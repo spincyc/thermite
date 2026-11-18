@@ -27,9 +27,8 @@ import re
 
 import oh_access_mode
 import oh_brand as brand
-import oh_entry
 import oh_routes
-from oh_conf import LIB, Addon, Conf, House
+from oh_conf import LIB, Conf, House
 
 from . import remote_activity, remote_cameras, remote_diagnostics, remote_topology, remote_model, remote_system
 
@@ -144,16 +143,14 @@ def validate(data: dict) -> list[str]:
 
 
 def render(house: House, conf: Conf) -> None:
-    conf.files.update(oh_entry.files())
-    conf.add_addon(Addon("automation", "jsscripting", "Thermite Home entry routing"))
     drawn = themed(palette(house.data))
     for name in FILES:
         if name == "house.js":
             conf.files[f"{TARGET}/{name}"] = remote_model.script(house)
         elif name == "access-config.js":
-            conf.files[f"{TARGET}/{name}"] = oh_access_mode.script(house.data)
+            conf.files[f"{TARGET}/{name}"] = oh_access_mode.script()
         elif name == "system.json":
-            metadata = conf.system_metadata if conf.system_metadata is not None else remote_system.selected(mode=oh_access_mode.mode(house.data))
+            metadata = conf.system_metadata if conf.system_metadata is not None else remote_system.selected()
             conf.files[f"{TARGET}/{name}"] = json.dumps(metadata, separators=(",", ":")) + "\n"
         elif name == "activity.json":
             conf.files[f"{TARGET}/{name}"] = json.dumps(remote_activity.manifest(house, conf), separators=(",", ":")) + "\n"

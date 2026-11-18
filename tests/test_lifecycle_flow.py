@@ -555,9 +555,9 @@ class Health(unittest.TestCase):
 
     def test_a_check_not_ready_just_after_a_start_gets_the_window(self):
         # An upgrade commits or rolls back on this report: a scrape target
-        # or the web entry a moment behind the start must not undo it.
+        # or an add-on a moment behind the start must not undo it.
         clock, online = [0.0], [thing("http:url:a", "ONLINE")]
-        reports = iter([self.report(online, failures=["Thermite web entry is not ready"]),
+        reports = iter([self.report(online, failures=["add-ons not installed: binding-http"]),
                         self.report(online, failures=["metrics: Prometheus ready, 1 of 2 targets up"]),
                         self.report(online)])
         with mock.patch.object(health, "run", side_effect=lambda args: next(reports)):
@@ -567,10 +567,10 @@ class Health(unittest.TestCase):
 
     def test_a_check_still_failing_when_the_window_ends_fails(self):
         clock = [0.0]
-        failing = self.report([thing("http:url:a", "ONLINE")], failures=["Thermite web entry is not ready"])
+        failing = self.report([thing("http:url:a", "ONLINE")], failures=["add-ons not installed: binding-http"])
         with mock.patch.object(health, "run", return_value=failing) as run:
             result = health.settled(self.args(), clock=lambda: clock[0], sleep=lambda s: clock.__setitem__(0, clock[0] + s))
-            self.assertEqual((clock[0], result["failures"]), (30, ["Thermite web entry is not ready"]))
+            self.assertEqual((clock[0], result["failures"]), (30, ["add-ons not installed: binding-http"]))
             run.reset_mock()
             self.assertIs(health.settled(self.args(settle=0), clock=lambda: clock[0], sleep=mock.Mock()), failing)
             run.assert_called_once()

@@ -22,11 +22,11 @@ MAC = re.compile(r"^[0-9a-f]{2}(?::[0-9a-f]{2}){5}$")
 IPV4 = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?![\d.])")
 
 ROOM_KEYS = {"label", "tag", "in"}
-#: The keys devices.yaml may have at its top level that this module, access
-#: (oh_access_mode) and the house-wide remote read. Integrations, features
-#: and Control4 (oh_control4) declare theirs (HOUSE_KEYS, keys()); the
-#: module that reads each key validates what is under it.
-TOP_KEYS = frozenset({"version", "rooms", "devices", "routing", "later", "services", "access", "theme",
+#: The keys devices.yaml may have at its top level that this module and the
+#: house-wide remote read. Integrations, features and Control4 (oh_control4)
+#: declare theirs (HOUSE_KEYS, keys()); the module that reads each key
+#: validates what is under it.
+TOP_KEYS = frozenset({"version", "rooms", "devices", "routing", "later", "services", "theme",
                       "diagnostics"})
 #: The keys any device may have: its identity, address and controls, how
 #: closely monitoring watches it (monitor), and owner documentation no
@@ -276,7 +276,6 @@ def validate(data: object) -> list[str]:
     # Imported here: the integration modules import lib/oh_conf.py, which
     # imports this module.
     import oh_integrations
-    import oh_access_mode
 
     if not isinstance(data, dict) or data.get("version") != 1:
         return ["devices.yaml: version must be 1"]
@@ -294,7 +293,7 @@ def validate(data: object) -> list[str]:
         problems.append("devices must be a list of devices; write `devices: []` for a house with none")
     if problems:
         return problems
-    problems = validate_rooms(data.get("rooms") or {}) + oh_access_mode.validate(data)
+    problems = validate_rooms(data.get("rooms") or {})
     rooms = data.get("rooms") if isinstance(data.get("rooms"), dict) else {}
     allowed = oh_integrations.allowed()
     needs_mac = {module.NAME for module in oh_integrations.REGISTRY if getattr(module, "NEEDS_MAC", False)}

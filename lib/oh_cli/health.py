@@ -10,7 +10,6 @@ from pathlib import Path
 
 import oh_cli
 import oh_deploy as deploy
-import oh_entry
 import oh_http
 import oh_music
 import oh_ports
@@ -40,15 +39,14 @@ are not installed yet.
 --production --installation checks installation readiness with the same
 Thing policy as the installer's native readiness wait. Offline devices
 waiting for pairing or connectivity are visible warnings. Thing configuration
-errors, required add-ons and monitoring failures still fail, and Thermite's
-web entry must redirect correctly. A runtime that has just started gets
---settle seconds (default 120 with --installation) to finish: Things still
-initializing (missing or reloading handlers, UNINITIALIZED, INITIALIZING,
-UNKNOWN), transient REST outages, and add-ons, monitoring, music or the web
-entry not ready yet are polled that long. Things still initializing then are
-reported as warnings; anything else still failing then fails. A Thing
-configuration error fails at once. --settle 0 takes one snapshot, as normal
-health checks do; they remain strict.
+errors, required add-ons and monitoring failures still fail. A runtime that
+has just started gets --settle seconds (default 120 with --installation) to
+finish: Things still initializing (missing or reloading handlers,
+UNINITIALIZED, INITIALIZING, UNKNOWN), transient REST outages, and add-ons,
+monitoring or music not ready yet are polled that long. Things still
+initializing then are reported as warnings; anything else still failing then
+fails. A Thing configuration error fails at once. --settle 0 takes one
+snapshot, as normal health checks do; they remain strict.
 """
 
 EXAMPLES = (
@@ -73,7 +71,7 @@ Items in NULL/UNDEF are reported but do not fail the check; Group Items
 without an aggregation function are skipped, since they never carry state.
 With --installation, exit 0 means installation is ready, possibly with
 device warnings or Things still initializing after the settle window; only
-configuration errors, missing add-ons, monitoring or entry failures exit 1.
+configuration errors, missing add-ons, monitoring or music failures exit 1.
 Compact output omits individual undefined Item states.
 """
 
@@ -97,13 +95,13 @@ def settled(args, *, clock=time.monotonic, sleep=time.sleep) -> dict:
     Things are pending or a readiness check still fails.
 
     An install transaction commits or rolls back on this report, taken just
-    after a start: a scrape target not up yet, or the web entry not
-    registered yet, gets the window before it counts, as a pending Thing
-    does. Configuration errors and authentication or data-shape problems
-    end the wait at once: no wait clears them. Things still pending at the
-    end stay in the report as warnings: the installer's own readiness wait
-    has already required complete initialization, so a later handler reload
-    must not fail a deployed run. A check still failing at the end fails it.
+    after a start: a scrape target not up yet gets the window before it
+    counts, as a pending Thing does. Configuration errors and authentication
+    or data-shape problems end the wait at once: no wait clears them. Things
+    still pending at the end stay in the report as warnings: the installer's
+    own readiness wait has already required complete initialization, so a
+    later handler reload must not fail a deployed run. A check still failing
+    at the end fails it.
     """
     window = getattr(args, "settle", None)
     if not getattr(args, "installation", False):
@@ -207,12 +205,8 @@ def run(args) -> dict:
         failures.append("music: " + music["summary"])
     if installation and music and not music["installed"]:
         failures.append("Music Assistant is not installed")
-    entry_ready = oh_entry.ready(args.url, timeout=args.timeout) if installation else None
-    if entry_ready is False:
-        failures.append("Thermite web entry is not ready")
     return {
         **({"mode": "installation"} if installation else {}),
-        **({"web_entry": {"ok": entry_ready}} if installation else {}),
         "url": args.url,
         "openhab_version": runtime["version"],
         "things": summary,

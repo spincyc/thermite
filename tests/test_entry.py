@@ -1,26 +1,25 @@
 """Pinned native entry routing and its script-owned Java lifecycle."""
 
-import contextlib
-import http.client
 import io
 import json
 import os
 from pathlib import Path
 import shutil
-import socketserver
 import subprocess
 import sys
 import tempfile
-import threading
-import time
 import unittest
 from unittest import mock
 import zipfile
 
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
+import oh_access_mode
 import oh_entry
+import oh_inventory
+import oh_render
 import oh_routes
+from oh_cli import sandbox as sandbox_cli
 
 SCRATCH = Path(os.environ.get("TMPDIR", AREA.parents[1] / ".scratch/thermite_clean_routes"))
 
@@ -122,148 +121,56 @@ for (const mode of ['ok','tampered','registerFail','hookFail']) run(mode);
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
-class Readiness(unittest.TestCase):
-    @contextlib.contextmanager
-    def server(self, respond):
-        stopping = threading.Event()
-        requests = []
+class SandboxOnly(unittest.TestCase):
+    """The no-gateway page mode: the runtime serves the pages and they talk to
+    it directly. A sandbox's copy of conf/ has it; what thermite generate
+    writes, and so an install, does not."""
 
-        class Handler(socketserver.StreamRequestHandler):
-            def handle(self):
-                self.connection.settimeout(2)
-                try:
-                    method, path, _ = self.rfile.readline().decode().strip().split()
-                    headers = {}
-                    while True:
-                        line = self.rfile.readline()
-                        if line in (b"\r\n", b"\n", b""):
-                            break
-                        name, value = line.decode().split(":", 1)
-                        headers[name.lower()] = value.strip()
-                    requests.append((method, path, headers))
-                    respond(path, self.connection, stopping)
-                except OSError:
-                    # Deliberate unfinished/late responses are closed by the client.
-                    pass
+    @classmethod
+    def setUpClass(cls):
+        cls.house = oh_inventory.load(AREA / "instance/devices.yaml")
+        cls.files = oh_render.render(cls.house)
 
-        server = socketserver.TCPServer(("127.0.0.1", 0), Handler)
-        worker = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": .01})
-        worker.start()
-        try:
-            yield f"http://127.0.0.1:{server.server_address[1]}", requests
-        finally:
-            stopping.set()
-            server.shutdown()
-            server.server_close()
-            worker.join(timeout=2)
-            self.assertFalse(worker.is_alive(), "entry HTTP fixture did not stop")
+    def test_generated_conf_has_neither_the_entry_nor_the_direct_transport(self):
+        self.assertFalse(set(oh_entry.files()) & set(self.files))
+        self.assertFalse([path for path in self.files if "thermite_entry" in path or "thermite-entry" in path])
+        self.assertEqual(self.files["html/remote/access-config.js"], oh_access_mode.script())
+        self.assertIn('"mode":"authenticated"', oh_access_mode.script())
+        with self.assertRaises(ValueError):
+            oh_access_mode.script("automatic")
 
-    @staticmethod
-    def reply(connection, *, status=302, location="/", page=None, cache="no-store", extra=""):
-        head = f"HTTP/1.1 {status} Fixture\r\nContent-Length: 999999\r\nConnection: close\r\n"
-        if location is not None:
-            head += f"Location: {location}\r\n"
-        if cache is not None:
-            head += f"Cache-Control: {cache}\r\n"
-        if page is not None:
-            head += f"X-Thermite-Page: {page}\r\n"
-        connection.sendall((head + extra + "\r\n").encode())
-        # No body: the readiness contract is headers only.
+    def test_both_sandbox_copies_have_them_under_the_same_guards(self):
+        for live in (False, True):
+            with self.subTest(live=live), mock.patch.object(sandbox_cli.lib, "mirror_conf") as mirror:
+                sandbox_cli.mirror(None, live)
+                copied = mirror.call_args.args[2](dict(self.files))
+                self.assertEqual({path: copied[path] for path in oh_entry.files()}, oh_entry.files())
+                self.assertEqual(copied["html/remote/access-config.js"], oh_access_mode.script("native"))
+                self.assertIn('"mode":"native"', copied["html/remote/access-config.js"])
+                # The mode is added before the copy's guard runs, not after it.
+                guard = oh_render.unrelayed if live else sandbox_cli.read_only
+                self.assertEqual(copied, guard(oh_render.direct(dict(self.files))))
+        self.assertEqual(set(oh_render.direct(self.files)) - set(self.files), set(oh_entry.files()))
 
-    def successful(self, path, connection):
-        self.reply(connection, **({"status": 200, "location": None, "page": "home"} if path == "/" else {}))
+    def test_the_copy_asks_for_the_add_on_the_entry_needs_where_the_house_does_not(self):
+        import oh_sandbox
+        asked = lambda files: oh_sandbox.parse_addons_cfg(files[oh_render.ADDONS_CFG])
+        # The example's own rules already ask: its list is left as generated.
+        self.assertIn("jsscripting", asked(self.files)["automation"])
+        self.assertEqual(oh_render.direct(self.files)[oh_render.ADDONS_CFG], self.files[oh_render.ADDONS_CFG])
+        bare = oh_render.render({"version": 1, "devices": []})
+        self.assertNotIn("automation", asked(bare))
+        copied = oh_render.direct(bare)
+        self.assertEqual(asked(copied), {**asked(bare), "automation": ["jsscripting"]})
+        listed = bare[oh_render.ADDONS_CFG].replace("misc = ", "automation = groovyscripting\nmisc = ")
+        self.assertEqual(asked(oh_render.direct({**bare, oh_render.ADDONS_CFG: listed}))["automation"],
+                         ["groovyscripting", "jsscripting"])
 
-    def test_real_redirects_are_checked_directly_without_credentials_or_body_reads(self):
-        with self.server(lambda path, connection, stopping: self.successful(path, connection)) as (origin, requests), \
-                mock.patch("oh_http.urllib.request.getproxies", side_effect=AssertionError("must not use proxies")), \
-                mock.patch.object(http.client.HTTPResponse, "read", side_effect=AssertionError("must not read bodies")):
-            self.assertTrue(oh_entry.ready(origin + "/", timeout=1))
-            self.assertEqual([(method, path) for method, path, _ in requests], [("HEAD", "/"), ("HEAD", "/overview/")])
-            for _, _, headers in requests:
-                self.assertFalse(set(headers) & {"authorization", "proxy-authorization", "cookie"})
-
-    def test_missing_wrong_or_ambiguous_redirects_and_bad_headers_are_not_ready(self):
-        cases = [{"status": 200}, {"status": 404}, {"location": None}, {"location": "/settings/"},
-                 {"location": "//example.invalid/static/remote/home.html"},
-                 {"location": "https://example.invalid/static/remote/home.html"},
-                 {"cache": None}, {"cache": "max-age=60"},
-                 {"extra": "Location: /settings/\r\n"}, {"extra": "Cache-Control: max-age=60\r\n"}]
-        for changes in cases:
-            def respond(path, connection, stopping):
-                if path == "/overview/":
-                    self.reply(connection, **changes)
-                else:
-                    self.successful(path, connection)
-            with self.subTest(changes=changes), self.server(respond) as (origin, requests):
-                self.assertFalse(oh_entry.ready(origin, timeout=1))
-                self.assertEqual([path for _, path, _ in requests], ["/", "/overview/"])
-
-    def test_native_mainui_or_missing_asset_cannot_impersonate_the_home_route(self):
-        for changes in ({"status": 200, "location": None},
-                        {"status": 200, "location": None, "page": "index"},
-                        {"status": 503, "location": None},
-                        {"status": 200, "location": None, "page": "home", "extra": "X-Thermite-Page: other\r\n"}):
-            with self.subTest(changes=changes), self.server(
-                    lambda path, connection, stopping: self.reply(connection, **changes)) as (origin, requests):
-                self.assertFalse(oh_entry.ready(origin, timeout=1))
-                self.assertEqual([path for _, path, _ in requests], ["/"])
-
-    def test_redirect_is_never_followed_even_to_another_loopback_server(self):
-        with self.server(lambda path, connection, stopping: self.reply(connection)) as (target, target_requests):
-            with self.server(lambda path, connection, stopping: self.reply(
-                    connection, location=target + "/static/remote/home.html")) as (origin, requests):
-                self.assertFalse(oh_entry.ready(origin, timeout=1))
-                self.assertEqual(len(requests), 1)
-                self.assertEqual(target_requests, [])
-
-    def test_trickled_headers_obey_absolute_deadline_and_malformed_http_fails_closed(self):
-        def trickle(path, connection, stopping):
-            connection.sendall(b"HTTP/1.1 302 Found\r\nLocation: /static/remote/home.html\r\nX-Slow: ")
-            for _ in range(100):
-                connection.sendall(b" ")
-                if stopping.wait(.025):
-                    return
-
-        with self.server(trickle) as (origin, requests):
-            started = time.monotonic()
-            self.assertFalse(oh_entry.ready(origin, timeout=.15))
-            self.assertLess(time.monotonic() - started, .8)
-            self.assertEqual(len(requests), 1)
-        for response in (b"broken status\r\n\r\n", b""):
-            with self.subTest(response=response), self.server(
-                    lambda path, connection, stopping: connection.sendall(response)) as (origin, _):
-                self.assertFalse(oh_entry.ready(origin, timeout=1))
-
-    def test_both_routes_share_one_budget_and_late_success_cannot_pass(self):
-        # Each answer takes .5 s of a budget of .8 s: the first route passes
-        # with .3 s to spare, which a loaded host needs (.07 s was too
-        # little), and the second cannot answer in what is left.
-        def delayed(path, connection, stopping):
-            if not stopping.wait(.5):
-                self.successful(path, connection)
-        with self.server(delayed) as (origin, requests):
-            started = time.monotonic()
-            self.assertFalse(oh_entry.ready(origin, timeout=.8))
-            self.assertLess(time.monotonic() - started, 2)
-            self.assertEqual([path for _, path, _ in requests], ["/", "/overview/"])
-
-    def test_only_literal_loopback_origins_are_accepted_and_programmer_errors_are_visible(self):
-        invalid = ["http://localhost:1234", "http://192.0.2.1:1234", "https://127.0.0.1:1234",
-                   "http://user@127.0.0.1:1234", "http://127.0.0.1:1234/path", "http://127.0.0.1:1234?x=1",
-                   "http://127.0.0.1:1234#x", "http://127.0.0.1:0", "http://127.0.0.1:65536", " http://127.0.0.1"]
-        with mock.patch("oh_entry.oh_http.headers") as headers:
-            for origin in invalid:
-                with self.subTest(origin=origin):
-                    self.assertFalse(oh_entry.ready(origin, timeout=1))
-            headers.assert_not_called()
-            for timeout in (0, -1, float("inf"), float("nan"), True):
-                with self.subTest(timeout=timeout), self.assertRaises(ValueError):
-                    oh_entry.ready("http://127.0.0.1", timeout)
-            with self.assertRaises(TypeError):
-                oh_entry.ready(None, 1)
-        with mock.patch("oh_entry.oh_http.headers", side_effect=RuntimeError("programming mistake")):
-            with self.assertRaisesRegex(RuntimeError, "programming mistake"):
-                oh_entry.ready("http://127.0.0.1", 1)
+    def test_a_house_file_selects_no_page_mode(self):
+        for mode in ("native", "authenticated"):
+            with self.subTest(mode=mode):
+                self.assertEqual(oh_inventory.validate({**self.house, "access": {"mode": mode}}),
+                                 ["unknown top-level key 'access'"])
 
 
 @unittest.skipUnless(all(os.environ.get(name) for name in ("THERMITE_JAVA", "THERMITE_ECJ", "THERMITE_RUNTIME")),

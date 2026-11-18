@@ -105,6 +105,13 @@ def commanding(files: dict) -> list[str]:
     return found
 
 
+def guards(files: dict) -> bool:
+    """Whether any Item in a conf is guarded."""
+    return any(is_guarded(item) for path, text in files.items()
+               if path.startswith("yaml/") and path.endswith(".yaml")
+               for item in ((yaml.safe_load(text) or {}).get("items") or {}).values())
+
+
 class EveryIntegration(unittest.TestCase):
     def test_every_integration_in_every_phase_commands_nothing_read_only(self):
         for name, phase in sorted(HOUSES):
@@ -115,6 +122,11 @@ class EveryIntegration(unittest.TestCase):
                 read_only = render.read_only(files)
                 self.assertEqual(commanding(read_only), [])
                 self.assertEqual(set(read_only), set(files))
+                # A guard runs on the JS add-on; the copy asks for it where the house does not.
+                if guards(read_only):
+                    self.assertRegex(read_only[render.ADDONS_CFG], r"(?m)^automation = (.*,)?jsscripting(,|$)")
+                else:
+                    self.assertEqual(read_only[render.ADDONS_CFG], files[render.ADDONS_CFG])
                 for path, text in files.items():
                     if path.startswith("automation/js/") and isinstance(text, str) and RULE_SENDS in text:
                         self.assertEqual(read_only[path], text.replace(RULE_SENDS, RULE_SILENT))
@@ -146,10 +158,26 @@ class FailsClosed(unittest.TestCase):
         self.assertEqual(items["den_box_power"], {"type": "Switch", "channel": "http:url:den_box:power"})
         self.assertEqual(commanding(read_only), [])
 
-    def test_guarding_needs_the_javascript_addon(self):
+    def test_a_guard_brings_the_javascript_addon_it_runs_on(self):
         text = yaml.safe_dump({"items": {"den_tv_power": {"type": "Switch", "channel": "sonos:Arc:den_tv:power"}}})
-        with self.assertRaisesRegex(ValueError, "jsscripting"):
-            render.read_only({"yaml/x.yaml": text})
+        for addons, asked in ((None, "automation = jsscripting"), ("binding = sonos\n", "automation = jsscripting"),
+                              ("automation = groovyscripting\nbinding = sonos\n",
+                               "automation = groovyscripting,jsscripting"),
+                              ("automation=groovyscripting, jsscripting\n", "automation=groovyscripting, jsscripting")):
+            with self.subTest(addons=addons):
+                files = {"yaml/x.yaml": text, **({} if addons is None else {"services/addons.cfg": addons})}
+                read_only = render.read_only(files)
+                self.assertTrue(is_guarded(self.items(read_only)["den_tv_power"]))
+                lines = read_only["services/addons.cfg"].splitlines()
+                self.assertEqual([line for line in lines if line.startswith("automation")], [asked])
+                self.assertEqual([line for line in lines if line.startswith("binding")],
+                                 ["binding = sonos"] if addons and "binding" in addons else [])
+
+    def test_a_copy_that_guards_nothing_asks_for_nothing_more(self):
+        text = yaml.safe_dump({"things": {"http:url:den_box": {"channels": {"power": {"type": "switch"}}}},
+                               "items": {"den_box_power": {"type": "Switch", "channel": "http:url:den_box:power"}}})
+        read_only = render.read_only({"yaml/x.yaml": text, "services/addons.cfg": "binding = http\n"})
+        self.assertEqual(read_only["services/addons.cfg"], "binding = http\n")
 
     def test_a_send_declaration_is_silenced_however_it_is_spaced(self):
         for line in ("const SEND = true;", "  const SEND=true;", "const  SEND = true", "\tlet SEND = true ;  "):
@@ -177,6 +205,19 @@ def addresses(files: dict) -> set[str]:
     """Every IPv4 address and Sonos UDN in the files openHAB reads."""
     return {found for path, text in files.items() if isinstance(text, str) and not path.startswith("html/")
             for found in render.IPV4.findall(text) + render.SONOS_UDN.findall(text)}
+
+
+class GuardAddon(unittest.TestCase):
+    def test_a_house_whose_own_rules_need_no_scripting_still_has_its_guard_run(self):
+        # What thermite generate writes asks only for what an install uses.
+        files = render.render(house("network_ping", "observe"))
+        self.assertFalse(guards(files))
+        self.assertNotIn("automation", files[render.ADDONS_CFG])
+        read_only = render.read_only(files)
+        self.assertTrue(guards(read_only))
+        self.assertEqual(read_only[render.ADDONS_CFG], files[render.ADDONS_CFG]
+                         + "\n# jsscripting: the transform:JS profile that keeps the read-only copy's Items "
+                           "display-only.\nautomation = jsscripting\n")
 
 
 class Unaddressed(unittest.TestCase):

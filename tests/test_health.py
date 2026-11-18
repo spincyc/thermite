@@ -121,9 +121,6 @@ class Health(unittest.TestCase):
         }
         self.metrics = {"installed": True, "ok": True, "summary": "Prometheus ready, targets 53/53; Grafana answers",
                         "targets_up": 53, "targets": 53, "down": [], "systemd_collector": True}
-        entry = mock.patch.object(health.oh_entry, "ready", return_value=True)
-        self.entry = entry.start()
-        self.addCleanup(entry.stop)
 
     def args(self, *, installation=True):
         return SimpleNamespace(url="http://127.0.0.1:13602", token_file=self.token_file, timeout=1,
@@ -274,17 +271,14 @@ class Health(unittest.TestCase):
                 self.metrics = metrics
                 self.assertTrue(self.report()["failures"])
 
-    def test_installation_requires_the_thermite_entry_but_ordinary_health_is_unchanged(self):
-        self.entry.return_value = False
-        report = self.report()
-        self.assertEqual(report["web_entry"], {"ok": False})
-        self.assertIn("Thermite web entry is not ready", report["failures"])
-        self.entry.assert_called_once_with("http://127.0.0.1:13602", timeout=1)
-        self.entry.reset_mock()
-        strict = self.report(installation=False)
-        self.entry.assert_not_called()
-        self.assertNotIn("web_entry", strict)
-        self.assertEqual(strict["failures"], [])
+    def test_installation_asks_nothing_of_the_runtimes_own_pages(self):
+        # An install's pages go through the gateway; the runtime's own page
+        # entry is the sandbox's (oh_render.direct). No request but the REST
+        # reads of report() leaves this check.
+        with mock.patch("socket.create_connection", side_effect=AssertionError("a request of its own")):
+            report = self.report()
+        self.assertNotIn("web_entry", report)
+        self.assertEqual(report["failures"], [])
 
     def test_installation_human_output_is_compact_actionable_and_has_no_secret_fields(self):
         self.responses[THINGS] = 200, observed_devices()

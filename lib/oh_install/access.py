@@ -436,7 +436,7 @@ class Gateway(Step):
             if path.is_symlink() or not path.is_file():
                 raise AccessError("gateway private assets are incomplete or unsafe")
             content["html/remote/" + name] = path.read_bytes()
-        content["html/remote/access-config.js"] = oh_access_mode.script({"access": {"mode": "authenticated"}}).encode()
+        content["html/remote/access-config.js"] = oh_access_mode.script().encode()
         metadata = json.loads(content["html/remote/system.json"])
         for tool in metadata["tools"]:
             if tool.get("id") == "openhab":

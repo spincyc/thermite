@@ -138,6 +138,21 @@ def safe_link(uid: str, link: object, readonly: set[str]) -> bool:
                                and not COMMAND_SCRIPTS & set(link))
 
 
+def scripted(files: dict[str, str | bytes], why: str) -> str:
+    """The files' addons.cfg, asking for the JS add-on too: a copy of conf
+    that adds something the add-on runs (the read-only copy's guard, the
+    sandbox's page entry) to a house whose own rules need none."""
+    addons = str(files.get(ADDONS_CFG, ""))
+    asked = re.search(r"^automation\s*=(.*)$", addons, re.MULTILINE)
+    names = [name.strip() for name in asked[1].split(",") if name.strip()] if asked else []
+    if "jsscripting" in names:
+        return addons
+    line = "automation = " + ",".join(sorted([*names, "jsscripting"]))
+    if asked:
+        return addons[:asked.start()] + line + addons[asked.end():]
+    return addons + f"\n# jsscripting: {why}.\n{line}\n"
+
+
 def read_only(files: dict[str, str | bytes]) -> dict[str, str | bytes]:
     """conf files that read every device and command none. The sandbox and
     the boot check run on this. It fails closed: every HTTP binding channel
@@ -149,8 +164,8 @@ def read_only(files: dict[str, str | bytes]) -> dict[str, str | bytes]:
     either: the matrix and the switch serve few sessions, the projector one
     request at a time, and the live runtime holds theirs; the reboots rule
     opens no USB matrix console); and a rule with none (but ITEM_ONLY_RULES),
-    Things or Items in a format it cannot read, or a guard without the
-    add-on that runs it, is a ValueError."""
+    or Things or Items in a format it cannot read, is a ValueError. A copy
+    that guards an Item asks for the add-on the guard runs on (scripted)."""
     out = dict(files)
     for path, text in files.items():
         if path.startswith(("things/", "items/")):
@@ -188,8 +203,9 @@ def read_only(files: dict[str, str | bytes]) -> dict[str, str | bytes]:
                 items[name] = guard(item)
                 changed.add(path)
                 guarded = True
-    if guarded and not re.search(r"^automation\s*=.*\bjsscripting\b", str(files.get(ADDONS_CFG, "")), re.MULTILINE):
-        raise ValueError(f"{ADDONS_CFG}: the read-only copy guards Items, which needs automation = jsscripting")
+    if guarded:
+        out[ADDONS_CFG] = scripted(files, "the transform:JS profile that keeps the read-only copy's Items "
+                                          "display-only")
     for path in changed:
         document = documents[path]
         out[path] = dump(READ_ONLY_HEADER, {key: document.get(key) or {} for key in ("things", "items", "pages")})
@@ -250,6 +266,18 @@ def unrelayed(files: dict[str, str | bytes]) -> dict[str, str | bytes]:
     """conf files for a runtime without the gateway's callback relay (the
     live sandbox): no UPNP_CFG, so jUPnP advertises the runtime's own port."""
     return {path: text for path, text in files.items() if path != UPNP_CFG}
+
+
+def direct(files: dict[str, str | bytes]) -> dict[str, str | bytes]:
+    """conf files for a runtime with no gateway in front of it (the
+    sandbox): the runtime serves the pages at their own paths (oh_entry)
+    and they talk to it directly, with no login (oh_access_mode). What
+    thermite generate writes has neither: an install's pages go through
+    the gateway."""
+    import oh_access_mode
+    import oh_entry
+    return {**files, **oh_entry.files(), ADDONS_CFG: scripted(files, "the runtime's own page entry (oh_entry)"),
+            "html/remote/access-config.js": oh_access_mode.script("native")}
 
 
 def on_disk(conf: Path) -> set[str]:

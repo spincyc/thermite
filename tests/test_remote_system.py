@@ -34,15 +34,6 @@ class SystemMetadata(unittest.TestCase):
             self.assertTrue(tool["label"])
             self.assertTrue(tool["description"])
 
-    def test_native_administration_is_direct_only_for_explicit_native_access(self):
-        native = remote_system.manifest({}, "5.2.3", mode="native")
-        self.assertFalse(native["tools"][0]["localOnly"])
-        authenticated = remote_system.manifest({}, "5.2.3", mode="authenticated")
-        self.assertTrue(authenticated["tools"][0]["localOnly"])
-        self.assertEqual(native["tools"][1:], authenticated["tools"][1:])
-        with self.assertRaises(ValueError):
-            remote_system.manifest({}, "5.2.3", mode="automatic")
-
     def test_actual_host_overrides_replace_defaults_without_serializing_private_facts(self):
         sentinel = "-".join(("private", "credential", "sentinel"))
         host = {"http_port": 14001, "metrics": {"grafana_port": 14002, "prometheus_port": 14003},

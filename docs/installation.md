@@ -72,7 +72,7 @@ Edit `instance/devices.yaml` and `instance/host.yaml` for your own equipment
 and time zone; see [host layout](#host-layout) before adding a `root`.
 Init's inventory is fictional: use it only
 for the mock example, then replace its devices before commissioning real
-equipment. Keep the default gateway access mode. Household accounts are separate, on
+equipment. Household accounts are separate, on
 the gateway's Security page; a new site starts with none.
 Port assignments are listed in [ports](ports.md).
 
@@ -149,9 +149,10 @@ The run ends with a read-only check, `thermite health --production
 --installation --settle 120`, and commits only when it passes: a failing
 check rolls the install back. The check gives what the start has not finished
 up to two minutes. Things still initializing then are reported as warnings,
-not failures, as offline devices always are; missing add-ons, monitoring or
-the web entry still failing then fail it. A Thing configuration error fails
-at once.
+not failures, as offline devices always are; missing add-ons or monitoring
+still failing then fail it. A Thing configuration error fails at once. The
+check asks nothing of pages: an install's pages go through the gateway,
+which the gateway's own step verifies over HTTPS when it starts a release.
 
 Keep `~/.local/bin` on your shell's PATH. If you activated the bootstrap
 environment above, leave it with `deactivate` after this first deployment and

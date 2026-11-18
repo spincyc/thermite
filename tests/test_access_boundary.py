@@ -426,7 +426,7 @@ class RenderedProxyPort(unittest.TestCase):
         self.assertEqual(oh_render.unrelayed(files), {path: text for path, text in files.items() if path != oh_render.UPNP_CFG})
         with mock.patch.object(sandbox_cli.lib, "mirror_conf") as mirror:
             sandbox_cli.mirror(None, True)
-        self.assertIs(mirror.call_args.args[2], oh_render.unrelayed)
+        self.assertEqual(mirror.call_args.args[2](files), oh_render.unrelayed(oh_render.direct(files)))
 
 
 class NativeFilter(unittest.TestCase):

@@ -203,15 +203,19 @@ problem. Writing never deletes: a file under conf/ or metrics/, or a unit
 in deploy/ (Music Assistant&#x27;s, once the host file has no music:), that
 nothing generates is reported and makes the exit status 1; --prune removes
 such a file when it carries the generated header (an earlier generate
-wrote it) or lies in conf/html/remote/, which the remote page&#x27;s copies fill
-whole, and only reports any other.
+wrote it), lies in conf/html/remote/, which the remote page&#x27;s copies fill
+whole, or is the page entry&#x27;s helper an earlier release generated
+(conf/automation/js/node_modules/thermite-entry/), and only reports any
+other.
 
 options:
   -h, --help     show this help message and exit
   --config DIR   use this private configuration directory
   --check        change nothing; exit 1 if conf/, metrics/ or deploy/ is stale
   --prune        also remove files under conf/, metrics/ and deploy/ with the generated
-                 header, or in conf/html/remote/, that nothing generates now
+                 header, or in conf/html/remote/ or
+                 conf/automation/js/node_modules/thermite-entry/, that nothing generates
+                 now
   --house FILE   the house file (default: instance/devices.yaml)
   --conf DIR     the runtime conf directory (default: conf/)
 
@@ -563,6 +567,11 @@ request at a time, because SEND is off; and HEOS, Cast, the Android TV remote an
 Things are addressed nowhere, with UPnP off (oh_render.unaddressed).
 `reload` refreshes the copy after `thermite generate`; the running sandbox
 picks the change up.
+
+There is no gateway here. The copy alone has the runtime serve thermite&#x27;s
+pages itself, at / and the paths the gateway gives them, and has them talk
+to the runtime directly, with no login (oh_render.direct). An install has
+neither: its pages always go through the gateway.
 
 `start --live` is a test instance for the house instead: its copy of conf/
 is unchanged, so its Source selectors switch the real matrices and its
@@ -1231,15 +1240,14 @@ are not installed yet.
 --production --installation checks installation readiness with the same
 Thing policy as the installer&#x27;s native readiness wait. Offline devices
 waiting for pairing or connectivity are visible warnings. Thing configuration
-errors, required add-ons and monitoring failures still fail, and Thermite&#x27;s
-web entry must redirect correctly. A runtime that has just started gets
---settle seconds (default 120 with --installation) to finish: Things still
-initializing (missing or reloading handlers, UNINITIALIZED, INITIALIZING,
-UNKNOWN), transient REST outages, and add-ons, monitoring, music or the web
-entry not ready yet are polled that long. Things still initializing then are
-reported as warnings; anything else still failing then fails. A Thing
-configuration error fails at once. --settle 0 takes one snapshot, as normal
-health checks do; they remain strict.
+errors, required add-ons and monitoring failures still fail. A runtime that
+has just started gets --settle seconds (default 120 with --installation) to
+finish: Things still initializing (missing or reloading handlers,
+UNINITIALIZED, INITIALIZING, UNKNOWN), transient REST outages, and add-ons,
+monitoring or music not ready yet are polled that long. Things still
+initializing then are reported as warnings; anything else still failing then
+fails. A Thing configuration error fails at once. --settle 0 takes one
+snapshot, as normal health checks do; they remain strict.
 
 options:
   -h, --help                   show this help message and exit
@@ -1276,7 +1284,7 @@ Items in NULL/UNDEF are reported but do not fail the check; Group Items
 without an aggregation function are skipped, since they never carry state.
 With --installation, exit 0 means installation is ready, possibly with
 device warnings or Things still initializing after the settle window; only
-configuration errors, missing add-ons, monitoring or entry failures exit 1.
+configuration errors, missing add-ons, monitoring or music failures exit 1.
 Compact output omits individual undefined Item states.
 
 examples:
@@ -1956,10 +1964,9 @@ front ends drive thermite the same way (tui/remote/README.md).
 
 By default it uses the authenticated site: THERMITE_SITE_URL, the installed
 gateway&#x27;s verified address, or https://localhost on the site&#x27;s HTTPS port
-(instance/host.yaml&#x27;s gateway.port, 13601 by default). A site with
-access.mode: native instead uses its
-production runtime without login; --native explicitly selects that testing
-mode for this run. Choosing a source really switches the room. --sandbox talks to
+(instance/host.yaml&#x27;s gateway.port, 13601 by default). --native uses a
+runtime directly instead, without login: a testing mode, for a runtime with
+no gateway in front of it. Choosing a source really switches the room. --sandbox talks to
 the sandbox on 127.0.0.1:13616 and --mock to the page&#x27;s mock backend,
 which sends nothing.
 

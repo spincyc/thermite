@@ -221,6 +221,25 @@ class Generate(Scratch):
         self.assertIn("conf/html/mine.html: nothing generates it now; thermite generate writes conf/ whole", err)
         self.assertTrue((conf / "html/mine.html").exists())
 
+    def test_prune_removes_the_page_entry_an_earlier_release_generated(self):
+        # Its script carries the header; its helper is a binary in a directory
+        # of its own. thermite check prunes before every install and upgrade.
+        import oh_entry
+        house, conf = self.house(EXAMPLE), self.root / "conf"
+        argv = ["generate", "--house", str(house), "--conf", str(conf), "--root", str(self.root)]
+        self.assertEqual(run(*argv)[0], 0)
+        for path, data in oh_entry.files().items():
+            self.assertFalse((conf / path).exists())
+            (conf / path).parent.mkdir(parents=True, exist_ok=True)
+            (conf / path).write_bytes(data if isinstance(data, bytes) else data.encode())
+        self.assertEqual(run(*argv)[0], 1)
+        code, out, _ = run(*argv, "--prune")
+        self.assertEqual(code, 0)
+        for path in oh_entry.files():
+            self.assertIn(f"removed conf/{path}", out)
+            self.assertFalse((conf / path).exists())
+        self.assertEqual(run(*argv, "--check")[0], 0)
+
     def test_prune_removes_music_assistants_units_once_the_host_has_no_music(self):
         import oh_deploy
         import oh_units

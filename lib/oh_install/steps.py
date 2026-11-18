@@ -2331,7 +2331,7 @@ class Verify(Step):
     always = True
     #: Seconds final health gives a start to finish. Things that a late
     #: handler reload left initializing are warnings then, not failures;
-    #: monitoring or the web entry still not answering then fails it.
+    #: monitoring still not answering then fails it.
     settle = 120
 
     def __init__(self, context: Context, *, materialized: bool = True):
@@ -2484,7 +2484,7 @@ class StartTarget(Step):
 class Health(Verify):
     """The gate an install transaction commits on: health --production
     --installation, whose exit status counts configuration errors, missing
-    add-ons and failed monitoring or entry points, never device warnings.
+    add-ons and failed monitoring, never device warnings.
     Any exit status but 0 stops the run, as in every step, so the
     transaction rolls back: changeover.run commits only after a run in
     which all steps passed."""

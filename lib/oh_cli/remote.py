@@ -45,10 +45,9 @@ front ends drive thermite the same way (tui/remote/README.md).
 
 By default it uses the authenticated site: THERMITE_SITE_URL, the installed
 gateway's verified address, or https://localhost on the site's HTTPS port
-(instance/host.yaml's gateway.port, 13601 by default). A site with
-access.mode: native instead uses its
-production runtime without login; --native explicitly selects that testing
-mode for this run. Choosing a source really switches the room. --sandbox talks to
+(instance/host.yaml's gateway.port, 13601 by default). --native uses a
+runtime directly instead, without login: a testing mode, for a runtime with
+no gateway in front of it. Choosing a source really switches the room. --sandbox talks to
 the sandbox on 127.0.0.1:13616 and --mock to the page's mock backend,
 which sends nothing.
 
@@ -133,20 +132,9 @@ def setup(build: Path = BUILD, tui: Path = TUI, npm: str | None = None, verb: st
 
 
 def native_mode(arguments: argparse.Namespace) -> bool:
-    """An explicit target cannot inherit a different local site's testing mode."""
-    if arguments.mock:
-        return False
-    if getattr(arguments, "native", False) or arguments.sandbox:
-        return True
-    if arguments.url or os.environ.get("THERMITE_SITE_URL"):
-        return False
-    from oh_access import client
-    if client.deployment(AREA) is not None:
-        return False
-    import oh_access_mode
-    from oh_conf import House
-
-    return oh_access_mode.mode(House.load(oh_cli.HOUSE).data) == "native"
+    """Only this run's own switch selects the testing mode: --native, or
+    --sandbox, whose runtime has no gateway."""
+    return not arguments.mock and bool(getattr(arguments, "native", False) or arguments.sandbox)
 
 
 def gateway_port(area: Path | None = None) -> int:

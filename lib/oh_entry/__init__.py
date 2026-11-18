@@ -1,4 +1,7 @@
-"""Small, pinned native HTTP entry helper; no compiler or new daemon at install time.
+"""Small, pinned native HTTP entry helper for a runtime with no gateway in
+front of it: the sandbox's copy of conf/ (oh_render.direct). No compiler or
+new daemon is needed. What thermite generate writes does not have it: an
+install's pages go through the gateway.
 
 The generated JS owns registration/disposal, while every request runs in Java.
 The checked-in JAR is a reproducible build artifact of EntryFilter.java. Its
@@ -8,19 +11,13 @@ exact bytes and source/compiler/API inputs are pinned in inputs.json.
 from __future__ import annotations
 
 import hashlib
-import http.client
 import io
 import json
-import math
 from pathlib import Path
-import re
 import subprocess
 import tempfile
-import time
-import urllib.request
 import zipfile
 
-import oh_http
 import oh_routes
 
 ROOT = Path(__file__).resolve().parent
@@ -28,46 +25,6 @@ JAR = "filter.jar"
 JAR_PATH = "automation/js/node_modules/thermite-entry/filter.jar"
 SCRIPT_PATH = "automation/js/thermite_entry.js"
 CLASS = "org/thermite/entry/EntryFilter.class"
-
-
-def ready(url: str, timeout: float) -> bool:
-    """Probe both native entry routes once, within one finite total allowance.
-
-    Only the literal loopback HTTP origin used by the native lifecycle is
-    accepted. Requests carry no credentials, use no proxy, follow no redirect,
-    and close after headers. A 200 at home.html would not prove its identity:
-    MainUI's SPA fallback can also answer 200, so that is not a readiness test.
-    """
-    if not isinstance(url, str):
-        raise TypeError("native entry origin must be a string")
-    if isinstance(timeout, bool) or not math.isfinite(timeout) or timeout <= 0:
-        raise ValueError("native entry timeout must be finite and positive")
-    match = re.fullmatch(r"http://(127\.0\.0\.1|\[::1\])(?::([1-9][0-9]{0,4}))?/?", url)
-    if match is None or int(match[2] or 80) > 65535:
-        return False
-    origin = f"http://{match[1]}:{int(match[2] or 80)}"
-    deadline = time.monotonic() + timeout
-
-    def remaining():
-        value = deadline - time.monotonic()
-        if value <= 0:
-            raise oh_http.DeadlineExpired("native entry deadline expired")
-        return value
-
-    try:
-        for path in ("/", "/overview/"):
-            status, response = oh_http.headers(urllib.request.Request(origin + path, method="HEAD"),
-                                               timeout=timeout, remaining=remaining)
-            if ([value.strip().lower() for value in response.get_all("Cache-Control", [])] != ["no-store"]):
-                return False
-            if path == "/":
-                if status != 200 or response.get_all("X-Thermite-Page", []) != ["home"] or response.get_all("Location", []):
-                    return False
-            elif status != 302 or response.get_all("Location", []) != ["/"]:
-                return False
-    except (OSError, http.client.HTTPException, oh_http.DeadlineExpired):
-        return False
-    return True
 
 
 def sha(data: bytes) -> str:

@@ -8,10 +8,6 @@
 #
 #     python -m tests.test_generated_output --write
 
-b797e804425f02808d1199b031eb43832e89420affe92393a99a93e042075e31  */conf/automation/js/node_modules/thermite-entry/filter.jar
-
-87c4d56e661dcc2afe7987c297292deaecf56d4cfce852364f7bedbba301bc00  */conf/automation/js/thermite_entry.js
-
 ed90ef80da36c1b21b20b5fdb3aef723f5b86f050be478337dbb840d0e7e157e  */conf/html/remote/access-config.js
 
 1ae66ed56f761c09c76894068c573569b513b969e2e521238874bbb67e4b5305  */conf/html/remote/access-mock.js
@@ -180,7 +176,7 @@ d4d0a0ff5806737e3e09864e0d4587037c75b27a04d1cddf500541abcd3e365d  androidtv_goog
 
 58e33110233bd95e32956600287c1310eca6f6a837edc556e6a716a2daf6d8f9  androidtv_googletv.control/conf/html/remote/users.html
 
-9fa9cde094cd738253fa158cc3ffdeac4d0d6b9f31504d2d1a3a181ecd87eb24  androidtv_googletv.control/conf/services/addons.cfg
+4e8d9fe16276f6a680b2725f35972b3edd73fc585cc08fca6e2ffa0c5d650270  androidtv_googletv.control/conf/services/addons.cfg
 
 33d846f316d908d9cab7cce9b1b5a64b6b555ba2f91a8f9903316d5374703e08  androidtv_googletv.control/conf/services/threadpools.cfg
 
@@ -246,7 +242,7 @@ a2ec0d89d17ef8c8ae4fdbdbf9f1da2dd9179183ba29758988ec97d87bf82152  avpro_telnet.c
 
 0112136aa494f7b62c20b031fc23e596e77f25ad3d5a2e0ad84747c0d2f7ae63  avpro_telnet.control/conf/html/remote/users.html
 
-79e62079c7c4b31c62d25956da6f70337282cf753cfcc6eaa57db417b671d7d6  avpro_telnet.control/conf/services/addons.cfg
+93e913f6064007d66a7f78006114ceedee0cb5638f330b7fe7dd327c6be69618  avpro_telnet.control/conf/services/addons.cfg
 
 3c73e2b041bf6f2f4eb20fa3529763e1c8da79a63933cb18fb3e0a74ceb2e8a4  avpro_telnet.control/conf/yaml/avpro.yaml
 
@@ -308,7 +304,7 @@ afd314ec83db9445b07b7b22f9f585d2faca456c248decdb4623a24a7661f573  bk808_cec.cont
 
 33bf0e84f3f90c872a83bde5886309c82d47b3916521fc54a197d2e5ec4e4689  bk808_cec.control/conf/html/remote/users.html
 
-12fb277becccfb3be3762de81d2eb985e3e1d6f98dcde66fa1bed4f7ffbdfda5  bk808_cec.control/conf/services/addons.cfg
+de7bdadc3d4c81819cc22e24e8dac6e8ecd7f5bfb9b10b59357b03a43c92857b  bk808_cec.control/conf/services/addons.cfg
 
 cfdfc6568b93a219bd9ad6b6d820ba60ee35ca07b34bcbf90aed694b22dc5765  bk808_cec.control/conf/transform/bk808-input-signal.js
 
@@ -374,7 +370,7 @@ bbf4adc9c1ddbd59e1ded2a9d7c9d2b439a2933e95c8c531e3803e53cbec5e9c  bk808_http.con
 
 4e58df8e419a3ecba735eb21b1f7ac2493a74931bd93d81408c726169e7ef990  bk808_http.control/conf/html/remote/users.html
 
-f79427b62cccc045b64d510fdf1af192b10636464a499d6bf15f7dbd87062a85  bk808_http.control/conf/services/addons.cfg
+5c0e6c2bb3fde454e5cde214a8712b8e7487ede3612c01195a22f2378d7c46a8  bk808_http.control/conf/services/addons.cfg
 
 cfdfc6568b93a219bd9ad6b6d820ba60ee35ca07b34bcbf90aed694b22dc5765  bk808_http.control/conf/transform/bk808-input-signal.js
 
@@ -436,7 +432,7 @@ adcab692ed96ee51fee95ecd85daec8942d54f398fdb10534bde8ed3530eff45  cast.observe/c
 
 3d9480e018583dc972b6b6978b5d504bb5a99b03059975ee0fefe75ef4316342  cast.observe/conf/html/remote/users.html
 
-816bf72dd5d0f8b473746dfb30df89f74c17adb23d244da247e8d38d56b8b562  cast.observe/conf/services/addons.cfg
+1243ecef6e8070ed5256a8b818d9ada030eef41bf9b280b343cd51e9963814ec  cast.observe/conf/services/addons.cfg
 
 077cf6cebf983727242f1284e5108b085ffd63a45f4154b88bc94b497e28acdb  cast.observe/conf/yaml/cast.yaml
 
@@ -498,7 +494,7 @@ b55f7b6f47a6561450c56fecd57befdb6825b1cac29fd822e20c6d2899d21bd2  denonmarantz_h
 
 8a53dda9d97d8f436497b965d1d13dd64067391a87e1d1788be02329827427f6  denonmarantz_http.control/conf/html/remote/users.html
 
-74797b0ab6ed34c0e131836c50b3bfac5a06f702fdb3026968134059729980d7  denonmarantz_http.control/conf/services/addons.cfg
+b9cb3f6f83046b811e44199cbae13da7cefd231ccbe5da91d0c0b653ca82994f  denonmarantz_http.control/conf/services/addons.cfg
 
 58ab1eea9d8fe0c4ed74253ac837c2126842642ecdc311b34761f36fe8e36e8f  denonmarantz_http.control/conf/yaml/all_off.yaml
 
@@ -556,7 +552,7 @@ b55f7b6f47a6561450c56fecd57befdb6825b1cac29fd822e20c6d2899d21bd2  denonmarantz_h
 
 0e6c2f6ca7432fbd1cb585e0d162042ed5c5cbc287ec80768682b7ec1a1c13ae  denonmarantz_http.observe/conf/html/remote/users.html
 
-720a1023c81dae9f1686d8cc3e817b20c4cc3842dc6ba5a529a17401edca5f6a  denonmarantz_http.observe/conf/services/addons.cfg
+04da13b6f6a05106bec1e66e38cf68173f71d098e3fed02857dd2b4117f3a488  denonmarantz_http.observe/conf/services/addons.cfg
 
 057389a57211d2e270ea8d79a38069acc6fbe2de20ace15df843d8f9485c2014  denonmarantz_http.observe/conf/yaml/marantz.yaml
 
@@ -612,7 +608,7 @@ bc88d02f314117c8ca6f30bafeb92c199acc2d3266cb424ffeb8c8bb68af5b53  drhdmi_http.ob
 
 3fbb0cceae2f8b926e0647da4cf58de9e8f516e0084517d9cbccdaf6fbe246b1  drhdmi_http.observe/conf/html/remote/users.html
 
-7a6b412a3b206c15f194e0d5cf1abd045605a4451be25e0093ec2a7385ddb2c9  drhdmi_http.observe/conf/services/addons.cfg
+afb1dfe9e85ec618efdd859ec41282502a360eea62106e8bfae29a132e9ad7ae  drhdmi_http.observe/conf/services/addons.cfg
 
 f969502927169345e2f26c4cc97ec6972c9021bf06420aa3e815aa1c47a7bf57  drhdmi_http.observe/conf/transform/drhdmi-signal.js
 
@@ -680,7 +676,7 @@ d15b98057ff28c66a673248e2ea21b21f8f3dca84a4b1e9dec2dacf2d57c92d9  example/conf/h
 
 910484b935ae9ab2343e1ae3d977a3290f8807c605a03594cac2c1081accd890  example/conf/html/remote/users.html
 
-4ffd891e8f018dc2f32b4af26f4f556170779f5cd597cfdba59b99d554a972a5  example/conf/services/addons.cfg
+7ccdb426c0f17c70b561f8cbd08225945f6d4c1ea107f2cd1dc31127464db547  example/conf/services/addons.cfg
 
 cfdfc6568b93a219bd9ad6b6d820ba60ee35ca07b34bcbf90aed694b22dc5765  example/conf/transform/bk808-input-signal.js
 
@@ -758,7 +754,7 @@ b55f7b6f47a6561450c56fecd57befdb6825b1cac29fd822e20c6d2899d21bd2  heos.control/c
 
 dccee2cd035138adcfc6653635792093d9fb4926730c2873b3990ab3d4a4767f  heos.control/conf/html/remote/users.html
 
-a065f358f3898476e514f9f40b4558c304e85067d9a51db179036a7c5b4b8a32  heos.control/conf/services/addons.cfg
+7ecca3b98e4335f219bd75de8343899d710ad1e017154473db2b6401ac5d3c77  heos.control/conf/services/addons.cfg
 
 58ab1eea9d8fe0c4ed74253ac837c2126842642ecdc311b34761f36fe8e36e8f  heos.control/conf/yaml/all_off.yaml
 
@@ -820,7 +816,7 @@ fb003e5e6bb6fab4897ed75cd5d1ed6dbe0501ab3e21f599c4628355af02323c  ir.control/con
 
 b98f09c37745850415e34c2531b997f3483fd556bf12ad91cae8a645b00a0a48  ir.control/conf/html/remote/users.html
 
-7c29eff9c2a1d2ef52fe86a678279bcc2a1648a5caa981d97bd9cbaf746e3f48  ir.control/conf/services/addons.cfg
+09aa0a4e93a419a59f15006b66181cb91583d6216d39cf70243d76d57d3faf3a  ir.control/conf/services/addons.cfg
 
 43f44302700230b3e36d10675b828391e8aa5ab5ee1e87a6a55b8ad2807c82b5  ir.control/conf/yaml/ir.yaml
 
@@ -876,7 +872,7 @@ ddbebd68686f23370e61b6c778cc3d1fbf582385cf0a045b666b3b0f3cbe5f5e  network_ping.o
 
 df0c7cdbce3317d35bf48932b8166130d8b2451e99a2e162bc788b54bb307535  network_ping.observe/conf/html/remote/users.html
 
-1d41380d2b6812d438a7c257f21a818598435dec000e9f74a13e4343539f7f4d  network_ping.observe/conf/services/addons.cfg
+6e8d179ddc5380a67fbce09a08ecf635c8be3b238e3b222358a6c4f46d1565a6  network_ping.observe/conf/services/addons.cfg
 
 3364a85f484bba3d97af6f467c42f21751ff68d575490d5e13ea1a7ef077fd58  network_ping.observe/conf/yaml/model.yaml
 
@@ -936,7 +932,7 @@ a996b5e602114fcda286b08e18c8a87dc1e9c4e509368d5e81905432f3153511  pyatv_http.con
 
 fdd8221250ab3b358e80d526a948128084ca7070b376f10a0e2307e4d0f2c821  pyatv_http.control/conf/html/remote/users.html
 
-1793e8fb07a95221e1457fd256a55b791e55e5dfe5df8c02e37b1eff03af273d  pyatv_http.control/conf/services/addons.cfg
+fbf90287ef5ebc4c37f68906d4a2c0c9fc2ceaa57b3e1cafba9cd79334f8a0c1  pyatv_http.control/conf/services/addons.cfg
 
 58ab1eea9d8fe0c4ed74253ac837c2126842642ecdc311b34761f36fe8e36e8f  pyatv_http.control/conf/yaml/all_off.yaml
 
@@ -1022,7 +1018,7 @@ d6f2a64f5e3629c9c3e9f6c7646b0cd9df470a7db680ea6c1b46bed33d25dc79  routed/conf/ht
 
 e5a5749102c4e29b4c95ab73c277b5bbf90697da1bc8abf5a598ca66ea7fa43b  routed/conf/html/remote/users.html
 
-450d14cffcdb82f32cc4ee8c4a0cf730762ed39bcd0ae744582873f03bcc96a0  routed/conf/services/addons.cfg
+6b36e4c1b80c597aae62203f1dcea9c3745dac25d63f8a86b426b87482e72a79  routed/conf/services/addons.cfg
 
 cfdfc6568b93a219bd9ad6b6d820ba60ee35ca07b34bcbf90aed694b22dc5765  routed/conf/transform/bk808-input-signal.js
 
@@ -1122,7 +1118,7 @@ c6f0567a928244dbc8068eb247eb277f30b5ce61d4a22db2ec5964c81e0417a8  sonos.control/
 
 c42ac1a7f968f24c69347e0754cc888e066593e643a93ac9a7e242f7a59ba60b  sonos.control/conf/html/remote/users.html
 
-86d3b7e590759280d369df35fdef1b41c0c6a1770068ad8e1dcaefb8e7802d3a  sonos.control/conf/services/addons.cfg
+6045f6bdf5359ffa9090ba821ae030f34000d78272bf3d3cba8b210b3f803352  sonos.control/conf/services/addons.cfg
 
 7370b1f27590e12313385b87b0e61861fc59d540644be87dee760c917e73614f  sonos.control/conf/services/upnp.cfg
 
@@ -1184,7 +1180,7 @@ e555008f851affb71e61fa61ff85ac002fe4a345d98cfeb787c10f338b45a7ff  sonos.observe/
 
 43db26b43ccc924c45b37ab9705ae8ec1ed4da341d80e8f9d2096bc31fb88894  sonos.observe/conf/html/remote/users.html
 
-628fd8e71ab8d72232d98cbd612c0f86026a7de49aad14e03ccdf2ef7bbd0764  sonos.observe/conf/services/addons.cfg
+2486d50c8b65890c24b7eabe1dbc5459fdbb64af0ef4b44c000aad010b94dece  sonos.observe/conf/services/addons.cfg
 
 7370b1f27590e12313385b87b0e61861fc59d540644be87dee760c917e73614f  sonos.observe/conf/services/upnp.cfg
 
@@ -1248,7 +1244,7 @@ a8c9b70cbbb4c4772b6493758a66ede7f97b8d65aff6f8368ae4f0c20bb3d623  sony_adcp.cont
 
 a443b7032c3668c719519c10622d7c24b455476ff9bef7d42b97baf379c63905  sony_adcp.control/conf/html/remote/users.html
 
-8f1d09812567ba7378270a80508ba3f42a4a3ba6823f269fb924df2438a95ee3  sony_adcp.control/conf/services/addons.cfg
+938292655d7be7024680ae77967c0de086b95719c828a9b193af2776c3881b65  sony_adcp.control/conf/services/addons.cfg
 
 58ab1eea9d8fe0c4ed74253ac837c2126842642ecdc311b34761f36fe8e36e8f  sony_adcp.control/conf/yaml/all_off.yaml
 
@@ -1308,7 +1304,7 @@ bcb2c7f5b6fd75d3c64514297ec8a3b1281f48da9b037170a51641a55da3c33a  sony_adcp.obse
 
 50e719924cff3241fdbc1469d54c27963145498e9dcdba11c001ad65e7f6d366  sony_adcp.observe/conf/html/remote/users.html
 
-441b5244a082eb407cc42a5990f412cab5a2835987ee51d4de444ab6a1c076e7  sony_adcp.observe/conf/services/addons.cfg
+ca3f7ddd932911e1b7ed837e47d14a39c9e391382df086b7fd7b8423c18896d2  sony_adcp.observe/conf/services/addons.cfg
 
 4af7b7190e22ad431be943394550ac398984f052d8df6fec983e4c9a6f10b669  sony_adcp.observe/conf/yaml/model.yaml
 
@@ -1368,7 +1364,7 @@ d24a3f1b5b4b86ab7189f980ad0cf32a5f4e775df9474e2baabb9fa57315c820  sony_ip_contro
 
 917b5398309814684d74849d0d94868f8565125664ef7356bfbb16dd0fe24802  sony_ip_control.control/conf/html/remote/users.html
 
-c7cdb171471fd5663898ab2a0ae9bfb1272c5fd4c7e06f17bee925b0aa9c3a0d  sony_ip_control.control/conf/services/addons.cfg
+34c58d8b1fdbf97dedd33b347c0d9d25fd1e0faf9e7e07f8cc33993b6b9382d6  sony_ip_control.control/conf/services/addons.cfg
 
 58ab1eea9d8fe0c4ed74253ac837c2126842642ecdc311b34761f36fe8e36e8f  sony_ip_control.control/conf/yaml/all_off.yaml
 
@@ -1428,7 +1424,7 @@ faf93de2bb558d7092af3d8656351a2c3898535c94bc362184807dd9870aca22  sony_rest.obse
 
 5d33d36fa23b37f7f6cc52c4fb4c7f2a542e716ac72a7aac8fb16a12007cf06e  sony_rest.observe/conf/html/remote/users.html
 
-6034702b34d2249efbd05d57eae35bef1359a4df315206466b1ffbebaf2330af  sony_rest.observe/conf/services/addons.cfg
+6783dd54b121a658f819939f0d6da1c48da2ee47195551aad396e7ef9c2a30e5  sony_rest.observe/conf/services/addons.cfg
 
 f7341662d23b0084521ffbb30b3865acc5d04eea4271cffbd07c809015b9f267  sony_rest.observe/conf/yaml/model.yaml
 
@@ -1486,7 +1482,7 @@ f98fe9796f630d3b2a1c3c9739065e932980d8c8b64a3fdbef420b34078ad391  ukm404_http.co
 
 ed3cd1b1f306446930794b8e583ff7615eea482ac486cc4265785d2ef4a037d3  ukm404_http.control/conf/html/remote/users.html
 
-e1398c020759b9e951d0d6f31d2530f500ae288a2e2ad4d6a1ceeccaf5283732  ukm404_http.control/conf/services/addons.cfg
+f53afd9284ef8a0777271730c773474b2c751166defa032bdb122b0ba74777f6  ukm404_http.control/conf/services/addons.cfg
 
 82472737da4d6fea47ca56648a847f5a2e3a79845a2d967aa39193ca255e8d96  ukm404_http.control/conf/yaml/model.yaml
 
@@ -1546,7 +1542,7 @@ d95a9c16256813ed251ad6cee6bdb52067ace09f7bc456e5523da90739a2aa70  unifi_protect.
 
 3fe18d4c7f6304187bd68453b1f6ea12e4dcc75ae2d10fd51a868b1283fabf77  unifi_protect.control/conf/html/remote/users.html
 
-5625f495092ce76a89b37b16b0aafb4dd4e2587fff1d41193873074176463d99  unifi_protect.control/conf/services/addons.cfg
+41f70a1d5250524718c35ac830942490e154825178e1740052c0b92e32ac4623  unifi_protect.control/conf/services/addons.cfg
 
 5adfef9d45ea245d9d983b3109c75f0981deba306aa350d8fcc1a6729da3b056  unifi_protect.control/conf/services/unifiprotect.cfg
 
@@ -1604,7 +1600,7 @@ ececceab9c89220df352790c0fe6be7a5ec5fda06877f91e42909c89f29847e1  vrroom_http.ob
 
 60d5a337936aa90355778391753677ec9f1b38320a7f26661a2c91a048f56a32  vrroom_http.observe/conf/html/remote/users.html
 
-7ce43add69caa40c96d618ca98ac7e826c9368cf519f44aa59117567f6b0fb04  vrroom_http.observe/conf/services/addons.cfg
+774f3a6c4f6fb2ca3b98bbe72574976e953d6e0722752e46ea22c6d4ab4d02d7  vrroom_http.observe/conf/services/addons.cfg
 
 856727d01506e5482d91b7af2262ef084aaac4a1b46b631008e78e85f11c6dd8  vrroom_http.observe/conf/transform/vrroom-signal.js
 
@@ -1666,7 +1662,7 @@ ececceab9c89220df352790c0fe6be7a5ec5fda06877f91e42909c89f29847e1  vrroom_telnet.
 
 9fbcaad3523369d9e6aab2835785eeb70a7e16c4feb64052c1a7ba89ab589d9d  vrroom_telnet.control/conf/html/remote/users.html
 
-1e720336783879c5539727b3f78739baa3fdf42e4e67f2a5b7fb477d295a5c65  vrroom_telnet.control/conf/services/addons.cfg
+c429a7a60762ed693db6f05a33666f66f228d03796e3c21fb343a09bc152f888  vrroom_telnet.control/conf/services/addons.cfg
 
 6ff1784333611cb0abbdaa617185a56dcca1a2e6126aa077abb85ffa5c52e1cd  vrroom_telnet.control/conf/yaml/model.yaml
 
@@ -1726,7 +1722,7 @@ d9ab77e421cca5c153d241323e74d9dcb018faab33a35b839e7dc1d4905d6697  wiim_http.cont
 
 a823d7f5acea9f9b5de726035c04b33a775e25b095c2272be54fcad0af15d4f4  wiim_http.control/conf/html/remote/users.html
 
-4a592b36ae1aa9078199541b621c897321c0d5b2b3da4995d995add54e161ac3  wiim_http.control/conf/services/addons.cfg
+694f9e91a114c05cf515ccb2bcc6cbac7d6997e6e899dc421becc731417edefb  wiim_http.control/conf/services/addons.cfg
 
 83929b0646639a849a4bb2e54427df715913d5f774eee7d1c1ecd1e717a6522d  wiim_http.control/conf/transform/hex-to-utf8.js
 
@@ -1788,7 +1784,7 @@ b934f450521e13d9af63c1f79c5302ac2815bca329559d52ced58cb80666c7e8  wiim_http.obse
 
 c204586effbd6fee6eb42adc869019e1e7d17b0f15784c28bf4cf36bbbc4edf3  wiim_http.observe/conf/html/remote/users.html
 
-4a592b36ae1aa9078199541b621c897321c0d5b2b3da4995d995add54e161ac3  wiim_http.observe/conf/services/addons.cfg
+694f9e91a114c05cf515ccb2bcc6cbac7d6997e6e899dc421becc731417edefb  wiim_http.observe/conf/services/addons.cfg
 
 83929b0646639a849a4bb2e54427df715913d5f774eee7d1c1ecd1e717a6522d  wiim_http.observe/conf/transform/hex-to-utf8.js
 

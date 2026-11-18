@@ -36,6 +36,11 @@ Things are addressed nowhere, with UPnP off (oh_render.unaddressed).
 `reload` refreshes the copy after `thermite generate`; the running sandbox
 picks the change up.
 
+There is no gateway here. The copy alone has the runtime serve thermite's
+pages itself, at / and the paths the gateway gives them, and has them talk
+to the runtime directly, with no login (oh_render.direct). An install has
+neither: its pages always go through the gateway.
+
 `start --live` is a test instance for the house instead: its copy of conf/
 is unchanged, so its Source selectors switch the real matrices and its
 remote drives the devices under control (the Apple TVs through thermite
@@ -120,7 +125,8 @@ SANDBOX_CONF = lib.VAR / "sandbox" / "conf"
 
 
 def mirror(source: Path | None, live: bool) -> Path:
-    return lib.mirror_conf(source or render.CONF, SANDBOX_CONF, render.unrelayed if live else read_only)
+    guard = render.unrelayed if live else read_only
+    return lib.mirror_conf(source or render.CONF, SANDBOX_CONF, lambda files: guard(render.direct(files)))
 
 
 def read_only(files: dict[str, str | bytes]) -> dict[str, str | bytes]:

@@ -1,7 +1,10 @@
-"""Explicit site access policy, shared by generated pages and the TUI launcher.
+"""How a page reaches the house: through the gateway, in everything thermite
+generate writes and an install serves, or at the runtime directly (native), in
+the copy of conf/ a sandbox runs on, which has no gateway (oh_render.direct).
 
-Native mode is an owner-selected testing mode, never an authentication fallback.
-This setting does not edit account, credential or service state.
+Native mode is a testing mode, never an authentication fallback, and no house
+file selects it. This setting does not edit account, credential or service
+state.
 """
 
 import json
@@ -9,23 +12,9 @@ import json
 MODES = ("authenticated", "native")
 
 
-def validate(data: dict) -> list[str]:
-    if "access" not in data:
-        return []
-    value = data["access"]
-    if not isinstance(value, dict) or set(value) != {"mode"} or value.get("mode") not in MODES:
-        return ["access: must contain only mode: authenticated or mode: native"]
-    return []
-
-
-def mode(data: dict) -> str:
-    problems = validate(data)
-    if problems:
-        raise ValueError(problems[0])
-    return data.get("access", {}).get("mode", "authenticated")
-
-
-def script(data: dict) -> str:
+def script(mode: str = "authenticated") -> str:
     """No inventory or identity data is needed before the access boundary."""
+    if mode not in MODES:
+        raise ValueError(f"no page mode {mode!r}")
     return "globalThis.THERMITE_ACCESS_CONFIG = Object.freeze(" + json.dumps(
-        {"version": 1, "mode": mode(data)}, separators=(",", ":")) + ");\n"
+        {"version": 1, "mode": mode}, separators=(",", ":")) + ");\n"

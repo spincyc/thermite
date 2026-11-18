@@ -1,11 +1,17 @@
 # Native Thermite entry
 
+This is the pages' entry at a runtime with no gateway in front of it: the
+sandbox. `thermite generate` does not write it, and an install has none: its
+pages go through the gateway, which serves the same routes itself
+(`oh_identity`). `oh_render.direct` adds it to the sandbox's copy of `conf/`,
+with the pages' direct mode.
+
 `files()` generates the private helper JAR under
-`automation/js/node_modules/thermite-entry/` and its activating script. Both
-are deployed with the ordinary generated configuration; the helper sorts
-before the script. The script embeds the helper's exact SHA-256, so a helper
-change also reloads the script. Installation needs the existing JavaScript
-Scripting add-on, with no additional daemon, listener or compiler.
+`automation/js/node_modules/thermite-entry/` and its activating script; the
+helper sorts before the script. The script embeds the helper's exact
+SHA-256, so a helper change also reloads the script. It needs the
+JavaScript Scripting add-on, which the copy asks for where the house's own
+rules do not, and no additional daemon, listener or compiler.
 
 The script registers a pure Java Servlet Filter through the supported OSGi
 HTTP Whiteboard service. Jetty calls Java directly. JavaScript runs only at
@@ -26,18 +32,14 @@ MainUI. Parameter values are never decoded or copied into a redirect.
 Other methods pass through. The deliberate native entry remains `/settings/`;
 Thermite room settings use `/room-settings/`.
 This is presentation routing; native listener/authentication policy remains
-the authority. A failed or unloaded helper restores upstream routing, so
-installation readiness must verify the Home response before reporting success.
+the authority. A failed or unloaded helper restores upstream routing.
 
-`ready(url, timeout)` makes one direct HEAD request to each of `/` and
-`/overview/`, under one total deadline. It accepts only a literal native
-loopback HTTP origin, sends no credentials, follows no redirects, uses no
-proxy and reads no bodies. Home must return 200, `X-Thermite-Page: home` and
-`no-store`; legacy overview must redirect exactly to `/` with `no-store`.
+A page it serves carries `X-Thermite-Page` (`home` at `/`) and `no-store`;
+legacy overview redirects exactly to `/` with `no-store`. A 200 at
+`home.html` would not identify it: MainUI's fallback can also answer 200.
 The Java filter verifies each fixed HTML asset is a regular file before
-forwarding and responds 503 for a missing or symlinked asset. This prevents a
-MainUI fallback response from falsely proving readiness. Page mappings are
-copied into an immutable Java map before service registration.
+forwarding and responds 503 for a missing or symlinked asset. Page mappings
+are copied into an immutable Java map before service registration.
 
 `EntryFilter.java` is the reviewed source. `filter.jar` is its deterministic
 compiled asset, with exact source/artifact/compiler/Servlet API hashes in

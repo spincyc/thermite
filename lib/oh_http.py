@@ -3,7 +3,7 @@
 Callers supply remaining() so their own clock, error type and safe diagnostic
 stay local. The budget covers headers and body even when bytes keep arriving.
 Without that callback, request() retains urllib's ordinary timeout behavior.
-Neither function uses environment proxies or follows redirects: callers send
+It never uses environment proxies or follows redirects: callers send
 runtime bearer credentials, which must reach only the URL they named.
 """
 
@@ -96,31 +96,6 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def _direct(*handlers):
     return urllib.request.build_opener(_NoRedirect(), urllib.request.ProxyHandler({}), *handlers)
-
-
-def headers(req, *, timeout, remaining=None):
-    """Return (status, headers), closing without reading a response body.
-
-    This direct, header-only probe never uses environment proxies or follows
-    redirects. HTTP error statuses are returned too. A remaining callback
-    applies one caller-owned absolute deadline through every header read.
-    """
-    budget = (lambda: min(timeout, remaining())) if remaining is not None else (lambda: timeout)
-    opener = _direct(*((_DeadlineHTTPHandler(budget), _DeadlineHTTPSHandler(budget)) if remaining is not None else ()))
-    try:
-        try:
-            response = opener.open(req, timeout=budget())
-        except urllib.error.HTTPError as error:
-            response = error
-        with response:
-            result = response.status, response.headers
-    except (OSError, http.client.HTTPException):
-        if remaining is not None:
-            remaining()
-        raise
-    if remaining is not None:
-        remaining()
-    return result
 
 
 def request(req, *, timeout, remaining=None):

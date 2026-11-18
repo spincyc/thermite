@@ -7,6 +7,16 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- An install no longer carries the runtime's own page entry, and
+  `thermite health --installation` no longer requires it: an install's
+  pages always go through the gateway. The upgrade removes
+  `automation/js/thermite_entry.js` and its helper from the runtime's
+  configuration; a house whose own rules need no JavaScript also stops
+  installing that add-on. The sandbox, which has no gateway, keeps the
+  entry and the pages' direct mode. The house file's `access:` key is
+  gone: remove it before upgrading (`thermite check` names it).
+  `thermite remote` uses a runtime directly only with `--native` or
+  `--sandbox`.
 - `thermite access stage` is removed, with the `handoff.sh` and
   `activate.sh` it wrote: they installed the gateway's units outside
   the installation's manifest. `thermite install` and `upgrade` stage,
