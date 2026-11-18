@@ -16,7 +16,7 @@ from .files import require_service_account
 RELATIVE = re.compile(r"(\d{1,6})([smhd])")
 UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
 # Actions whose target is an account's ID.
-ACCOUNT_TARGETS = {"login", "bootstrap", "user.create", "user.update"}
+ACCOUNT_TARGETS = {"login", "bootstrap", "user.create", "user.update", "user.reset_admin"}
 
 
 def since(value, now, zone):

@@ -14,7 +14,8 @@ from oh_access import AccessError
 DESCRIPTION = """Run a site's HTTPS boundary and room-policy worker, or log
 this terminal into a site. The Security page holds what guests see. Local
 setup issues a one-use code to create the first admin there; bootstrap instead
-prompts privately and creates it at once. Staging prepares
+prompts privately and creates it at once. If every administrator's password
+is lost, reset-admin gives one existing account a new one. Staging prepares
 persistent code, private authority, a pinned
 environment, and owner-installable units; it starts no service.
 
@@ -34,6 +35,7 @@ EXAMPLES = (("thermite access login --url https://thermite.example:13601 --user 
             ("thermite access setup --descriptor /srv/thermite/access/releases/RELEASE/config.json", "arm first admin setup on the HTTPS Security page"),
             ("thermite access migrate --descriptor /srv/thermite/access/releases/RELEASE/config.json", "upgrade identity schema after stopping services and backing up state"),
             ("thermite access bootstrap --descriptor /srv/thermite/access/releases/RELEASE/config.json --user admin", "initialize one site's first admin locally"),
+            ("thermite access reset-admin --descriptor /srv/thermite/access/releases/RELEASE/config.json --user admin", "give an account a new password and make it an administrator, after a lost password"),
             ("thermite access verify --descriptor /srv/thermite/access/releases/RELEASE/config.json", "check service ownership and configuration as thermite before activation"),
             ("thermite access serve --descriptor /srv/thermite/access/releases/RELEASE/config.json", "serve the compiled site over verified TLS"),
             ("thermite access worker --descriptor /srv/thermite/access/releases/RELEASE/config.json", "run the single supervised room-policy worker"),
@@ -97,6 +99,16 @@ def main(argv=None):
         sub.add_argument("--descriptor", required=True, type=Path, metavar="FILE", help=SERVICE_DESCRIPTOR)
         if name == "bootstrap":
             sub.add_argument("--user", required=True, help="first admin's username")
+    sub = oh_cli.action(commands, "reset-admin", "recover from a lost administrator password: set a new one on an "
+                        "existing account and make it an active administrator",
+                        description="""Run this on the host as the thermite service account, which already owns the site's
+accounts and keys, with the gateway running or stopped. It asks for the new
+password at the terminal, ends that account's sessions and tokens, changes no
+other account, lock, setting or pairing, and is recorded in the security audit
+as user.reset_admin by a local principal.""",
+                        examples=[example for example in EXAMPLES if " reset-admin " in example[0]])
+    sub.add_argument("--descriptor", required=True, type=Path, metavar="FILE", help=SERVICE_DESCRIPTOR)
+    sub.add_argument("--user", required=True, help="the existing account's username")
     sub = oh_cli.action(commands, "audit", "read the security audit (logins, tokens, accounts, locks, what guests see)",
                         examples=[example for example in EXAMPLES if " audit " in example[0]])
     sub.add_argument("--descriptor", required=True, type=Path, metavar="FILE", help=SERVICE_DESCRIPTOR)
@@ -198,6 +210,11 @@ def main(argv=None):
             require_service_account()
             from oh_access.service import bootstrap
             result = bootstrap(args.descriptor, args.user, hidden_password("First admin password: ", confirm=True))
+        elif args.command == "reset-admin":
+            from oh_access.files import require_service_account
+            require_service_account()
+            from oh_access.service import reset_admin
+            result = reset_admin(args.descriptor, args.user, hidden_password("New administrator password: ", confirm=True))
         elif args.command == "verify":
             from oh_access.staging import verify
             result = verify(args.descriptor)

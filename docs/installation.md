@@ -467,6 +467,12 @@ shown them to everyone. See the
 [identity reference](https://github.com/spincyc/thermite/blob/main/lib/oh_identity/README.md)
 for owner setup and the account model.
 
+If every administrator's password is lost, `thermite access reset-admin
+--descriptor FILE --user NAME`, run on the host as the `thermite` service
+account, sets a new password on an existing account and makes it an
+administrator. It leaves every other account alone and is recorded in the
+security audit.
+
 The installer binds native HTTP/HTTPS to loopback and applies a dedicated
 `nftables` table that blocks non-loopback access to native ports, including
 the language server. It preserves other firewall tables, disables implicit native

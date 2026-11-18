@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from datetime import timedelta
 import json
 import logging
+import os
 import secrets
 import sys
 from unittest.mock import patch
@@ -17,13 +18,14 @@ from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 import oh_room_policy
+from oh_access import AccessError, service
 from oh_identity import hub, topics, transport
 from oh_identity.hardening import CONTENT_SECURITY_POLICY, PrivateFormatter, PrivateRecord
 from oh_identity.models import Audit, BoundaryReceipt, LoginThrottle, PersonalToken, ReconcileState, RoomPolicy, User
 from oh_identity.policy_store import next_revision, prune_history, prune_unknown_rooms
 from oh_identity.runtime import RuntimeContract, install_adapter
 from oh_identity.security import arm_setup
-from oh_identity.services import AUDIT_CAP, DENIED_CAP, bootstrap, issue_token
+from oh_identity.services import AUDIT_CAP, DENIED_CAP, Problem, bootstrap, issue_token, reset_admin, save_user
 from oh_identity.tests.test_core import PASSPHRASE, adapter
 
 
@@ -401,6 +403,104 @@ class FirstActivation(TestCase):
         self.assertEqual(enable(code).status_code, 200)
         self.assertEqual(held, [])
         self.assertTrue(User.objects.get().admin)
+
+
+class LostAdminPassword(Requests, TestCase):
+    """thermite access reset-admin: the owner's way back in, from the host."""
+    NEW = "a phrase nobody had before"
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.owner = bootstrap("owner", PASSPHRASE)
+        cls.member = save_user(cls.owner, {"username": "member", "password": PASSPHRASE})
+
+    def setUp(self):
+        install_adapter(adapter())
+
+    def signed_in(self, username):
+        client = self.browser()
+        self.assertEqual(self.post(client, "/api/v1/session", {"username": username, "password": PASSPHRASE}).status_code, 200)
+        return client
+
+    def me(self, client=None, token=None):
+        extra = {"HTTP_AUTHORIZATION": "Bearer " + token} if token else {}
+        return (client or Client()).get("/api/v1/me", secure=True, **extra)
+
+    def service(self, username, secret, **patches):
+        """oh_access.service.reset_admin on this test database, as the service account."""
+        config = {"timezone": settings.TIME_ZONE, "state": "/unused/state"}
+        with patch.dict(os.environ), patch.object(service, "require_service_account", **patches.get("account", {})), \
+                patch.object(service, "load_config", return_value=config) as load, patch.object(service, "setup"), \
+                patch.object(service, "check_schema", **patches.get("schema", {})):
+            try:
+                return service.reset_admin("/unused/config.json", username, secret)
+            finally:
+                self.loaded = load.called
+
+    def test_the_named_account_gets_the_password_and_is_an_admin_and_no_other_account_changes(self):
+        sessions = {name: self.signed_in(name) for name in ("owner", "member")}
+        tokens = {user.username: issue_token(user, "laptop")[1] for user in (self.owner, self.member)}
+        before = User.objects.get(username="owner")
+        policy = RoomPolicy.objects.create(room_id="den", revision=1, config={"version": 1, "enabled": True})
+        rows = Audit.objects.count()
+
+        self.assertEqual(self.service("member", self.NEW), {"reset": True, "username": "member", "admin": True,
+                                                           "state": "/unused/state"})
+
+        member = User.objects.get(username="member")
+        self.assertTrue(member.admin and member.is_active and member.check_password(self.NEW))
+        # The account's earlier credentials end; the other account's all stand.
+        self.assertEqual([self.me(sessions["member"]).status_code, self.me(token=tokens["member"]).status_code], [401, 401])
+        self.assertEqual([self.me(sessions["owner"]).json()["username"], self.me(token=tokens["owner"]).json()["username"]],
+                         ["owner", "owner"])
+        after = User.objects.get(username="owner")
+        self.assertEqual((after.password, after.auth_revision, after.admin, after.is_active),
+                         (before.password, before.auth_revision, True, True))
+        self.assertEqual(PersonalToken.objects.filter(user=self.owner, revoked=False).count(), 1)
+        self.assertEqual(RoomPolicy.objects.get().revision, policy.revision)
+        # One audit row says it happened, by a local principal: nobody signed in to do it.
+        [row] = Audit.objects.order_by("id")[rows:]
+        self.assertEqual((row.action, row.principal, row.actor_id, row.target, row.outcome, row.peer),
+                         ("user.reset_admin", "local", member.pk, str(member.pk), "ok", ""))
+        client = self.browser()
+        signed = self.post(client, "/api/v1/session", {"username": "member", "password": self.NEW})
+        self.assertEqual((signed.status_code, self.me(client).json()["admin"]), (200, True))
+
+    def test_a_deactivated_only_admin_comes_back_active(self):
+        User.objects.filter(pk=self.owner.pk).update(is_active=False, admin=False)
+        reset_admin("owner", self.NEW)
+        owner = User.objects.get(pk=self.owner.pk)
+        self.assertTrue(owner.is_active and owner.admin and owner.check_password(self.NEW))
+
+    def test_a_refused_reset_changes_and_audits_nothing(self):
+        def unchanged():
+            return list(User.objects.order_by("id").values_list("username", "password", "auth_revision", "admin", "is_active"))
+        before, rows = unchanged(), Audit.objects.count()
+        for name, secret, code in (("nobody", self.NEW, "not_found"), (None, self.NEW, "not_found"),
+                                   ("owner", "short", "invalid_password"), ("owner", "1" * 20, "invalid_password"),
+                                   ("owner", "x" * 1025, "invalid_password")):
+            with self.subTest(name=name, code=code), self.assertRaises(Problem) as refused:
+                reset_admin(name, secret)
+            self.assertEqual(refused.exception.code, code)
+        # The command says what to do next, and names the accounts to whoever already holds them.
+        with self.assertRaisesRegex(AccessError, "No account is named 'nobody'. This site's accounts: member, owner"):
+            self.service("nobody", self.NEW)
+        with self.assertRaisesRegex(AccessError, "at least 12 characters"):
+            self.service("owner", "short")
+        with self.assertRaisesRegex(AccessError, "thermite access migrate"):
+            self.service("owner", self.NEW, schema={"side_effect": AccessError("Back up identity state and run thermite access migrate")})
+        self.assertEqual((unchanged(), Audit.objects.count()), (before, rows))
+        # Another account is refused before the configuration or the state is opened.
+        with self.assertRaisesRegex(AccessError, "user thermite"):
+            self.service("owner", self.NEW, account={"side_effect": AccessError("Run this access service as user thermite")})
+        self.assertFalse(self.loaded)
+        self.assertEqual((unchanged(), Audit.objects.count()), (before, rows))
+
+    def test_a_site_with_no_account_is_sent_to_first_setup(self):
+        User.objects.all().delete()
+        with self.assertRaisesRegex(AccessError, "no account to reset: create the first administrator with thermite access setup"):
+            self.service("owner", self.NEW)
+        self.assertFalse(User.objects.exists())
 
 
 class PolicyPredicates(TestCase):

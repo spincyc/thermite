@@ -106,6 +106,21 @@ plus the first administrator's username and password. The
 code expires after 15 minutes; run setup again for a replacement. It cannot
 replace existing accounts. Keep the code out of logs, URLs and shared messages.
 
+If every administrator's password is lost, give one existing account a new
+one from the host:
+
+```sh
+sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access reset-admin --descriptor "$RELEASE/config.json" --user admin
+```
+
+It asks for the new password at the terminal and makes that account an active
+administrator. The service account already owns the accounts and the signing
+keys, so nothing else is asked for; the gateway may be running or stopped,
+and the schema must be current. That account's sessions and tokens end. No
+other account, lock, setting or pairing changes. The security audit records
+it as `user.reset_admin` by a `local` principal. An unknown name is refused
+with the site's account names.
+
 The Security page's settings change private identity state; they do not
 regenerate inventory, restart services, or switch clients to native REST.
 Guests can use ordinary controls in unlocked rooms through the gateway; camera

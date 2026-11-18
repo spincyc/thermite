@@ -219,6 +219,37 @@ def bootstrap(config_path, username, secret):
     return {"initialized": True, "username": user.username, "state": config["state"]}
 
 
+def reset_admin(config_path, username, secret):
+    """Owner's recovery from a lost Admin password: the named account gets
+    this password and is an active Admin. Whoever runs as the service account
+    can already read and write this state and its signing keys, so nothing
+    else is asked for. It is one database transaction, so the gateway and
+    the worker may be running or stopped; the account's open sessions end at
+    their next request. Only a trusted local CLI calls this with a hidden
+    terminal password."""
+    require_service_account()
+    config = load_config(config_path, tls=False)
+    os.environ["THERMITE_TIME_ZONE"] = config["timezone"]
+    setup(config)
+    check_schema()
+    from oh_identity.models import User
+    from oh_identity.services import Problem, reset_admin as reset
+    try:
+        user = reset(username, secret)
+    except Problem as exc:
+        if exc.code == "invalid_password":
+            raise AccessError("That password was refused: use at least 12 characters, not all digits and not a "
+                              "common password") from None
+        if exc.code != "not_found":
+            raise
+        names = sorted(User.objects.values_list("username", flat=True))
+        if not names:
+            raise AccessError("This site has no account to reset: create the first administrator with thermite "
+                              "access setup") from None
+        raise AccessError(f"No account is named {username!r}. This site's accounts: " + ", ".join(names)) from None
+    return {"reset": True, "username": user.username, "admin": True, "state": config["state"]}
+
+
 def rebase_timezone(adapter, zone):
     """Move stored policies to the configured site timezone, under every room
     lock, before either service evaluates a schedule. A starting service

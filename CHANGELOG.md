@@ -7,6 +7,13 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- `thermite access reset-admin --descriptor FILE --user NAME` recovers
+  from a lost administrator password. Run on the host as the thermite
+  service account, with the gateway running or stopped, it sets a new
+  password on an existing account and makes it an active
+  administrator. That account's sessions and tokens end; no other
+  account, lock, setting or pairing changes; the security audit
+  records `user.reset_admin`.
 - Authentication is no longer a mode. Accounts exist or they do not,
   and what a guest (a client with no account) may do is settings of
   their own, each an administrator's on the Security page and none

@@ -46,7 +46,11 @@ and code consumption commit atomically, and change no setting or lock. An unarme
 expired, repeated or competing bootstrap cannot claim ownership. Alternatively,
 the local CLI calls `composition.initialize(state_directory, username,
 password, allowed_hosts)`, supplying the password from a hidden terminal
-prompt, to create the first Admin.
+prompt, to create the first Admin. `services.reset_admin(username, password)`
+is the same CLI's recovery from a lost Admin password (`thermite access
+reset-admin`): an existing account gets the password and is an active Admin,
+its sessions and tokens end, nothing else changes, and the audit row is
+`user.reset_admin` by a `local` principal.
 Further starts call
 `composition.setup(...)`, install a `runtime.RuntimeAdapter` through
 `install_adapter()`, then run `oh_identity.asgi:application` with a production

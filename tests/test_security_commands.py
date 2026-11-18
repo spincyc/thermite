@@ -202,6 +202,50 @@ class Audit(unittest.TestCase):
         self.assertIn("Run as thermite", error.getvalue())
 
 
+class ResetAdmin(unittest.TestCase):
+    ARGV = ["reset-admin", "--descriptor", "/srv/thermite/config.json", "--user", "owner"]
+
+    def run_verb(self, *, account=None, terminal=True, entered=("a phrase nobody had", "a phrase nobody had")):
+        output, error = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(error), \
+                patch("oh_access.files.require_service_account", side_effect=account) as required, \
+                patch.object(sys.stdin, "isatty", return_value=terminal), \
+                patch.object(access.getpass, "getpass", side_effect=list(entered)) as asked, \
+                patch.object(service, "reset_admin", return_value={"reset": True, "username": "owner"}) as reset:
+            status = access.main(self.ARGV)
+        return status, output.getvalue(), error.getvalue(), required, asked, reset
+
+    def test_it_asks_the_terminal_for_the_password_and_resets_the_named_account(self):
+        status, output, _, required, asked, reset = self.run_verb()
+        self.assertEqual((status, json.loads(output)), (0, {"reset": True, "username": "owner"}))
+        required.assert_called_once_with()
+        self.assertEqual([call.args[0] for call in asked.call_args_list], ["New administrator password: ", "Confirm password: "])
+        reset.assert_called_once_with(Path("/srv/thermite/config.json"), "owner", "a phrase nobody had")
+        self.assertNotIn("a phrase nobody had", output)
+
+    def test_another_account_is_refused_before_a_password_is_asked_for(self):
+        status, _, error, _, asked, reset = self.run_verb(account=AccessError("Run this access service as user thermite"))
+        self.assertEqual(status, 2)
+        self.assertIn("user thermite", error)
+        asked.assert_not_called()
+        reset.assert_not_called()
+
+    def test_it_needs_a_terminal_and_two_matching_entries_of_twelve_characters(self):
+        for terminal, entered, message in ((False, (), "interactive terminal"),
+                                           (True, ("a phrase nobody had", "another phrase"), "must match"),
+                                           (True, ("short",), "at least 12 characters")):
+            with self.subTest(message=message):
+                status, _, error, _, _, reset = self.run_verb(terminal=terminal, entered=entered)
+                self.assertEqual(status, 2)
+                self.assertIn(message, error)
+                reset.assert_not_called()
+
+    def test_the_name_is_required(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as refused:
+            access.main(self.ARGV[:3])
+        self.assertEqual(refused.exception.code, 2)
+
+
 class StagePort(unittest.TestCase):
     def test_staged_https_port_defaults_to_the_selected_sites_gateway_port(self):
         import oh_ports

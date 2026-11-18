@@ -110,6 +110,25 @@ def bootstrap(username, secret, *, request=None):
 
 
 @transaction.atomic
+def reset_admin(username, secret):
+    """The owner's way back in after a lost Admin password. Only the local
+    CLI calls this, as the service account that already owns this state and
+    its keys (oh_access.service.reset_admin). The named account gets the new
+    password and is an active Admin; its sessions and tokens end, as after
+    any account change. No other account, token, lock or setting is touched,
+    and the audit row is the record that it happened."""
+    user = User.objects.filter(username=username).first() if isinstance(username, str) else None
+    if user is None:
+        raise Problem("not_found", 404)
+    password(user, secret)
+    user.is_active = user.admin = True
+    user.auth_revision += 1
+    user.save()
+    audit(user, "user.reset_admin", user.pk)
+    return user
+
+
+@transaction.atomic
 def save_user(actor, data, ident=None):
     """Create or update an account: {username, password, active, admin}."""
     admin_actor(actor)

@@ -77,7 +77,7 @@ class Launcher(unittest.TestCase):
 
             cases = []
             for action in actions:
-                more = ["--user", "admin"] if action == "bootstrap" else []
+                more = ["--user", "admin"] if action in ("bootstrap", "reset-admin") else []
                 cases += [["access", action, "--descriptor", str(descriptor), *more],
                           ["-qv", "access", action, "--descriptor", str(descriptor), *more],
                           ["access", action, f"--descriptor={descriptor}", *more, "--config", str(site)]]

@@ -2272,7 +2272,8 @@ examples:
 Run a site&#x27;s HTTPS boundary and room-policy worker, or log
 this terminal into a site. The Security page holds what guests see. Local
 setup issues a one-use code to create the first admin there; bootstrap instead
-prompts privately and creates it at once. Staging prepares
+prompts privately and creates it at once. If every administrator&#x27;s password
+is lost, reset-admin gives one existing account a new one. Staging prepares
 persistent code, private authority, a pinned
 environment, and owner-installable units; it starts no service.
 
@@ -2295,6 +2296,8 @@ actions:
     worker       run the single room-policy worker
     verify       verify service custody without initializing state
     prune        delete saved policies for rooms the compiled house no longer has
+    reset-admin  recover from a lost administrator password: set a new one on an
+                 existing account and make it an active administrator
     audit        read the security audit (logins, tokens, accounts, locks, what guests
                  see)
     music-tidal  sign the site&#x27;s Music Assistant into TIDAL: show a code to approve at
@@ -2319,6 +2322,8 @@ examples:
                                     upgrade identity schema after stopping services and backing up state
   thermite access bootstrap --descriptor /srv/thermite/access/releases/RELEASE/config.json --user admin
                                     initialize one site&#x27;s first admin locally
+  thermite access reset-admin --descriptor /srv/thermite/access/releases/RELEASE/config.json --user admin
+                                    give an account a new password and make it an administrator, after a lost password
   thermite access verify --descriptor /srv/thermite/access/releases/RELEASE/config.json
                                     check service ownership and configuration as thermite before activation
   thermite access serve --descriptor /srv/thermite/access/releases/RELEASE/config.json
@@ -2451,6 +2456,30 @@ switches every verb takes:
 examples:
   thermite access prune --descriptor /srv/thermite/access/releases/RELEASE/config.json
                                     delete saved policies for rooms the house no longer has
+</pre></details>
+<details id="access-reset-admin"><summary><code>thermite access reset-admin</code></summary><pre class="help">usage: thermite access reset-admin [-h] --descriptor FILE --user USER
+
+Recover from a lost administrator password: set a new one on an existing account and make it an active administrator.
+
+Run this on the host as the thermite service account, which already owns the site&#x27;s
+accounts and keys, with the gateway running or stopped. It asks for the new
+password at the terminal, ends that account&#x27;s sessions and tokens, changes no
+other account, lock, setting or pairing, and is recorded in the security audit
+as user.reset_admin by a local principal.
+
+options:
+  -h, --help         show this help message and exit
+  --descriptor FILE  the release&#x27;s private service descriptor (its config.json)
+  --user USER        the existing account&#x27;s username
+
+switches every verb takes:
+  -q, --quiet        print only errors
+  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
+  --no-color         no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite access reset-admin --descriptor /srv/thermite/access/releases/RELEASE/config.json --user admin
+                                    give an account a new password and make it an administrator, after a lost password
 </pre></details>
 <details id="access-audit"><summary><code>thermite access audit</code></summary><pre class="help">usage: thermite access audit [-h] --descriptor FILE [--since WHEN] [--action ACTION]
                              [--json]
