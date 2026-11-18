@@ -59,6 +59,9 @@ REMOTE_LAYOUT = "apple_tv"
 #: No fixed port to probe: the helper reaches an Apple TV on the Companion
 #: port it announces over mDNS, which changes.
 PROBED = False
+#: The rule's own read of the helper says whether the Apple TV is paired and
+#: connected.
+READS = True
 #: AirPlay, which every Apple TV announces and answers on.
 DISCOVER_PORTS = (7000,)
 DISCOVER_MDNS = ("_airplay", "_raop", "AirPlay", "AirTunes")

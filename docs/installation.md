@@ -718,7 +718,10 @@ in one word of a fixed list: `unreachable`, `no_answer`, `refused`, `busy`,
 (an answer openHAB does not understand) or `other`. Where the rule knows
 more, its own warning comes first, once while the fault stays the same. The
 device's `<id>_problem` Item holds the code, and the remotes show it after
-the device's label, until the device takes a command again. `command` is
+the device's label, until the device takes a command again. That can be
+long after its cause has gone, so no alert reads it: an alert follows only
+what holds now, such as a device that no longer answers the rule's reads.
+`command` is
 `<private>` for a pairing code and `?` for a value the Item does not take;
 `ms` runs from the rule taking the command to its conclusion. The line names
 the device and Item, not the command's `id`: match it by time. A command to

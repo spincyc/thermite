@@ -894,6 +894,34 @@ test('every Sony TV poll posts its input, volume and mute, changed or not; its p
   assert.deepEqual(r.logs.filter(([level]) => level !== 'info'), []);
 });
 
+test('a Sony TV\'s tally says what its reads meet only while it is read: nothing in standby, its problem while one stands', () => {
+  const reads = r => JSON.parse(r.items.tv_sony_ip_control_commands).reads;
+  const r = sonyTv();
+  // Not read yet, then on and answering.
+  assert.equal(reads(r), undefined);
+  r.poll(); assert.equal(reads(r), 'ok');
+  // In standby the rule asks it nothing, so it says nothing: an `ok` kept
+  // from the evening before would outlive a TV unplugged since.
+  r.tv.power = 'standby'; r.items.tv_power = 'OFF'; r.poll(); r.poll();
+  assert.equal(reads(r), undefined); assert.equal(r.items.tv_problem, 'UNDEF');
+  r.tv.power = 'active'; r.items.tv_power = 'ON'; r.poll(); assert.equal(reads(r), 'ok');
+  // A read it does not answer is its problem, also once its power is no
+  // longer known and it is asked nothing; standby, which it reports, ends it.
+  r.tv.down = 'unreached'; r.poll(); assert.equal(reads(r), 'unreachable');
+  r.items.tv_power = 'UNDEF'; r.poll(); assert.equal(reads(r), 'unreachable');
+  assert.equal(r.items.tv_problem, 'unreachable');
+  r.tv.down = null; r.tv.power = 'standby'; r.items.tv_power = 'OFF'; r.poll();
+  assert.equal(reads(r), undefined); assert.equal(r.items.tv_problem, 'UNDEF');
+  // A read the TV declines is an answer; the code is kept as it came.
+  r.tv.power = 'active'; r.items.tv_power = 'ON'; r.tv.decline = 'getVolumeInformation'; r.poll();
+  assert.equal(reads(r), 'refused'); assert.equal(r.items.tv_problem, 'refused');
+  // A TV that is not paired is, on or in standby: the rule knows that itself.
+  const unpaired = sonyTv({ paired: false });
+  unpaired.poll(); assert.equal(reads(unpaired), 'auth');
+  unpaired.tv.power = 'standby'; unpaired.items.tv_power = 'OFF'; unpaired.poll(); unpaired.poll();
+  assert.equal(reads(unpaired), 'auth'); assert.equal(unpaired.items.tv_problem, 'auth');
+});
+
 test('a volume the Sony TV refuses is explained once and recorded each time, and stays its problem until it takes a command', () => {
   const r = sonyTv();
   r.poll();
@@ -1165,6 +1193,50 @@ test('a sender that throws, or does not say how its command ended, is recorded u
     ['warn', 'tv_volume', '30', 'dropped', 'read_only'], ['warn', 'tv_volume', '30', 'dropped', 'held']]);
   assert.equal(r.items.tv_problem, 'other');
   assert.deepEqual(r.tally('tv_test_commands'), { unknown: 7, dropped: 3 });
+});
+
+test('the tally says what the reads meet apart from a command\'s problem, on change, and nothing in a script that reads nothing', () => {
+  // The latest `reads` the tally was posted with; undefined while it has none.
+  const reads = r => JSON.parse(r.items.tv_test_commands).reads;
+  const tallied = r => r.posted.filter(([item]) => item === 'tv_test_commands').length;
+  const sent = device({ items: recordItems() }), record = sent.helper.recorder('tv');
+  // A script that only sends: a command's problem stays in the Item, and
+  // the tally never claims a reading of the device.
+  record({ item: 'tv_key', command: 'play', outcome: 'unsent', code: 'unreachable', ms: 1 });
+  assert.equal(sent.items.tv_problem, 'unreachable'); assert.equal(reads(sent), undefined);
+  assert(!sent.items.tv_test_commands.includes('reads'));
+
+  const r = device({ items: recordItems() }), health = r.helper.health();
+  const refuse = r.helper.recorder('tv');
+  assert.equal(reads(r), undefined);
+  health.answered('tv', 'answers again'); assert.equal(reads(r), 'ok');
+  // A command the device refused is its problem until it takes one, while
+  // its reads go on saying that it answers.
+  refuse({ item: 'tv_volume', command: '300', outcome: 'refused', code: 'refused', ms: 1 });
+  const posts = tallied(r);
+  for (let poll = 0; poll < 5; poll++) health.answered('tv', 'answers again');
+  assert.equal(r.items.tv_problem, 'refused'); assert.equal(reads(r), 'ok');
+  // Posted when it changes, not at every read.
+  assert.equal(tallied(r), posts);
+  health.failed('tv', 'does not answer', 'no_answer'); health.failed('tv', 'does not answer', 'no_answer');
+  assert.equal(reads(r), 'no_answer'); assert.equal(tallied(r), posts + 1);
+  // A device that answers and is not paired cannot be read either.
+  health.answered('tv', 'answers again', 'auth'); assert.equal(reads(r), 'auth');
+  health.answered('tv', 'answers again'); assert.equal(reads(r), 'ok');
+  assert.equal(r.items.tv_problem, 'refused');
+  // A script that asks the device nothing now takes back its `ok`, once: no
+  // reading outlives its read. A problem its reads met stands until a read
+  // ends it.
+  r.helper.problem.unread('tv'); r.helper.problem.unread('tv');
+  assert.equal(reads(r), undefined); assert.equal(tallied(r), posts + 4);
+  assert.equal(r.items.tv_problem, 'refused');
+  health.failed('tv', 'does not answer', 'unreachable'); r.helper.problem.unread('tv');
+  assert.equal(reads(r), 'unreachable'); assert.equal(r.items.tv_problem, 'unreachable');
+  health.answered('tv', 'answers again'); assert.equal(reads(r), 'ok');
+  // A read concluded before the script records for the device is not lost.
+  const late = device({ items: recordItems() });
+  late.helper.problem.read('tv', 'unreachable'); late.helper.recorder('tv');
+  assert.equal(reads(late), 'unreachable');
 });
 
 test('only a code of the table reaches a problem Item or a record, and no PIN or free text a record', () => {

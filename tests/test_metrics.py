@@ -432,9 +432,10 @@ class Speakers(unittest.TestCase):
     def test_a_speaker_is_required_while_it_played_lately_or_was_playing_when_last_read(self):
         recorded = [rule for rule in yaml.safe_load(self.FILES["prometheus/alerts.yml"])["groups"][0]["rules"]
                     if rule.get("record") == alerts.CHECK and rule["labels"].get("device") == "example_speaker"]
-        # Its key rule keeps a problem Item (oh_integrations._commands), checked like its Thing.
+        # Its key rule only sends: the problem Item it keeps (oh_integrations._commands)
+        # holds a key's problem until the next key, and is no check.
         self.assertEqual({(rule["labels"]["check"], rule["labels"]["required"]) for rule in recorded},
-                         {(check, required) for check in ("thing", "port", "problem") for required in ("true", "false")})
+                         {(check, required) for check in ("thing", "port") for required in ("true", "false")})
         for rule in recorded:
             # Its own room, no routing zone.
             self.assertEqual(rule["labels"]["room"], "example_patio")
@@ -681,6 +682,38 @@ class Checks(unittest.TestCase):
             self.assertIn("vector(-1)", rule["expr"], "missing telemetry must read unknown")
         sources = [rule for rule in recorded if rule["labels"]["check"] == "source"]
         self.assertEqual({rule["labels"]["zone"] for rule in sources}, set(MAP["routing"]["zones"]))
+
+    def test_a_device_is_checked_by_what_its_rules_reads_meet_and_never_by_its_problem_item(self):
+        """The problem Item keeps a command's problem until the device takes
+        a command (oh_integrations._commands): as a check it failed for as
+        long as nobody commanded the device again."""
+        inventory = copy.deepcopy(INVENTORY)
+        inventory["devices"].append(
+            {"id": "example_avpro", "room": "example_east", "kind": "hdmi_matrix", "make": "AVPro Edge",
+             "model": "AC-MX-44X", "ip": "192.0.2.30",
+             "controls": {"observe": ["network_ping"], "control": ["avpro_telnet"]}})
+        self.assertEqual(oh_inventory.validate(inventory), [])
+        mapping = json.loads(rendered(inventory)[oh_metrics.EXPORTER_MAP])
+        found = mapping["health_checks"]
+        self.assertFalse([check for check in found if "problem" in (check["check"], check["metric"])
+                          or check["metric"].startswith("thermite_device_command")])
+        reads = {check["device"]: check for check in found if check["check"] == "reads"}
+        self.assertEqual({device: (check["metric"], check["labels"], check["bad"]) for device, check in reads.items()}, {
+            device: ("thermite_device_read_ok", {"device": device, "integration": integration}, 0)
+            for device, integration in (("example_player", "pyatv_http"), ("example_tv", "sony_ip_control"),
+                                        ("example_display", "sony_ip_control"), ("example_avpro", "avpro_telnet"))})
+        # A matrix whose Telnet port may not be probed is read by its rule
+        # alone, and needed whatever the rooms select.
+        self.assertTrue(reads["example_avpro"]["always"])
+        self.assertEqual([check["check"] for check in found if check["device"] == "example_avpro"], ["reads"])
+        self.assertFalse(reads["example_player"]["always"])
+        self.assertTrue(reads["example_player"]["required"])
+        # Each names the tally the exporter reads it from.
+        for device, check in reads.items():
+            self.assertIn(f"{device}_{check['labels']['integration']}_commands", mapping["commands"])
+        # The problem Items are exported as before, for the remotes' column on Devices.
+        self.assertEqual({spec["device"] for spec in mapping["items"].values() if spec["point"] == "problem"},
+                         {"example_player", "example_tv", "example_display", "example_avpro"})
 
     def test_optional_devices_are_never_required(self):
         inventory = copy.deepcopy(INVENTORY)
@@ -967,7 +1000,7 @@ class Dashboards(unittest.TestCase):
                  for prop in override["properties"] if prop["id"] == "mappings"
                  for mapping in prop["value"] for option in mapping["options"].values()}
         self.assertLessEqual({"Not responding to control", "Control port closed", "Off while in use",
-                              "Reports a problem", "Commands quarantined"}, words)
+                              "Cannot be read", "Commands quarantined"}, words)
         # Service starts and deploys are marked where a board has time axes; House health has none.
         marked = {name: {annotation["name"] for annotation in board["annotations"]["list"]}
                   for name, board in boards().items()}

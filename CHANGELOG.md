@@ -120,8 +120,16 @@ rollback. The unified deployment workflow uses a separate committed private site
     until the device takes a command again. The gateway passes the code
     through; it no longer answers "Device control unavailable" for
     every problem.
-  - Each of those devices has a `problem` health check while a room uses
-    it, as the Sony TVs had.
+  - A device's problem is not a health check: it stays on `<id>_problem`
+    until the device takes a command, so it would alert long after its
+    cause had gone. A device its rule reads (Sony TVs and projectors,
+    Apple TV, AVPro and Vrroom matrices) has a `reads` check instead,
+    "Cannot be read": failing while the rule's own reads meet
+    `unreachable`, `no_answer`, `auth`, `protocol` or `other`, over with
+    the next read that answers, unknown while the rule asks the device
+    nothing. A device whose rule only sends is checked by its Thing and
+    control port. New series
+    `thermite_device_read_ok{device,room,kind,integration}`.
   - Metrics count each device's commands and the time they took by
     outcome: `thermite_device_commands_total` and
     `thermite_device_command_seconds_total`.

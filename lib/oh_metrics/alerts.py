@@ -10,7 +10,7 @@ check, required, scope} is 1 failing, 0 OK or -1 unknown, for
     source    a routing zone's source readback is known (device empty)
     thing     a device's control Thing is ONLINE
     port      a device's control port accepts connections
-    problem   a device reports no problem
+    reads     a device's own rule can read it: it answers and is paired
     power     a device on the active path is on
 
 `zone` is the routing zone's id, as in thermite_route_seconds and
@@ -81,7 +81,7 @@ CHECK_WORDS = {
     "source": "Source not reported",
     "thing": "Not responding to control",
     "port": "Control port closed",
-    "problem": "Reports a problem",
+    "reads": "Cannot be read",
     "power": "Off while in use",
 }
 CHECK = "thermite:check"

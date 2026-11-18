@@ -65,6 +65,8 @@ KINDS = {"projector"}
 PORT = 53595
 #: A TCP probe of PORT would cost the projector a session, reset with its greeting unread.
 PROBED = False
+#: The rule's own read of the projector's status says whether it answers.
+READS = True
 #: Seconds from a command to its read-back: none, the command's session
 #: reads the projector again on the same connection.
 READ_BACK = 0

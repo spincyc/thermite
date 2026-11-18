@@ -563,7 +563,11 @@ def health_paths(inventory: dict, conf, items: dict) -> tuple[dict, list[dict]]:
     receiver and matrices, and a room's `audio` device (the one its Volume
     and Mute drive) joins every source. Only control integrations supply
     availability checks; an optional Cast observer cannot invalidate working
-    Sony control.
+    Sony control. A check reads what holds now: a Thing's status, a probed
+    port, what a rule's own reads of the device meet (an integration with
+    READS). The device's problem Item is none: it keeps the problem of a
+    command until the device takes one (oh_integrations._commands), so it
+    would fail a check for as long as nobody commands the device again.
     Infrastructure serving routing is monitored even when every zone is Off.
     A speaker (a `playing` point, exporter_map()) is in use while it plays,
     or did within alerts.IN_USE: its demand is {"item": its playing Item,
@@ -576,9 +580,11 @@ def health_paths(inventory: dict, conf, items: dict) -> tuple[dict, list[dict]]:
     import oh_integrations
     from oh_conf import House
     from oh_features import remote_diagnostics, routing
+    from oh_integrations import _commands
 
     house = House(inventory)
     devices = {d["id"]: d for d in house.devices}
+    present = {name for file in conf.yaml.values() for name in file.items}
     physical = remote_diagnostics.manifest(house, conf)["rooms"]
     found, _ = probes(inventory, conf)
     checks: dict[tuple, dict] = {}
@@ -606,14 +612,19 @@ def health_paths(inventory: dict, conf, items: dict) -> tuple[dict, list[dict]]:
             for uid in (file.things if file else {}):
                 if uid.split(":")[-1] == ident:
                     add("thing", ident, "thermite_thing_online", {"thing": uid}, 0, demand)
+            # What the module's own rule meets reading the device, while it
+            # reads it. The problem Item is no check: a command's problem
+            # stays there until the device takes a command, long after its
+            # cause went.
+            if getattr(module, "READS", False) and _commands.tally_item(ident, module.NAME) in present:
+                add("reads", ident, "thermite_device_read_ok", {"device": ident, "integration": module.NAME}, 0,
+                    demand)
         for probe in found:
             if probe.device == ident and set(controls).intersection(probe.integrations):
                 add("port", ident, "probe_success", {"job": DEVICE_JOB, "device": ident, "port": str(probe.port)}, 0,
                     demand)
         if demand is None:
             return
-        if any(s.get("device") == ident and s.get("point") == "problem" for s in items.values()):
-            add("problem", ident, "thermite_device_problem", {"device": ident}, 1, demand)
         power = []
         if node and node["role"] in ("receiver", "display") and (module := routing.stager(device)):
             zone = node.get("zone")

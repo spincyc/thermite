@@ -74,6 +74,8 @@ PORT = 2222
 #: The command list names one "current open IP connection" for its notices;
 #: a TCP probe of PORT could take that session.
 PROBED = False
+#: The rule's own read of the input says whether the switch answers.
+READS = True
 #: The input numbers TX0 can show (RX0-RX3).
 INPUTS = range(0, 4)
 READBACK_INPUTS = tuple(str(number) for number in INPUTS)

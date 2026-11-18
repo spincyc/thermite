@@ -31,6 +31,8 @@ Colour means one thing on every dashboard, in tiles, tables and charts alike: gr
 
 A tile, or a room in a table, is a link where another dashboard says more: a room opens Devices for that room. **Dashboards**, at the top, lists them all.
 
+Control health is made of checks, and each reads what holds now: a device's Thing is online, its control port accepts a connection, it is on while a room uses it, and, where thermite reads the device itself (a Sony TV while it is on, an Apple TV, a Sony projector, an AVPro matrix, a VRROOM), those reads are answered and the device is paired. A command a device didn't take is not a check. The remote says why after the device's label until the device takes a command, and **Devices** lists it under Problem, but nothing alerts: that note stays long after its cause has gone, and a TV that declines a key in standby is not broken.
+
 A device a room needs only now and then, such as a sleeping TV, counts against control health only while a room's selected source uses it. A device that stops answering often takes the room's source reading with it, so a room that no longer reports its source keeps the one it last reported, for three days at most: the failure stays that room's until the device answers again. A room that reports Off needs none of its devices from that moment, and one whose source hasn't been read since thermite started needs none either. To keep a device you know is broken on the dashboards but out of control health and alerts, mark it `monitor: optional` in the house file:
 
 ```yaml

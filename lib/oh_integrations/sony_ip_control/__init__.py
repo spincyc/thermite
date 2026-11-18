@@ -92,6 +92,10 @@ DEVICE_KEYS = ("sony_speaker_audio",)
 REMOTE_LAYOUT = "sony_tv"
 #: The rule talks to the TV's REST API and IRCC on plain HTTP.
 PROBE_PORTS = (80,)
+#: The rule's own reads say whether the TV is paired and, while it is on,
+#: whether it answers them; in standby it is asked nothing, and its port
+#: says that.
+READS = True
 #: BRAVIA Simple IP control, open on a TV with IP control enabled.
 DISCOVER_PORTS = (20060,)
 #: The modules whose files the rule needs beside its own: sony_rest's Thing

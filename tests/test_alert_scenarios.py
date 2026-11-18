@@ -36,13 +36,22 @@ from oh_metrics import alerts  # noqa: E402
 WEST, EAST = "example_west", "example_east"
 PLAYER, COMPUTER = "example_player", "example_computer"
 TV, DISPLAY, MATRIX = "example_tv", "example_display", "example_matrix"
+PATIO, SPEAKER = "example_patio", "example_speaker"
 TEXTFILES = "/host/srv/thermite/runtime/textfile"
 
 
 @functools.lru_cache(maxsize=None)
-def house() -> tuple[str, dict]:
-    """The example house's alerts.yml and exporter map."""
-    inventory = oh_inventory.load(AREA / "instance/devices.yaml")
+def house(speaker: bool = False) -> tuple[str, dict]:
+    """The example house's alerts.yml and exporter map.
+    With `speaker`, the house has a Sonos in a room of its own as well: a
+    device whose rule only sends, and reads nothing of it."""
+    inventory = copy.deepcopy(oh_inventory.load(AREA / "instance/devices.yaml"))
+    if speaker:
+        from tests import test_playing
+        assert test_playing.SPEAKER["id"] == SPEAKER
+        inventory["rooms"][PATIO] = {"label": "Example Patio", "tag": "Room"}
+        inventory["devices"].append({**copy.deepcopy(test_playing.SPEAKER), "room": PATIO})
+        assert oh_inventory.validate(inventory) == []
     host = yaml.safe_load((AREA / "instance/host.yaml").read_text())
     files = oh_metrics.render(copy.deepcopy(inventory), host)
     return files["prometheus/alerts.yml"], json.loads(files[oh_metrics.EXPORTER_MAP])
@@ -94,14 +103,14 @@ def readback(zone: str, *spans: tuple[int, str | None]) -> dict[str, str]:
     return out
 
 
-def check_series(device: str, check: str) -> str:
+def check_series(device: str, check: str, speaker: bool = False) -> str:
     """The one series a device's check reads, from the exporter map."""
-    found = [each for each in house()[1]["health_checks"] if (each["device"], each["check"]) == (device, check)]
+    found = [each for each in house(speaker)[1]["health_checks"] if (each["device"], each["check"]) == (device, check)]
     assert len(found) == 1, (device, check, found)
     return series(found[0]["metric"], **found[0]["labels"])
 
 
-def healthy(samples: int) -> dict[str, str]:
+def healthy(samples: int, speaker: bool = False) -> dict[str, str]:
     """Every series the house-wide and device checks read, all well."""
     out = {series("thermite_openhab_up", job="thermite"): f"1x{samples}",
            series("node_scrape_collector_success", job="node", collector="systemd"): f"1x{samples}"}
@@ -109,7 +118,7 @@ def healthy(samples: int) -> dict[str, str]:
         out[series("up", job=job)] = f"1x{samples}"
     for service in alerts.SERVICES:
         out[series("probe_success", job="service_http", service=service)] = f"1x{samples}"
-    for each in house()[1]["health_checks"]:
+    for each in house(speaker)[1]["health_checks"]:
         out[series(each["metric"], **each["labels"])] = f"{1 - each['bad']}x{samples}"
     return out
 
@@ -128,11 +137,12 @@ class Scenarios(unittest.TestCase):
             raise unittest.SkipTest(reason)
         cls.podman, cls.image = shutil.which("podman"), image()
 
-    def run_rules(self, inputs: dict[str, str], *, firing=(), values=(), interval: str = "1m") -> None:
-        """Evaluate the example house's rules over `inputs`, a sample each
-        `interval`. firing: (time, alert, [labels of each one firing then]),
-        exactly; severity and the catalogue's words are added here.
-        values: (time, expression, [(series, value)]), exactly."""
+    def run_rules(self, inputs: dict[str, str], *, firing=(), values=(), interval: str = "1m",
+                  speaker: bool = False) -> None:
+        """Evaluate the example house's rules (house(speaker)) over `inputs`,
+        a sample each `interval`. firing: (time, alert, [labels of each one
+        firing then]), exactly; severity and the catalogue's words are added
+        here. values: (time, expression, [(series, value)]), exactly."""
         def expected(name, labels):
             title, detail = alerts.CATALOG[name]
             severity = "critical" if name in alerts.CRITICAL else "warning"
@@ -150,9 +160,10 @@ class Scenarios(unittest.TestCase):
         # The checks before the alerts that read them, as written: promtool
         # otherwise takes the groups in either order, and an alert that
         # reads the last evaluation's checks fires an interval later.
-        order = [group["name"] for group in yaml.safe_load(house()[0])["groups"]]
+        rules = house(speaker)[0]
+        order = [group["name"] for group in yaml.safe_load(rules)["groups"]]
         with tempfile.TemporaryDirectory() as directory:
-            Path(directory, "alerts.yml").write_text(house()[0])
+            Path(directory, "alerts.yml").write_text(rules)
             Path(directory, "scenario.yml").write_text(yaml.safe_dump(
                 {"rule_files": ["alerts.yml"], "evaluation_interval": interval, "group_eval_order": order,
                  "tests": [test]}))
@@ -166,20 +177,21 @@ class Scenarios(unittest.TestCase):
 
     def test_a_device_that_fails_in_use_alerts_with_its_room_though_the_readback_went_with_it(self):
         # The West watches the player. At 10 minutes its TV stops answering:
-        # port closed, power and problem unread, and the room's readback
-        # unknown. At 40 it is back.
+        # port closed, its rule's reads failing, its power unread, and the
+        # room's readback unknown. At 40 it is back.
         inputs = {**healthy(60),
                   **readback(WEST, (10, PLAYER), (30, None), (21, PLAYER)), **readback(EAST, (61, routing.OFF)),
                   check_series(TV, "port"): through((10, 1), (30, 0), (21, 1)),
                   check_series(TV, "power"): through((10, 1), (30, None), (21, 1)),
-                  check_series(TV, "problem"): through((10, 0), (30, None), (21, 0))}
+                  check_series(TV, "reads"): through((10, 1), (30, 0), (21, 1))}
         port = check(WEST, "port", TV, WEST)
-        unread = [check(WEST, "source", zone=WEST), check(WEST, "power", TV, WEST), check(WEST, "problem", TV, WEST)]
+        failing = [port, check(WEST, "reads", TV, WEST)]
+        unread = [check(WEST, "source", zone=WEST), check(WEST, "power", TV, WEST)]
         self.run_rules(inputs, firing=[
             ("9m", "ThermiteCheckFailing", []),
             ("14m", "ThermiteCheckFailing", []),
-            ("15m", "ThermiteCheckFailing", [port]),
-            ("39m", "ThermiteCheckFailing", [port]),
+            ("15m", "ThermiteCheckFailing", failing),
+            ("39m", "ThermiteCheckFailing", failing),
             ("19m", "ThermiteControlUnknown", []),
             ("20m", "ThermiteControlUnknown", unread),
             ("39m", "ThermiteControlUnknown", unread),
@@ -236,7 +248,7 @@ class Scenarios(unittest.TestCase):
         inputs = {**healthy(60), **readback(EAST, (61, routing.OFF)),
                   check_series(TV, "port"): through((61, 0)),
                   check_series(TV, "power"): through((61, None)),
-                  check_series(TV, "problem"): through((61, None))}
+                  check_series(TV, "reads"): through((61, 0))}
         self.run_rules(inputs, firing=[
             (when, name, []) for when in ("15m", "30m", "60m")
             for name in ("ThermiteCheckFailing", "ThermiteControlUnknown")
@@ -261,10 +273,10 @@ class Scenarios(unittest.TestCase):
             ("40m", "ThermiteControlUnknown", []),
         ], values=[
             # Both of the player's checks are released with it: its power,
-            # and the problem its own script keeps of its commands.
+            # and what its own rule's reads of it meet.
             ("11m", f'thermite:check{{device="{PLAYER}"}}',
              [(series("thermite:check", **{**check(WEST, name, PLAYER, WEST), "required": "false"}), 0)
-              for name in ("power", "problem")]),
+              for name in ("power", "reads")]),
         ])
 
     def test_a_reading_the_room_does_not_offer_is_unknown_and_holds_the_source_before_it(self):
@@ -299,6 +311,120 @@ class Scenarios(unittest.TestCase):
             ("4d", f'thermite:check{{device="{TV}",check="port"}}',
              [(series("thermite:check", **{**port, "required": "false"}), 1)]),
         ])
+
+    def test_a_problem_a_command_left_behind_alerts_nobody_however_long_it_stays(self):
+        # Ten minutes a sample, four days. The West watches the player. At
+        # one hour a key meets a player that does not take it, and nobody
+        # sends it another: its problem Item keeps the code from then on,
+        # as the display's does in the East, which is Off. Both answer every
+        # read meanwhile.
+        day = 24 * 6
+        inputs = {**healthy(4 * day), **readback(WEST, (4 * day + 1, PLAYER)), **readback(EAST, (4 * day + 1, routing.OFF)),
+                  series("thermite_device_problem", device=PLAYER): through((6, 0), (4 * day - 5, 1)),
+                  series("thermite_device_problem", device=DISPLAY): through((6, 0), (4 * day - 5, 1))}
+        self.run_rules(inputs, interval="10m", firing=[
+            (when, name, []) for when in ("70m", "2h", "1d", "3d", "4d")
+            for name in ("ThermiteCheckFailing", "ThermiteControlUnknown")
+        ], values=[
+            ("4d", 'count(thermite:check{scope="control"} != 0)', []),
+            ("4d", "thermite:control_health", [("thermite:control_health", 0)]),
+        ])
+
+    def test_a_speaker_that_is_only_sent_keys_alerts_by_its_thing_and_never_by_the_problem_a_key_left(self):
+        # A Sonos plays on the patio for four days, ten minutes a sample.
+        # Its rule only sends: at one hour a key is not taken, and its
+        # problem Item keeps that until the next key, which nobody sends.
+        day = 24 * 6
+        playing = series("thermite_item_value", item=f"{SPEAKER}_state", point="playing")
+        problem = series("thermite_device_problem", device=SPEAKER)
+        self.assertEqual({each["check"] for each in house(True)[1]["health_checks"] if each["device"] == SPEAKER},
+                         {"thing", "port"})
+        inputs = {**healthy(4 * day, True), **readback(WEST, (4 * day + 1, routing.OFF)),
+                  **readback(EAST, (4 * day + 1, routing.OFF)), playing: f"2x{4 * day}",
+                  problem: through((6, 0), (4 * day - 5, 1))}
+        self.run_rules(inputs, interval="10m", speaker=True, firing=[
+            (when, name, []) for when in ("70m", "1d", "3d", "4d")
+            for name in ("ThermiteCheckFailing", "ThermiteControlUnknown")
+        ], values=[
+            # In use all the while: its checks are required, and well.
+            ("4d", f'thermite:check{{device="{SPEAKER}",required="true"}}',
+             [(series("thermite:check", **check(PATIO, name, SPEAKER)), 0) for name in ("port", "thing")]),
+        ])
+        # What says that it stopped answering is its Thing: offline from 10
+        # minutes, with the playing state it can no longer report.
+        thing = check_series(SPEAKER, "thing", True)
+        gone = {**healthy(40, True), **readback(WEST, (41, routing.OFF)), **readback(EAST, (41, routing.OFF)),
+                playing: through((10, 2), (20, None), (11, 2)), thing: through((10, 1), (20, 0), (11, 1)),
+                problem: "0x40"}
+        failing = check(PATIO, "thing", SPEAKER)
+        self.run_rules(gone, speaker=True, firing=[
+            ("14m", "ThermiteCheckFailing", []),
+            ("15m", "ThermiteCheckFailing", [failing]),
+            ("29m", "ThermiteCheckFailing", [failing]),
+            ("30m", "ThermiteCheckFailing", []),
+            ("40m", "ThermiteControlUnknown", []),
+        ])
+
+    def test_a_tv_in_standby_is_asked_nothing_so_its_reads_are_unknown_and_never_well(self):
+        # The West watches the player. At 10 minutes someone puts its TV in
+        # standby with the TV's own remote: its rule asks a TV in standby
+        # nothing, so the reading of its reads ends there instead of going
+        # on saying that they went well. At 30 it is on again.
+        inputs = {**healthy(45), **readback(WEST, (46, PLAYER)), **readback(EAST, (46, routing.OFF)),
+                  check_series(TV, "power"): through((10, 1), (20, 0), (16, 1)),
+                  check_series(TV, "reads"): through((10, 1), (20, None), (16, 1))}
+        power, reads = check(WEST, "power", TV, WEST), check(WEST, "reads", TV, WEST)
+        self.run_rules(inputs, firing=[
+            # Its power says why; Alertmanager holds the unknown check back
+            # behind it (the room's own inhibition, tested below).
+            ("15m", "ThermiteCheckFailing", [power]),
+            ("19m", "ThermiteControlUnknown", []),
+            ("20m", "ThermiteControlUnknown", [reads]),
+            ("30m", "ThermiteCheckFailing", []),
+            ("30m", "ThermiteControlUnknown", []),
+        ], values=[
+            ("12m", f'thermite:check{{device="{TV}",check="reads",required="true"}}',
+             [(series("thermite:check", **reads), -1)]),
+        ])
+
+    def test_a_device_its_own_rule_cannot_read_fails_while_its_room_uses_it_and_recovers_with_the_next_read(self):
+        # The West watches the player. From 10 minutes the player's rule
+        # cannot read it (no answer, or not paired any more), whatever its
+        # problem Item shows; at 30 a read succeeds.
+        reads = check_series(PLAYER, "reads")
+        self.assertIn("thermite_device_read_ok", reads)
+        inputs = {**healthy(45), **readback(WEST, (46, PLAYER)), **readback(EAST, (46, routing.OFF)),
+                  reads: through((10, 1), (20, 0), (16, 1))}
+        unread = check(WEST, "reads", PLAYER, WEST)
+        self.run_rules(inputs, firing=[
+            ("14m", "ThermiteCheckFailing", []),
+            ("15m", "ThermiteCheckFailing", [unread]),
+            ("29m", "ThermiteCheckFailing", [unread]),
+            ("30m", "ThermiteCheckFailing", []),
+            ("45m", "ThermiteCheckFailing", []),
+            ("45m", "ThermiteControlUnknown", []),
+        ])
+        # The same in the East, which is Off, is nobody's failure.
+        idle = {**healthy(45), **readback(WEST, (46, PLAYER)), **readback(EAST, (46, routing.OFF)),
+                check_series(DISPLAY, "reads"): through((10, 1), (36, 0))}
+        self.run_rules(idle, firing=[("45m", "ThermiteCheckFailing", []), ("45m", "ThermiteControlUnknown", [])])
+
+    def test_commands_a_device_does_not_take_fail_no_check_while_it_answers_its_reads(self):
+        # The West watches the player, and for half an hour every key sent
+        # to it ends refused or unsent, one a minute: the remote says so at
+        # each, and the player still answers every read.
+        def commands(outcome, values):
+            return {series("thermite_device_commands_total", device=PLAYER, integration="pyatv_http",
+                           outcome=outcome): values}
+
+        inputs = {**healthy(45), **readback(WEST, (46, PLAYER)), **readback(EAST, (46, routing.OFF)),
+                  **commands("applied", "3x45"), **commands("refused", "0x5 0+1x15 15x24"),
+                  **commands("unsent", "0x5 0+1x15 15x24"),
+                  series("thermite_device_problem", device=PLAYER): through((6, 0), (40, 1))}
+        self.run_rules(inputs, firing=[
+            (when, name, []) for when in ("10m", "20m", "30m", "45m")
+            for name in ("ThermiteCheckFailing", "ThermiteControlUnknown")
+        ], values=[("30m", "thermite:control_health", [("thermite:control_health", 0)])])
 
     def test_monitoring_trouble_is_not_a_control_alert(self):
         # From 5 minutes Grafana does not answer, node_exporter cannot read
@@ -445,6 +571,20 @@ class Rules(unittest.TestCase):
         for name, rule in self.alerts.items():
             self.assertNotIn(alerts.HEALTH, rule["expr"], f"{name} reads the fold, which names nothing")
         self.assertIn(required, self.groups[0]["rules"][-1]["expr"])
+
+    def test_no_check_or_alert_reads_what_a_command_left_behind(self):
+        """A device's problem Item keeps a command's problem until it takes
+        a command, and the tally counts events: neither says whether the
+        device answers now. A check reads what its rule's reads meet."""
+        for group in self.groups:
+            for rule in group["rules"]:
+                for family in ("thermite_device_problem", "thermite_device_commands_total",
+                               "thermite_device_command_seconds_total"):
+                    self.assertNotIn(family, rule["expr"], rule.get("alert") or rule.get("labels") or rule["record"])
+        self.assertNotIn("problem", {rule["labels"]["check"] for rule in self.recorded})
+        reads = {(rule["labels"]["device"], rule["expr"].split("{", 1)[0].removeprefix("(max("))
+                 for rule in self.recorded if rule["labels"]["check"] == "reads"}
+        self.assertEqual(reads, {(device, "thermite_device_read_ok") for device in (PLAYER, TV, DISPLAY)})
 
     def test_a_failing_check_holds_back_the_unknown_ones_of_its_own_room_only(self):
         # The gateway's feed applies both tables (oh_identity.tests.test_alerts

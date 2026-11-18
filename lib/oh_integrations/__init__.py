@@ -256,6 +256,13 @@ integration.
                   metrics never probes its devices: it has no fixed port,
                   or a connection costs the device a session or a TLS
                   handshake
+    READS = True
+                  its rule reads its devices itself and says what each read
+                  met (_device.js health and problem.read): metrics keep
+                  that as thermite_device_read_ok, the reading that says
+                  whether such a device answers, and a health check. A rule
+                  that asks a device nothing for a while says so
+                  (problem.unread), and the reading is unknown meanwhile
     SESSIONS = True
                   it keeps a session or subscription open with each device:
                   the sandbox, which still reads the other devices, addresses

@@ -20,7 +20,8 @@ volume, input...) and conversion:
 each tally of the commands a script took for a device (map `commands`,
 oh_integrations._commands): its JSON becomes thermite_device_commands_total
 and thermite_device_command_seconds_total by outcome, with a zero for every
-outcome it has not counted yet;
+outcome it has not counted yet, and, for a script that reads its device,
+thermite_device_read_ok from what its last read met;
 
 and each device's two playing Items (map `playing`, oh_features.playing):
 its app and title as free-text labels of
@@ -120,7 +121,13 @@ FAMILIES = {
                                            "free text of at most 160 characters, empty when not known; the Unix "
                                            "time of the reading, absent while nothing plays. zones lists the "
                                            "routing zones whose source it is now, comma-separated, empty for none."),
-    "thermite_device_problem": ("gauge", "1 while the device's problem Item holds a problem code."),
+    "thermite_device_problem": ("gauge", "1 while the device's problem Item holds a problem code: what its reads "
+                                "meet now, else what its last command met, which stays until it takes a "
+                                "command. What the remotes show; no check reads it."),
+    "thermite_device_read_ok": ("gauge", "1 while the device answers the reads its integration's script makes of "
+                                "it, 0 while they meet no connection, no answer, no pairing or an answer the "
+                                "script cannot use. Absent while nothing reads the device: a script that only "
+                                "sends, a TV in standby."),
     "thermite_device_commands_total": ("counter", "Commands a rule took for the device, by the integration whose "
                                        "script took them and how each ended, since that script loaded."),
     "thermite_device_command_seconds_total": ("counter", "Seconds those commands took in all, from the command to "
@@ -156,6 +163,11 @@ FAILURE_REASONS = ("unsent", "refused", "unknown", "quarantined", "probe_failed"
 #: How a command a device script took ended (oh_integrations._commands
 #: OUTCOMES, which a test keeps this equal to).
 COMMAND_OUTCOMES = ("applied", "sent", "dropped", "unsent", "refused", "busy", "unknown")
+#: What a tally's `reads` says while the device answers its script's reads
+#: (_device.js): `ok`, or the code of a device that answered and declined
+#: (oh_integrations._commands ANSWERED, which a test keeps this equal to).
+#: Any other text there is the code of a read that got nothing it can use.
+READ_ANSWERS = ("ok", "refused", "busy", "not_ready")
 #: Bytes of a routing Item's JSON the exporter reads; anything longer is invalid.
 ROUTING_BYTES = 262144
 #: The suffixes of a histogram family's samples.
@@ -494,7 +506,11 @@ def _routing(mapping: dict, answer: list) -> list[Sample]:
 def _commands(mapping: dict, answer: list) -> list[Sample]:
     """Each command tally (map "commands": {Item: {device, integration}}) as
     counters by outcome. A tally that is not valid yet has no series; one
-    that is has a zero for each outcome it has not counted."""
+    that is has a zero for each outcome it has not counted. A tally of a
+    script that reads its device says what the last read met (`reads`: ok,
+    or a problem code): thermite_device_read_ok, 1 while that is of
+    READ_ANSWERS and 0 for anything else it says, whose text never becomes
+    a label."""
     spec = mapping.get("commands")
     if not isinstance(spec, dict):
         return []
@@ -507,6 +523,9 @@ def _commands(mapping: dict, answer: list) -> list[Sample]:
         if not isinstance(outcomes, dict):
             continue
         labels = {**device_labels(mapping, str(entry.get("device", ""))), "integration": str(entry.get("integration", ""))}
+        reads = data.get("reads")
+        if isinstance(reads, str) and reads:
+            samples.append(("thermite_device_read_ok", labels, 1.0 if reads in READ_ANSWERS else 0.0))
         for outcome in COMMAND_OUTCOMES:
             row = outcomes.get(outcome) if isinstance(outcomes.get(outcome), dict) else {}
             count, spent = _count(row.get("count", 0)), _count(row.get("ms", 0))

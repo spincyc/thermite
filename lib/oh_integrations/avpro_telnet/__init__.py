@@ -55,6 +55,8 @@ KINDS = {"hdmi_matrix"}
 PORT = 23
 #: A TCP probe of PORT would cost the matrix a session and a listing.
 PROBED = False
+#: The rule's own read, every 10 s, says whether the matrix answers.
+READS = True
 INPUTS = OUTPUTS = 4
 READBACK_INPUTS = tuple(str(number) for number in range(1, INPUTS + 1))
 #: All that the rule ever sends, named as lib/oh_matrix_sim's stand-in

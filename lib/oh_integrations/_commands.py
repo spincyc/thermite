@@ -17,11 +17,20 @@ words its state description gives the clients: no script writes free text to
 it. `<id>_<integration>_commands` (String, in no group, read by the metrics
 exporter alone) holds the tally:
 
-    {"version": 1, "outcomes": {"<outcome>": {"count": n, "ms": total}, ...}}
+    {"version": 1, "outcomes": {"<outcome>": {"count": n, "ms": total}, ...},
+     "reads": "ok" or a code of CODES}
 
 counted since the script loaded. One Item for each script that commands the
 device, since each script context counts alone: a receiver's HEOS transport
 rule and its routing actor are two.
+
+`reads` is there while the script reads the device (an integration with
+READS): what its last read met. A command's problem stays in `<id>_problem`
+until the device takes a command, however long ago its cause went, so that
+Item says what a person last ran into, not whether the device answers now.
+`reads` does: metrics build the device's health check on it and on nothing
+a command left behind. It is absent, not `ok`, while the script asks the
+device nothing (a TV in standby), so that no reading outlives its read.
 """
 
 from __future__ import annotations
@@ -47,6 +56,11 @@ CODES = {
     "protocol": "answered in a way openHAB does not understand",
     "other": "has a problem",
 }
+#: The codes of a device that answered: it declined, or cannot do that now.
+#: They say nothing of whether it can be reached and used, so a read that
+#: meets one leaves the metrics' reading of that as it was while reads went
+#: well (thermite_device_read_ok).
+ANSWERED = ("refused", "busy", "not_ready")
 #: Why a rule dropped a command itself, which says nothing of the device and
 #: so never reaches its problem Item: a value the Item does not take, a
 #: read-only copy (oh_render.read_only), or routing holding the device.

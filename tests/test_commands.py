@@ -237,6 +237,46 @@ class Tally(unittest.TestCase):
         self.assertIn(("thermite_device_commands_total", {**self.LABELS, "outcome": "sent"}, 0.0), samples)
         self.assertEqual(exporter._commands({"devices": {}}, []), [])
 
+    def test_what_a_scripts_reads_meet_is_a_gauge_of_its_own_and_never_a_label(self):
+        zeros = {outcome: {"count": 0, "ms": 0} for outcome in _commands.OUTCOMES}
+
+        def read_ok(reads):
+            tally = {"version": 1, "outcomes": zeros, **({} if reads is None else {"reads": reads})}
+            return [(labels, value) for name, labels, value in self.samples(json.dumps(tally))
+                    if name == "thermite_device_read_ok"]
+
+        self.assertEqual(read_ok("ok"), [(self.LABELS, 1.0)])
+        # A read the device declined was answered: only a read that got
+        # nothing it can use says the device cannot be read.
+        self.assertEqual(exporter.READ_ANSWERS, ("ok", *_commands.ANSWERED))
+        self.assertLess(set(_commands.ANSWERED), set(_commands.CODES))
+        for code in (*_commands.CODES, "something new"):
+            self.assertEqual(read_ok(code), [(self.LABELS, 1.0 if code in _commands.ANSWERED else 0.0)], code)
+        self.assertEqual({code for code in _commands.CODES if read_ok(code)[0][1] == 0},
+                         {"unreachable", "no_answer", "auth", "protocol", "other"})
+        # A script that reads nothing of the device says nothing of it.
+        for nothing in (None, "", 1, True, ["ok"], {"ok": 1}):
+            self.assertEqual(read_ok(nothing), [], nothing)
+        self.assertEqual(exporter.FAMILIES["thermite_device_read_ok"][0], "gauge")
+        self.assertIn(f"reads: now.read || '{exporter.READ_ANSWERS[0]}'", scripts()["_device.js"])
+
+    def test_an_integration_says_its_rule_reads_its_devices_exactly_when_the_rule_concludes_reads(self):
+        """READS is what gives a device its `reads` check: a rule that polled
+        and did not say so would leave its devices with no reading of whether
+        they answer, and one that said so without polling a check that is
+        unknown for good."""
+        concludes = re.compile(r"thermiteDevice\.(?:health\(|problem\.read\()")
+        polling = {module.NAME for module in integrations.REGISTRY if getattr(module, "SOURCE", None)
+                   and concludes.search(Path(module.SOURCE).read_text(encoding="utf-8"))}
+        self.assertEqual(polling, {"avpro_telnet", "pyatv_http", "sony_adcp", "sony_ip_control", "vrroom_telnet"})
+        self.assertEqual({module.NAME for module in integrations.REGISTRY if getattr(module, "READS", False)}, polling)
+        for device, check in ((check["device"], check) for check in oh_metrics.exporter_map(EXAMPLE)["health_checks"]):
+            if check["check"] == "reads":
+                self.assertEqual(check["metric"], "thermite_device_read_ok")
+                self.assertIn(check["labels"]["integration"], polling)
+                self.assertIn(_commands.tally_item(device, check["labels"]["integration"]),
+                              oh_metrics.exporter_map(EXAMPLE)["commands"])
+
     def test_the_map_names_each_tally_with_its_device_and_integration(self):
         mapping = oh_metrics.exporter_map(EXAMPLE)
         self.assertEqual(mapping["commands"], {
