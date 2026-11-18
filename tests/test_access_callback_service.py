@@ -189,13 +189,14 @@ class Configuration(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(config.stat().st_mode), 0o600)
         unit = (self.root / "release-opt-in/units/thermite-access-callbacks.service").read_text()
         self.assertIn('"callbacks" "--descriptor"', unit)
-        # The commands the receipt hands the owner and the installer are ones
-        # this release's own access verb accepts.
+        # The command the receipt hands the installer is one this release's
+        # own access verb accepts, and the receipt addresses nobody else.
         import oh_cli
-        for field, action in (("verification_command", "verify"), ("bootstrap_command", "bootstrap")):
-            command = receipt[field]
-            parsed = oh_cli.parser_of("access").parse_args(command[command.index("access") + 1:])
-            self.assertEqual((parsed.command, parsed.descriptor), (action, self.root / "release-opt-in/config.json"))
+        command = receipt["verification_command"]
+        parsed = oh_cli.parser_of("access").parse_args(command[command.index("access") + 1:])
+        self.assertEqual((parsed.command, parsed.descriptor), ("verify", self.root / "release-opt-in/config.json"))
+        self.assertFalse({"activation_commands", "owner_commands", "bootstrap_command",
+                          "activation_requirements"} & set(receipt))
         for field in ("User=thermite", "Group=thermite", "Slice=thermite.slice", "UMask=0077"):
             self.assertIn("\n" + field + "\n", unit)
         self.assertIn("callbacks.json", unit)
@@ -205,7 +206,6 @@ class Configuration(unittest.TestCase):
         self.assertEqual(receipt["persistent_state"], plain["persistent_state"])
         self.assertEqual(list((self.root / "site-state").iterdir()), [])
         self.assertNotIn(CALLBACK, json.dumps(receipt))
-        self.assertIn("SUBSCRIBE", " ".join(receipt["activation_requirements"]))
 
     def test_staging_refuses_mismatched_upstream_before_creating_release_or_state(self):
         with self.assertRaisesRegex(AccessError, "callback configuration"):
@@ -213,23 +213,6 @@ class Configuration(unittest.TestCase):
         self.assertFalse((self.root / "bad").exists())
         self.assertFalse((self.root / "bad-plan").exists())
         self.assertFalse((self.root / "site-state").exists())
-
-    def test_stage_cli_forwards_optional_config_without_enabling_a_listener(self):
-        from oh_cli import access as cli
-        # Staging itself is replaced, so these paths are never created or read.
-        args = ["stage", "--destination", str(self.root / "release"), "--state", str(self.root / "site-state"),
-                "--plan-directory", str(self.root / "operator-plan"),
-                "--assets", str(self.root / "assets"), "--runtime-url", CONFIG["upstream"],
-                "--runtime-token-file", str(self.root / "bearer"), "--tls-cert", str(self.root / "cert"),
-                "--tls-key", str(self.root / "key"), "--allowed-host", "site.example", "--callbacks", str(self.path)]
-        allocated = oh_ports.effective()
-        # The selected site's instance/host.yaml is not an input of this test.
-        with patch.object(cli, "_site_host", return_value=(allocated, None)), patch.object(staging, "stage", return_value={"activated": False}) as stage, patch("sys.stdout", new_callable=io.StringIO), patch.object(service, "serve", side_effect=AssertionError("listener forbidden")):
-            self.assertEqual(cli.main(args), 0)
-        self.assertEqual(stage.call_args.kwargs["callbacks"], self.path)
-        self.assertEqual(stage.call_args.kwargs["state"], self.root / "site-state")
-        self.assertEqual(stage.call_args.kwargs["host_ports"], allocated)
-        self.assertEqual(list(self.root.iterdir()), [self.path])
 
 
 @unittest.skipUnless(importlib.util.find_spec("uvicorn"), "optional pinned service environment required")

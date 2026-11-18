@@ -129,7 +129,7 @@ existing identity state before migration, and verifies native authentication,
 live service releases and HTTPS readiness. It switches
 `~/.local/bin/thermite` to the prepared application only after every phase passes,
 and a successful run warns when `thermite` on PATH is a different launcher.
-No separate access staging, handoff or activation commands are required.
+There are no separate access staging, handoff or activation commands.
 
 Each run has one native readiness allowance, 900 seconds by default. Runtime
 startup, a settle before gateway commissioning, commissioning itself and the

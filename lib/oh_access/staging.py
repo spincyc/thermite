@@ -4,7 +4,6 @@ import os
 import json
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-import shlex
 import shutil
 import stat
 import subprocess
@@ -248,7 +247,7 @@ def _trusted_ancestors(path, purpose):
 
 
 def _plan_location(plan, target, state):
-    _systemd_text(plan)  # Also reject line/control characters in script metadata.
+    _systemd_text(plan)  # Also reject line/control characters in the receipt's commands.
     if any(_overlap(plan, root) for root in (target, state)):
         raise AccessError("Plan directory must be separate from releases and persistent state")
     _no_symlinks(plan)
@@ -319,77 +318,6 @@ def _new_release(target, *, purpose="Release", private_parent=False):
             os.close(descriptor)
 
 
-def _handoff_script(receipt):
-    """Render this stage's in-memory argv plan, never commands from a JSON input."""
-    return ("#!/bin/sh\nset -eu\n"
-            "# Run as the operator after reviewing this exact plan, never sudo sh.\n"
-            "# This script does not bootstrap accounts or activate services.\n"
-            "trap 'handoff_status=$?; if [ \"$handoff_status\" -ne 0 ]; then "
-            "printf \"%s\\n\" \"Handoff stopped. Fix the failed command and run this same handoff.sh again. Bootstrap and activation were not run.\" >&2; fi; exit \"$handoff_status\"' 0\n"
-            "trap 'exit 130' INT\ntrap 'exit 143' TERM\n"
-            "\n# 1. Account checks, then validated descriptor-anchored custody.\n"
-            "printf '%s\\n' 'Applying the reviewed thermite:thermite ownership plan.'\n" +
-            "\n".join(shlex.join(command) for command in receipt["ownership_commands"]) +
-            "\n\n# 2. Read-only verification as the thermite service account.\n"
-            "printf '%s\\n' 'Verifying private service custody.'\n" +
-            shlex.join(receipt["verification_command"]) +
-            "\nprintf '%s\\n' 'Custody verified. Bootstrap only a new site; complete the activation checklist before installing or starting units.'\n")
-
-
-def _activation_script(receipt):
-    """A reviewed cutover, using only commands generated for this release."""
-    target = receipt["destination"]
-    installed = receipt["units"]
-    retired = [name for name in ACCESS_UNITS if name not in installed]
-    lines = ["#!/bin/sh", "set -eu", "umask 077",
-             "# Run as the operator only after reviewing this script and completing",
-             "# the receipt's TLS, native-listener and callback requirements.",
-             "# This script never bootstraps or migrates site authority.",
-             "trap 'activation_status=$?; if [ \"$activation_status\" -ne 0 ]; then printf \"%s\\n\" \"Activation stopped; services may be stopped. Fix the failed command and rerun this script. See the guide before rolling back with an older plan.\" >&2; fi; exit \"$activation_status\"' 0",
-             "trap 'exit 130' INT", "trap 'exit 143' TERM",
-             "expected_release=" + shlex.quote(target),
-             "running_release() {",
-             '  unit=$1',
-             '  systemctl is-active --quiet "$unit" || return 1',
-             '  pid=$(systemctl show --property=MainPID --value "$unit") || return 1',
-             '  case "$pid" in ""|0|*[!0-9]*) return 1 ;; esac',
-             '  current=$(sudo readlink -- "/proc/$pid/cwd") || return 1',
-             '  [ "$current" = "$expected_release" ] || return 1',
-             '  [ "$(systemctl show --property=MainPID --value "$unit")" = "$pid" ]',
-             "}",
-             "# Verify the new release before stopping any existing service.",
-             shlex.join(receipt["verification_command"]),
-             "same_release=true"]
-    for command in receipt["unit_install_commands"]:
-        source, destination = command[-2:]
-        lines.append("cmp -s " + shlex.join([source, destination]) + " || same_release=false")
-    for name in installed:
-        lines.extend(["running_release " + shlex.quote(name) + " || same_release=false",
-                      "systemctl is-enabled --quiet " + shlex.quote(name) + " || same_release=false"])
-    for name in retired:
-        lines.append("if systemctl is-active --quiet " + shlex.quote(name) + " || systemctl is-enabled --quiet " + shlex.quote(name) + "; then same_release=false; fi")
-    lines.extend(['if [ "$same_release" = true ]; then',
-                  "  printf '%s\\n' 'This release is already active; no services restarted.'", "  exit 0", "fi",
-                  "# Stop installed access services before replacing their units."])
-    for name in ACCESS_UNITS:
-        lines.append("if systemctl cat " + shlex.quote(name) + " >/dev/null 2>&1; then " +
-                     shlex.join(["sudo", "systemctl", "stop", name]) + "; fi")
-    for name in retired:
-        lines.append("if systemctl cat " + shlex.quote(name) + " >/dev/null 2>&1; then " +
-                     shlex.join(["sudo", "systemctl", "disable", name]) + "; fi")
-    lines.extend(shlex.join(command) for command in receipt["unit_install_commands"])
-    lines.extend(["sudo systemctl daemon-reload",
-                  shlex.join(["sudo", "systemctl", "enable", "--now", *installed])])
-    for name in installed:
-        lines.extend(["for attempt in 1 2 3 4 5 6 7 8 9 10; do",
-                      "  if running_release " + shlex.quote(name) + "; then break; fi",
-                      '  if [ "$attempt" = 10 ]; then printf \'%s\\n\' ' +
-                      shlex.quote("Running release verification failed: " + name) + " >&2; exit 1; fi",
-                      "  sleep 1", "done"])
-    lines.append("printf '%s\\n' 'Running release verified. Check HTTPS login, room controls and any callbacks.'")
-    return "\n".join(lines) + "\n"
-
-
 def _install_environment(target, program, plan, descriptor, wheelhouse):
     log = plan / "environment-install.log"
     fd = os.open(log.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=descriptor)
@@ -414,13 +342,11 @@ def _install_environment(target, program, plan, descriptor, wheelhouse):
             output.flush()
             os.fsync(output.fileno())
             raise _EnvironmentInstallError("Service environment installation failed; review the private diagnostic log at " +
-                                           str(log) + ". The partial release was removed; use a new plan directory when retrying.") from None
+                                           str(log) + ". The partial release was removed.") from None
 
 
 def _export_plan(descriptor, receipt, custody, unit_sources=None):
     files = {"stage.json": json.dumps(receipt, indent=2, allow_nan=False) + "\n",
-             "handoff.sh": _handoff_script(receipt),
-             "activate.sh": _activation_script(receipt),
              "custody.json": json.dumps(custody, separators=(",", ":"), allow_nan=False) + "\n",
              "custody.py": Path(__file__).with_name("custody.py").read_text()}
     def write(parent, name, content):
@@ -435,8 +361,9 @@ def _export_plan(descriptor, receipt, custody, unit_sources=None):
             os.close(fd)
     for name, content in files.items():
         write(descriptor, name, content)
-    # Activation is privileged too: never install root units from the release
-    # after its service account has acquired permission to replace their bytes.
+    # Installing units is privileged too: never install root units from the
+    # release after its service account has acquired permission to replace
+    # their bytes.
     os.mkdir("units", mode=0o700, dir_fd=descriptor)
     units_descriptor = os.open("units", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
     try:
@@ -458,14 +385,19 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
     music is host.yaml's checked music (oh_music.settings): the gateway then
     serves its libraries through Music Assistant on host_ports' music port.
 
-    Owner installs the units only AFTER resolving the activation checklist. The
-    program and assets are copied, so no service points into a disposable checkout.
+    Nothing is handed over, installed or started here. The caller is the
+    install transaction's gateway step (oh_install.access.Gateway): it runs the
+    receipt's ownership and verification commands, migrates, installs the
+    plan's protected unit copies and starts them. plan_directory is its private
+    directory for the receipt, the custody manifest and helper, and those unit
+    copies. The program and assets are copied, so no service points into a
+    disposable checkout.
     """
     from . import guest
     from .service import CONFIG_VERSION, compile_contract, load_config, validate_listeners
     from oh_paths import PROGRAM, SITE, SITE_FILE
     if plan_directory is None:
-        raise AccessError("An operator-owned --plan-directory is required for a safe, replayable custody handoff")
+        raise AccessError("An operator-owned plan directory is required for a safe, replayable custody handoff")
     area = _absolute(area or SITE)
     resources = PROGRAM if (area / SITE_FILE).is_file() else area
     target = _absolute(destination)
@@ -554,27 +486,15 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
             _install_environment(target, program, plan, plan_descriptor, wheelhouse)
         for name, source in generated_units.items():
             atomic_private(target / "units" / name, source.encode())
-        requirements = [
-            "Complete and verify the explicit thermite:thermite ownership handoff before bootstrap or activation. Bootstrap as thermite only for a genuinely new site; reuse persistent state for upgrades and never bootstrap an existing site again.",
-            "Install and trust an owner-managed TLS certificate for each client; never disable certificate validation.",
-            "Seal every native HTTP/HTTPS/websocket/alternate-UI listener before exposing this as the security boundary.",
-            "Disable implicit native user roles and trusted-network authentication grants.",
-            "Preserve and verify native Sonos/UPnP callbacks before loopback listener cutover; no callback relay is enabled by this bundle.",
-            "Confirm one worker, shared state/locks, native bearer permissions, and service user ownership.",
-            "Only then may the owner install these unit files, daemon-reload, and enable/start the services."]
-        if callback_config is not None:
-            requirements[4] = "The optional callback listener is staged, not activated: verify exact native SUBSCRIBE advertised host/port/path and publishing peer, accepted NOTIFY to Item-state readback, renewal and native listener closure before cutover."
         receipt = {"version": 1, "staged": True, "activated": False, "security_boundary_active": False,
                    "destination": str(target), "persistent_state": str(state), "config": str(target / "config.json"), "units": list(generated_units),
-                   "environment_installed": install_environment, "activation_requirements": requirements,
+                   "environment_installed": install_environment,
                    "callbacks_staged": callback_config is not None, "callbacks_activated": False,
                    "service_user": ACCOUNT, "service_group": GROUP}
         command = ["sudo", "-u", ACCOUNT, "-g", GROUP, str(target / "env/bin/python"),
                    str(target / "program/bin/thermite"), "access"]
         receipt["verification_command"] = [*command, "verify", "--descriptor", str(target / "config.json")]
-        receipt["bootstrap_command"] = [*command, "bootstrap", "--descriptor", str(target / "config.json"), "--user", "<admin-user>"]
         receipt["unit_install_commands"] = [["sudo", "install", "-o", "root", "-g", "root", "-m", "0644", str(plan / "units" / name), "/etc/systemd/system/" + name] for name in generated_units]
-        receipt["activation_commands"] = [["sh", str(plan / "activate.sh")]]
         json_private(target / "stage.json", {})
         release_inventory = _inventory(target, release=True)
         for path, mode in release_inventory:
@@ -585,7 +505,6 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
         receipt["custody_manifest"] = str(plan / "custody.json")
         receipt["ownership_commands"] = [["getent", "passwd", ACCOUNT], ["getent", "group", GROUP], ["id", ACCOUNT],
                                          ["sudo", "/usr/bin/python3", "-I", "-S", str(plan / "custody.py"), str(plan / "custody.json")]]
-        receipt["owner_commands"] = [*receipt["ownership_commands"], receipt["verification_command"], *receipt["activation_commands"]]
         json_private(target / "stage.json", receipt)
         from .custody import manifest
         _export_plan(plan_descriptor, receipt, manifest([release_inventory, state_inventory], uid, gid), generated_units)

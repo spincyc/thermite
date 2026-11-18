@@ -1,49 +1,52 @@
 # Site access services
 
-`thermite access stage` copies the program and every remote asset into a new
-persistent private release, compiles authority from the validated house and
-native providers, installs the hash-pinned site environment, and writes two
-systemd units. All access units use `User=thermite`, `Group=thermite` and
-`UMask=0077`; arbitrary service account overrides are refused. It never
-installs or starts those units. No service path points
-back into the source checkout. Use `--wheelhouse` for an offline installation.
+`thermite install` and `thermite upgrade` stage, hand over, migrate and start
+the gateway as one step of their install transaction (`oh_install.access`).
+No command stages a release, and no unit is installed or started by hand:
+the transaction's manifest holds the units, and a rollback puts the previous
+ones back.
 
-Use a service-accessible root outside native runtime state and private operator
-home directories: the installer uses `access/` in the installation root,
-`/srv/thermite/access` by default. After the installer has created the
-`thermite` account and group and the root-owned installation root, the owner
-prepares its staging parents as the installer does:
+Staging (`oh_access.staging.stage`) copies the program and every remote asset
+into a new persistent private release, compiles authority from the validated
+house and native providers, installs the hash-pinned site environment, and
+writes two systemd units. All access units use `User=thermite`,
+`Group=thermite` and `UMask=0077`; arbitrary service account overrides are
+refused. Staging never installs or starts those units. No service path points
+back into the source checkout.
+
+Releases and state live in a service-accessible root outside native runtime
+state and private operator home directories: `access/` in the installation
+root, `/srv/thermite/access` by default. After the installer has created the
+`thermite` account and group and the root-owned installation root, its
+gateway step prepares the staging parents as the operator's:
 
 ```sh
 ACCESS_ROOT=/srv/thermite/access
 sudo install -d -o "$(id -un)" -g "$(id -gn)" -m 0755 "$ACCESS_ROOT" "$ACCESS_ROOT/releases"
 ```
 
-Stage as the operator, with `--destination "$ACCESS_ROOT/releases/first"` and
-`--state "$ACCESS_ROOT/state"`. Explicit TLS/key/token inputs remain in the
-operator's custody; staging copies them into the new release. The receipt's
-`ownership_commands` invokes the operator-owned custody helper for the finite
-release and state manifest, followed separately by its
-`verification_command`. Normal output is a concise summary; `--json` returns
-the full receipt for automation. `--port`, the HTTPS listener, defaults to the
-selected site's `gateway.port` in `instance/host.yaml` (13601 without one);
-install and upgrade always take it from there, never from the release they
-replace, so an upgrade can move it.
+It stages as the operator, into `$ACCESS_ROOT/releases/` under the
+transaction's name and on the state `$ACCESS_ROOT/state`. Explicit
+TLS/key/token inputs remain in the operator's custody; staging copies them
+into the new release. The receipt's `ownership_commands` invokes the
+operator-owned custody helper for the finite release and state manifest,
+followed separately by its `verification_command`; the step runs both. The
+HTTPS listener's port is the selected site's `gateway.port` in
+`instance/host.yaml` (13601 without one); install and upgrade always take it
+from there, never from the release they replace, so an upgrade can move it.
 
-The required `--plan-directory` saves an operator-owned receipt, `handoff.sh`
-and `activate.sh`
-outside the release and state. Its parent must already belong to the operator
-with mode 0700; the [installation guide](../../docs/installation.md#set-up-https-and-accounts)
-creates that parent explicitly. Review the script, then run it with `sh` as
-the operator. Only its exact administrative commands use sudo. The script
-validates every planned path without following symlinks, applies permissions
-through opened file descriptors, and verifies custody as thermite, stopping
-on failure. Its private operator-owned copy remains readable for replay after
-partial or complete handoff. Keep its helper and manifest in that trusted
-operator directory; never execute a privileged helper from the service-owned
-release. The plan also retains protected unit copies for the privileged
-installation step; never install units from the service-owned release.
-Bootstrap and activation remain separate. Release and state ancestors must
+Staging saves an operator-owned plan outside the release and state: the
+receipt, the custody manifest and its helper, and protected copies of the
+units. The installer keeps it in the run's private directory of the site,
+`var/transaction/<transaction>/gateway/plan`; its parent must already belong
+to the operator with mode 0700. Only the step's exact administrative commands
+use sudo. The helper validates every planned path without following symlinks
+and applies permissions through opened file descriptors; the step then
+verifies custody as thermite, stopping on failure. The helper and manifest
+stay in that trusted operator directory; a privileged helper is never
+executed from the service-owned release. The plan also retains protected unit
+copies for the privileged installation step; units are never installed from
+the service-owned release. Release and state ancestors must
 also be owned by root or the operator and protected from group/world writes;
 root-owned sticky directories are allowed because they protect each trusted
 child from replacement. Group- or world-writable access parents, such as an
@@ -53,8 +56,8 @@ account is refused.
 Python environment installation writes a private `environment-install.log`
 inside the operator's plan. On environment or dependency failure, staging
 removes the partial release and retains only the diagnostic plan, without
-changing existing authority. Review that log locally and retry with a new
-plan directory; diagnostic contents are never printed or copied into receipts.
+changing existing authority. Review that log locally and run the install
+again; diagnostic contents are never printed or copied into receipts.
 
 No ownership changes or privileged commands run during staging. Once handed
 over, release and state directories belong to
@@ -62,11 +65,12 @@ over, release and state directories belong to
 and environment executables are 0700. The two staging parents retain their
 operator/group ownership so the operator can prepare the next release.
 
-Pass a separate persistent `--state` directory and reuse it for every release
-of the same site. Releases share that directory's site identity, signing key,
+Every release of the same site uses the one persistent state directory.
+Releases share that directory's site identity, signing key,
 users, policies, durable claims and locks. Staging validates custody but does
 not migrate SQLite or initialize authority. Bootstrap only a genuinely new
-site; existing-site schema migrations require an explicit backed-up upgrade.
+site; an existing site's schema migrates inside an upgrade, which sets the
+state aside first.
 
 Staging accepts an existing `thermite:thermite` mode-0700 state root without
 opening its contents. It validates new release inputs against a temporary empty
@@ -75,12 +79,11 @@ state directory, then removes that directory. Existing authority is unchanged.
 ownership, group, modes, bounded internal environment links and TLS/configuration,
 and refuses missing state instead of initializing it.
 
-For a new site, the owner runs verification and then the receipt's
-`bootstrap_command`, replacing `<admin-user>` with the first administrator name:
+The installed release is the gateway unit's working directory. For a new
+site, the owner can create the first administrator from the host:
 
 ```sh
-RELEASE="$ACCESS_ROOT/releases/first"
-sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access verify --descriptor "$RELEASE/config.json"
+RELEASE=$(systemctl show -P WorkingDirectory thermite-access.service)
 sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access bootstrap --descriptor "$RELEASE/config.json" --user admin
 ```
 
@@ -92,16 +95,14 @@ Bootstrap, service and worker CLI operations require the thermite account and
 effective primary group. Personal terminal login/logout credentials remain
 operator-owned.
 
-To create the first administrator on the web Security page instead, replace
-the bootstrap command with:
+To create the first administrator on the web Security page instead, run:
 
 ```sh
 sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access setup --descriptor "$RELEASE/config.json"
 ```
 
 This initializes a fresh schema with no account and prints a one-use
-code to the interactive terminal. After completing the activation boundary
-checks below and starting the gateway, open `/security/` and enter the code
+code to the interactive terminal. Open `/security/` and enter the code
 plus the first administrator's username and password. The
 code expires after 15 minutes; run setup again for a replacement. It cannot
 replace existing accounts. Keep the code out of logs, URLs and shared messages.
@@ -134,26 +135,17 @@ the remote. No application role grants host sudo privileges.
 
 `thermite upgrade` sets the entire persistent state directory aside after
 stopping both access services and before migrating, and puts it back if the
-upgrade rolls back (docs/installation.md). By hand, before upgrading an
-existing identity schema, stop both access services, copy the entire
-persistent state directory aside privately, and use the new release's
-interpreter and program:
-
-```sh
-sudo systemctl stop thermite-access.service thermite-access-worker.service
-sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access migrate --descriptor "$RELEASE/config.json"
-```
-
-Copy the state after stopping services and before the migration command.
-Then activate the new release using its reviewed plan. `serve` and `worker`
+upgrade rolls back (docs/installation.md). It migrates as `thermite`, with
+the new release's own interpreter and program (`access migrate`). `serve`
+and `worker`
 refuse pending migrations; they never silently upgrade existing authority.
 The independent-settings migration replaces the authentication switch
 (`oh_identity/README.md` says what each stored state becomes): after it no
 Guest sees the cameras until an Admin turns that on. The principals migration replaces roles and room grants with one
 `admin` flag: accounts holding the reserved Admin role become admins and all
 others become Members; custom roles, Viewer and room grants are dropped.
-For rollback across a schema change, stop both services and restore the whole
-matching copy before activating the prior release. Do not mix an older
+A rollback of the upgrade, or `thermite revert` after it, puts the whole
+matching copy back with the prior release. Do not mix an older
 database with newer signing keys or a different site identity.
 
 `serve --descriptor …` loads a private compiled contract and explicit host list,
@@ -282,9 +274,10 @@ label.
 
 ## Optional device callbacks
 
-`stage --callbacks <private-file>` validates and copies an explicit callback
-configuration and stages a third unit. Without it, the release still has only
-the HTTPS service and policy worker. No unit is installed or started.
+Staging with a callback map (the installer's verified one, kept in
+`access/inputs/callbacks.json`) validates and copies it and stages a third
+unit. Without one, the release still has only the HTTPS service and policy
+worker.
 `thermite access callbacks --descriptor <private-file>` runs that separate
 legacy plaintext UPnP ingress; it has no credential or site-state input.
 
@@ -301,7 +294,7 @@ it forwards no upstream response content or credentials. Its pinned h11
 server bounds connections, initial-header time, body time and upstream time.
 The native runtime retains subscription SID/sequence authority.
 
-Before activation, verify the actual native SUBSCRIBE callback address,
+After an install, verify the actual native SUBSCRIBE callback address,
 port and path, then a notification that changes the native Item. jUPnP's
 `httpProxyPort` changes the advertised port; it does not create this listener.
 openHAB gets it as it starts, from `conf/services/upnp.cfg`, which `thermite
@@ -325,32 +318,30 @@ startup. `oh_identity.guest` then answers those requests only as a Guest. See
 
 ## Activation boundary
 
-The staged receipt explicitly says `security_boundary_active: false`.
-Before owner activation, seal every bypassing native HTTP, HTTPS, websocket
-and alternate UI listener, disable implicit roles and trusted-network grants,
-and verify client TLS trust. Preserve Sonos/UPnP callbacks during this change:
-loopback binding alone can break their LAN callback URLs. This package does
-not enable an unverified callback relay. The owner must validate the exact
-native callback path and either its supported listener/proxy setting or an
-independently allowlisted relay before changing listeners.
+The staged receipt explicitly says `security_boundary_active: false`:
+staging seals nothing. The install transaction makes the gateway the
+boundary around staging, in the one approved run. It binds native HTTP and
+HTTPS to loopback, blocks non-loopback access to the native ports, disables
+implicit roles and trusted-network grants, and verifies that anonymous
+native requests are rejected. It preserves Sonos/UPnP callbacks through that
+change: loopback binding alone can break their LAN callback URLs, so it
+keeps verified routes, derives missing ones from committed identities and
+live descriptions, and stops rather than enable an unverified relay.
 
-Only after custody verification and that checklist is satisfied should the owner
-review and run `sh "$PLAN/activate.sh"`. It verifies custody again before
-stopping installed access services, installs the protected unit copies,
-reloads systemd and enables/starts the new release. It checks each active
-MainPID's working directory against the staged release, with a bounded retry;
-the owner then checks HTTPS login, controls and callbacks. A callback unit
-omitted from the new release is stopped and disabled. Replaying a plan whose
-units and running release already match does not restart services.
+It then hands the release to `thermite`, verifies custody, stops the
+installed access services, migrates, installs the plan's protected unit
+copies, reloads systemd and enables and starts the new release. It checks
+each active MainPID's working directory against the staged release, with a
+bounded retry, then HTTPS and the boundary again; the owner then checks
+login, controls and callbacks. An installed callback relay is never
+dropped: without its exact map the run refuses before it begins.
 
 Each upgrade uses a new release and plan with the same persistent state and
-no bootstrap. If cutover fails, fix the cause and rerun the saved activation
-script; services may be stopped. Keep the old release and plan for rollback
-after checking shared-state compatibility. The
-[installation guide](../../docs/installation.md#update-the-access-release)
-gives the full upgrade and recovery procedure. `activation_commands` in the
-JSON receipt invokes the saved script; `unit_install_commands` records its
-protected unit-copy operations for review.
+no bootstrap. If the gateway step fails, the transaction rolls back: the
+previous units, releases and identity state are put back as they were. The
+[installation guide](../../docs/installation.md#update-or-remove) gives the
+upgrade and recovery procedure. `unit_install_commands` in the receipt
+records the unit-copy operations the step runs.
 
 Staging, a responsive login page,
 or a working authenticated client alone does not establish that direct native

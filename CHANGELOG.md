@@ -7,6 +7,11 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- `thermite access stage` is removed, with the `handoff.sh` and
+  `activate.sh` it wrote: they installed the gateway's units outside
+  the installation's manifest. `thermite install` and `upgrade` stage,
+  migrate and start every gateway release; there is no separate
+  staging or activation command.
 - `thermite deploy` is removed. A deploy is a step of `thermite
   install`, `upgrade` and `rollback`, which ask once and record what
   they do. The step no longer asks a second time or writes its own
@@ -150,8 +155,7 @@ rollback. The unified deployment workflow uses a separate committed private site
   a guest network need not serve sign-in there. Loopback is always
   bound as well. Unset, it listens on every IPv4 interface as before.
   The gateway's service descriptor is version 3 (`listen` replaces
-  `bind_host`), and `thermite access stage` takes `--listen`
-  (repeatable) in place of `--bind-host`.
+  `bind_host`).
 - `thermite access reset-admin --descriptor FILE --user NAME` recovers
   from a lost administrator password. Run on the host as the thermite
   service account, with the gateway running or stopped, it sets a new

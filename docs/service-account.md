@@ -297,8 +297,8 @@ The workflow retains existing identity and TLS state, stops gateway writers,
 migrates the schema, starts the new services and verifies their live release
 and HTTPS response. In an upgrade, the install transaction has set the
 identity state aside first, and a rollback puts it back. It also seals
-native ports and preserves verified callback routes. No separate staging or
-activation script is needed. See [installation and recovery](installation.md#update-or-remove).
+native ports and preserves verified callback routes. There is no separate
+staging or activation command. See [installation and recovery](installation.md#update-or-remove).
 
 On a new site, ordinary controls work with no account. The Security
 page creates the first administrator account from an owner-issued setup
@@ -326,10 +326,9 @@ sudo mv --no-clobber --no-target-directory -- \
 ```
 
 Confirm the old path is gone and the new directory contains the existing
-state before continuing. Stage a new release with
-`--state /srv/thermite/access/state`, then run its explicit ownership commands
-and service-user verification. This preserves the database, site identity,
-signing keys, policies and locks. Skip bootstrap. Keep the prior release for
-rollback; because its configuration names the old state location, it must be
-restaged with the current location before reuse. Leave all access services
-stopped until the new units and access settings have been checked.
+state before continuing. Then run `thermite install --config DIR`: it stages
+a new release on the state in that place, hands both to the service account,
+verifies them as `thermite`, migrates and starts the services. This preserves
+the database, site identity, signing keys, policies and locks. Skip
+bootstrap. The prior release's configuration names the old state location,
+so it cannot serve again as it is.

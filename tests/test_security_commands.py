@@ -246,22 +246,13 @@ class ResetAdmin(unittest.TestCase):
         self.assertEqual(refused.exception.code, 2)
 
 
-class StagePort(unittest.TestCase):
-    def test_staged_https_port_defaults_to_the_selected_sites_gateway_port(self):
-        import oh_ports
-        from oh_access import staging
-        moved = oh_ports.effective({"gateway": {"port": 16301}})
-        required = ["stage", "--destination", "/fictional/release", "--state", "/fictional/state",
-                    "--plan-directory", "/fictional/plan", "--assets", "/fictional/assets",
-                    "--runtime-url", "http://127.0.0.1:13602", "--runtime-token-file", "/fictional/bearer",
-                    "--tls-cert", "/fictional/cert", "--tls-key", "/fictional/key", "--allowed-host", "house.example.test",
-                    "--json"]
-        for site, extra, expected in ((moved, [], 16301), (None, [], 13601), (moved, ["--port", "14000"], 14000)):
-            with self.subTest(site=bool(site), extra=extra), contextlib.redirect_stdout(io.StringIO()), \
-                    patch.object(access, "_site_host", return_value=(site, None)), \
-                    patch.object(staging, "stage", return_value={}) as stage:
-                self.assertEqual(access.main([*required, *extra]), 0)
-                self.assertEqual((stage.call_args.kwargs["port"], stage.call_args.kwargs["host_ports"]), (expected, site))
+class Stage(unittest.TestCase):
+    def test_no_action_stages_a_release(self):
+        """Only the install transaction stages one (oh_install.access.Gateway)."""
+        with contextlib.redirect_stderr(io.StringIO()) as refused, self.assertRaises(SystemExit) as stopped:
+            access.main(["stage", "--help"])
+        self.assertEqual(stopped.exception.code, 2)
+        self.assertIn("invalid choice: 'stage'", refused.getvalue())
 
 
 class Prune(unittest.TestCase):

@@ -2,9 +2,7 @@
 
 import getpass
 import json
-import os
 from pathlib import Path
-import shlex
 import sys
 
 import oh_cli
@@ -15,14 +13,13 @@ DESCRIPTION = """Run a site's HTTPS boundary and room-policy worker, or log
 this terminal into a site. The Security page holds what guests see. Local
 setup issues a one-use code to create the first admin there; bootstrap instead
 prompts privately and creates it at once. If every administrator's password
-is lost, reset-admin gives one existing account a new one. Staging prepares
-persistent code, private authority, a pinned
-environment, and owner-installable units; it starts no service.
+is lost, reset-admin gives one existing account a new one.
 
 Normal deployment uses thermite install and updates use thermite upgrade.
-Those commands stage and migrate the gateway, preserve callbacks and verify
-the native network boundary. Stage, migrate, verify, serve and worker here
-are service and recovery primitives, not a separate deployment sequence.
+Those commands stage, hand over, migrate and start the gateway, preserve
+callbacks and verify the native network boundary; no action here stages a
+release or installs a unit. Migrate, verify, serve and worker are what its
+services and the installer run, not a separate deployment sequence.
 """
 
 #: The terminal's subcommands: like thermite tui, they need no private site.
@@ -51,44 +48,6 @@ def hidden_password(prompt="Password: ", *, confirm=False):
     if confirm and (len(secret) < 12 or secret != getpass.getpass("Confirm password: ")):
         raise AccessError("Passwords must match and contain at least 12 characters")
     return secret
-
-
-def print_stage(result, args):
-    target = Path(os.path.abspath(Path(result.get("destination", args.destination)).expanduser()))
-    commands = result.get("ownership_commands", [])
-    paths = result.get("custody_paths", 0)
-    print("Staged release: " + str(target))
-    print("Persistent state: " + str(result.get("persistent_state", args.state)))
-    print(f"Custody: {paths} private paths; {len(commands)} ownership commands for thermite:thermite.")
-    plan = Path(os.path.abspath(args.plan_directory.expanduser()))
-    print("Full receipt: " + str(plan / "stage.json"))
-    print("Review: " + shlex.join(["more", str(plan / "handoff.sh")]))
-    print("Hand off and verify: " + shlex.join(["sh", str(plan / "handoff.sh")]))
-    print("Review activation: " + shlex.join(["more", str(plan / "activate.sh")]))
-    if result.get("bootstrap_command"):
-        print("Only for a new site: " + shlex.join(result["bootstrap_command"]))
-    print("Before activation:")
-    for requirement in result.get("activation_requirements", ["Complete the TLS, native-listener and callback checklist in the receipt."]):
-        print("  - " + requirement)
-    print("After completing those checks: " + shlex.join(["sh", str(plan / "activate.sh")]))
-    print("No services started; the security boundary is not active.")
-
-
-def _site_host():
-    """A selected site's host overrides participate in separate access
-    staging: its listeners' ports and its music (oh_music.settings)."""
-    import oh_deploy
-    import oh_music
-    path = oh_cli.AREA / "instance/host.yaml"
-    try:
-        host = oh_deploy.load_host(path)
-        return oh_ports.effective(host), oh_music.settings(host)
-    except FileNotFoundError:
-        if not path.is_symlink():
-            return None, None
-        raise AccessError("Cannot validate staged listeners against the selected site's instance/host.yaml") from None
-    except (OSError, ValueError) as exc:
-        raise AccessError(f"Cannot validate staged listeners against the selected site's host file: {exc}") from None
 
 
 def main(argv=None):
@@ -131,24 +90,6 @@ as user.reset_admin by a local principal.""",
         if name == "status":
             sub.add_argument("--room", action="append", default=[], help="also read this room's policy (repeatable)")
         oh_cli.add_json(sub)
-    sub = oh_cli.action(commands, "stage", "prepare a persistent release and owner-installable units", examples=[("thermite access stage --help", "list the explicit custody and listener inputs")])
-    sub.add_argument("--destination", required=True, type=Path, help="new persistent release directory outside this checkout")
-    sub.add_argument("--state", required=True, type=Path, help="site-owned mode0700 state directory outside releases and source checkouts; reuse on upgrades")
-    sub.add_argument("--plan-directory", required=True, type=Path, help="new operator-owned plan directory under an existing mode0700 parent; saves private diagnostics, the receipt, handoff.sh and activate.sh")
-    oh_cli.add_house(sub)
-    sub.add_argument("--assets", required=True, type=Path, help="complete generated conf/html/remote directory for the selected inventory")
-    sub.add_argument("--runtime-url", required=True, help="explicit native loopback HTTP origin")
-    sub.add_argument("--runtime-token-file", required=True, type=Path, help="operator-owned mode0600 native bearer input; copied for service handoff")
-    sub.add_argument("--tls-cert", required=True, type=Path, help="owner-managed TLS certificate chain")
-    sub.add_argument("--tls-key", required=True, type=Path, help="operator-owned mode0600 TLS private key input; copied for service handoff")
-    sub.add_argument("--allowed-host", required=True, action="append", dest="allowed_hosts", help="exact HTTP Host name (repeatable; no wildcard)")
-    sub.add_argument("--listen", action="append", metavar="ADDRESS", help="HTTPS listener address (repeatable; default: all IPv4 interfaces)")
-    sub.add_argument("--port", type=int, help=f"unprivileged HTTPS port (default: the selected site's gateway.port, else {oh_ports.ACCESS_PORT})")
-    sub.add_argument("--timezone", default="UTC", help="site's IANA timezone (default: UTC)")
-    sub.add_argument("--service-user", dest="user", choices=("thermite",), default="thermite", help="fixed service account (thermite); ownership handoff is reported explicitly")
-    sub.add_argument("--wheelhouse", type=Path, help="install pinned dependencies offline from this directory")
-    sub.add_argument("--callbacks", type=Path, help="optional private mode0600 exact callback map; stage a separate disabled listener unit")
-    oh_cli.add_json(sub)
     args = parser.parse_args(argv)
     if args.command not in TERMINAL:
         # The server's subcommands run on its private site, so they check it
@@ -230,20 +171,7 @@ as user.reset_admin by a local principal.""",
             from oh_access.callback_service import serve
             serve(args.descriptor)
             return 0
-        else:
-            from oh_access.staging import stage
-            values = vars(args).copy()
-            values.pop("command")
-            values.pop("json")
-            values["host_ports"], values["music"] = _site_host()
-            values["listen"] = values["listen"] or list(oh_ports.GATEWAY_LISTEN)
-            if values["port"] is None:
-                values["port"] = (values["host_ports"] or oh_ports.DEFAULTS)["access"]
-            result = stage(**values)
-        if args.command == "stage" and not args.json:
-            print_stage(result, args)
-        else:
-            print(json.dumps(result, indent=2))
+        print(json.dumps(result, indent=2))
         return 0
     except AccessError as exc:
         print("thermite access: " + str(exc), file=sys.stderr)
