@@ -171,6 +171,26 @@ class Features(TestCase):
         self.assertNotIn("sentinel", project("avr_signal", json.dumps(raw), schema))
         self.assertEqual(project("read_text", "arbitrary", {"kind": "text"}), "UNDEF")
 
+    def test_a_device_problem_reaches_a_client_as_its_code_and_the_gateway_puts_no_text_in_its_place(self):
+        import oh_render
+        import oh_site_contract
+        from oh_conf import House
+        from oh_integrations import _commands
+        data = json.loads((Path(__file__).resolve().parents[3] / "instance/devices.yaml").read_text())
+        states = oh_site_contract.compile(House(data), oh_render.build(data))["states"]
+        for name in ("example_tv_problem", "example_player_problem"):
+            spec = states[name]
+            self.assertEqual(spec, {"kind": "enum", "values": list(_commands.CODES)})
+            for code in _commands.CODES:
+                self.assertEqual(project(name, code, spec), code)
+            self.assertEqual(project(name, _commands.CLEAR, spec), "UNDEF")
+            # Text a rule of an older release left in the Item is no code:
+            # it is not shown, and nothing is shown for it.
+            for text in ("not paired: pair it on the Pairing page", "Device control unavailable", ""):
+                self.assertEqual(project(name, text, spec), "UNDEF")
+        # A tally is the exporter's alone: no client reads it.
+        self.assertNotIn("example_tv_sony_ip_control_commands", states)
+
     def test_lock_rechecks_policy_after_acquiring_and_value_specific_affected_rooms(self):
         touched = []
 

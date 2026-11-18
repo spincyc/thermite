@@ -144,6 +144,15 @@ does what their binding cannot, provides
               files rendered from all the devices it renders at once, such
               as its rule under automation/js/
 
+A module whose rule takes its devices' commands (_device.js commandRule)
+keeps the record of each one (_commands): its render() adds the record's
+Items (_commands.render), its script embeds the shared device part under
+its NAME (_io.embed, _io.shared), and it provides
+
+    problem(device) -> the device's problem Item (_commands.problem_item)
+              when its rule commands the device, else None: the remote
+              page and the metrics show the code it holds
+
 A control module that can restart its devices without cutting their power
 provides, for nightly reboots (oh_features.reboots),
 
@@ -250,8 +259,6 @@ integration.
                   the sandbox, which still reads the other devices, addresses
                   its Things nowhere (oh_render.unaddressed) and leaves the
                   sessions to the runtime
-    PROBLEM_CLEAR_STATE
-                  the state its <id>_problem Item holds for "nothing wrong"
     ROUTE_OPTIONAL = True
                   its Things and ports never gate a routed source's health
     DISCOVER_PORTS, DISCOVER_MDNS

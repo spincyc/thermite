@@ -25,6 +25,9 @@ Items, per Apple TV:
   secrets directory (atv/secrets/<id> in production's state,
   var/secrets/pyatv/<id> for a test instance), never in conf/ or Git, so a
   helper with an empty one pairs again.
+- `<id>_problem` and `<id>_pyatv_http_commands` (oh_integrations._commands): why
+  the Apple TV did not take the rule's last command or cannot be read, as a
+  code, and the rule's tally of its commands by outcome.
 
 The rule holds oh_conf.RULE_SENDS, so oh_render.read_only() makes it read
 the Apple TVs and send them nothing.
@@ -36,7 +39,7 @@ import json
 from pathlib import Path
 
 from oh_conf import RULE_SENDS, Addon, House, YamlFile, uses
-from .. import _io
+from .. import _commands, _io
 
 from .. import _pairing
 
@@ -121,6 +124,13 @@ def render(device: dict, house: House, out: YamlFile) -> None:
     out.items[f"{ident}_key"] = {"type": "String", "label": "Remote Key", "groups": [ident], "tags": ["Control"],
                                  "autoupdate": False}
     _pairing.render(device, house, out, NAME, **PAIRING)
+    _commands.render(device, out, NAME)
+
+
+def problem(device: dict) -> str | None:
+    """The device's problem Item (oh_integrations._commands) when this rule
+    commands it, else None."""
+    return _commands.problem_item(device["id"]) if uses(device, PHASE, NAME) else None
 
 
 def table(devices: list[dict]) -> list[dict]:
@@ -134,7 +144,7 @@ def _line(name: str, value: object) -> str:
 
 def rule(devices: list[dict]) -> str:
     """pyatv_http.js with its tables filled in for these devices."""
-    source = _io.embed(SOURCE.read_text(encoding="utf-8"))
+    source = _io.embed(SOURCE.read_text(encoding="utf-8"), NAME)
     for mark in (DEVICES_MARK, PRESSES_MARK, APPS_MARK, RULE_SENDS):
         if source.split("\n").count(mark) != 1:
             raise ValueError(f"{SOURCE} must contain the line {mark!r} exactly once")

@@ -461,6 +461,7 @@ def exporter_map(inventory: dict, conf=None) -> dict:
     reading, which tells TV audio from a silent TV."""
     import oh_conf
     import oh_integrations
+    from oh_integrations import _commands
     from oh_features import remote_model
 
     conf = conf if conf is not None else _build(inventory)
@@ -483,13 +484,11 @@ def exporter_map(inventory: dict, conf=None) -> dict:
             point, convert = chosen
             entry = {"device": ident, "room": device["room"], "kind": device["kind"], "point": point,
                      "convert": convert}
-            # An integration may name the state its problem Item holds for
-            # "nothing wrong" (PROBLEM_CLEAR_STATE); other undefined
+            # A device's problem Item holds a problem code, or CLEAR for
+            # "nothing wrong" (oh_integrations._commands); other undefined
             # telemetry remains unknown. Missing/NULL is not clear.
-            clear = next((module.PROBLEM_CLEAR_STATE for module in oh_integrations.REGISTRY
-                          if hasattr(module, "PROBLEM_CLEAR_STATE") and _uses(device, module.PHASE, module.NAME)), None)
-            if point == "problem" and clear is not None and name == f"{ident}_problem":
-                entry["clear_state"] = clear
+            if point == "problem" and name == _commands.problem_item(ident):
+                entry["clear_state"] = _commands.CLEAR
             if convert == "enum":
                 entry["options"] = _options(item)
             items[name] = kept[name] = entry
@@ -531,6 +530,11 @@ def exporter_map(inventory: dict, conf=None) -> dict:
              if (names := playing.items(device)) and set(names.values()) <= present}
     result = {"version": MAP_VERSION, "rooms": rooms, "devices": devices, "sources": sources,
               "items": dict(sorted(items.items())), "paths": paths, "health_checks": checks, "playing": shown}
+    # Each script's tally of the commands it took for a device, which the
+    # exporter turns into thermite_device_commands_total.
+    tallies = _commands.tallies(house.devices, present)
+    if tallies:
+        result["commands"] = dict(sorted(tallies.items()))
     from oh_features import threadpools
     if threadpools.enabled(house):
         result["handler_pool"] = dict(threadpools.ITEM_NAMES)

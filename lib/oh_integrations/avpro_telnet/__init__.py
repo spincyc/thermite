@@ -19,6 +19,9 @@ Items, per matrix:
 
 - `<id>_output<N>_input` (Number): the input routed to output N; commanded
   with an input number.
+- `<id>_problem` and `<id>_avpro_telnet_commands` (oh_integrations._commands): why
+  the matrix did not take the rule's last command or cannot be read, as a
+  code, and the rule's tally of its commands by outcome.
 
 A room's HDMI switch in the routing (oh_features.routing) may be one of its
 outputs, as the example TV's is (ports(), switch_item()). The matrix
@@ -35,7 +38,7 @@ import json
 from pathlib import Path
 
 from oh_conf import RULE_SENDS, Addon, House, YamlFile, uses
-from .. import _io
+from .. import _commands, _io
 
 NAME = "avpro_telnet"
 PHASE = "control"
@@ -99,6 +102,13 @@ def render(device: dict, house: House, out: YamlFile) -> None:
             "tags": ["Control"],
             "autoupdate": False,
         }
+    _commands.render(device, out, NAME)
+
+
+def problem(device: dict) -> str | None:
+    """The device's problem Item (oh_integrations._commands) when this rule
+    commands it, else None."""
+    return _commands.problem_item(device["id"]) if uses(device, PHASE, NAME) else None
 
 
 def table(devices: list[dict]) -> list[dict]:
@@ -112,7 +122,7 @@ def _line(value: object) -> str:
 
 def rule(devices: list[dict]) -> str:
     """avpro_telnet.js with its device table filled in."""
-    source = _io.embed(SOURCE.read_text(encoding="utf-8"))
+    source = _io.embed(SOURCE.read_text(encoding="utf-8"), NAME)
     for mark in (DEVICES_MARK, RULE_SENDS):
         if source.split("\n").count(mark) != 1:
             raise ValueError(f"{SOURCE} must contain the line {mark!r} exactly once")

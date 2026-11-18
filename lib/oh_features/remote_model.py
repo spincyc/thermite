@@ -11,6 +11,7 @@ import re
 
 import oh_integrations as integrations
 from oh_conf import House
+from oh_integrations import _commands
 from . import playing, routing
 
 GENERATED = "// Generated remote model; edit the house file, not this preview."
@@ -107,8 +108,9 @@ def capabilities(device: dict) -> tuple[dict | None, str | None, str | None]:
     module, control = provider(device)
     if module is not None:
         layout = module.remote_of(device) if hasattr(module, "remote_of") else getattr(module, "REMOTE_LAYOUT", None)
-        problem = module.problem(device) if hasattr(module, "problem") else None
-        return control, layout, problem
+        # Whichever script commands it keeps its problem Item, which need not
+        # be the integration that gives it its remote (a receiver's HEOS rule).
+        return control, layout, _commands.problem(device)
     for module in integrations.REGISTRY:
         if hasattr(module, "remote_availability") and module.remote_availability(device) is not None:
             return None, module.remote_of(device), None

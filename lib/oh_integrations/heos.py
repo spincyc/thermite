@@ -35,7 +35,7 @@ from pathlib import Path
 
 from oh_conf import Addon, House, YamlFile, point, uses
 
-from . import denonmarantz_http
+from . import _commands, _io, denonmarantz_http
 
 NAME = "heos"
 PHASE = "control"
@@ -143,13 +143,20 @@ def render(device: dict, house: House, out: YamlFile) -> None:
         "type": "String", "label": "Reboot", "groups": [ident], "tags": ["Control"], "autoupdate": False,
         "metadata": {"commandDescription": {"config": {"options": "reboot=Reboot"}}},
     }
+    _commands.render(device, out, NAME)
+
+
+def problem(device: dict) -> str | None:
+    """The device's problem Item (oh_integrations._commands) when this rule
+    commands it, else None."""
+    return _commands.problem_item(device["id"]) if uses(device, PHASE, NAME) else None
 
 
 def files(devices: list[dict], house: House) -> dict[str, str]:
     table = [{"id": d["id"], "thing": thing_uid(d, house), "receiver": denonmarantz_http.thing_uid(d),
               "host": str(ipaddress.IPv4Address(d["ip"])),
               "readURL": f"http://{ipaddress.IPv4Address(d['ip'])}:8080/goform/AppCommand.xml"} for d in devices]
-    return {RULE: SOURCE.read_text().replace("const DEVICES = null;", "const DEVICES = " + json.dumps(table) + ";")}
+    return {RULE: _io.shared(SOURCE.read_text(), NAME).replace("const DEVICES = null;", "const DEVICES = " + json.dumps(table) + ";")}
 
 
 def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:

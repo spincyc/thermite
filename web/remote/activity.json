@@ -89,7 +89,17 @@
       "room": "Example West",
       "kind": "problem",
       "states": true,
-      "commands": false
+      "commands": false,
+      "options": {
+        "unreachable": "cannot be reached",
+        "no_answer": "does not answer",
+        "refused": "refused the command",
+        "busy": "is busy",
+        "not_ready": "is not ready for that command",
+        "auth": "is not paired or refuses openHAB",
+        "protocol": "answered in a way openHAB does not understand",
+        "other": "has a problem"
+      }
     },
     "example_player_power": {
       "label": "Power",
@@ -127,6 +137,24 @@
         "unavailable": "Cannot pair now"
       },
       "power": "example_player_power"
+    },
+    "example_player_problem": {
+      "label": "Problem",
+      "device": "Example Player",
+      "room": "Example West",
+      "kind": "problem",
+      "states": true,
+      "commands": false,
+      "options": {
+        "unreachable": "cannot be reached",
+        "no_answer": "does not answer",
+        "refused": "refused the command",
+        "busy": "is busy",
+        "not_ready": "is not ready for that command",
+        "auth": "is not paired or refuses openHAB",
+        "protocol": "answered in a way openHAB does not understand",
+        "other": "has a problem"
+      }
     },
     "example_display_power": {
       "label": "Power",
@@ -216,7 +244,17 @@
       "room": "Example East",
       "kind": "problem",
       "states": true,
-      "commands": false
+      "commands": false,
+      "options": {
+        "unreachable": "cannot be reached",
+        "no_answer": "does not answer",
+        "refused": "refused the command",
+        "busy": "is busy",
+        "not_ready": "is not ready for that command",
+        "auth": "is not paired or refuses openHAB",
+        "protocol": "answered in a way openHAB does not understand",
+        "other": "has a problem"
+      }
     },
     "example_matrix_output1_input": {
       "label": "Output 1 input",

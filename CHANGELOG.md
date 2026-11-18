@@ -7,6 +7,24 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Commands: every command a device's rule takes is recorded when it
+  ends. openHAB's journal has one line for it, `command device=<id>
+  item=<Item> command=<value> outcome=<outcome> code=<code> ms=<n>`, a
+  warning unless the device took it; see
+  [trace a command](docs/installation.md#trace-a-command).
+  - `<id>_problem` now exists for every device a rule commands and holds
+    one of eight codes (`unreachable`, `no_answer`, `refused`, `busy`,
+    `not_ready`, `auth`, `protocol`, `other`), each with fixed words,
+    until the device takes a command again. The gateway passes the code
+    through; it no longer answers "Device control unavailable" for
+    every problem.
+  - Each of those devices has a `problem` health check while a room uses
+    it, as the Sony TVs had.
+  - Metrics count each device's commands and the time they took by
+    outcome: `thermite_device_commands_total` and
+    `thermite_device_command_seconds_total`.
+  - A routing step's `exc=` names a `native_*` code where it printed
+    `Error`.
 - The switch that selects a site is spelled `--config`. `--site` is no
   longer documented or shown in help; the launcher still takes it, for a
   release from before this one that checks a version it has put back.

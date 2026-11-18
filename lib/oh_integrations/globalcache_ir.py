@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 
 from oh_conf import Addon, House, LIB, YamlFile, point, retarget, uses
+from . import _commands, _io
 
 NAME = "ir"
 PHASE = "control"
@@ -163,6 +164,13 @@ def render(device: dict, house: House, out: YamlFile) -> None:
     out.items[f"{ident}_ir_native"] = point(ident, "String", "IR transport (no device feedback)", ["Status"], channel, guarded=True)
     out.items[f"{ident}_key"] = {"type": "String", "label": "Verified IR key", "groups": [ident],
                                  "tags": ["Control"], "autoupdate": False}
+    _commands.render(device, out, NAME)
+
+
+def problem(device: dict) -> str | None:
+    """The device's problem Item (oh_integrations._commands) when this rule
+    commands it, else None."""
+    return _commands.problem_item(device["id"]) if uses(device, PHASE, NAME) and commissioned(device) is not None else None
 
 
 def files(devices: list[dict], house: House) -> dict[str, str]:
@@ -175,7 +183,7 @@ def files(devices: list[dict], house: House) -> dict[str, str]:
         table.append({"id": device["id"], "thing": thing_uid(device), "channel": f"ir-m1#c{profile['connector']}", "keys": keys})
         result[f"transform/{map_name(device)}"] = "\n".join(f"{key}={profile['commands'][key]}" for key in keys) + "\n"
     if table:
-        result[RULE] = SOURCE.read_text().replace("const DEVICES = null;", "const DEVICES = " + json.dumps(table) + ";")
+        result[RULE] = _io.shared(SOURCE.read_text(), NAME).replace("const DEVICES = null;", "const DEVICES = " + json.dumps(table) + ";")
     return result
 
 

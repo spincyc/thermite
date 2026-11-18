@@ -82,14 +82,18 @@ const FIELDS={avr_main_power:{kind:'denon',thing:'avr_thing',zone:1,point:'power
 
 function rig(options={}){
  const state={main:{power:'ON',input:'SAT/CBL'},zone2:{power:'ON',input:'SOURCE'},commands:[],...options};
- const device=receiver(state),parsers=[],updates=[],rules=[],logs=[];
+ const device=receiver(state),parsers=[],updates=[],rules=[],logs=[],said=[],record={};
  const broker={states:new NativeMap(),events:new Queue(),active:number(),eventWake:{value:false,set(v){this.value=v;},compareAndSet(b,a){if(this.value!==b)return false;this.value=a;return true;}},
   overflow:{value:false,get(){return this.value;},set(v){this.value=v;}},lock:{lock(){},unlock(){}}};
  let serial=0;
  const env={broker,noRules:true,wake:()=>true,now:()=>++serial,id:()=>String(++serial),sleep(){},
   log:{error:m=>logs.push(['error',m]),warn:m=>logs.push(['warn',m]),info:m=>logs.push(['info',m])},journal:{load:()=>null,save(){}}};
  const thing={getConfiguration:()=>new NativeMap([['host','192.0.2.1'],['httpPort',8080]])};
- const openhab={things:{getThing:uid=>uid==='avr_thing'&&!state.noThing?{rawThing:thing}:null},items:{getItem:name=>({postUpdate:value=>updates.push([name,value])})},
+ // The command record's own Items (oh_integrations/_commands.py) keep their
+ // state in `record`; every other post is a reading, in `updates`.
+ const item=name=>/_problem$|_commands$/.test(name)?{get state(){return name in record?record[name]:'NULL';},postUpdate:value=>{record[name]=String(value);}}
+  :{postUpdate:value=>updates.push([name,value])};
+ const openhab={things:{getThing:uid=>uid==='avr_thing'&&!state.noThing?{rawThing:thing}:null},items:{getItem:item},
   rules:{JSRule:row=>rules.push(row)},triggers:{ItemCommandTrigger:name=>({name})}};
  const shared={Java:java(parsers),thermiteIO:{http:device.answer,unreached:error=>!!error&&error.unreached===true},Date,JSON,Map,Object,String,Error,Number,encodeURIComponent,decodeURIComponent};
  const io=vm.createContext({...shared,module:{exports:{}},require(name){assert.equal(name,'openhab');return openhab;}});
@@ -98,16 +102,19 @@ function rig(options={}){
  const descriptor={io:{epoch:'denon-1',wake:'events',actors:{avr:{wake:'avr_wake',resources:Object.keys(FIELDS)}}}};
  const bridge=module.create(descriptor,env);
  let api=null;
- const routingIO={...module,actor(config,provider,given){assert.deepEqual(given,{readonly:false});api=module.actor(config,provider,{...env,...given});return api;},
+ // The rule hands its actor the script's command record.
+ const routingIO={...module,actor(config,provider,given){assert.deepEqual(Object.keys(given),['readonly','record']);assert.equal(given.readonly,false);
+   assert.equal(typeof given.record,'function');api=module.actor(config,provider,{...env,...given});return api;},
   explicitControls:(config,actor)=>module.explicitControls(config,actor,{})};
  const config={key:'avr',io:descriptor.io,fields:FIELDS};
  const script=rule.replace('const ROUTING_EXECUTOR = null;','const ROUTING_EXECUTOR = '+JSON.stringify(config)+';');
- vm.runInContext(script,vm.createContext({...shared,require(name){if(name==='openhab')return openhab;assert.equal(name,'thermite-routing-io');return routingIO;}}));
+ vm.runInContext(script,vm.createContext({...shared,console:{info:m=>said.push(['info',m]),warn:m=>said.push(['warn',m])},
+  require(name){if(name==='openhab')return openhab;assert.equal(name,'thermite-routing-io');return routingIO;}}));
  assert(api,'the rule built no actor');
  const reports=[];
  const probe=resource=>{bridge.probe({token:String('p')+(++serial),key:'avr',resource},row=>reports.push(row));api.drain();bridge.events();return reports.at(-1);};
  const write=(resource,value)=>{bridge.dispatch({token:String('w')+(++serial),key:'avr',resource,value,phase:'acquire'},row=>reports.push(row));api.drain();bridge.events();return reports.at(-1);};
- return {state,requests:device.requests,parsers,updates,rules,logs,reports,probe,write,api};
+ return {state,requests:device.requests,parsers,updates,rules,logs,said,record,reports,probe,write,api};
 }
 const tests=[];
 function test(name,fn){fn();tests.push(name);}
@@ -179,6 +186,24 @@ test('a declined, unreached or lost command ends refused, unsent or unknown',()=
   assert.equal(report.type,'terminal');assert.equal(report.reason,outcome);assert(report.admitted!==true||outcome==='device_refused');
  }
  const lost=rig({status:500}).write('avr_main_power','OFF');assert.equal(lost.type,'uncertain');
+});
+test('each write the actor concludes is one line of the rule\'s command record, and why it failed the receiver\'s problem',()=>{
+ const line=(level,item,value,outcome,code)=>[level,new RegExp(`^command device=avr item=${item} command=${value} outcome=${outcome} code=${code} ms=\\d+$`)];
+ const same=(f,expected)=>{assert.equal(f.said.length,expected.length,JSON.stringify(f.said));
+  expected.forEach(([level,pattern],at)=>{assert.equal(f.said[at][0],level);assert.match(f.said[at][1],pattern);});};
+ const f=rig();
+ assert.equal(f.record.avr_problem,'UNDEF');
+ f.write('avr_main_power','OFF');f.probe('avr_main_power');f.api.legacy('avr_main_input','PHONO');
+ same(f,[line('info','avr_main_power','OFF','applied','-'),line('warn','avr_main_input','\\?','dropped','invalid')]);
+ for(const [options,outcome,code] of [[{status:403},'refused','refused'],[{fail:{unreached:true}},'unsent','unreachable'],
+  [{status:500},'unknown','protocol'],[{fail:{}},'unknown','no_answer'],[{noThing:true},'unsent','unreachable']]){
+  const g=rig(options);g.write('avr_main_power','OFF');
+  same(g,[line('warn','avr_main_power','OFF',outcome,code)]);assert.equal(g.record.avr_problem,code);
+  assert.equal(JSON.parse(g.record.avr_denonmarantz_http_commands).outcomes[outcome].count,1);
+ }
+ assert.equal(f.record.avr_problem,'UNDEF');
+ assert.deepEqual(Object.entries(JSON.parse(f.record.avr_denonmarantz_http_commands).outcomes).filter(([,row])=>row.count).map(([outcome,row])=>[outcome,row.count]),
+  [['applied',1],['dropped',1]]);
 });
 test('an answered command whose readback still differs is applied without a sample',()=>{
  const f=rig({ignore:true});const report=f.write('avr_main_input','MPLAY');

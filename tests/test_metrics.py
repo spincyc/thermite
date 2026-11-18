@@ -72,8 +72,11 @@ def items(**states):
 #: The gateway's subscriptions opened and resyncs repeat its connects, which
 #: are routine (the first remote page opens it): its failures are what
 #: matters, and the gateway is to stop exporting both (handoff).
+#: What became of each device's commands is counted for a query when one
+#: fails, and for a board that has yet to be drawn.
 UNREAD = {"thermite_zone_info", "thermite_item_device_off",
-          "thermite_gateway_upstream_connects_total", "thermite_gateway_upstream_resyncs_total"}
+          "thermite_gateway_upstream_connects_total", "thermite_gateway_upstream_resyncs_total",
+          "thermite_device_commands_total", "thermite_device_command_seconds_total"}
 
 
 def read_families():
@@ -429,8 +432,9 @@ class Speakers(unittest.TestCase):
     def test_a_speaker_is_required_while_it_played_lately_or_was_playing_when_last_read(self):
         recorded = [rule for rule in yaml.safe_load(self.FILES["prometheus/alerts.yml"])["groups"][0]["rules"]
                     if rule.get("record") == alerts.CHECK and rule["labels"].get("device") == "example_speaker"]
+        # Its key rule keeps a problem Item (oh_integrations._commands), checked like its Thing.
         self.assertEqual({(rule["labels"]["check"], rule["labels"]["required"]) for rule in recorded},
-                         {("thing", "true"), ("thing", "false"), ("port", "true"), ("port", "false")})
+                         {(check, required) for check in ("thing", "port", "problem") for required in ("true", "false")})
         for rule in recorded:
             # Its own room, no routing zone.
             self.assertEqual(rule["labels"]["room"], "example_patio")

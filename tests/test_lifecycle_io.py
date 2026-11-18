@@ -18,6 +18,7 @@ from oh_features.routing import lifecycle_io  # noqa: E402
 import oh_integrations as integrations  # noqa: E402
 from oh_integrations import ukm404_http, avpro_telnet, sony_adcp, sony_ip_control, pyatv_http, sony_rest, denonmarantz_http  # noqa: E402
 from oh_testing import routing as routing_check  # noqa: E402
+from tests import test_integration_scripts as scripts  # noqa: E402
 
 
 class Rendering(unittest.TestCase):
@@ -274,15 +275,17 @@ class Denon(unittest.TestCase):
             result = subprocess.run([shutil.which('node'), str(AREA / 'tests/denonmarantz_http_harness.js'), str(lifecycle_io.SOURCE), str(rule)],
                                     capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)['passed'], 12)
+        self.assertEqual(json.loads(result.stdout)['passed'], 13)
 
 
 @unittest.skipUnless(shutil.which('node'),'node required')
 class Broker(unittest.TestCase):
     def test_actual_executor_source(self):
-        result=subprocess.run([shutil.which('node'),str(AREA/'tests/lifecycle_io_harness.js'),str(lifecycle_io.SOURCE),str(pyatv_http.SOURCE)],capture_output=True,text=True,timeout=10)
+        with tempfile.TemporaryDirectory() as directory:
+            result=subprocess.run([shutil.which('node'),str(AREA/'tests/lifecycle_io_harness.js'),str(lifecycle_io.SOURCE),str(pyatv_http.SOURCE),
+                                   str(scripts.shared(directory,[pyatv_http.NAME]))],capture_output=True,text=True,timeout=10)
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertEqual(json.loads(result.stdout)['passed'],47)
+        self.assertEqual(json.loads(result.stdout)['passed'],51)
 
 
 class Quiescence(unittest.TestCase):

@@ -12,6 +12,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -28,6 +29,7 @@ from oh_features.routing import lifecycle_io  # noqa: E402
 from oh_integrations import _io, vrroom_http, vrroom_telnet  # noqa: E402
 from oh_room_policy import expected_plan  # noqa: E402
 from oh_testing import routing as routing_check  # noqa: E402
+from tests import test_integration_scripts as scripts  # noqa: E402
 
 DESK = "example_desk"
 SWITCH = {"id": "example_switch", "room": DESK, "kind": "hdmi_switch", "make": "HDFury", "model": "VRROOM",
@@ -60,10 +62,12 @@ def house():
 @unittest.skipUnless(shutil.which("node"), "node is required for the production VRROOM rule")
 class Rule(unittest.TestCase):
     def test_the_production_rule_against_a_scripted_switch(self):
-        result = subprocess.run([shutil.which("node"), str(AREA / "tests/vrroom_telnet_harness.js"),
-                                 str(vrroom_telnet.SOURCE), str(_io.DEVICE), str(_io.SOURCE)], capture_output=True, text=True, timeout=30)
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([shutil.which("node"), str(AREA / "tests/vrroom_telnet_harness.js"),
+                                     str(vrroom_telnet.SOURCE), str(scripts.shared(directory, [vrroom_telnet.NAME])),
+                                     str(_io.SOURCE)], capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(json.loads(result.stdout)["passed"], 12)
+        self.assertEqual(json.loads(result.stdout)["passed"], 13)
 
 
 class Rendering(unittest.TestCase):
@@ -98,8 +102,9 @@ class Rendering(unittest.TestCase):
         data = house()
         out = YamlFile(())
         vrroom_telnet.render(SWITCH, House(data), out)
-        self.assertEqual(set(out.items), {"example_switch_input", "example_switch_reboot"})
-        self.assertTrue(all(item["autoupdate"] is False and "channel" not in item for item in out.items.values()))
+        self.assertEqual(set(out.items), {"example_switch_input", "example_switch_reboot", "example_switch_problem",
+                                          "example_switch_vrroom_telnet_commands"})
+        self.assertTrue(all(item.get("autoupdate", False) is False and "channel" not in item for item in out.items.values()))
         files = vrroom_telnet.files([SWITCH], House(data))
         text = files["automation/js/vrroom_telnet_example_switch.js"]
         self.assertEqual(text.count(RULE_SENDS), 1)

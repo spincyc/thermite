@@ -30,6 +30,9 @@ Items, per switch:
   hangs (resets every HTTP request) while telnet still answers. Only a
   switch with `reboot: nightly` restarts unasked, at night while its input
   has no signal (reboot(), oh_features.reboots), which vrroom_http reports.
+- `<id>_problem` and `<id>_vrroom_telnet_commands` (oh_integrations._commands): why
+  the switch did not take the rule's last command or cannot be read, as a
+  code, and the rule's tally of its commands by outcome.
 
 The wording of the answers (`insel %d %d`, `insel err`, `ipinterrupt on`,
 `ipinterrupt err`, `reboot`) comes from strings in the VRROOM's firmware,
@@ -53,7 +56,7 @@ import json
 from pathlib import Path
 
 from oh_conf import RULE_SENDS, Addon, House, YamlFile, uses
-from .. import _io, vrroom_http
+from .. import _commands, _io, vrroom_http
 
 NAME = "vrroom_telnet"
 PHASE = "control"
@@ -144,6 +147,13 @@ def render(device: dict, house: House, out: YamlFile) -> None:
         "autoupdate": False,
         "metadata": {"commandDescription": {"config": {"options": f"{REBOOT}=Reboot"}}},
     }
+    _commands.render(device, out, NAME)
+
+
+def problem(device: dict) -> str | None:
+    """The device's problem Item (oh_integrations._commands) when this rule
+    commands it, else None."""
+    return _commands.problem_item(device["id"]) if uses(device, PHASE, NAME) else None
 
 
 def table(devices: list[dict]) -> list[dict]:
@@ -157,7 +167,7 @@ def _line(value: object) -> str:
 
 def rule(devices: list[dict]) -> str:
     """vrroom_telnet.js with its device table filled in."""
-    source = _io.embed(SOURCE.read_text(encoding="utf-8"))
+    source = _io.embed(SOURCE.read_text(encoding="utf-8"), NAME)
     for mark in (DEVICES_MARK, RULE_SENDS):
         if source.split("\n").count(mark) != 1:
             raise ValueError(f"{SOURCE} must contain the line {mark!r} exactly once")

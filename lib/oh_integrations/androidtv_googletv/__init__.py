@@ -50,6 +50,9 @@ Items, per device:
   a PIN is not paired. The binding asks for a code on PORT + 1, and drops
   the request silently when that port does not connect, so the rule tries
   it first, also before pairing again, and shows `closed` instead.
+- `<id>_problem` and `<id>_androidtv_googletv_commands` (oh_integrations._commands): why
+  the device did not take the rule's last command or cannot be read, as a
+  code, and the rule's tally of its commands by outcome.
 
 The rule hands its presses to the Thing's handler, as the binding's console
 command does, so no Item links the binding's keycode, debug or pincode
@@ -67,7 +70,7 @@ from pathlib import Path
 
 from oh_conf import RULE_SENDS, Addon, House, YamlFile, point, retarget, uses
 
-from .. import _pairing
+from .. import _commands, _io, _pairing
 
 NAME = "androidtv_googletv"
 PHASE = "control"
@@ -315,6 +318,13 @@ def render(device: dict, house: House, out: YamlFile) -> None:
                              "autoupdate": False}
     label = pairing_label(device)
     _pairing.render(device, house, out, NAME, label=label, confirm=CONFIRM.format(label=label), **PAIRING)
+    _commands.render(device, out, NAME)
+
+
+def problem(device: dict) -> str | None:
+    """The device's problem Item (oh_integrations._commands) when this rule
+    commands it, else None."""
+    return _commands.problem_item(device["id"]) if uses(device, PHASE, NAME) else None
 
 
 def table(devices: list[dict]) -> list[dict]:
@@ -330,7 +340,7 @@ def _line(name: str, value: object) -> str:
 
 def rule(devices: list[dict]) -> str:
     """androidtv_googletv.js with its tables filled in for these devices."""
-    source = SOURCE.read_text(encoding="utf-8")
+    source = _io.shared(SOURCE.read_text(encoding="utf-8"), NAME)
     for mark in (DEVICES_MARK, PRESSES_MARK, RULE_SENDS):
         if source.split("\n").count(mark) != 1:
             raise ValueError(f"{SOURCE} must contain the line {mark!r} exactly once")

@@ -129,6 +129,21 @@ class NativeItems(unittest.TestCase):
             [f"{ARC}_tv", UDN]])
         self.assertEqual(result["unknownSent"], [])
         self.assertEqual(result["readOnlySent"], [])
+        # Each key has its record (oh_integrations._commands): the binding
+        # acknowledges nothing, so a key it was handed is sent; one the rule
+        # does not have is dropped unprinted; a toggle whose state is unknown
+        # goes nowhere, and is the speaker's problem.
+        key = f"{ARC}_key"
+        self.assertEqual(result["recorded"], [
+            *(["info", key, pressed, "sent", "-"]
+              for pressed in ("previous", "next", "play_pause", "play_pause", "night", "speech", "tv")),
+            *(["warn", key, "?", "dropped", "invalid"] for _ in range(4)),
+            ["warn", key, "play_pause", "unsent", "not_ready"], ["warn", key, "night", "unsent", "not_ready"]])
+        self.assertEqual(result["problems"], ["not_ready"])
+        self.assertEqual(result["tally"], {"sent": 7, "dropped": 4, "unsent": 2})
+        self.assertEqual(result["readOnlyRecorded"], [["warn", key, pressed, "dropped", "read_only"]
+                                                      for pressed in ("previous", "play_pause", "tv", "night", "speech")])
+        self.assertEqual(result["readOnlyProblems"], [])
 
 
 class AudioPage(unittest.TestCase):

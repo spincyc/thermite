@@ -19,6 +19,7 @@ from pathlib import Path
 import yaml
 
 from oh_conf import GUARD_PROFILE, Addon, House, YamlFile, options_text, point, uses, volume_js
+from . import _commands, _io
 
 NAME = "sonos"
 PHASE = "observe"
@@ -176,9 +177,16 @@ def render(device: dict, house: House, out: YamlFile) -> None:
             items[f"{ident}_tv"]["autoupdate"] = False
         items[f"{ident}_key"] = {"type": "String", "label": "Remote Key", "groups": [ident],
                                  "tags": ["Control"], "autoupdate": False}
+        _commands.render(device, out, NAME)
     if device["model"] == "Arc":
         items[f"{ident}_codec"] = point(ident, "String", "TV Audio Format", ["Status", "Info"], f"{uid}:codec")
         items[f"{ident}_line_in"] = point(ident, "Switch", "TV Audio Connected", ["Status"], f"{uid}:linein")
+
+
+def problem(device: dict) -> str | None:
+    """The device's problem Item (oh_integrations._commands) when this rule
+    commands it, else None."""
+    return _commands.problem_item(device["id"]) if uses(device, "control", NAME) else None
 
 
 def setting(ident: str, suffix: str, kind: str, label: str, channel: str, values) -> dict:
@@ -209,7 +217,7 @@ def files(devices: list[dict], house: House) -> dict[str, str]:
                   if uses(d, "control", NAME)]
     if not controlled:
         return {}
-    return {RULE: SOURCE.read_text().replace(MARK, "const DEVICES = " + json.dumps(controlled, indent=2) + ";")}
+    return {RULE: _io.shared(SOURCE.read_text(), NAME).replace(MARK, "const DEVICES = " + json.dumps(controlled, indent=2) + ";")}
 
 
 def playing(device: dict) -> dict:

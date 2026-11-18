@@ -1,6 +1,14 @@
 'use strict';
 const fs=require('fs'), path=require('path'), vm=require('vm'), assert=require('assert');
+const {RECORD}=require('./command_record.js');
+// argv: lifecycle_io.js, pyatv_http.js, and a JSON file with _device.js as
+// that script embeds it under `pyatv_http` (_io.device()).
 const source=fs.readFileSync(process.argv[2],'utf8');
+// The Apple TV script with its tables, and what it shares embedded as
+// _io.py embeds it; its thermiteIO stays each test's fixture.
+const appleTvScript=()=>fs.readFileSync(process.argv[3],'utf8').replace('const DEVICES = null;',`const DEVICES = [{id:'source',host:'192.0.2.1',helper:'http://owned'}];`)
+ .replace('const PRESSES = null;',"const PRESSES = {menu:'menu'};").replace('const APPS = null;','const APPS = {};')
+ .replace('// THERMITE_DEVICE',()=>JSON.parse(fs.readFileSync(process.argv[4],'utf8')).pyatv_http);
 class NativeMap extends Map { get(key){return super.has(key)?super.get(key):null;} put(key,value){assert.equal(typeof value,'string');this.set(key,value);} }
 class Queue {constructor(){this.rows=[];} offer(value){assert.equal(typeof value,'string');if(this.rows.length>=512)return false;this.rows.push(value);return true;}poll(){return this.rows.length?this.rows.shift():null;}isEmpty(){return this.rows.length===0;}size(){return this.rows.length;} }
 const number=()=>({n:0,get(){return this.n;},incrementAndGet(){return ++this.n;},decrementAndGet(){return --this.n;}});
@@ -11,15 +19,16 @@ function setup(initial,moduleSource=source,options={}){
  vm.runInNewContext(moduleSource,context);
  const module=context.module.exports, writes=[], events=[], journals=[], wakes=[];
  let active=true, serial=0, fail=false, midway=null;
- const logs=[], sleeps=[];
+ const logs=[], sleeps=[], records=[];
  const log={error:m=>logs.push(['error',m]),warn:m=>logs.push(['warn',m]),info:m=>logs.push(['info',m])};
  const env={broker,noRules:true,wake:name=>wakes.push(name),now:options.now||(()=>++serial),id:()=>String(++serial),log,sleep:ms=>sleeps.push(ms)};
  const bridge=module.create(descriptor,env);
  const journal={data:initial||null,load(){return this.data;},save(row){if(fail)throw Error('disk failure');this.data=JSON.parse(JSON.stringify(row));journals.push({...row});if(midway&&row.status==='admitted')midway();}};
  const provider={has:(r,v)=>['D1','D2'].includes(r)&&['1','2','3','4'].includes(String(v)),execute(r,v){writes.push([r,v]);return {outcome:'applied',sample:{value:String(v),fresh:true}};},probe(r){return {value:'3',fresh:true};}};
- const actor=module.actor({key:'switch',io:descriptor.io},provider,{...env,journal,id:()=>String(++serial)});
+ // The device script's command record (thermiteDevice.recorder()), as the actor is handed it.
+ const actor=module.actor({key:'switch',io:descriptor.io},provider,{...env,journal,id:()=>String(++serial),record:options.record||(row=>records.push(row))});
  const submit=(token,resource,value='3')=>bridge.dispatch({token,key:'switch',resource,value,phase:'acquire',isCurrent:()=>active},r=>events.push({...r}));
- return {bridge,actor,submit,writes,events,journals,wakes,provider,broker,journal,descriptor,env,module,logs,sleeps,
+ return {bridge,actor,submit,writes,events,journals,wakes,provider,broker,journal,descriptor,env,module,logs,sleeps,records,
   inactive(){active=false;},failJournal(){fail=true;},onJournal(fn){midway=fn;}};
 }
 const tests=[];
@@ -30,7 +39,7 @@ const tickets=f=>f.logs.filter(l=>l[1].startsWith('routing ticket ')).map(([leve
 const fieldsOf=line=>Object.fromEntries(line.slice('routing ticket '.length).split(' ').map(part=>[part.slice(0,part.indexOf('=')),part.slice(part.indexOf('=')+1)]));
 const timeless=line=>{const row=fieldsOf(line);delete row.ms;delete row.wait;return row;};
 // An httpActor around the VRROOM wiring above, with a scripted exchange.
-function httpRig({status=200,body='',thing=true,ack='readback',fail=null,observed=3,rules=null}={}){
+function httpRig({status=200,body='',thing=true,ack='readback',fail=null,observed=3,rules=null,record=null}={}){
  const f=setup();
  const nativeThing={getConfiguration:()=>new Map([['baseURL','http://owned'],['commandMethod','GET'],['stateMethod','GET']]),
   getChannel:()=>({getConfiguration:()=>new Map([['commandExtension','/cmd?insel=%2$s'],['commandTransformation',['JS(|parseInt(input))']],['stateExtension','/status'],['stateTransformation',['JSONPATH($.portseltx0)']]])})};
@@ -42,7 +51,7 @@ function httpRig({status=200,body='',thing=true,ack='readback',fail=null,observe
    unreached:error=>!!error&&error.unreached===true}});
  vm.runInContext(source,context);const module=context.module.exports,bridge=module.create(f.descriptor,f.env);
  const actor=module.httpActor({key:'switch',io:f.descriptor.io,fields:{D1:{kind:'http',thing:'native',channel:'input',ack,allowed:['1','2','3','4']}}},
-  {...f.env,noRules:!rules,journal:{load:()=>null,save(){}}});
+  {...f.env,noRules:!rules,journal:{load:()=>null,save(){}},...(record?{record}:{})});
  const write=(value='3',labels={})=>{bridge.dispatch({token:String('w')+value,key:'switch',resource:'D1',value,phase:'acquire',...labels},()=>{});actor.drain();bridge.events();};
  const read=()=>{bridge.probe({token:String('read'),key:'switch',resource:'D1'},()=>{});actor.drain();bridge.events();};
  return {f,bridge,actor,write,read};
@@ -85,10 +94,7 @@ test('source provider requires correlated native evidence, never cached GET or A
  const context=vm.createContext({Date,JSON,Map,Set,Number,Object,String,Error,
   console:{info(){},warn(){}},thermiteIO:{http(url,method,body){const payload=JSON.parse(body);requests.push([url,method,payload]);return {getStatus:()=>status,getContentAsString:()=>JSON.stringify(typeof answer==='function'?answer(payload):answer)};}},
   require(name){assert.equal(name,'openhab');return {rules:{JSRule(){}},triggers:{GenericCronTrigger(){},ItemCommandTrigger(){}},items:{getItem:()=>({state:'UNDEF',postUpdate(){}})}};}});
- let driver=fs.readFileSync(process.argv[3],'utf8').replace('const DEVICES = null;',`const DEVICES = [{id:'source',host:'192.0.2.1',helper:'http://owned'}];`).replace('const PRESSES = null;','const PRESSES = {};').replace('const APPS = null;','const APPS = {};');
- // Embedded as _io.py embeds it; thermiteIO stays the fixture above.
- driver=driver.replace('// THERMITE_DEVICE',()=>fs.readFileSync(path.join(path.dirname(process.argv[3]),'..','_device.js'),'utf8'));
- vm.runInContext(driver,context);
+ vm.runInContext(appleTvScript(),context);
  const provider=vm.runInContext('routingProvider()',context), op={token:String('native'),value:'OFF'};
  assert.equal(provider.execute('source_power','OFF',op).outcome,'applied');
  const sample=provider.probe('source_power',op);assert(sample.fresh);assert.equal(sample.value,'OFF');assert.equal(sample.observedAt,1000);assert.equal(sample.nativeSequence,4);
@@ -489,6 +495,10 @@ test('failed exchanges keep only their HTTP status or exception class',()=>{
   [()=>{throw javaError('ExecutionException',javaError('ConnectException'));},'uncertain','provider_outcome_unknown',' exc=ConnectException'],
   [()=>{throw Error('lost reply: secret body');},'uncertain','provider_outcome_unknown',' exc=Error'],
   [()=>{throw Error('executor_thing_unavailable');},'uncertain','provider_outcome_unknown',' exc=executor_thing_unavailable'],
+  // An integration's own fixed code, and an executor's with a prefix, name themselves too.
+  [()=>{throw Error('native_avpro_status_unavailable');},'uncertain','provider_outcome_unknown',' exc=native_avpro_status_unavailable'],
+  [()=>{throw Error('unsupported_executor_state_transform');},'uncertain','provider_outcome_unknown',' exc=unsupported_executor_state_transform'],
+  [()=>{throw Error('native_power: secret body');},'uncertain','provider_outcome_unknown',' exc=Error'],
   [()=>({outcome:'unsent',exc:'secret class name'}),'terminal','device_not_reached',''],
   [()=>({outcome:'unsent',http:999,exc:7}),'terminal','device_not_reached',''],
  ];
@@ -501,6 +511,17 @@ test('failed exchanges keep only their HTTP status or exception class',()=>{
  const f=setup();f.provider.probe=()=>{throw Object.assign(Error('executor_http_refused'),{http:502});};
  f.bridge.probe({token:String('failed-read'),key:'switch',resource:'D1'},()=>{});f.actor.drain();
  assert.deepEqual(timeless(tickets(f)[0]),{route:'-',room:'-',choice:'-',resource:'D1',value:'-',phase:'probe',outcome:'terminal',reason:'owned_probe_failed',readback:'-',polls:'0',http:'502'});
+});
+test('an HTTP actor names why its write was not applied by a problem code',()=>{
+ const coded=options=>{const records=[],rig=httpRig({...options,record:row=>records.push(row)});rig.write();
+  assert.equal(records.length,1);return [records[0].outcome,records[0].code];};
+ assert.deepEqual(coded({}),['applied',null]);
+ assert.deepEqual(coded({status:404}),['refused','refused']);
+ assert.deepEqual(coded({status:503}),['unknown','protocol']);
+ assert.deepEqual(coded({fail:javaError('ExecutionException',javaError('ConnectException'),{unreached:true})}),['unsent','unreachable']);
+ assert.deepEqual(coded({fail:javaError('TimeoutException')}),['unknown','no_answer']);
+ assert.deepEqual(coded({body:'{"result":0}',ack:'result'}),['unknown','protocol']);
+ assert.deepEqual(coded({thing:false}),['unsent','unreachable']);
 });
 test('HTTP actors surface the status or exception class but never a body',()=>{
  const expect=(rig,act,outcome,reason,cause)=>{act(rig);const line=tickets(rig.f).at(-1);const row=fieldsOf(line);
@@ -515,6 +536,85 @@ test('HTTP actors surface the status or exception class but never a body',()=>{
  expect(httpRig({status:500,body:'secret body'}),r=>r.read(),'terminal','owned_probe_failed',' http=500');
  const lagging=httpRig({observed:2});lagging.write('3');
  assert.deepEqual(timeless(tickets(lagging.f)[0]),{route:'-',room:'-',choice:'-',resource:'D1',value:'3',phase:'acquire',outcome:'terminal',reason:'-',readback:'unconfirmed',polls:'4'});
+});
+test('each write an actor concludes is handed once to its device script\'s command record, as the device ended it; a probe is not',()=>{
+ const cases=[
+  [()=>({outcome:'applied',sample:{value:'3',fresh:true}}),'applied',null],
+  [()=>({outcome:'refused',code:'not_ready'}),'refused','not_ready'],
+  [()=>({outcome:'refused'}),'refused','refused'],
+  [()=>({outcome:'busy',code:'busy',retryAfterMs:500}),'busy','busy'],
+  [()=>({outcome:'unsent',code:'unreachable'}),'unsent','unreachable'],
+  [()=>({outcome:'unknown',code:'no_answer'}),'unknown','no_answer'],
+  // No word of why: the record itself names it `other` (_device.js).
+  [()=>{throw Error('lost reply');},'unknown',undefined],
+  [()=>'done','unknown',undefined],
+  // A one-shot its helper completed by declining it is retired, and recorded as it ended.
+  [()=>({outcome:'applied',record:{outcome:'unsent',code:'auth'}}),'unsent','auth'],
+ ];
+ for(const [execute,outcome,code] of cases){
+  const f=setup();f.provider.execute=execute;f.submit('ticket','D1');f.actor.drain();f.bridge.events();
+  assert.equal(f.records.length,1,outcome);assert.equal(tickets(f).length,1);
+  const [row]=f.records;
+  assert.deepEqual([row.item,row.command,row.secret,row.outcome,row.code],['D1','3',false,outcome,code]);
+  assert(Number.isFinite(row.ms)&&row.ms>=0,outcome);
+ }
+ const f=setup();f.bridge.probe({token:String('read'),key:'switch',resource:'D1'},()=>{});f.actor.drain();
+ assert.equal(tickets(f).length,1);assert.deepEqual(f.records,[]);
+ // A record that throws changes no outcome.
+ const g=setup(null,source,{record(){throw Error('record failed');}});g.submit('ticket','D1');g.actor.drain();g.bridge.events();
+ assert(g.events.some(e=>e.type==='terminal'&&e.token==='ticket'));assert.equal(JSON.parse(g.broker.states.get('switch')).quarantine,null);
+});
+test('a manual command the actor will not send is recorded dropped: a value it does not have, a device it holds, a read-only copy, a reload',()=>{
+ const rows=f=>f.records.map(row=>[row.item,row.command,row.secret,row.outcome,row.code,row.ms]);
+ const f=setup();
+ assert.equal(f.actor.legacy('D1','99'),false);assert.equal(f.actor.legacy('D1','0000',true),false);
+ assert.deepEqual(rows(f),[['D1','99',false,'dropped','invalid',0],['D1','<private>',true,'dropped','invalid',0]]);
+ // Quarantined after an unknown outcome, it queues nothing.
+ f.provider.execute=()=>{throw Error('lost reply');};f.submit('unknown','D1');f.actor.drain();f.bridge.events();f.records.length=0;
+ assert.equal(f.actor.legacy('D2','3'),false);
+ assert.deepEqual(rows(f),[['D2','3',false,'dropped','held',0]]);
+ const copy=setup(null,source.replace('const SEND = true;','const SEND = false;'));
+ copy.bridge.onLegacy(e=>{if(e.type==='legacy')copy.bridge.authorizeLegacy(e.token);});
+ assert(copy.actor.legacy('D1','2'));copy.bridge.events();copy.actor.drain();
+ assert.deepEqual(rows(copy).map(row=>row.slice(0,5)),[['D1','2',false,'dropped','read_only']]);assert.deepEqual(copy.writes,[]);
+ // A reload cancels what the old actor had queued and not sent: its script's new record says so.
+ const old=setup(),later=[];
+ assert(old.actor.legacy('D1','2'));assert.deepEqual(old.records,[]);
+ old.module.actor({key:'switch',io:old.descriptor.io},old.provider,{...old.env,journal:{load:()=>null,save(){}},record:row=>later.push(row)});
+ assert.deepEqual(later.map(row=>[row.item,row.command,row.outcome,row.code]),[['D1','2','dropped','held']]);
+});
+test('a command the Apple TV rule hands its actor is recorded once, by the actor, in the record the rule itself would use',()=>{
+ const f=setup(),logs=[],rules={},items={},desc={io:{epoch:'record',wake:'events',actors:{source:{wake:'sourceWake',resources:['source_power']}}}};
+ const bridge=f.module.create(desc,f.env);bridge.onLegacy(e=>{if(e.type==='legacy')bridge.authorizeLegacy(e.token);});
+ let status=200,actor=null;
+ const openhab={rules:{JSRule(rule){rules[rule.id]=rule;}},triggers:{GenericCronTrigger(){},ItemCommandTrigger:name=>name},
+  items:{getItem:name=>({get state(){return name in items?items[name]:'NULL';},postUpdate(value){items[name]=String(value);}})}};
+ // The module the script requires, its actor on this test's broker and clock.
+ const routingIO={actor(config,provider,given){actor=f.module.actor(config,provider,{...f.env,...given,journal:{load:()=>null,save(){}}});return actor;}};
+ const context=vm.createContext({Date,JSON,Map,Set,Number,Object,String,Error,
+  console:{info:m=>logs.push(['info',m]),warn:m=>logs.push(['warn',m])},
+  thermiteIO:{unreached:()=>false,http(url,method,body){const payload=JSON.parse(body);
+   return {getStatus:()=>status,getContentAsString:()=>JSON.stringify({id:'source',operation:payload.operation,terminal:true,ok:status===200,paired:true,connected:true,power:'on',power_reported_at:1000})};}},
+  require(name){if(name==='openhab')return openhab;assert.equal(name,'thermite-routing-io');return routingIO;}});
+ vm.runInContext(appleTvScript().replace('const ROUTING_EXECUTOR = null;',`const ROUTING_EXECUTOR = ${JSON.stringify({key:'source',io:desc.io})};`),context);
+ assert(actor,'the script built no actor');
+ const press=value=>{rules.pyatv_http_source_command.execute({itemName:'source_key',receivedCommand:value});bridge.events();actor.drain();bridge.events();};
+ const recorded=()=>logs.filter(([,line])=>line.startsWith('command device=')).map(([level,line])=>[level,...RECORD.exec(line).slice(2,6)]);
+ press('menu');
+ assert.deepEqual(recorded(),[['info','source_key','menu','applied','-']]);
+ // The helper completes the one-shot by declining it (not paired): the
+ // executor retires its ticket, and the record says the key went nowhere.
+ status=409;press('menu');
+ assert.deepEqual(recorded().slice(1),[['warn','source_key','menu','unsent','auth']]);
+ assert.equal(items.source_problem,'auth');
+ assert.deepEqual(tickets(f).map(line=>fieldsOf(line).outcome),['terminal','terminal']);
+ // What the actor will not queue is the rule's command all the same.
+ press('nokey');
+ assert.deepEqual(recorded().slice(2),[['warn','source_key','?','dropped','invalid']]);
+ status=200;press('menu');
+ assert.equal(items.source_problem,'UNDEF');
+ const counted=Object.entries(JSON.parse(items.source_pyatv_http_commands).outcomes).filter(([,row])=>row.count).map(([outcome,row])=>[outcome,row.count]);
+ assert.deepEqual(counted,[['applied',2],['dropped',1],['unsent',1]]);
 });
 test('a manual command keeps a private value private and takes a gateway id from its source',()=>{
  const f=setup(),values=[];f.provider.has=()=>true;f.provider.execute=(r,v)=>{values.push(v);return {outcome:'applied'};};

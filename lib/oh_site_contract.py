@@ -45,8 +45,6 @@ def _state(name, item):
         return {"kind": "pairing_status"}
     if name.endswith("_pairing_result"):
         return {"kind": "pairing_result"}
-    if name.endswith("_problem"):
-        return {"kind": "problem"}
     description = (item.get("metadata", {}).get("stateDescription", {}).get("config") or {})
     command = item.get("metadata", {}).get("commandDescription", {}).get("config") or {}
     options = [value for value, _ in parse_options(description.get("options") or command.get("options") or "") if value]

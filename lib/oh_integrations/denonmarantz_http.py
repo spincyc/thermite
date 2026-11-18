@@ -167,7 +167,7 @@ def rule_path(device: dict) -> str:
 
 def rule() -> str:
     """The routing actor's source, its input aliases filled in."""
-    source = SOURCE.read_text(encoding="utf-8")
+    source = _io.shared(SOURCE.read_text(encoding="utf-8"), NAME)
     if source.splitlines().count(ALIASES_MARK) != 1:
         raise ValueError(f"{SOURCE} must contain the line {ALIASES_MARK!r} exactly once")
     origin = SOURCE.relative_to(SOURCE.parents[2])

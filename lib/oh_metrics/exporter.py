@@ -15,7 +15,12 @@ volume, input...) and conversion:
     enum     an info series with the value as a label: one of the Item's
              options, `other` for any value outside them; without options,
              the value itself when it is short and plain, else `other`
-    problem  1 while the problem text is set, 0 when it is empty
+    problem  1 while the problem Item holds a problem, 0 while it is clear
+
+each tally of the commands a script took for a device (map `commands`,
+oh_integrations._commands): its JSON becomes thermite_device_commands_total
+and thermite_device_command_seconds_total by outcome, with a zero for every
+outcome it has not counted yet;
 
 and each device's two playing Items (map `playing`, oh_features.playing):
 its app and title as free-text labels of
@@ -26,9 +31,9 @@ An Item whose state is NULL or UNDEF has no value but, whatever its
 conversion, thermite_item_device_off 1 while the power Item it needs on
 (map `power`) reads OFF, else thermite_item_unknown 1; anything unparsable is
 absent, never stale. The explicit clear_state descriptor is the sole
-exception: a problem Item whose integration declares a PROBLEM_CLEAR_STATE
-(Sony's: UNDEF) uses that present state to mean "nothing wrong", which
-becomes 0. Missing/NULL never becomes healthy. A scrape makes
+exception: a device's problem Item (oh_integrations._commands) holds UNDEF,
+a present state, to mean "nothing wrong", which becomes 0. Missing/NULL
+never becomes healthy. A scrape makes
 at most one REST round (GET /rest/things and /rest/items, ROUND_SECONDS
 for both), shared by scrapes within CACHE_SECONDS. When openHAB does not answer,
 thermite_openhab_up is 0 and no Thing or Item series is reported. The API
@@ -115,7 +120,11 @@ FAMILIES = {
                                            "free text of at most 160 characters, empty when not known; the Unix "
                                            "time of the reading, absent while nothing plays. zones lists the "
                                            "routing zones whose source it is now, comma-separated, empty for none."),
-    "thermite_device_problem": ("gauge", "1 while the device's problem Item has a text."),
+    "thermite_device_problem": ("gauge", "1 while the device's problem Item holds a problem code."),
+    "thermite_device_commands_total": ("counter", "Commands a rule took for the device, by the integration whose "
+                                       "script took them and how each ended, since that script loaded."),
+    "thermite_device_command_seconds_total": ("counter", "Seconds those commands took in all, from the command to "
+                                              "its outcome: divide its rate by the commands' for a mean."),
     "thermite_handler_pool_up": ("gauge", "1 when thingHandler telemetry is complete and at most 60 seconds old."),
     "thermite_handler_pool_observation_age_seconds": ("gauge", "Age of the native thingHandler telemetry sample."),
     "thermite_handler_pool_active_threads": ("gauge", "Active thingHandler workers."),
@@ -144,6 +153,9 @@ ROUTE_BUCKETS = (1, 2, 4, 8, 15, 30, 60)
 OPERATION_OUTCOMES = ("applied", "sampled", "probe_failed", "unsent", "refused", "busy", "unknown", "quarantined",
                       "superseded", "revoked", "journal_failed", "read_only", "other")
 FAILURE_REASONS = ("unsent", "refused", "unknown", "quarantined", "probe_failed", "journal_failed", "recovery_failed")
+#: How a command a device script took ended (oh_integrations._commands
+#: OUTCOMES, which a test keeps this equal to).
+COMMAND_OUTCOMES = ("applied", "sent", "dropped", "unsent", "refused", "busy", "unknown")
 #: Bytes of a routing Item's JSON the exporter reads; anything longer is invalid.
 ROUTING_BYTES = 262144
 #: The suffixes of a histogram family's samples.
@@ -339,6 +351,7 @@ def collect(mapping: dict, fetch: Fetch, clock: Callable[[], float] = time.monot
     samples += _handler_pool(mapping, answers.get("items", []))
     if "items" in answers:
         samples += _routing(mapping, answers["items"])
+        samples += _commands(mapping, answers["items"])
     return samples
 
 
@@ -475,6 +488,32 @@ def _routing(mapping: dict, answer: list) -> list[Sample]:
         samples += _routing_status(spec, _json_state(states.get(spec["status"])))
     if spec.get("metrics"):
         samples += _routing_metrics(spec, _json_state(states.get(spec["metrics"])))
+    return samples
+
+
+def _commands(mapping: dict, answer: list) -> list[Sample]:
+    """Each command tally (map "commands": {Item: {device, integration}}) as
+    counters by outcome. A tally that is not valid yet has no series; one
+    that is has a zero for each outcome it has not counted."""
+    spec = mapping.get("commands")
+    if not isinstance(spec, dict):
+        return []
+    states = {item["name"]: item.get("state") for item in answer if isinstance(item, dict) and "name" in item}
+    samples: list[Sample] = []
+    for name in sorted(spec):
+        entry = spec[name] if isinstance(spec[name], dict) else {}
+        data = _json_state(states.get(name))
+        outcomes = data.get("outcomes") if isinstance(data, dict) and data.get("version") == 1 else None
+        if not isinstance(outcomes, dict):
+            continue
+        labels = {**device_labels(mapping, str(entry.get("device", ""))), "integration": str(entry.get("integration", ""))}
+        for outcome in COMMAND_OUTCOMES:
+            row = outcomes.get(outcome) if isinstance(outcomes.get(outcome), dict) else {}
+            count, spent = _count(row.get("count", 0)), _count(row.get("ms", 0))
+            if count is not None:
+                samples.append(("thermite_device_commands_total", {**labels, "outcome": outcome}, count))
+            if spent is not None:
+                samples.append(("thermite_device_command_seconds_total", {**labels, "outcome": outcome}, spent / 1000))
     return samples
 
 

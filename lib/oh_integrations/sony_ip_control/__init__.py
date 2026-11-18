@@ -52,9 +52,13 @@ Items, per TV under control:
   error 1 is shown as Internal Server Error. Raw TV messages are never copied.
   Clients keep the last failure visible after its transient failed status
   expires; starting another attempt or a successful pairing clears it.
-- `<id>_problem` (String): why openHAB cannot command the TV (not paired,
-  a registration it refuses, no answer), as the remote page shows it after
-  the TV's label; UNDEF while nothing is wrong (problem()).
+- `<id>_problem` (String): why openHAB cannot command or read the TV, as
+  one code of oh_integrations._commands.CODES (not paired or a registration
+  it refuses: auth; no answer; a request it refused), whose words the
+  remotes show after the TV's label; UNDEF while nothing is wrong
+  (problem()).
+- `<id>_sony_ip_control_commands` (String): the rule's tally of this TV's
+  commands by outcome, for the metrics exporter (oh_integrations._commands).
 
 A room whose display the TV is (oh_features.routing) powers and switches it
 through these (stage()). The rule holds oh_conf.RULE_SENDS, so
@@ -68,7 +72,7 @@ import json
 from pathlib import Path
 
 from oh_conf import RULE_SENDS, Addon, House, YamlFile, options_text, retarget, uses
-from .. import _io
+from .. import _commands, _io
 
 from .. import _pairing, sony_rest
 
@@ -88,8 +92,6 @@ DEVICE_KEYS = ("sony_speaker_audio",)
 REMOTE_LAYOUT = "sony_tv"
 #: The rule talks to the TV's REST API and IRCC on plain HTTP.
 PROBE_PORTS = (80,)
-#: The rule publishes UNDEF to <id>_problem for "nothing wrong".
-PROBLEM_CLEAR_STATE = "UNDEF"
 #: BRAVIA Simple IP control, open on a TV with IP control enabled.
 DISCOVER_PORTS = (20060,)
 #: The modules whose files the rule needs beside its own: sony_rest's Thing
@@ -278,8 +280,7 @@ def render(device: dict, house: House, out: YamlFile) -> None:
     items[pairing_result(device)] = {"type": "String", "label": "Pairing result", "groups": [ident],
                                      "tags": ["Status"], "autoupdate": False,
                                      "metadata": {"stateDescription": {"config": {"readOnly": True}}}}
-    items[problem(device)] = {"type": "String", "label": "Problem", "icon": "error", "groups": [ident],
-                              "tags": ["Status"]}
+    _commands.render(device, out, NAME)
 
 
 def pairing_result(device: dict) -> str:
@@ -291,7 +292,7 @@ def problem(device: dict) -> str | None:
     """The Item that says why openHAB cannot command the TV, for the remote
     page (web/remote/house.js devices.<id>.problem); None for a TV this
     does not command."""
-    return f"{device['id']}_problem" if uses(device, PHASE, NAME) else None
+    return _commands.problem_item(device["id"]) if uses(device, PHASE, NAME) else None
 
 
 def table(devices: list[dict]) -> list[dict]:
@@ -307,7 +308,7 @@ def _line(name: str, value: object) -> str:
 
 def rule(devices: list[dict]) -> str:
     """sony_ip_control.js with its tables filled in."""
-    source = _io.embed(SOURCE.read_text(encoding="utf-8"))
+    source = _io.embed(SOURCE.read_text(encoding="utf-8"), NAME)
     for mark in (DEVICES_MARK, PRESSES_MARK, RULE_SENDS):
         if source.split("\n").count(mark) != 1:
             raise ValueError(f"{SOURCE} must contain the line {mark!r} exactly once")

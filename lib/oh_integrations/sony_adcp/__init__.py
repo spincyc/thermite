@@ -28,6 +28,10 @@ Items, per device:
   control.
 - `<id>_picture_mode` (String): the picture mode, UNDEF in standby.
 - `<id>_key` (String, control only): a remote button id (KEYS) to press.
+- `<id>_problem` and `<id>_sony_adcp_commands` (control only;
+  oh_integrations._commands): why the projector did not take the rule's
+  last command or cannot be read, as a code, and the rule's tally of its
+  commands by outcome.
 
 Under observe only, every Item is display-only and the rule listens to none
 of them. The projector answers one request at a time, across controllers
@@ -43,7 +47,7 @@ import json
 from pathlib import Path
 
 from oh_conf import RULE_SENDS, Addon, House, YamlFile, options_text, uses
-from .. import _io
+from .. import _commands, _io
 
 NAME = "sony_adcp"
 PHASE = "observe"
@@ -147,6 +151,13 @@ def render(device: dict, house: House, out: YamlFile) -> None:
     if control:
         out.items[f"{ident}_key"] = {"type": "String", "label": "Remote Key", "groups": [ident],
                                      "tags": ["Control"], "autoupdate": False}
+        _commands.render(device, out, NAME)
+
+
+def problem(device: dict) -> str | None:
+    """The device's problem Item (oh_integrations._commands) when this rule
+    commands it, else None."""
+    return _commands.problem_item(device["id"]) if uses(device, "control", NAME) else None
 
 
 def table(devices: list[dict]) -> list[dict]:
@@ -160,7 +171,7 @@ def _line(name: str, value: object) -> str:
 
 def rule(devices: list[dict]) -> str:
     """sony_adcp.js with its tables filled in for these devices."""
-    source = _io.embed(SOURCE.read_text(encoding="utf-8"))
+    source = _io.embed(SOURCE.read_text(encoding="utf-8"), NAME)
     for mark in (DEVICES_MARK, KEYS_MARK, INPUTS_MARK):
         if source.split("\n").count(mark) != 1:
             raise ValueError(f"{SOURCE} must contain the line {mark!r} exactly once")

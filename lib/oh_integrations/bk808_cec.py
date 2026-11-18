@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 
 from oh_conf import Addon, House, YamlFile, point, retarget, uses
+from . import _commands, _io
 from . import _instr as instr
 from . import globalcache_ir as ir
 
@@ -96,6 +97,13 @@ def render(device: dict, house: House, out: YamlFile) -> None:
     out.items[f"{ident}_cec_transport"] = point(ident, "String", "Matrix transport reply; not player state", ["Status"], f"{uid}:transport", guarded=True)
     out.items[f"{ident}_cec_native"] = point(ident, "String", "Internal CEC request", ["Status"], f"{uid}:command", guarded=True)
     out.items[f"{ident}_key"] = {"type": "String", "label": "Source CEC key", "groups": [ident], "tags": ["Control"], "autoupdate": False}
+    _commands.render(device, out, NAME)
+
+
+def problem(device: dict) -> str | None:
+    """The device's problem Item (oh_integrations._commands) when this rule
+    commands it, else None."""
+    return _commands.problem_item(device["id"]) if enabled(device) else None
 
 
 def files(devices: list[dict], house: House) -> dict[str, str]:
@@ -104,7 +112,7 @@ def files(devices: list[dict], house: House) -> dict[str, str]:
     if validate_house(house.data):
         raise ValueError("CEC wiring must validate before rendering command rules")
     table = [{"id": d["id"], "thing": thing_uid(d), "requests": {button: request(d, button) for button in KEYS}} for d in devices]
-    return {RULE: SOURCE.read_text().replace("const DEVICES = null;", "const DEVICES = " + json.dumps(table) + ";")}
+    return {RULE: _io.shared(SOURCE.read_text(), NAME).replace("const DEVICES = null;", "const DEVICES = " + json.dumps(table) + ";")}
 
 
 def remote(device: dict) -> dict | None:

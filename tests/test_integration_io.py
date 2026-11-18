@@ -10,7 +10,7 @@ from pathlib import Path
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 from oh_conf import House  # noqa: E402
-from oh_integrations import _io, avpro_telnet, pyatv_http, sony_adcp, sony_ip_control  # noqa: E402
+from oh_integrations import _commands, _io, avpro_telnet, pyatv_http, sony_adcp, sony_ip_control  # noqa: E402
 from oh_testing import controls  # noqa: E402
 
 
@@ -48,13 +48,28 @@ class Embedding(unittest.TestCase):
                 self.assertEqual(text.count("const thermiteIO = "), 1)
                 self.assertEqual(text.count("const thermiteDevice = "), 1)
                 self.assertLess(text.index("const thermiteIO = "), text.index("const thermiteDevice = "))
+                # The shared parts carry the command record's table, with this integration's tally.
+                self.assertNotIn(_commands.MARK, text)
+                self.assertEqual(text.count(f'"tally":"{module.NAME}_commands"'), 1)
 
     def test_the_shared_device_parts_are_optional_but_once_and_after_the_io(self):
         self.assertEqual(_io.embed(f"a\n{_io.MARK}\nb\n"), f"a\n{_io.SOURCE.read_text()}\nb\n")
         for bad in (f"{_io.MARK}\n{_io.DEVICE_MARK}\n{_io.DEVICE_MARK}\n", f"{_io.DEVICE_MARK}\n{_io.MARK}\n",
                     f"{_io.MARK}\nx = 1; {_io.DEVICE_MARK}\n", f"{_io.DEVICE_MARK}\n"):
             with self.subTest(source=bad), self.assertRaises(ValueError):
-                _io.embed(bad)
+                _io.embed(bad, "example")
+
+    def test_the_shared_device_parts_need_the_name_of_the_integration_whose_script_takes_them(self):
+        marked = f"{_io.MARK}\n{_io.DEVICE_MARK}\n"
+        with self.assertRaisesRegex(ValueError, "must name its integration"):
+            _io.embed(marked)
+        self.assertEqual(_io.embed(marked, "example"), f"{_io.SOURCE.read_text()}\n{_io.device('example')}\n")
+
+    def test_a_script_that_opens_no_connection_takes_the_shared_device_parts_alone(self):
+        self.assertEqual(_io.shared(f"a\n{_io.DEVICE_MARK}\nb\n", "example"), f"a\n{_io.device('example')}\nb\n")
+        for bad in ("a\n", f"{_io.DEVICE_MARK}\n{_io.DEVICE_MARK}\n", f"x = 1; {_io.DEVICE_MARK}\n", f"{_io.MARK}\n{_io.DEVICE_MARK}\n"):
+            with self.subTest(source=bad), self.assertRaises(ValueError):
+                _io.shared(bad, "example")
 
 
 class DeviceContexts(unittest.TestCase):

@@ -78,7 +78,8 @@ globalThis.REMOTE_HOUSE = {
       "control": {
         "key": "example_player_key",
         "power": "example_player_power"
-      }
+      },
+      "problem": "example_player_problem"
     },
     "example_display": {
       "label": "Example Display",

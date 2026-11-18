@@ -1,13 +1,22 @@
 'use strict';
 // Runs production integration scripts against stub openHAB and Java types.
 // argv: heos.js globalcache_ir.js bk808_cec.js androidtv_googletv.js
-// avpro_telnet.js sony_adcp.js sony_ip_control.js _device.js. No device or
-// network access: HTTP and sockets are fixtures. A script's thermiteIO is a
-// fixture too, but what the scripts share (_device.js) is embedded as the
-// renderer embeds it (_io.py).
+// avpro_telnet.js sony_adcp.js sony_ip_control.js pyatv_http.js, then a JSON
+// file {integration name: _device.js as its script embeds it, `vocabulary`:
+// the command record's codes, drops and outcomes} (_io.device(), _commands).
+// No device or network access: HTTP and sockets are fixtures. A script's
+// thermiteIO is a fixture too, but what the scripts share (_device.js) is
+// embedded as the renderer embeds it (_io.py).
 const fs = require('fs'), vm = require('vm'), assert = require('assert');
-const [heosSource, irSource, cecSource, androidSource, avproSource, adcpSource, sonyTvSource, deviceSource] =
-  process.argv.slice(2).map(path => fs.readFileSync(path, 'utf8'));
+const { RECORD, records } = require('./command_record.js');
+const sources = process.argv.slice(2).map(path => fs.readFileSync(path, 'utf8'));
+const shared = JSON.parse(sources.pop());
+const VOCABULARY = shared.vocabulary;
+const [heosSource, irSource, cecSource, androidSource, avproSource, adcpSource, sonyTvSource, pyatvSource] =
+  ['heos', 'ir', 'bk808_cec', 'androidtv_googletv', 'avpro_telnet', 'sony_adcp', 'sony_ip_control', 'pyatv_http']
+    .map((name, at) => sources[at].replace('// THERMITE_DEVICE', () => shared[name]));
+// _device.js alone, as a script of an integration named `test` embeds it.
+const deviceSource = shared.test;
 const tests = [];
 function test(name, fn) { fn(); tests.push(name); }
 
@@ -79,11 +88,16 @@ function run(source, table, { things, items, java = {}, clock, globals = {}, run
     Date: { now: () => clock.now }, JSON, Map, Set, Object, String, Number, Boolean, Array, Error, Math, RegExp,
     ...globals,
   });
-  let text = source.replace('// THERMITE_DEVICE', () => deviceSource);
+  let text = source;
   for (const [mark, value] of Object.entries(table)) text = text.replace(`const ${mark} = null;`, `const ${mark} = ${JSON.stringify(value)};`);
   vm.runInContext(text, context);
-  return { rules, logs, posted: openhab.posted, context };
+  ran.push({ logs, posted: openhab.posted });
+  return { rules, logs, posted: openhab.posted, context, ...records(logs, openhab.posted) };
 }
+
+// Every script run here, for the last test: whatever a scenario above did,
+// nothing but the record's vocabulary reached a problem Item or a record.
+const ran = [];
 
 const VERIFIED = name => '<?xml version="1.0" encoding="utf-8"?>\r\n<tx>\r\n<cmd id="1">' + name + '</cmd>\r\n</tx>\r\n';
 
@@ -135,10 +149,10 @@ const HEOS_DEVICES = [{ id: 'avr', thing: 'heos:player:1', receiver: 'denon:avr:
 function heos(replies) {
   const requests = [];
   const things = { 'heos:player:1': thing('ONLINE'), 'denon:avr:1': thing('ONLINE') };
-  const items = { avr_main_power: 'ON', avr_main_input: 'NET', avr_heos_playback: 'NULL' };
+  const items = { avr_main_power: 'ON', avr_main_input: 'NET', avr_heos_playback: 'NULL', avr_problem: 'NULL', avr_heos_commands: 'NULL' };
   const loaded = run(heosSource, { DEVICES: HEOS_DEVICES }, { things, items, java: heosJava(requests, replies), clock: { now: 0 } });
   loaded.rules.heos_avr_transport.execute({ itemName: 'avr_key', receivedCommand: 'play' });
-  return { requests, handled: things['heos:player:1'].handled, logs: loaded.logs };
+  return { requests, handled: things['heos:player:1'].handled, logs: loaded.logs, recorded: loaded.recorded() };
 }
 
 // A command to the receiver's reboot Item, and the HEOS CLI sockets it opened.
@@ -146,9 +160,11 @@ function heosReboot(command, network, send = true) {
   const requests = [], sockets = [];
   const things = { 'heos:player:1': thing('ONLINE'), 'denon:avr:1': thing('ONLINE') };
   const source = send ? heosSource : heosSource.replace('const SEND = true;', 'const SEND = false;');
-  const loaded = run(source, { DEVICES: HEOS_DEVICES }, { things, items: {}, java: heosJava(requests, () => '', network, sockets), clock: { now: 0 } });
+  const loaded = run(source, { DEVICES: HEOS_DEVICES }, { things, items: { avr_problem: 'NULL', avr_heos_commands: 'NULL' },
+    java: heosJava(requests, () => '', network, sockets), clock: { now: 0 } });
   loaded.rules.heos_avr_reboot.execute({ itemName: 'avr_reboot', receivedCommand: command });
-  return { sockets, requests, logs: loaded.logs.map(([level, message]) => `${level}: ${message}`) };
+  return { sockets, requests, logs: loaded.said().map(([level, message]) => `${level}: ${message}`),
+    recorded: loaded.recorded(), problems: loaded.problems('avr_problem'), tally: loaded.tally('avr_heos_commands') };
 }
 
 test('a HEOS reboot goes to the receiver\'s own CLI, once, and logs its answer', () => {
@@ -167,6 +183,24 @@ test('a HEOS reboot goes to the receiver\'s own CLI, once, and logs its answer',
   assert.deepEqual([readOnly.sockets, readOnly.logs], [[], ['info: avr: SEND is false, not sending heos://system/reboot']]);
 });
 
+test('every HEOS reboot ends in one record: what the receiver answered, or why nothing was sent', () => {
+  const said = result => `{"heos": {"command": "system/reboot", "result": "${result}", "message": ""}}\r\n`;
+  for (const [command, network, send, record, problem, tally] of [
+    ['reboot', { answer: said('success') }, true, ['info', 'avr_reboot', 'reboot', 'applied', '-'], [], { applied: 1 }],
+    ['reboot', { answer: said('fail') }, true, ['warn', 'avr_reboot', 'reboot', 'refused', 'refused'], ['refused'], { refused: 1 }],
+    ['reboot', { answer: 'not HEOS\r\n' }, true, ['warn', 'avr_reboot', 'reboot', 'unknown', 'protocol'], ['protocol'], { unknown: 1 }],
+    ['reboot', {}, true, ['warn', 'avr_reboot', 'reboot', 'unknown', 'no_answer'], ['no_answer'], { unknown: 1 }],
+    ['reboot', { refuse: true }, true, ['warn', 'avr_reboot', 'reboot', 'unsent', 'unreachable'], ['unreachable'], { unsent: 1 }],
+    // What the rule drops itself says nothing of the receiver, and a value
+    // the Item does not take is not printed.
+    ['ON', {}, true, ['warn', 'avr_reboot', '?', 'dropped', 'invalid'], [], { dropped: 1 }],
+    ['reboot', {}, false, ['warn', 'avr_reboot', 'reboot', 'dropped', 'read_only'], [], { dropped: 1 }]]) {
+    const r = heosReboot(command, network, send);
+    assert.deepEqual(r.recorded, [record], JSON.stringify(record));
+    assert.deepEqual(r.problems, ['UNDEF', ...problem]); assert.deepEqual(r.tally, tally);
+  }
+});
+
 test('HEOS reads the receiver one verified AppCommand at a time before a transport press', () => {
   // Like the firmware: anything but the verified serialization gets <rx> empty.
   const firmware = (power, source) => body => body === VERIFIED('GetAllZonePowerStatus') ? `<rx><cmd><zone1>${power}</zone1><zone2>ON</zone2></cmd></rx>` :
@@ -174,34 +208,53 @@ test('HEOS reads the receiver one verified AppCommand at a time before a transpo
   const pressed = heos(firmware('ON', 'NET'));
   assert.deepEqual(pressed.requests, [VERIFIED('GetAllZonePowerStatus'), VERIFIED('GetSourceStatus')]);
   assert.deepEqual(pressed.handled, [['heos:player:1:Control', 'PLAY']]);
+  // The binding acknowledges nothing: handed over is all the record can say.
+  assert.deepEqual(pressed.recorded, [['info', 'avr_key', 'play', 'sent', '-']]);
   for (const [power, source] of [['OFF', 'NET'], ['ON', 'TUNER']]) {
     const refused = heos(firmware(power, source));
     assert.deepEqual(refused.handled, []);
     assert(refused.logs.some(([level, message]) => level === 'warn' && /fresh main-zone ON/.test(message)));
+    assert.deepEqual(refused.recorded, [['warn', 'avr_key', 'play', 'unsent', 'not_ready']]);
   }
 });
 
-function keys(source, table, uid, command, clock, status = 'ONLINE') {
+function keys(source, table, uid, tally, clock, status = 'ONLINE') {
   const things = { [uid]: thing(status) };
-  const loaded = run(source, table, { things, items: {}, clock });
+  const loaded = run(source, table, { things, items: { [`${table.DEVICES[0].id}_problem`]: 'NULL', [tally]: 'NULL' }, clock });
   const rule = Object.values(loaded.rules)[0];
-  return { send: value => rule.execute({ receivedCommand: value }), logs: loaded.logs, thing: things[uid] };
+  const item = `${table.DEVICES[0].id}_key`;
+  return { ...loaded, send: value => rule.execute({ itemName: item, receivedCommand: value }), thing: things[uid] };
 }
 
 test('IR and CEC keys that cannot be sent warn once a minute per device and reason, without the key', () => {
-  for (const [source, table, uid, good] of [
-    [irSource, { DEVICES: [{ id: 'bluray', thing: 'globalcache:itachIR:1', channel: 'ir-m1#c1', keys: ['PLAY'] }] }, 'globalcache:itachIR:1', 'PLAY'],
-    [cecSource, { DEVICES: [{ id: 'player', thing: 'bk808:cec:1', requests: { PLAY: 'cec play' } }] }, 'bk808:cec:1', 'PLAY']]) {
-    const clock = { now: 1000 }, r = keys(source, table, uid, good, clock);
+  for (const [source, table, uid, good, tally] of [
+    [irSource, { DEVICES: [{ id: 'bluray', thing: 'globalcache:itachIR:1', channel: 'ir-m1#c1', keys: ['PLAY'] }] }, 'globalcache:itachIR:1', 'PLAY',
+      'bluray_ir_commands'],
+    [cecSource, { DEVICES: [{ id: 'player', thing: 'bk808:cec:1', requests: { PLAY: 'cec play' } }] }, 'bk808:cec:1', 'PLAY',
+      'player_bk808_cec_commands']]) {
+    const clock = { now: 1000 }, r = keys(source, table, uid, tally, clock);
     r.send('SECRETKEY'); r.send('SECRETKEY');
     r.thing.status = 'OFFLINE'; r.send(good); r.send(good);
-    let warnings = r.logs.filter(([level]) => level === 'warn');
+    let warnings = r.said().filter(([level]) => level === 'warn');
     assert.equal(warnings.length, 2, source.slice(0, 40));
     assert(/not a/.test(warnings[0][1])); assert(new RegExp(`${uid} is OFFLINE`).test(warnings[1][1]));
     assert(!r.logs.some(([, message]) => message.includes('SECRETKEY')));
     clock.now += 60000; r.send('SECRETKEY');
-    warnings = r.logs.filter(([level]) => level === 'warn'); assert.equal(warnings.length, 3);
+    warnings = r.said().filter(([level]) => level === 'warn'); assert.equal(warnings.length, 3);
     r.thing.status = 'ONLINE'; r.send(good); assert.equal(r.thing.handled.length, 1);
+    // Each key has its record all the same: the reason is said once a
+    // minute, that a key did not go out every time.
+    const id = table.DEVICES[0].id, item = `${id}_key`;
+    assert.deepEqual(r.recorded(), [...Array(2).fill(['warn', item, '?', 'dropped', 'invalid']),
+      ...Array(2).fill(['warn', item, good, 'unsent', 'unreachable']), ['warn', item, '?', 'dropped', 'invalid'],
+      ['info', item, good, 'sent', '-']]);
+    assert.deepEqual(r.problems(`${id}_problem`), ['UNDEF', 'unreachable', 'UNDEF']);
+    // A transport that throws leaves the key's effect unknown.
+    r.thing.handler.handleCommand = () => { throw Error('binding failed'); };
+    r.send(good);
+    assert.deepEqual(r.recorded().at(-1), ['warn', item, good, 'unknown', 'other']);
+    assert.equal(r.problems(`${id}_problem`).at(-1), 'other');
+    assert.deepEqual(r.tally(tally), { sent: 1, dropped: 3, unsent: 2, unknown: 1 });
   }
 });
 
@@ -221,11 +274,14 @@ function android(options = {}) {
     'org.openhab.core.OpenHAB': { getUserDataFolder: () => '/srv/openhab/userdata' },
     'java.lang.System': { getProperty: () => null },
   };
-  const loaded = run(androidSource, { DEVICES: [{ id: 'tv', thing: 'androidtv:googletv:tv', remote: 'android', volume: options.volume || null,
-    keystore: 'androidtv/googletv.tv.keystore' }], PRESSES: { android: {} } },
-  { things: { 'androidtv:googletv:tv': tv }, items: { tv_pairing_status: 'NULL', tv_key: 'NULL', tv_pairing: 'NULL', ...options.items }, java, clock });
+  const source = options.send === false ? androidSource.replace('const SEND = true;', 'const SEND = false;') : androidSource;
+  const loaded = run(source, { DEVICES: [{ id: 'tv', thing: 'androidtv:googletv:tv', remote: 'android', volume: options.volume || null,
+    keystore: 'androidtv/googletv.tv.keystore' }], PRESSES: { android: { home: ['keypress', 'KEY_HOME'] } } },
+  { things: { 'androidtv:googletv:tv': tv }, items: { tv_pairing_status: 'NULL', tv_key: 'NULL', tv_pairing: 'NULL', tv_problem: 'NULL',
+    tv_androidtv_googletv_commands: 'NULL', ...options.items }, java, clock });
   const status = () => { const rows = loaded.posted.filter(([name]) => name === 'tv_pairing_status'); return rows.length ? rows[rows.length - 1][1] : null; };
-  return { clock, files, moves, tv, logs: loaded.logs, status,
+  return { ...loaded, clock, files, moves, tv, status,
+    key: command => loaded.rules.androidtv_googletv_tv_command.execute({ itemName: 'tv_key', receivedCommand: command }),
     poll: () => loaded.rules.androidtv_googletv_pairing_poll.execute({}),
     pair: command => loaded.rules.androidtv_googletv_tv_command.execute({ itemName: 'tv_pairing', receivedCommand: command }),
     volume: command => loaded.rules.androidtv_googletv_tv_command.execute({ itemName: 'tv_android_volume', receivedCommand: command }) };
@@ -244,6 +300,29 @@ test('an Android TV volume is stepped anywhere on its own scale and never clampe
   assert(r.logs.some(([level, message]) => level === 'warn' && message.includes("'101' is not a volume on its scale")));
   r.clock.now += 10000; r.volume('0');
   assert.equal(presses(r, 2).length, 98); assert(presses(r, 2).every(press => press === 'androidtv:googletv:tv:keycode 25'));
+});
+
+test('an Android TV press is sent while its Thing is online, unknown when it is not, and unsent with no handler or volume to step from', () => {
+  const scale = { min: 0, max: 100, step: 1, unit: '%' };
+  const r = android({ status: 'ONLINE', description: '', volume: scale, items: { tv_android_volume: 'NULL' } });
+  r.key('home'); r.volume('30');
+  r.tv.status = 'OFFLINE'; r.tv.description = 'Connection refused'; r.key('home');
+  r.tv.description = 'PIN Process Incomplete'; r.key('home');
+  r.tv.handler = null; r.key('home');
+  r.key('nokey'); r.volume('101'); r.pair('not a code');
+  assert.deepEqual(r.recorded(), [['info', 'tv_key', 'home', 'sent', '-'], ['warn', 'tv_android_volume', '30', 'unsent', 'not_ready'],
+    ['warn', 'tv_key', 'home', 'unknown', 'unreachable'], ['warn', 'tv_key', 'home', 'unknown', 'auth'],
+    ['warn', 'tv_key', 'home', 'unsent', 'unreachable'], ['warn', 'tv_key', '?', 'dropped', 'invalid'],
+    ['warn', 'tv_android_volume', '?', 'dropped', 'invalid'], ['warn', 'tv_pairing', '<private>', 'dropped', 'invalid']]);
+  assert.deepEqual(r.problems('tv_problem'), ['UNDEF', 'not_ready', 'unreachable', 'auth', 'unreachable']);
+  // A volume it already has needs no press, and a read-only copy presses nothing.
+  const there = android({ status: 'ONLINE', description: '', volume: scale, items: { tv_android_volume: '30' } });
+  there.volume('30');
+  const copy = android({ status: 'ONLINE', description: '', volume: scale, items: { tv_android_volume: '30' }, send: false });
+  copy.key('home'); copy.volume('31');
+  assert.deepEqual([there.recorded(), there.tv.handled], [[['info', 'tv_android_volume', '30', 'applied', '-']], []]);
+  assert.deepEqual([copy.recorded(), copy.tv.handled], [[['warn', 'tv_key', 'home', 'dropped', 'read_only'],
+    ['warn', 'tv_android_volume', '31', 'dropped', 'read_only']], []]);
 });
 
 test('a missing-PIN report right after Thing start is checking until it lasts two minutes', () => {
@@ -277,11 +356,11 @@ test('a failed restore of the previous keystore stops retrying and shows failed 
 // and a SET it refuses (`error`) with CMD ERR. `refuse` makes it accept a
 // connection and close it at once, `mute` close one at its next request,
 // unanswered, and `hangup` close one at that request, unanswered. `silent`
-// takes a SET without answering it. close() closes every connection while
-// idle. `format` shapes each answer.
+// takes a SET without answering it, and `down` takes no connection. close()
+// closes every connection while idle. `format` shapes each answer.
 function avpro({ send = true } = {}) {
   const clock = { now: 0 }, hooks = [];
-  const matrix = { refuse: false, mute: false, hangup: null, silent: false, error: false, routes: [1, 1, 1, 1], opened: [],
+  const matrix = { refuse: false, mute: false, hangup: null, silent: false, error: false, down: false, routes: [1, 1, 1, 1], opened: [],
     requests: [], links: [],
     format: line => line, close() { for (const link of matrix.links) link.peerClosed = true; } };
   const listing = () => [...matrix.routes.map((input, i) => `OUT${i + 1} VS IN${input}`),
@@ -290,6 +369,7 @@ function avpro({ send = true } = {}) {
     deadline: ms => clock.now + ms,
     remaining: end => { if (end <= clock.now) throw Error('deadline'); return end - clock.now; },
     open() {
+      if (matrix.down) throw Error('refused');
       matrix.opened.push(clock.now / 10000);
       const link = { closed: false, peerClosed: matrix.refuse, lines: matrix.refuse ? [] : listing() };
       matrix.links.push(link);
@@ -316,11 +396,12 @@ function avpro({ send = true } = {}) {
     close(link) { link.closed = true; },
   };
   const items = Object.fromEntries([1, 2, 3, 4].map(output => [`matrix_output${output}_input`, 'NULL']));
+  Object.assign(items, { matrix_problem: 'NULL', matrix_avpro_telnet_commands: 'NULL' });
   const source = send ? avproSource : avproSource.replace('const SEND = true;', 'const SEND = false;');
   const loaded = run(source.replace('// THERMITE_BOUNDED_IO', ''), { DEVICES: [{ id: 'matrix', host: '192.0.2.30', port: 23,
     inputs: 4, outputs: 4 }] }, { items, clock, globals: { thermiteIO }, strict: true,
     runtime: { lifecycleTracker: { addDisposeHook: hook => hooks.push(hook) } } });
-  const warnings = () => loaded.logs.filter(([level]) => level === 'warn').map(([, message]) => message);
+  const warnings = () => loaded.said().filter(([level]) => level === 'warn').map(([, message]) => message);
   return { ...loaded, clock, matrix, items, warnings, unload: () => hooks.forEach(hook => hook()),
     poll: () => { loaded.rules.avpro_telnet_matrix_poll.execute(); clock.now += 10000; },
     command: (output, input) => loaded.rules.avpro_telnet_matrix_command.execute({
@@ -395,31 +476,52 @@ test('the AVPro routing provider is unsent before SET, refused on CMD ERR, unkno
     { outcome: 'applied', sample: { value: '2', fresh: true, basis: 'owned_native_read', observedAt: 10000 } });
   // CMD ERR is the matrix declining: terminal, never re-read as a slow switch.
   r.matrix.error = true;
-  assert.deepEqual(provider.execute('matrix_output4_input', '3'), { outcome: 'refused' });
+  assert.deepEqual(provider.execute('matrix_output4_input', '3'), { outcome: 'refused', code: 'refused' });
   assert.equal(r.items.matrix_output4_input, '2');
   r.matrix.error = false;
   // A SET with no answer, whether the matrix stays connected or hangs up, may
   // still take effect: unknown, even when the read after it succeeds.
   r.matrix.silent = true;
-  assert.deepEqual(provider.execute('matrix_output4_input', '3'), { outcome: 'unknown' });
+  assert.deepEqual(provider.execute('matrix_output4_input', '3'), { outcome: 'unknown', code: 'no_answer' });
   r.matrix.silent = false; r.matrix.hangup = 'SET OUT4 VS IN4';
-  assert.deepEqual(provider.execute('matrix_output4_input', '4'), { outcome: 'unknown' });
+  assert.deepEqual(provider.execute('matrix_output4_input', '4'), { outcome: 'unknown', code: 'no_answer' });
   // An answered SET whose read then fails is applied; the executor re-reads.
   r.matrix.hangup = 'GET OUT0 VS';
   assert.deepEqual(provider.execute('matrix_output4_input', '1'), { outcome: 'applied', sample: null });
   assert.equal(r.matrix.routes[3], 1);
   // No connection, so no SET byte: unsent.
   r.matrix.hangup = null; r.matrix.refuse = true; r.matrix.close();
-  assert.deepEqual(provider.execute('matrix_output4_input', '2'), { outcome: 'unsent' });
+  assert.deepEqual(provider.execute('matrix_output4_input', '2'), { outcome: 'unsent', code: 'no_answer' });
   assert.deepEqual(r.matrix.requests.filter(line => line.startsWith('SET')),
     ['SET OUT4 VS IN2', 'SET OUT4 VS IN3', 'SET OUT4 VS IN3', 'SET OUT4 VS IN4', 'SET OUT4 VS IN1']);
+});
+
+test('each way an AVPro switch ends is its record, and what the matrix did not take is its problem until it takes one', () => {
+  const r = avpro(), item = 'matrix_output4_input';
+  r.poll();
+  r.command(4, 2);
+  r.matrix.error = true; r.command(4, 3);
+  r.matrix.error = false; r.matrix.silent = true; r.command(4, 3);
+  r.matrix.silent = false; r.matrix.refuse = true; r.matrix.close(); r.command(4, 1);
+  r.matrix.refuse = false; r.matrix.down = true; r.command(4, 1);
+  r.command(4, 9); r.command(4, 'IN2');
+  r.matrix.down = false; r.command(4, 1);
+  assert.deepEqual(r.recorded(), [['info', item, '2', 'applied', '-'], ['warn', item, '3', 'refused', 'refused'],
+    ['warn', item, '3', 'unknown', 'no_answer'], ['warn', item, '1', 'unsent', 'no_answer'],
+    ['warn', item, '1', 'unsent', 'unreachable'], ['warn', item, '?', 'dropped', 'invalid'], ['warn', item, '?', 'dropped', 'invalid'],
+    ['info', item, '1', 'applied', '-']]);
+  assert.deepEqual(r.problems('matrix_problem'), ['UNDEF', 'refused', 'no_answer', 'unreachable', 'UNDEF']);
+  assert.deepEqual(r.tally('matrix_avpro_telnet_commands'), { applied: 2, dropped: 2, unsent: 2, refused: 1, unknown: 1 });
 });
 
 test('a read-only copy connects to no AVPro matrix and only logs what it would send', () => {
   const r = avpro({ send: false });
   r.poll(); r.poll(); r.command(4, 2);
-  assert.deepEqual(r.matrix.opened, []); assert.deepEqual(r.posted, []);
+  assert.deepEqual(r.matrix.opened, []); assert.deepEqual(r.posted.filter(([item]) => item.includes('_input')), []);
   assert(r.logs.some(([level, message]) => level === 'info' && message === 'matrix: SEND is false, not sending SET OUT4 VS IN2'));
+  // Its own record says the command went nowhere, and blames no matrix.
+  assert.deepEqual(r.recorded(), [['warn', 'matrix_output4_input', '2', 'dropped', 'read_only']]);
+  assert.deepEqual(r.problems('matrix_problem'), ['UNDEF']);
 });
 
 // A Sony projector on ADCP. It greets each connection with `greeting`
@@ -487,14 +589,16 @@ function adcp({ send = true } = {}) {
     },
     close(link) { link.closed = true; },
   };
-  const items = Object.fromEntries(['power', 'power_state', 'input', 'picture_mode', 'key']
+  const items = Object.fromEntries(['power', 'power_state', 'input', 'picture_mode', 'key', 'problem', 'sony_adcp_commands']
     .map(point => [`projector_${point}`, 'NULL']));
   const source = send ? adcpSource : adcpSource.replace('const SEND = true;', 'const SEND = false;');
   const loaded = run(source.replace('// THERMITE_BOUNDED_IO', ''), { DEVICES: [{ id: 'projector', host: '192.0.2.31',
     port: 53595, control: true }], KEYS: { menu: 'menu' }, INPUTS: ['hdmi1', 'hdmi2'] }, { items, clock, globals: { thermiteIO }, strict: true,
     runtime: { lifecycleTracker: { addDisposeHook: hook => hooks.push(hook) } } });
-  const warnings = () => loaded.logs.filter(([level]) => level === 'warn').map(([, message]) => message);
+  const warnings = () => loaded.said().filter(([level]) => level === 'warn').map(([, message]) => message);
   return { ...loaded, clock, projector, items, warnings, unload: () => hooks.forEach(hook => hook()),
+    // Whether any reading was ever posted UNDEF; its problem Item is UNDEF while nothing is wrong.
+    unread: () => loaded.posted.some(([item, state]) => state === 'UNDEF' && item !== 'projector_problem'),
     poll: () => { loaded.rules.sony_adcp_projector_poll.execute(); clock.now += 15000; },
     command: (point, value) => loaded.rules.sony_adcp_projector_command.execute({
       itemName: `projector_${point}`, receivedCommand: value }) };
@@ -537,7 +641,7 @@ test('a connection the projector closed while idle, or lost to a power cycle, is
   r.projector.close(); r.poll(); r.poll();
   r.projector.cycle(); r.poll(); r.poll();
   assert.deepEqual(r.projector.opened, [0, 2, 4]); assert.deepEqual(r.projector.requests, Array(6).fill(READS).flat());
-  assert(!r.posted.some(([, state]) => state === 'UNDEF')); assert.deepEqual(r.warnings(), []);
+  assert(!r.unread()); assert.deepEqual(r.warnings(), []);
 });
 
 test('a projector waking from standby is asked again: after err_cmd on the same connection, after silence on a new one', () => {
@@ -549,7 +653,7 @@ test('a projector waking from standby is asked again: after err_cmd on the same 
   r.projector.asleep = 1; r.poll();
   r.projector.close(); r.projector.wake = 1; r.poll(); r.poll();
   assert.deepEqual(r.projector.opened, [0, 2, 3, 3]);
-  assert(!r.posted.some(([, state]) => state === 'UNDEF')); assert.deepEqual(r.warnings(), []);
+  assert(!r.unread()); assert.deepEqual(r.warnings(), []);
 });
 
 test('a projector that does not answer is UNDEF and tried after 15 and 30 s, then every minute; a command connects at once', () => {
@@ -590,18 +694,18 @@ test('the routing provider is unsent before the command line, refused or unknown
   assert.deepEqual(provider.execute('projector_input', 'hdmi2'),
     { outcome: 'applied', sample: { value: 'hdmi2', fresh: true, basis: 'owned_native_read', observedAt: 15000 } });
   r.projector.refuse = 'err_inactive';
-  assert.deepEqual(provider.execute('projector_input', 'hdmi1'), { outcome: 'refused' });
+  assert.deepEqual(provider.execute('projector_input', 'hdmi1'), { outcome: 'refused', code: 'refused' });
   assert.deepEqual(r.projector.opened, [0]);
   // The kept connection lost and no new one: nothing was sent.
   r.projector.refuse = null; r.projector.cycle(); r.projector.down = true;
-  assert.deepEqual(provider.execute('projector_power', 'OFF'), { outcome: 'unsent' });
+  assert.deepEqual(provider.execute('projector_power', 'OFF'), { outcome: 'unsent', code: 'unreachable' });
   r.projector.down = false; r.projector.mute = true;
-  assert.deepEqual(provider.execute('projector_power', 'OFF'), { outcome: 'unsent' });
+  assert.deepEqual(provider.execute('projector_power', 'OFF'), { outcome: 'unsent', code: 'no_answer' });
   r.projector.mute = false;
   const opened = r.projector.opened.length;
   assert.equal(provider.probe('projector_power').value, 'ON'); assert.equal(r.projector.opened.length, opened + 1);
   r.projector.hangup = 'input "hdmi1"';
-  assert.deepEqual(provider.execute('projector_input', 'hdmi1'), { outcome: 'unknown' });
+  assert.deepEqual(provider.execute('projector_input', 'hdmi1'), { outcome: 'unknown', code: 'no_answer' });
   // Taken, but its read-back closed: applied, unconfirmed.
   r.projector.hangup = 'input ?';
   assert.deepEqual(provider.execute('projector_power', 'OFF'), { outcome: 'applied', sample: null });
@@ -639,15 +743,15 @@ test('the routing provider answers busy to a command declined or ignored while t
   r.poll();
   // On while it cools: err_inactive, as the VW915ES and the stand-in answer.
   r.projector.power = 'cooling1'; r.projector.refuse = 'err_inactive';
-  assert.deepEqual(provider.execute('projector_power', 'ON'), { outcome: 'busy', retryAfterMs: 3000 });
+  assert.deepEqual(provider.execute('projector_power', 'ON'), { outcome: 'busy', code: 'busy', retryAfterMs: 3000 });
   // Off while it starts up, declined or taken and ignored.
   r.projector.power = 'startup';
-  assert.deepEqual(provider.execute('projector_power', 'OFF'), { outcome: 'busy', retryAfterMs: 6000 });
+  assert.deepEqual(provider.execute('projector_power', 'OFF'), { outcome: 'busy', code: 'busy', retryAfterMs: 6000 });
   r.projector.refuse = null; r.projector.after = { on: 'startup', off: 'startup' };
-  assert.deepEqual(provider.execute('projector_power', 'OFF'), { outcome: 'busy', retryAfterMs: 6000 });
+  assert.deepEqual(provider.execute('projector_power', 'OFF'), { outcome: 'busy', code: 'busy', retryAfterMs: 6000 });
   // An input while it starts up waits for it to be on.
   r.projector.refuse = 'err_inactive';
-  assert.deepEqual(provider.execute('projector_input', 'hdmi2'), { outcome: 'busy', retryAfterMs: 6000 });
+  assert.deepEqual(provider.execute('projector_input', 'hdmi2'), { outcome: 'busy', code: 'busy', retryAfterMs: 6000 });
   // Taken and under way: applied, its transition the readback.
   r.projector.refuse = null; r.projector.power = 'on'; r.projector.after = { on: 'startup', off: 'cooling1' };
   assert.equal(provider.execute('projector_power', 'OFF').outcome, 'applied');
@@ -657,20 +761,43 @@ test('the routing provider answers busy to a command declined or ignored while t
   for (const [status, resource, value] of [['cooling1', 'projector_power', 'OFF'], ['standby', 'projector_input', 'hdmi1'],
     ['cooling2', 'projector_input', 'hdmi1'], ['on', 'projector_power', 'OFF'], ['standby', 'projector_power', 'ON']]) {
     r.projector.power = status;
-    assert.deepEqual(provider.execute(resource, value), { outcome: 'refused' }, `${status} ${resource}=${value}`);
+    assert.deepEqual(provider.execute(resource, value), { outcome: 'refused', code: 'refused' }, `${status} ${resource}=${value}`);
   }
   // Without a declared settle it is busy with no wait of its own.
   const bare = adcp(), plain = bare.context.routingProvider();
   bare.projector.power = 'cooling2'; bare.projector.refuse = 'err_inactive';
-  assert.deepEqual(plain.execute('projector_power', 'ON'), { outcome: 'busy' });
+  assert.deepEqual(plain.execute('projector_power', 'ON'), { outcome: 'busy', code: 'busy' });
+});
+
+test('each way a Sony projector command ends is its record: applied, refused, busy while it moves, unsent or unknown', () => {
+  const r = adcp();
+  r.poll();
+  r.command('input', 'hdmi2');
+  r.projector.refuse = 'err_inactive'; r.command('input', 'hdmi1');
+  r.projector.power = 'cooling1'; r.command('power', 'ON');
+  r.projector.power = 'on'; r.projector.refuse = null; r.projector.hangup = 'key "menu"'; r.command('key', 'menu');
+  r.projector.hangup = null; r.projector.cycle(); r.projector.down = true; r.command('power', 'OFF');
+  r.projector.down = false; r.projector.greeting = '9f86d081'; r.command('power', 'OFF');
+  r.command('key', 'nokey'); r.command('input', 'hdmi9');
+  r.projector.greeting = 'NOKEY'; r.command('key', 'menu');
+  assert.deepEqual(r.recorded(), [['info', 'projector_input', 'hdmi2', 'applied', '-'],
+    ['warn', 'projector_input', 'hdmi1', 'refused', 'refused'], ['warn', 'projector_power', 'ON', 'busy', 'busy'],
+    ['warn', 'projector_key', 'menu', 'unknown', 'no_answer'], ['warn', 'projector_power', 'OFF', 'unsent', 'unreachable'],
+    ['warn', 'projector_power', 'OFF', 'unsent', 'auth'], ['warn', 'projector_key', '?', 'dropped', 'invalid'],
+    ['warn', 'projector_input', '?', 'dropped', 'invalid'], ['info', 'projector_key', 'menu', 'applied', '-']]);
+  assert.deepEqual(r.problems('projector_problem'), ['UNDEF', 'refused', 'busy', 'no_answer', 'unreachable', 'auth', 'UNDEF']);
 });
 
 test('a read-only copy connects to no Sony projector and only logs what it would send', () => {
   const r = adcp({ send: false });
   r.poll(); r.poll(); r.command('power', 'OFF'); r.command('key', 'menu'); r.unload();
-  assert.deepEqual(r.projector.opened, []); assert.deepEqual(r.posted, []);
-  assert.deepEqual(r.logs, [['info', 'projector: SEND is false, not sending power "off"'],
+  assert.deepEqual(r.projector.opened, []);
+  assert.deepEqual(r.posted.filter(([item]) => !item.endsWith('_problem') && !item.endsWith('_commands')), []);
+  assert.deepEqual(r.said(), [['info', 'projector: SEND is false, not sending power "off"'],
     ['info', 'projector: SEND is false, not sending key "menu"']]);
+  assert.deepEqual(r.recorded(), [['warn', 'projector_power', 'OFF', 'dropped', 'read_only'],
+    ['warn', 'projector_key', 'menu', 'dropped', 'read_only']]);
+  assert.deepEqual(r.problems('projector_problem'), ['UNDEF']);
 });
 
 test('a projector or matrix read while a reload has an Item missing posts the rest and stays connected', () => {
@@ -691,17 +818,28 @@ test('a projector or matrix read while a reload has an Item missing posts the re
 // with `volume` and `mute`; in standby Sony's error 40005. setPowerStatus
 // turns it on or off; while `boot` is above 0 its content API (avContent)
 // answers `bootError` instead, one request less each time. Its power Item is
-// sony_rest's, so a test sets it.
-function sonyTv() {
+// sony_rest's, so a test sets it. `decline` names a method it answers with a
+// Sony error, `status` is the HTTP status of every answer, `fault` answers a
+// key with a SOAP fault, and `down` loses every request: `unreached` before
+// it connects, `lost` after. `paired: false` leaves it no registration.
+function sonyTv({ paired = true, send = true } = {}) {
   const clock = { now: 0 }, day = 24 * 60 * 60 * 1000;
-  const tv = { power: 'active', input: 2, volume: 20, mute: false, boot: 0, bootError: [40005, 'Display Is Turned off'], requests: [] };
-  const answer = body => ({ getStatus: () => 200, getContentAsString: () => JSON.stringify(Object.assign({ id: 1 }, body)),
+  const tv = { power: 'active', input: 2, volume: 20, mute: false, boot: 0, bootError: [40005, 'Display Is Turned off'], requests: [],
+    decline: null, status: 200, fault: false, down: null };
+  const answer = body => ({ getStatus: () => tv.status, getContentAsString: () => JSON.stringify(Object.assign({ id: 1 }, body)),
     getHeaders: () => ({ getValuesList: () => ({ size: () => 0, get: () => null }) }) });
   const thermiteIO = {
-    unreached: () => false,
+    unreached: error => error.unreached === true,
     http(url, method, body) {
+      if (tv.down) throw Object.assign(Error('no answer'), { unreached: tv.down === 'unreached' });
+      if (url.endsWith('/sony/IRCC')) {
+        tv.requests.push('IRCC');
+        return { getStatus: () => tv.status, getContentAsString: () => tv.fault ? '<s:Envelope><s:Body><s:Fault></s:Fault></s:Body></s:Envelope>' : '',
+          getHeaders: () => ({ getValuesList: () => ({ size: () => 0, get: () => null }) }) };
+      }
       const request = JSON.parse(body).method;
       tv.requests.push(request);
+      if (request === tv.decline) return answer({ error: [3, 'Illegal Argument'] });
       if (request === 'getPowerStatus') return answer({ result: [{ status: tv.power }] });
       if (request === 'setPowerStatus') { tv.power = JSON.parse(body).params[0].status ? 'active' : 'standby'; return answer({ result: [] }); }
       if (tv.power !== 'active') return answer({ error: [40005, 'Display Is Turned off'] });
@@ -720,20 +858,22 @@ function sonyTv() {
     pin: null, cookie: session, expires: 30 * day, refused: false });
   const path = { resolve: () => path, toString: () => 'userdata/sony_ip_control/tv.json' };
   const java = {
-    'java.nio.file.Files': { exists: () => true, readString: () => registration },
+    'java.nio.file.Files': { exists: () => paired, readString: () => registration },
     'java.nio.file.Paths': { get: () => path },
     'java.nio.file.StandardCopyOption': {},
     'java.nio.file.attribute.PosixFilePermissions': {},
     'java.util.UUID': { randomUUID: () => '00000000-0000-4000-8000-000000000001' },
     'org.openhab.core.OpenHAB': { getUserDataFolder: () => 'userdata' },
   };
-  const items = Object.fromEntries(['input', 'volume', 'mute', 'key', 'pairing', 'pairing_status', 'pairing_result', 'problem']
-    .map(point => [`tv_${point}`, 'NULL']));
+  const items = Object.fromEntries(['input', 'volume', 'mute', 'key', 'pairing', 'pairing_status', 'pairing_result', 'problem',
+    'sony_ip_control_commands'].map(point => [`tv_${point}`, 'NULL']));
   items.tv_power = 'ON';
-  const loaded = run(sonyTvSource.replace('// THERMITE_BOUNDED_IO', ''), {
+  const source = send ? sonyTvSource : sonyTvSource.replace('const SEND = true;', 'const SEND = false;');
+  const loaded = run(source.replace('// THERMITE_BOUNDED_IO', ''), {
     DEVICES: [{ id: 'tv', address: '192.0.2.40', inputs: [1, 2, 3, 4], volume: { min: 0, max: 100, step: 1 }, speakerAudio: true }],
     PRESSES: { home: 'AAAAAQAAAAEAAABgAw==' } }, { items, clock, java, globals: { thermiteIO } });
-  return { ...loaded, clock, tv, items, poll: () => { loaded.rules.sony_ip_control_tv_poll.execute(); clock.now += 15000; } };
+  return { ...loaded, clock, tv, items, poll: () => { loaded.rules.sony_ip_control_tv_poll.execute(); clock.now += 15000; },
+    command: (point, value) => loaded.rules.sony_ip_control_tv_command.execute({ itemName: `tv_${point}`, receivedCommand: value }) };
 }
 
 test('every Sony TV poll posts its input, volume and mute, changed or not; its problem and pairing only on change', () => {
@@ -754,6 +894,133 @@ test('every Sony TV poll posts its input, volume and mute, changed or not; its p
   assert.deepEqual(r.logs.filter(([level]) => level !== 'info'), []);
 });
 
+test('a volume the Sony TV refuses is explained once and recorded each time, and stays its problem until it takes a command', () => {
+  const r = sonyTv();
+  r.poll();
+  r.tv.decline = 'setAudioVolume';
+  r.command('volume', '30'); r.command('volume', '31');
+  // What an operator reads: why, once while it stays the same, then one
+  // record for each command that was not applied.
+  assert.deepEqual(r.logs.filter(([level]) => level === 'warn'), [
+    ['warn', 'tv: answered setAudioVolume with a Sony API error'],
+    ['warn', 'command device=tv item=tv_volume command=30 outcome=refused code=refused ms=0'],
+    ['warn', 'command device=tv item=tv_volume command=31 outcome=refused code=refused ms=0']]);
+  assert.equal(r.items.tv_problem, 'refused');
+  // A poll that reads the TV says nothing of whether it would now take it.
+  r.poll(); assert.equal(r.items.tv_problem, 'refused');
+  r.tv.decline = null; r.command('volume', '30');
+  assert.deepEqual(r.logs.slice(-2), [['info', 'tv: sent setAudioVolume [{"target":"speaker","volume":"30"}]'],
+    ['info', 'command device=tv item=tv_volume command=30 outcome=applied code=- ms=0']]);
+  assert.deepEqual(r.problems('tv_problem'), ['UNDEF', 'refused', 'UNDEF']);
+  assert.deepEqual(r.tally('tv_sony_ip_control_commands'), { applied: 1, refused: 2 });
+});
+
+test('each way a Sony TV command fails ends in its own outcome and code', () => {
+  for (const [how, point, value, outcome, code] of [
+    [r => { r.tv.power = 'standby'; }, 'volume', '30', 'refused', 'not_ready'],
+    [r => { r.tv.down = 'unreached'; }, 'volume', '30', 'unsent', 'unreachable'],
+    [r => { r.tv.down = 'lost'; }, 'mute', 'ON', 'unknown', 'no_answer'],
+    [r => { r.tv.status = 500; }, 'input', 'hdmi3', 'unknown', 'protocol'],
+    [r => { r.tv.status = 404; }, 'input', 'hdmi3', 'refused', 'refused'],
+    [r => { r.tv.status = 403; }, 'power', 'OFF', 'refused', 'auth'],
+    [r => { r.tv.fault = true; }, 'key', 'home', 'refused', 'refused'],
+    [r => { r.tv.status = 503; }, 'key', 'home', 'unknown', 'protocol'],
+    [r => { r.tv.down = 'unreached'; }, 'pairing', 'REQUEST', 'unsent', 'unreachable'],
+    [r => { r.tv.down = 'lost'; }, 'pairing', 'REQUEST', 'unknown', 'no_answer']]) {
+    const r = sonyTv();
+    r.poll(); how(r); r.command(point, value);
+    const command = point === 'pairing' ? '<private>' : value;
+    assert.deepEqual(r.recorded(), [['warn', `tv_${point}`, command, outcome, code]], `${point} ${value}`);
+    assert.equal(r.items.tv_problem, code, `${point} ${value}`);
+  }
+  // Not paired: nothing is sent, and it was the TV's problem before any command.
+  const unpaired = sonyTv({ paired: false });
+  assert.equal(unpaired.items.tv_problem, 'auth');
+  unpaired.command('volume', '30');
+  assert.deepEqual([unpaired.recorded(), unpaired.tv.requests], [[['warn', 'tv_volume', '30', 'unsent', 'auth']], []]);
+  // What the rule drops itself is no problem of the TV.
+  const r = sonyTv(), copy = sonyTv({ send: false });
+  r.command('key', 'unknownkey'); r.command('volume', '300'); r.command('input', 'hdmi9'); r.command('pairing', 'not a pin');
+  copy.command('volume', '30'); copy.command('key', 'home'); copy.command('pairing', '1234');
+  assert.deepEqual(r.recorded(), [['warn', 'tv_key', '?', 'dropped', 'invalid'], ['warn', 'tv_volume', '?', 'dropped', 'invalid'],
+    ['warn', 'tv_input', '?', 'dropped', 'invalid'], ['warn', 'tv_pairing', '<private>', 'dropped', 'invalid']]);
+  assert.deepEqual(copy.recorded(), [['warn', 'tv_volume', '30', 'dropped', 'read_only'], ['warn', 'tv_key', 'home', 'dropped', 'read_only'],
+    ['warn', 'tv_pairing', '<private>', 'dropped', 'read_only']]);
+  assert.deepEqual([r.problems('tv_problem'), copy.problems('tv_problem')], [['UNDEF'], ['UNDEF']]);
+  // A key and a power command it takes are applied.
+  r.command('key', 'home'); r.command('power', 'OFF');
+  assert.deepEqual(r.recorded().slice(-2), [['info', 'tv_key', 'home', 'applied', '-'], ['info', 'tv_power', 'OFF', 'applied', '-']]);
+});
+
+// An Apple TV behind its helper. The helper answers a read with the Apple
+// TV's `state`, and a command with HTTP `status`: that state on 200, else
+// what it declined. `down` loses every request: `unreached` before it
+// connects, `lost` after.
+function appleTv({ send = true } = {}) {
+  const clock = { now: 0 };
+  const helper = { status: 200, down: null, requests: [],
+    state: { id: 'player', paired: true, connected: true, pairing: null, error: null, power: 'on', power_reported_at: 1700000000000 } };
+  const thermiteIO = {
+    unreached: error => error.unreached === true,
+    http(url, method) {
+      helper.requests.push(`${method} ${url.replace('http://helper.example', '').replace(/\?.*$/, '')}`);
+      if (helper.down) throw Object.assign(Error('no answer'), { unreached: helper.down === 'unreached' });
+      const status = method === 'POST' ? helper.status : 200;
+      return { getStatus: () => status, getContentAsString: () => JSON.stringify(status === 200 ? helper.state : { error: 'declined' }) };
+    },
+  };
+  const items = Object.fromEntries(['power', 'power_reported_at', 'key', 'pairing', 'pairing_status', 'problem', 'pyatv_http_commands']
+    .map(point => [`player_${point}`, 'NULL']));
+  const source = send ? pyatvSource : pyatvSource.replace('const SEND = true;', 'const SEND = false;');
+  const loaded = run(source.replace('// THERMITE_BOUNDED_IO', ''), { DEVICES: [{ id: 'player', host: '192.0.2.50', helper: 'http://helper.example' }],
+    PRESSES: { menu: 'menu' }, APPS: { films: 'com.example.films' } }, { items, clock, strict: true,
+    // The rule turns the helper's power timestamp into a date.
+    globals: { thermiteIO, Date: class extends Date { static now() { return clock.now; } } } });
+  return { ...loaded, clock, helper, items, poll: () => { loaded.rules.pyatv_http_player_poll.execute(); clock.now += 5000; },
+    command: (point, value) => loaded.rules.pyatv_http_player_command.execute({ itemName: `player_${point}`, receivedCommand: value }) };
+}
+
+test('each way the Apple TV helper answers a command is its record, and the Apple TV\'s own state its problem', () => {
+  for (const [how, point, value, outcome, code, problem] of [
+    [r => { r.helper.status = 409; }, 'key', 'menu', 'unsent', 'auth', 'auth'],
+    [r => { r.helper.status = 422; }, 'pairing', '1234', 'refused', 'auth', 'auth'],
+    [r => { r.helper.status = 404; }, 'key', 'films', 'unsent', 'protocol', 'protocol'],
+    [r => { r.helper.status = 502; }, 'power', 'OFF', 'unknown', 'no_answer', 'no_answer'],
+    [r => { r.helper.status = 500; }, 'power', 'ON', 'unknown', 'other', 'other'],
+    [r => { r.helper.down = 'unreached'; }, 'key', 'menu', 'unsent', 'unreachable', 'unreachable'],
+    [r => { r.helper.down = 'lost'; }, 'key', 'menu', 'unknown', 'no_answer', 'no_answer']]) {
+    const r = appleTv();
+    r.poll(); how(r); r.command(point, value);
+    assert.deepEqual(r.recorded(), [['warn', `player_${point}`, point === 'pairing' ? '<private>' : value, outcome, code]], `${point} ${value}`);
+    assert.equal(r.items.player_problem, problem, `${point} ${value}`);
+    // It answers again and takes a key: nothing is wrong any more.
+    r.helper.status = 200; r.helper.down = null; r.command('key', 'menu');
+    assert.deepEqual(r.recorded()[1], ['info', 'player_key', 'menu', 'applied', '-']);
+    assert.equal(r.items.player_problem, 'UNDEF');
+  }
+  // What each poll reads of the Apple TV is its problem without any command.
+  const r = appleTv();
+  r.helper.state.paired = false; r.helper.state.connected = false; r.poll();
+  assert.equal(r.items.player_problem, 'auth');
+  r.helper.state.paired = true; r.helper.state.error = 'cannot connect'; r.poll();
+  assert.equal(r.items.player_problem, 'unreachable');
+  r.helper.down = 'unreached'; r.poll(); assert.equal(r.items.player_problem, 'unreachable');
+  r.helper.down = 'lost'; r.poll(); assert.equal(r.items.player_problem, 'no_answer');
+  r.helper.down = null; r.helper.state.connected = true; r.helper.state.error = null; r.poll();
+  assert.deepEqual(r.problems('player_problem'), ['UNDEF', 'auth', 'unreachable', 'no_answer', 'UNDEF']);
+  // What the rule drops itself reaches no helper.
+  const copy = appleTv({ send: false });
+  r.helper.requests.length = 0;
+  r.command('key', 'nokey'); r.command('power', 'TOGGLE'); r.command('pairing', 'not a code');
+  copy.command('key', 'menu'); copy.command('power', 'ON'); copy.command('pairing', '1234');
+  assert.deepEqual(r.recorded(), [['warn', 'player_key', '?', 'dropped', 'invalid'], ['warn', 'player_power', '?', 'dropped', 'invalid'],
+    ['warn', 'player_pairing', '<private>', 'dropped', 'invalid']]);
+  assert.deepEqual(copy.recorded(), [['warn', 'player_key', 'menu', 'dropped', 'read_only'],
+    ['warn', 'player_power', 'ON', 'dropped', 'read_only'], ['warn', 'player_pairing', '<private>', 'dropped', 'read_only']]);
+  assert.deepEqual([r.helper.requests, copy.helper.requests], [[], []]);
+  assert(![...r.logs, ...copy.logs].some(([, message]) => message.includes('1234') || message.includes('not a code')));
+});
+
 // _device.js alone, as the renderer embeds it after thermiteIO in a script
 // whose SEND it reads.
 test('a Sony TV whose content API still boots after power-on reads as on its way, and an input it declines then is busy', () => {
@@ -765,21 +1032,21 @@ test('a Sony TV whose content API still boots after power-on reads as on its way
   r.tv.boot = 3;
   assert.deepEqual(provider.execute('tv_power', 'ON'), { outcome: 'applied', sample: sample('ON', { transition: true }) });
   r.clock.now += 1000;
-  assert.deepEqual(provider.execute('tv_input', 'hdmi3'), { outcome: 'busy', retryAfterMs: 3000 });
+  assert.deepEqual(provider.execute('tv_input', 'hdmi3'), { outcome: 'busy', code: 'busy', retryAfterMs: 3000 });
   assert.equal(r.tv.input, 2);
   r.clock.now += 3000; r.tv.boot = 0;
   assert.deepEqual(provider.probe('tv_power'), sample('ON'));
   assert.deepEqual(provider.execute('tv_input', 'hdmi3'), { outcome: 'applied', sample: sample('hdmi3') });
   // Past the boot window, or a TV in standby, a declined input means no.
   r.clock.now += 30000; r.tv.boot = 5;
-  assert.deepEqual(provider.execute('tv_input', 'hdmi1'), { outcome: 'refused' });
+  assert.deepEqual(provider.execute('tv_input', 'hdmi1'), { outcome: 'refused', code: 'not_ready' });
   assert.deepEqual(provider.probe('tv_power'), sample('ON'));
   r.tv.boot = 0; r.tv.power = 'standby';
   assert.equal(provider.probe('tv_power').value, 'OFF');
   r.tv.power = 'active'; r.tv.boot = 5;
   assert.deepEqual(provider.probe('tv_power'), sample('ON', { transition: true }));
   r.tv.power = 'standby';
-  assert.deepEqual(provider.execute('tv_input', 'hdmi1'), { outcome: 'refused' });
+  assert.deepEqual(provider.execute('tv_input', 'hdmi1'), { outcome: 'refused', code: 'not_ready' });
   // An answer naming no HDMI input (Sony's error 7) is a booted TV showing
   // something else; without a declared settle nothing is a boot.
   r.tv.power = 'active'; r.tv.boot = 5; r.tv.bootError = [7, 'Illegal State'];
@@ -787,7 +1054,7 @@ test('a Sony TV whose content API still boots after power-on reads as on its way
   const bare = sonyTv(), plain = bare.context.routingProvider();
   bare.tv.power = 'standby'; plain.probe('tv_power'); bare.tv.boot = 5;
   assert.deepEqual(plain.execute('tv_power', 'ON').sample.transition, undefined);
-  assert.deepEqual(plain.execute('tv_input', 'hdmi1'), { outcome: 'refused' });
+  assert.deepEqual(plain.execute('tv_input', 'hdmi1'), { outcome: 'refused', code: 'not_ready' });
 });
 
 function device({ send = true, items = {}, thermiteIO = {} } = {}) {
@@ -800,8 +1067,13 @@ function device({ send = true, items = {}, thermiteIO = {} } = {}) {
     Date: { now: () => clock.now }, thermiteIO, Map, Set, Object, String, Math,
   });
   const helper = vm.runInContext(`const SEND = ${send};\n${deviceSource}\nthermiteDevice;`, context);
-  return { helper, rules, logs, hooks, clock, items, posted: openhab.posted };
+  ran.push({ logs, posted: openhab.posted });
+  return { helper, rules, logs, hooks, clock, items, posted: openhab.posted, ...records(logs, openhab.posted) };
 }
+
+// The problem and tally Items of the device `tv` in a script of the
+// integration `test`, not yet posted to.
+const recordItems = () => ({ tv_problem: 'NULL', tv_test_commands: 'NULL' });
 
 test('the shared helper posts a reading at every read, the rule\'s own state only on change, and no missing Item', () => {
   const r = device({ items: { tv_power: 'ON', tv_pairing_status: 'paired' } });
@@ -837,19 +1109,103 @@ test('with SEND false the shared helper holds a command back and says so', () =>
   assert.deepEqual(live.logs, []); assert.deepEqual(copy.logs, [['info', 'tv: SEND is false, not sending power ON']]);
 });
 
-test('the shared command rule hands a command to the routing actor once there is one, else sends it', () => {
-  const r = device(), direct = [], legacy = [];
+test('the shared command rule hands a command to the routing actor once there is one, else sends and records it', () => {
+  const r = device({ items: recordItems() }), direct = [], legacy = [];
   let actor = null;
-  r.helper.commandRule({ id: 'x_tv_command', name: 'tv', items: ['tv_power', 'tv_pairing'], actor: () => actor,
-    direct: event => { direct.push(event.itemName); return 'sent'; } });
+  r.helper.commandRule({ id: 'x_tv_command', name: 'tv', device: 'tv', items: ['tv_power', 'tv_pairing'], actor: () => actor,
+    direct: event => { direct.push(event.itemName); return { outcome: 'applied' }; } });
   const rule = r.rules.x_tv_command;
   assert.deepEqual(rule.triggers, [{ name: 'tv_power' }, { name: 'tv_pairing' }]);
-  assert.equal(rule.execute({ itemName: 'tv_power', receivedCommand: 'ON' }), 'sent');
+  rule.execute({ itemName: 'tv_power', receivedCommand: 'ON' });
+  assert.deepEqual(r.recorded(), [['info', 'tv_power', 'ON', 'applied', '-']]);
   actor = { legacy: (...args) => legacy.push(args) };
   rule.execute({ itemName: 'tv_power', receivedCommand: { toString: () => 'OFF' }, eventSource: 'remote' });
   rule.execute({ itemName: 'tv_pairing', receivedCommand: '1234' });
   assert.deepEqual(direct, ['tv_power']);
   assert.deepEqual(legacy, [['tv_power', 'OFF', false, 'remote'], ['tv_pairing', '1234', true, undefined]]);
+  // A command handed on is the actor's to record when it concludes it
+  // (lifecycle_io_harness.js): the rule adds no record of its own.
+  assert.equal(r.recorded().length, 1); assert.deepEqual(r.tally('tv_test_commands'), { applied: 1 });
+});
+
+test('a command its sender could not apply leaves a WARN record, its code as the problem and a count; the next one taken ends the problem', () => {
+  const r = device({ items: recordItems() });
+  let answer = { outcome: 'refused', code: 'refused' };
+  r.helper.commandRule({ id: 'x_tv_command', name: 'tv', device: 'tv', items: ['tv_volume'],
+    direct: () => { r.clock.now += 120; return answer; } });
+  // From the start: a count of zero for every outcome, and no problem.
+  const zeros = Object.fromEntries(VOCABULARY.outcomes.map(outcome => [outcome, { count: 0, ms: 0 }]));
+  assert.deepEqual(r.posted, [['tv_test_commands', JSON.stringify({ version: 1, outcomes: zeros })], ['tv_problem', 'UNDEF']]);
+  const send = value => r.rules.x_tv_command.execute({ itemName: 'tv_volume', receivedCommand: value });
+  send('30');
+  assert.deepEqual(r.logs, [['warn', 'command device=tv item=tv_volume command=30 outcome=refused code=refused ms=120']]);
+  assert.equal(r.items.tv_problem, 'refused');
+  assert.deepEqual(JSON.parse(r.items.tv_test_commands), { version: 1, outcomes: { ...zeros, refused: { count: 1, ms: 120 } } });
+  // Another that fails the same way counts again and posts no problem twice.
+  send('30');
+  assert.deepEqual(r.problems('tv_problem'), ['UNDEF', 'refused']);
+  answer = { outcome: 'applied' }; send('31');
+  assert.deepEqual(r.logs[2], ['info', 'command device=tv item=tv_volume command=31 outcome=applied code=- ms=120']);
+  assert.equal(r.items.tv_problem, 'UNDEF');
+  assert.deepEqual(JSON.parse(r.items.tv_test_commands).outcomes, { ...zeros, refused: { count: 2, ms: 240 }, applied: { count: 1, ms: 120 } });
+});
+
+test('a sender that throws, or does not say how its command ended, is recorded unknown, and what the rule dropped blames no device', () => {
+  const r = device({ items: recordItems() });
+  let direct = () => { throw Error('the sender failed'); };
+  r.helper.commandRule({ id: 'x_tv_command', name: 'tv', device: 'tv', items: ['tv_volume'], direct: event => direct(event) });
+  const send = () => r.rules.x_tv_command.execute({ itemName: 'tv_volume', receivedCommand: '30' });
+  // The record is made, and openHAB still logs the rule's failure.
+  assert.throws(send, /the sender failed/);
+  for (const said of [undefined, null, 'applied', true, {}, { outcome: 'done' }]) { direct = () => said; send(); }
+  assert.deepEqual(r.recorded(), Array(7).fill(['warn', 'tv_volume', '30', 'unknown', 'other']));
+  assert.deepEqual(r.problems('tv_problem'), ['UNDEF', 'other']);
+  for (const code of VOCABULARY.drops) { direct = () => ({ outcome: 'dropped', code }); send(); }
+  assert.deepEqual(r.recorded().slice(7), [['warn', 'tv_volume', '?', 'dropped', 'invalid'],
+    ['warn', 'tv_volume', '30', 'dropped', 'read_only'], ['warn', 'tv_volume', '30', 'dropped', 'held']]);
+  assert.equal(r.items.tv_problem, 'other');
+  assert.deepEqual(r.tally('tv_test_commands'), { unknown: 7, dropped: 3 });
+});
+
+test('only a code of the table reaches a problem Item or a record, and no PIN or free text a record', () => {
+  const r = device({ items: recordItems() }), record = r.helper.recorder('tv'), health = r.helper.health();
+  assert.equal(r.helper.recorder('tv'), record);
+  for (const code of ['The TV said: Illegal State', 'native_avpro_status_unavailable', 'invalid', 'UNDEF', '', 7, {}]) {
+    record({ item: 'tv_volume', command: '30', outcome: 'refused', code, ms: 1 });
+    assert.equal(r.items.tv_problem, 'other', String(code));
+    record({ item: 'tv_volume', command: '30', outcome: 'applied', code, ms: 1 });
+    assert.equal(r.items.tv_problem, 'UNDEF');
+    r.helper.problem.read('tv', code);
+    assert.equal(r.items.tv_problem, 'other', String(code));
+    r.helper.problem.read('tv', null);
+  }
+  health.failed('tv', 'does not answer'); assert.equal(r.items.tv_problem, 'other');
+  health.answered('tv', 'answers again', 'not a code'); assert.equal(r.items.tv_problem, 'other');
+  health.answered('tv', 'answers again'); assert.equal(r.items.tv_problem, 'UNDEF');
+  // A record never prints a pairing PIN, a value with anything but plain
+  // characters, a duration that is no number or an Item name that is none.
+  record({ item: 'tv_pairing', command: '1234', secret: true, outcome: 'applied', ms: 2 });
+  record({ item: 'tv_app', command: 'a title: with words', outcome: 'sent', ms: -5 });
+  record({ item: 'tv key', command: 'x'.repeat(65), outcome: 'dropped', code: 'not a drop', ms: 'soon' });
+  assert.deepEqual(r.logs.slice(-3), [['info', 'command device=tv item=tv_pairing command=<private> outcome=applied code=- ms=2'],
+    ['info', 'command device=tv item=tv_app command=? outcome=sent code=- ms=0'],
+    ['warn', 'command device=tv item=? command=? outcome=dropped code=- ms=0']]);
+});
+
+test('a read that fails shows before a failed command, and one that recovers ends only the same problem of a command', () => {
+  const r = device({ items: recordItems() }), record = r.helper.recorder('tv'), health = r.helper.health();
+  const command = (outcome, code) => record({ item: 'tv_volume', command: '30', outcome, code, ms: 1 });
+  command('refused', 'refused');
+  health.failed('tv', 'does not answer', 'no_answer'); assert.equal(r.items.tv_problem, 'no_answer');
+  // That it answers a read again does not say it would now take the command.
+  health.answered('tv', 'answers again'); assert.equal(r.items.tv_problem, 'refused');
+  command('unsent', 'unreachable'); health.failed('tv', 'cannot connect', 'unreachable');
+  health.answered('tv', 'answers again'); assert.equal(r.items.tv_problem, 'UNDEF');
+  // What a device answers can itself be the problem: not paired, say.
+  health.answered('tv', 'answers again', 'auth'); assert.equal(r.items.tv_problem, 'auth');
+  command('applied'); assert.equal(r.items.tv_problem, 'auth');
+  health.answered('tv', 'answers again'); assert.equal(r.items.tv_problem, 'UNDEF');
+  assert.deepEqual(r.problems('tv_problem'), ['UNDEF', 'refused', 'no_answer', 'refused', 'unreachable', 'UNDEF', 'auth', 'UNDEF']);
 });
 
 test('the shared connections keep one per device, replace one closed while idle and close all on unload', () => {
@@ -881,6 +1237,25 @@ test('the shared samples are fresh owned reads, and a command applied without on
   assert.deepEqual(r.helper.sample('ON'), { value: 'ON', fresh: true, basis: 'owned_native_read', observedAt: 5000 });
   assert.deepEqual(r.helper.applied(() => r.helper.sample('hdmi1')).sample.value, 'hdmi1');
   assert.deepEqual(r.helper.applied(() => { throw Error('unread'); }), { outcome: 'applied', sample: null });
+});
+
+test('in every scenario above, a problem Item held only a code of the table or UNDEF, and every record was of the table', () => {
+  const states = [VOCABULARY.clear, ...VOCABULARY.problems];
+  let problems = 0, recorded = 0;
+  for (const { logs, posted } of ran) {
+    for (const [item, state] of posted) if (item.endsWith('_problem')) { problems += 1; assert(states.includes(state), `${item}=${state}`); }
+    for (const [level, message] of logs) if (message.startsWith('command ')) {
+      const match = RECORD.exec(message);
+      assert(match, message);
+      const outcome = match[4], code = match[5], taken = outcome === 'applied' || outcome === 'sent';
+      assert(VOCABULARY.outcomes.includes(outcome), message); assert.equal(level, taken ? 'info' : 'warn', message);
+      assert(taken ? code === '-' : outcome === 'dropped' ? code === '-' || VOCABULARY.drops.includes(code)
+        : VOCABULARY.problems.includes(code), message);
+      recorded += 1;
+    }
+  }
+  // Not vacuous: the scenarios above post problems and record commands.
+  assert(problems >= 60 && recorded >= 60, `${problems} problem posts, ${recorded} records`);
 });
 
 process.stdout.write(JSON.stringify({ passed: tests.length, tests }));

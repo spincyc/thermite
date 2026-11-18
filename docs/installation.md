@@ -695,6 +695,37 @@ journalctl -u thermite-openhab.service -g 'routing ticket .*(reason=[a-z]|readba
 journalctl -u thermite-openhab.service -g 'routing (deadline|settle|ticket .* ms=[0-9]{4,})'
 ```
 
+`accepted` says only that openHAB took the command. What the device made of
+it is the `command` line of the rule that sent it, also in openHAB's journal:
+
+```sh
+journalctl -u thermite-openhab.service -g 'command device=den_tv '
+journalctl -u thermite-openhab.service -g 'command device=.* outcome=(dropped|unsent|refused|busy|unknown)'
+```
+
+```text
+command device=den_tv item=den_tv_volume command=30 outcome=refused code=refused ms=41
+```
+
+`outcome` is `applied` (the device acknowledged it), `sent` (handed to a
+transport that acknowledges nothing, such as an IR code), `dropped` (the
+rule sent nothing: `code` is `invalid`, `read_only` or `held` by routing),
+`unsent` (nothing reached the device), `refused` or `busy` (the device
+answered no, or not now) or `unknown` (sent, and its effect is not known).
+Every outcome but `applied` and `sent` is a warning, and its `code` says why
+in one word of a fixed list: `unreachable`, `no_answer`, `refused`, `busy`,
+`not_ready`, `auth` (not paired, or the device refuses openHAB), `protocol`
+(an answer openHAB does not understand) or `other`. Where the rule knows
+more, its own warning comes first, once while the fault stays the same. The
+device's `<id>_problem` Item holds the code, and the remotes show it after
+the device's label, until the device takes a command again. `command` is
+`<private>` for a pairing code and `?` for a value the Item does not take;
+`ms` runs from the rule taking the command to its conclusion. The line names
+the device and Item, not the command's `id`: match it by time. A command to
+an Item that a binding's channel takes itself (an HDMI matrix output on its
+HTTP binding, in a house without the routing executor) has no such line,
+because openHAB tells no rule what became of it.
+
 Which lock blocked a command, and who set it:
 
 ```sh

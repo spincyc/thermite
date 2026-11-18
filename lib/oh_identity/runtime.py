@@ -277,8 +277,6 @@ def project(name, value, spec):
         except ValueError:
             date = None
         return date.isoformat() if date and date.tzinfo else "UNDEF"
-    if kind == "problem":
-        return "UNDEF" if value in ("", None) else "Device control unavailable"
     if kind == "pairing_status":
         return value if value in PAIR_STATES else "UNDEF"
     if kind == "pairing_result":

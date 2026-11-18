@@ -261,8 +261,11 @@ class Scenarios(unittest.TestCase):
             ("40m", "ThermiteCheckFailing", [check(WEST, "port", TV, WEST)]),
             ("40m", "ThermiteControlUnknown", []),
         ], values=[
+            # Both of the player's checks are released with it: its power,
+            # and the problem its own script keeps of its commands.
             ("11m", f'thermite:check{{device="{PLAYER}"}}',
-             [(series("thermite:check", **{**check(WEST, "power", PLAYER, WEST), "required": "false"}), 0)]),
+             [(series("thermite:check", **{**check(WEST, name, PLAYER, WEST), "required": "false"}), 0)
+              for name in ("power", "problem")]),
         ])
 
     def test_a_reading_the_room_does_not_offer_is_unknown_and_holds_the_source_before_it(self):

@@ -1,12 +1,15 @@
 'use strict';
 // Runs the production VRROOM telnet rule against a stub openHAB and a
-// scripted switch. argv: vrroom_telnet.js _device.js _io.js. No device or
-// network access: the rule's thermiteIO is a fixture, and what the scripts
-// share (_device.js) is embedded as the renderer embeds it (_io.py). The
-// last test runs the real _io.js and _device.js on a scripted socket
+// scripted switch. argv: vrroom_telnet.js, a JSON file with _device.js as
+// the rule embeds it under `vrroom_telnet` (_io.device()), and _io.js. No
+// device or network access: the rule's thermiteIO is a fixture, and what the
+// scripts share (_device.js) is embedded as the renderer embeds it (_io.py).
+// The last test runs the real _io.js and _device.js on a scripted socket
 // (integration_io_harness.js).
 const fs = require('fs'), vm = require('vm'), assert = require('assert');
-const [ruleSource, deviceSource, ioSource] = process.argv.slice(2).map(path => fs.readFileSync(path, 'utf8'));
+const { records } = require('./command_record.js');
+const [ruleSource, shared, ioSource] = process.argv.slice(2).map(path => fs.readFileSync(path, 'utf8'));
+const deviceSource = JSON.parse(shared).vrroom_telnet;
 const tests = [];
 function test(name, fn) { fn(); tests.push(name); }
 
@@ -72,7 +75,7 @@ function vrroom({ send = true, interrupts = false } = {}) {
     close(link) { link.closed = true; },
   };
   const rules = {}, logs = [], posted = [];
-  const items = { switch_input: 'NULL', switch_reboot: 'NULL' };
+  const items = { switch_input: 'NULL', switch_reboot: 'NULL', switch_problem: 'NULL', switch_vrroom_telnet_commands: 'NULL' };
   const openhab = {
     items: { getItem: (name, nullable) => {
       if (!(name in items)) { if (nullable) return null; throw Error(`Item ${name} does not exist`); }
@@ -93,9 +96,11 @@ function vrroom({ send = true, interrupts = false } = {}) {
   text = text.replace('// THERMITE_BOUNDED_IO', '').replace('// THERMITE_DEVICE', () => deviceSource)
     .replace('const DEVICES = null;', `const DEVICES = ${JSON.stringify([{ id: 'switch', host: '192.0.2.40', port: 2222, inputs: 4 }])};`);
   vm.runInContext(text, context);
-  const warnings = () => logs.filter(([level]) => level === 'warn').map(([, message]) => message);
+  const record = records(logs, posted);
+  // What the rule itself warned of: each command's record is read apart.
+  const warnings = () => record.said().filter(([level]) => level === 'warn').map(([, message]) => message);
   const posts = () => posted.filter(([item]) => item === 'switch_input').map(([, value]) => value);
-  return { rules, logs, posted, posts, context, clock, vr, items, warnings, unload: () => hooks.forEach(hook => hook()),
+  return { rules, logs, posted, posts, context, clock, vr, items, warnings, ...record, unload: () => hooks.forEach(hook => hook()),
     poll: () => { rules.vrroom_telnet_switch_poll.execute(); clock.now += 1000; },
     listen: () => { rules.vrroom_telnet_switch_listen.execute(); clock.now += 1000; },
     // Ten seconds of the rule's life: the poll, then a listen each second.
@@ -174,17 +179,17 @@ test('the VRROOM routing provider is unsent before set insel, refused when anoth
   assert.deepEqual(provider.execute('switch_input', '2'),
     { outcome: 'applied', sample: { value: '2', fresh: true, basis: 'owned_native_read', observedAt: 10000 } });
   r.vr.decline = true;
-  assert.deepEqual(provider.execute('switch_input', '3'), { outcome: 'refused' });
+  assert.deepEqual(provider.execute('switch_input', '3'), { outcome: 'refused', code: 'refused' });
   assert.equal(r.items.switch_input, '2');
   r.vr.decline = false; r.vr.silent = true;
-  assert.deepEqual(provider.execute('switch_input', '3'), { outcome: 'unknown' });
+  assert.deepEqual(provider.execute('switch_input', '3'), { outcome: 'unknown', code: 'no_answer' });
   r.vr.silent = false; r.vr.hangup = 'set insel 1 4';
-  assert.deepEqual(provider.execute('switch_input', '1'), { outcome: 'unknown' });
+  assert.deepEqual(provider.execute('switch_input', '1'), { outcome: 'unknown', code: 'no_answer' });
   // An acknowledged switch whose read then fails is applied; the executor re-reads.
   r.vr.hangup = 'get insel';
   assert.deepEqual(provider.execute('switch_input', '0'), { outcome: 'applied', sample: null });
   r.vr.hangup = null; r.vr.refuse = true; r.vr.close();
-  assert.deepEqual(provider.execute('switch_input', '2'), { outcome: 'unsent' });
+  assert.deepEqual(provider.execute('switch_input', '2'), { outcome: 'unsent', code: 'no_answer' });
   r.vr.refuse = false;
   assert.deepEqual(provider.probe('switch_input'), { value: '0', fresh: true, basis: 'owned_native_read', observedAt: 10000 });
   assert(provider.has('switch_input', '3') && provider.has('switch_input', '0.0'));
@@ -206,16 +211,38 @@ test('reboot is sent only when asked for, logged with who asked, and leaves the 
   assert(provider.has('switch_reboot', 'reboot'));
   assert.deepEqual(provider.execute('switch_reboot', 'reboot'), { outcome: 'applied' });
   r.vr.refuse = true; r.tick();
-  assert.deepEqual(provider.execute('switch_reboot', 'reboot'), { outcome: 'unsent' });
+  assert.deepEqual(provider.execute('switch_reboot', 'reboot'), { outcome: 'unsent', code: 'no_answer' });
   assert.equal(r.vr.requests.filter(line => line === 'set reboot').length, 2);
+});
+
+test('each way a VRROOM command ends is its record, and what the switch did not take is its problem until it takes one', () => {
+  const r = vrroom({ interrupts: true });
+  r.tick();
+  r.command('input', 2);
+  r.vr.decline = true; r.command('input', 3);
+  r.vr.decline = false; r.vr.silent = true; r.command('input', 3);
+  r.vr.silent = false; r.vr.refuse = true; r.vr.close(); r.command('input', 1); r.command('reboot', 'reboot');
+  r.command('input', 4); r.command('reboot', 'ON');
+  r.vr.refuse = false; r.command('input', 1); r.command('reboot', 'reboot');
+  assert.deepEqual(r.recorded(), [['info', 'switch_input', '2', 'applied', '-'], ['warn', 'switch_input', '3', 'refused', 'refused'],
+    ['warn', 'switch_input', '3', 'unknown', 'no_answer'], ['warn', 'switch_input', '1', 'unsent', 'no_answer'],
+    ['warn', 'switch_reboot', 'reboot', 'unsent', 'no_answer'], ['warn', 'switch_input', '?', 'dropped', 'invalid'],
+    ['warn', 'switch_reboot', '?', 'dropped', 'invalid'], ['info', 'switch_input', '1', 'applied', '-'],
+    ['info', 'switch_reboot', 'reboot', 'applied', '-']]);
+  assert.deepEqual(r.problems('switch_problem'), ['UNDEF', 'refused', 'no_answer', 'UNDEF']);
+  assert.deepEqual(r.tally('switch_vrroom_telnet_commands'), { applied: 3, dropped: 2, unsent: 2, refused: 1, unknown: 1 });
 });
 
 test('a read-only copy connects to no VRROOM and only logs what it would send', () => {
   const r = vrroom({ send: false });
   r.tick(); r.tick(); r.command('input', 2); r.command('reboot', 'reboot');
-  assert.deepEqual(r.vr.opened, []); assert.deepEqual(r.posted, []);
-  assert.deepEqual(r.logs, [['info', 'switch: SEND is false, not sending set insel 2 4'],
+  assert.deepEqual(r.vr.opened, []); assert.deepEqual(r.posts(), []);
+  assert.deepEqual(r.said(), [['info', 'switch: SEND is false, not sending set insel 2 4'],
     ['info', 'switch: SEND is false, not sending set reboot']]);
+  // Its own record says each went nowhere, and blames no switch.
+  assert.deepEqual(r.recorded(), [['warn', 'switch_input', '2', 'dropped', 'read_only'],
+    ['warn', 'switch_reboot', 'reboot', 'dropped', 'read_only']]);
+  assert.deepEqual(r.problems('switch_problem'), ['UNDEF']);
 });
 
 test('the 1 s rule reads only on a live connection that gave notice, and never connects; reconnects keep the poll backoff', () => {
@@ -262,21 +289,21 @@ test('set insel is applied only on an insel answer naming it: insel err or anoth
   const r = vrroom({ interrupts: true }), provider = r.context.routingProvider(), link = () => r.vr.links[0];
   r.tick();
   r.vr.err = true;
-  assert.deepEqual(provider.execute('switch_input', '2'), { outcome: 'refused' });
+  assert.deepEqual(provider.execute('switch_input', '2'), { outcome: 'refused', code: 'refused' });
   assert.deepEqual(r.warnings(), ['switch: answered set insel 2 4 with insel err']);
   r.vr.format = line => line.slice(1);
-  assert.deepEqual(provider.execute('switch_input', '2'), { outcome: 'refused' });
+  assert.deepEqual(provider.execute('switch_input', '2'), { outcome: 'refused', code: 'refused' });
   r.vr.format = line => line; r.vr.err = false;
   // Stale or unrelated lines before a silent switch are no acknowledgement.
   r.vr.silent = true;
   for (const stale of ['ipinterrupt on', 'nt', 'interrupt', 'int', 'reboot']) {
     link().lines.push(stale);
-    assert.deepEqual(provider.execute('switch_input', '3'), { outcome: 'unknown' }, stale);
+    assert.deepEqual(provider.execute('switch_input', '3'), { outcome: 'unknown', code: 'no_answer' }, stale);
   }
   r.vr.silent = false; r.vr.insel = [0, 4];
   // An echo of the command is not its answer; the answer that follows is.
   r.vr.echo = true; r.vr.decline = true;
-  assert.deepEqual(provider.execute('switch_input', '1'), { outcome: 'refused' });
+  assert.deepEqual(provider.execute('switch_input', '1'), { outcome: 'refused', code: 'refused' });
   r.vr.decline = false;
   assert.deepEqual(provider.execute('switch_input', '1'),
     { outcome: 'applied', sample: { value: '1', fresh: true, basis: 'owned_native_read', observedAt: 10000 } });

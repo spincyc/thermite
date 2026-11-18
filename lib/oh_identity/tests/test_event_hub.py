@@ -31,7 +31,7 @@ def contract():
         "desk": {"source_item": "loc_desk_source", "sources": ["player"]}},
         states={"loc_den_source": {"kind": "enum", "values": ["player", "off"]},
                 "amp_volume": {"kind": "number", "max": 98, "commands": True},
-                "amp_problem": {"kind": "problem"},
+                "amp_problem": {"kind": "enum", "values": ["unreachable", "refused"]},
                 "matrix_label": {"kind": "text", "max_length": 192, "pattern": "[^\\x00-\\x1f\\x7f-\\x9f]{1,192}",
                                  "free_text": True},
                 "tv_pairing": {"kind": "enum", "commands": True},
