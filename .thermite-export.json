@@ -229,6 +229,7 @@
     "lib/oh_identity/tests/test_core.py",
     "lib/oh_identity/tests/test_event_hub.py",
     "lib/oh_identity/tests/test_features.py",
+    "lib/oh_identity/tests/test_gateway_peers.py",
     "lib/oh_identity/tests/test_gateway_server.py",
     "lib/oh_identity/tests/test_guest_listener.py",
     "lib/oh_identity/tests/test_hardening.py",

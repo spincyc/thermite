@@ -7,6 +7,17 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The gateway no longer lets one address hold all of its requests. One
+  peer (an IPv4 address or an IPv6 /64) has at most 40 requests in
+  flight, its 8 event streams among them; its next is answered 429 while
+  other peers are served. Before, 100 connections that sent a head and no
+  body made every other request a 503.
+  - A request whose body has not arrived 10 seconds after its head is
+    answered 408, and a connection whose peer acknowledges or reads
+    nothing for 30 seconds is dropped. Event streams are not cut by
+    either.
+  - Each refusal logs one rate-limited warning: `peer_busy` or
+    `body_overdue` with the peer's digest.
 - A command waits at most 8 seconds for its rooms' and devices' locks
   and is then refused 503 `runtime_busy`, never sent late. Before, it
   queued behind a slow device call for as long as that took, after its

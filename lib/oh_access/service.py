@@ -4,6 +4,7 @@
 from contextlib import ExitStack, contextmanager
 import asyncio
 import copy
+import errno
 import ipaddress
 import json
 import logging
@@ -11,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import socket
 import ssl
 import sys
 
@@ -33,6 +35,32 @@ STARTUP_FAILURE = 3
 COMMAND_LOCK_SECONDS = 8
 # In-flight HTTP requests across the gateway; every HTTP/2 stream counts.
 MAX_REQUESTS = 100
+# In-flight requests of one peer, so that no peer can hold them all. A peer
+# is the connection's own address, counted as oh_identity.addresses.peer_bucket
+# counts it (one IPv4 address, one IPv6 /64): the gateway trusts no forwarded
+# header, so the clients behind one address share it, as the terminal remotes
+# and the handheld bridge on the gateway's host do, or every device behind a
+# NAT or a proxy. Those already share a peer's event streams
+# (oh_identity/streams.py PEER_STREAMS), which fill long before this does: it
+# holds those streams and, beside them, as many requests as one HTTP/2
+# connection carries (listener()'s h2_max_concurrent_streams), which is all a
+# browser can have in flight however many pages it shows. Half the gateway's
+# requests stay with the other peers.
+PEER_REQUESTS = 40
+# Seconds a request's body may take to arrive once its head has. The site
+# reads no body over 64 KiB (oh_identity.settings DATA_UPLOAD_MAX_MEMORY_SIZE)
+# and a command's is under 1 KiB, sent with its head; the clients themselves
+# give a read up after 8 s and a command after 15 s. The head has its own
+# deadline: a connection without a complete one closes after listener()'s
+# keep_alive_timeout. An event stream has no body, so neither ends it.
+BODY_SECONDS = 10
+# Seconds the kernel keeps a connection whose peer acknowledges nothing it was
+# sent, or takes nothing more (TCP_USER_TIMEOUT). Without it a phone that left
+# the network holds its event stream's slot for about 15 minutes, and a peer
+# that asks and never reads holds a request's for good. A slow link still
+# acknowledges within seconds, and a client reopens a stream that showed it
+# nothing for 15 s (web/remote/access.js STREAM_HEARTBEAT_MS) anyway.
+UNANSWERED_SECONDS = 30
 # After the shutdown deadline tells the requests still running that their
 # client has gone, they and their connections get this long to end. Requests
 # that ignore it are then cancelled, and their connections get as long again.
@@ -246,31 +274,42 @@ class Admission:
     refused with 403. At most `limit` HTTP requests run at once, each HTTP/2
     stream counting alone, so streams reset by their client still count until
     their handler returns. A request over the limit is answered 503 at once,
-    as uvicorn's limit_concurrency answered it. Listeners that share one
-    instance share one budget."""
+    as uvicorn's limit_concurrency answered it. Of those, one peer
+    (PEER_REQUESTS says what a peer is) has at most `peer_limit`; its next is
+    answered 429 at once, while other peers' are served. A request whose body
+    has not all arrived `body_seconds` after its head is ended as if its
+    client had gone, and answered 408. Listeners that share one instance
+    share one budget."""
 
     UNAVAILABLE = b"Service Unavailable"
+    PEER_BUSY = b"Too Many Requests"
+    BODY_OVERDUE = b"Request Timeout"
 
-    def __init__(self, application, limit=MAX_REQUESTS):
+    def __init__(self, application, limit=MAX_REQUESTS, *, peer_limit=PEER_REQUESTS, body_seconds=BODY_SECONDS):
         self.application, self.limit, self.active = application, limit, 0
+        self.peer_limit, self.body_seconds, self.peers = peer_limit, body_seconds, {}
 
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http":
+            from oh_identity.addresses import peer_bucket
+            address = (scope.get("client") or (None,))[0]
+            peer = peer_bucket(address)
             if self.active >= self.limit:
-                # One rate-limited warning; the request never reaches the
-                # trail's request line.
-                from oh_identity.trail import warnings
-                warnings.warning(("gateway_busy",), "gateway_busy", status=503, active=self.active, limit=self.limit)
-                await send({"type": "http.response.start", "status": 503, "headers": [
-                    (b"content-type", b"text/plain; charset=utf-8"),
-                    (b"content-length", b"%d" % len(self.UNAVAILABLE)), (b"connection", b"close")]})
-                await send({"type": "http.response.body", "body": self.UNAVAILABLE})
+                await self._refuse(send, 503, self.UNAVAILABLE, "gateway_busy", active=self.active, limit=self.limit)
+                return
+            if self.peers.get(peer, 0) >= self.peer_limit:
+                await self._refuse(send, 429, self.PEER_BUSY, "peer_busy", address, active=self.peers[peer],
+                                   limit=self.peer_limit)
                 return
             self.active += 1
+            self.peers[peer] = self.peers.get(peer, 0) + 1
             try:
-                await self.application(scope, receive, send)
+                await self._bounded(scope, receive, send, address)
             finally:
                 self.active -= 1
+                self.peers[peer] -= 1
+                if not self.peers[peer]:
+                    del self.peers[peer]
         elif scope["type"] == "lifespan":
             while (await receive())["type"] == "lifespan.startup":
                 await send({"type": "lifespan.startup.complete"})
@@ -279,6 +318,53 @@ class Admission:
             # Hypercorn's only other scope. Closing a WebSocket before
             # accepting it answers HTTP 403.
             await send({"type": "websocket.close"})
+
+    async def _bounded(self, scope, receive, send, address):
+        """Run the application with a deadline on the request's body. Once
+        the body has ended, receive waits without one: that wait is how a
+        held request, an event stream above all, hears that its client has
+        gone."""
+        deadline = asyncio.get_running_loop().time() + self.body_seconds
+        awaited, overdue, answered = True, False, False
+
+        async def receiving():
+            nonlocal awaited, overdue
+            if not awaited:
+                return await receive()
+            try:
+                async with asyncio.timeout_at(deadline):
+                    message = await receive()
+            except TimeoutError:
+                # The site ends a request whose client has gone, with no answer.
+                awaited, overdue = False, True
+                return {"type": "http.disconnect"}
+            awaited = message["type"] == "http.request" and message.get("more_body", False)
+            return message
+
+        async def sending(message):
+            nonlocal answered
+            answered = True
+            await send(message)
+
+        await self.application(scope, receiving, sending)
+        if overdue and not answered:
+            await self._refuse(send, 408, self.BODY_OVERDUE, "body_overdue", address, seconds=self.body_seconds)
+
+    @staticmethod
+    async def _refuse(send, status, text, kind, address=None, **fields):
+        """Answer a request the site never answers, and close its HTTP/1.1
+        connection. One rate-limited warning per kind: the request has no
+        request line in the trail. peer is the trail's digest, never the
+        address."""
+        from oh_identity import trail
+        if address is not None:
+            fields["peer"] = trail.short(trail.peer_digest(address))
+        trail.warnings.warning((kind,), kind, status=status, **fields)
+        await send({"type": "http.response.start", "status": status, "headers": [
+            (b"content-type", b"text/plain; charset=utf-8"),
+            (b"content-length", b"%d" % len(text)), (b"connection", b"close"),
+            *([(b"retry-after", b"1")] if status == 429 else [])]})
+        await send({"type": "http.response.body", "body": text})
 
 
 def listener(host, port, tls=None, clients=None):
@@ -295,6 +381,9 @@ def listener(host, port, tls=None, clients=None):
 
         def create_sockets(self):
             sockets = super().create_sockets()
+            # Each connection inherits its listening socket's value.
+            for listening in (*sockets.secure_sockets, *sockets.insecure_sockets):
+                listening.setsockopt(socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT, UNANSWERED_SECONDS * 1000)
             if clients is not None:
                 sockets.insecure_sockets[:] = map(clients.only, sockets.insecure_sockets)
             return sockets
@@ -306,6 +395,8 @@ def listener(host, port, tls=None, clients=None):
     config.accesslog = None
     config.errorlog = logging.getLogger("hypercorn.error")
     config.include_server_header = False
+    # Also the deadline for a request's head: Hypercorn's idle timer runs
+    # from a connection's start, and from each answer, until a complete head.
     config.keep_alive_timeout = 5
     config.graceful_timeout = 15
     # Hypercorn ends a connection after this many requests, and over HTTP/2
@@ -344,6 +435,15 @@ async def _serve(bound, *, on_shutdown=None, stop=None):
         loop = asyncio.get_running_loop()
         for signum in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(signum, stop.set)
+
+    def unanswered(loop, context):
+        # A connection the kernel gave up (UNANSWERED_SECONDS) fails with
+        # ETIMEDOUT as Hypercorn closes it, where Hypercorn expects only a
+        # reset. Its requests have ended by then. A peer that went away is no
+        # error to log, with a traceback, each time a phone leaves the network.
+        if getattr(context.get("exception"), "errno", None) != errno.ETIMEDOUT:
+            loop.default_exception_handler(context)
+    asyncio.get_running_loop().set_exception_handler(unanswered)
 
     requests = set()
     # Done at the shutdown deadline.

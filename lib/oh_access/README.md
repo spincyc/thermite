@@ -147,6 +147,18 @@ validates the TLS certificate/key, and runs one direct-TLS ASGI process on
 Hypercorn. TLS 1.2 or later offers HTTP/2 before HTTP/1.1, so one browser's
 pages share a connection. At most 100 requests run at once, each HTTP/2 stream
 counting alone, and more are answered 503; WebSocket handshakes are refused.
+One peer has at most 40 of them, its 8 event streams and a full HTTP/2
+connection of other requests, and its next is answered 429 while other peers
+are served. A peer is the connection's own address, an IPv4 address or an
+IPv6 /64 as for the event streams: clients behind one address (a NAT, or the
+terminal remotes and the handheld bridge on the gateway's host) share it. A
+connection that has sent no complete request head within 5 seconds is closed,
+and a request whose body has not all arrived 10 seconds after its head is
+answered 408 (over HTTP/1.1 its connection then closes); an event stream,
+which has no body, is held as long as its client stays. A connection whose
+peer acknowledges or reads nothing for 30 seconds is dropped
+(`TCP_USER_TIMEOUT`). Each refusal logs a rate-limited warning: `gateway_busy`,
+or `peer_busy` or `body_overdue` with the peer's digest.
 Shutdown gives requests 15 seconds, then cancels the rest. It
 does not trust proxy headers, environment HTTP proxies, redirects, cookies
 from the native runtime, or arbitrary caller-supplied upstream URLs. The
