@@ -7,6 +7,10 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A command waits at most 8 seconds for its rooms' and devices' locks
+  and is then refused 503 `runtime_busy`, never sent late. Before, it
+  queued behind a slow device call for as long as that took, after its
+  client had given it up.
 - A test holds the gateway's cap on one address's event streams to the
   alert that reads it: a cap lowered below a browser's six HTTP/1.1
   connections would have kept ThermiteRemoteStarved from ever firing.

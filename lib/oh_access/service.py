@@ -1,7 +1,7 @@
 """Explicit site composition: TLS, plus the opt-in plain-HTTP Guest listener
 (oh_access.guest). No service starts on import."""
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import asyncio
 import copy
 import ipaddress
@@ -25,6 +25,12 @@ CONFIG_FIELDS = {"version", "state", "contract_file", "runtime_url", "runtime_to
 CONFIG_VERSION = 2
 # Uvicorn's exit status for a server that never started; systemd sees a failure.
 STARTUP_FAILURE = 3
+# Seconds a command waits for its rooms' and devices' locks before it is
+# refused as runtime_busy. A command holds them across its call to openHAB,
+# which gives up after 5 s (oh_identity.transport), and a client gives a
+# command up after 15 s (web/remote/access.js COMMAND_DEADLINE_MS): a command
+# that waits its turn this long and then takes those 5 s still answers first.
+COMMAND_LOCK_SECONDS = 8
 # In-flight HTTP requests across the gateway; every HTTP/2 stream counts.
 MAX_REQUESTS = 100
 # After the shutdown deadline tells the requests still running that their
@@ -118,15 +124,30 @@ def setup(config, *, transport=None):
         raise AccessError("Invalid private runtime contract") from None
     transport = transport or LoopbackTransport(config["runtime_url"], config["runtime_token_file"])
     locks = FileLocks(Path(config["state"]) / "locks")
-
-    @contextmanager
-    def command_lock(rooms, resources):
-        with locks.hold([*("room:" + room for room in rooms), *resources]):
-            yield
-
-    adapter = RuntimeAdapter(contract, transport, policy=oh_room_policy, command_lock=command_lock)
+    adapter = RuntimeAdapter(contract, transport, policy=oh_room_policy, command_lock=command_lock(locks))
     install_adapter(adapter)
     return adapter, locks
+
+
+def command_lock(locks, deadline=COMMAND_LOCK_SECONDS):
+    """The runtime adapter's command lock over locks (FileLocks): a command
+    whose rooms and resources do not all come free within deadline seconds is
+    refused as runtime_busy (503), and nothing of it runs later. A caller no
+    one waits on, a service that is starting, passes deadline=None and waits
+    as long as it takes."""
+    from oh_identity.services import Problem
+    from oh_room_policy.worker import Busy
+
+    @contextmanager
+    def hold(rooms, resources, *, deadline=deadline):
+        with ExitStack() as held:
+            try:
+                held.enter_context(locks.hold([*("room:" + room for room in rooms), *resources], deadline=deadline))
+            except Busy:
+                raise Problem("runtime_busy", 503) from None
+            yield
+
+    return hold
 
 
 def configured(path, *, tls=True, transport=None):
@@ -163,16 +184,17 @@ def bootstrap(config_path, username, secret):
     os.environ["THERMITE_TIME_ZONE"] = config["timezone"]
     from oh_identity import composition
     adapter, _ = setup(config)
-    with adapter.command_lock(tuple(sorted(adapter.contract.rooms)), ()):
+    with adapter.command_lock(tuple(sorted(adapter.contract.rooms)), (), deadline=None):
         user = composition.initialize(config["state"], username, secret, config["allowed_hosts"])
     return {"initialized": True, "username": user.username, "state": config["state"]}
 
 
 def rebase_timezone(adapter, zone):
     """Move stored policies to the configured site timezone, under every room
-    lock, before either service evaluates a schedule."""
+    lock, before either service evaluates a schedule. A starting service
+    waits for the locks as long as it takes."""
     from oh_identity.policy_store import rebase_timezone as rebase
-    with adapter.command_lock(tuple(sorted(adapter.contract.rooms)), ()):
+    with adapter.command_lock(tuple(sorted(adapter.contract.rooms)), (), deadline=None):
         return rebase(zone)
 
 

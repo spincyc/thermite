@@ -361,14 +361,16 @@ class Housekeeping(TestCase):
         held = []
 
         @contextmanager
-        def locks(rooms, resources):
-            held.append(rooms)
+        def locks(rooms, resources, *, deadline):
+            held.append((rooms, deadline))
             yield
         runtime = adapter()
         runtime.command_lock = locks
         RoomPolicy.objects.create(room_id="den", revision=2, config={"room": "den", "timezone": "UTC", "revision": 2})
         self.assertEqual(rebase_timezone(runtime, "America/Chicago"), 1)
-        self.assertEqual(held, [("den", "desk")])
+        # No one waits on a starting service: it waits for the locks without
+        # the deadline a command has.
+        self.assertEqual(held, [(("den", "desk"), None)])
         row = RoomPolicy.objects.get()
         self.assertEqual((row.revision, row.config["timezone"], row.config["revision"]), (3, "America/Chicago", 3))
         self.assertEqual(rebase_timezone(runtime, "America/Chicago"), 0)

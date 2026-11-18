@@ -152,7 +152,10 @@ does not trust proxy headers, environment HTTP proxies, redirects, cookies
 from the native runtime, or arbitrary caller-supplied upstream URLs. The
 separate `worker --descriptor …` uses the same SQLite database and sorted
 `room:<id>` / `device:<id>` file locks. One process lease prevents a second
-worker. No database transaction spans device I/O.
+worker. No database transaction spans device I/O. A gateway command waits at
+most 8 seconds for its locks and is then refused 503 `runtime_busy`, never
+sent late: with openHAB's 5 seconds that is inside the 15 seconds after which
+a client gives a command up. A starting service waits without that limit.
 
 The worker observes only exact native `ItemStateUpdatedEvent` topics for
 compiled route fields. It starts Unknown, clears observations after any

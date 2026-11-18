@@ -96,6 +96,10 @@ class ResourceLocks:
             yield
 
 
+class Busy(Exception):
+    """The locks did not all come free within the caller's deadline."""
+
+
 class FileLocks:
     """Optional cross-process locks in a private service-state directory.
 
@@ -103,18 +107,51 @@ class FileLocks:
     transaction is never used as a lock around network operations.
     """
 
+    # Seconds between tries for a lock another process holds while a deadline
+    # runs: flock has no timed wait.
+    RETRY = 0.01
+
     def __init__(self, directory: Path):
         self.directory = Path(directory)
+        # One lock per key for this process's own threads. They queue here,
+        # in the order they came, and only the first of them tries the file.
+        self._guard = threading.Lock()
+        self._turns = {}
 
     @contextlib.contextmanager
-    def hold(self, keys, *, blocking=True):
+    def hold(self, keys, *, blocking=True, deadline=None):
+        """Hold every key's lock, taken in sorted order. With a deadline, in
+        seconds for all of them together, a lock still held when it passes
+        releases those already taken and raises Busy. Without one the wait
+        has no limit, or with blocking=False a held lock raises
+        BlockingIOError at once."""
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        until = None if deadline is None else time.monotonic() + deadline
         with contextlib.ExitStack() as stack:
             for key in sorted(set(keys)):
+                with self._guard:
+                    turn = self._turns.setdefault(key, threading.Lock())
+                if until is None:
+                    if not turn.acquire(blocking):
+                        raise BlockingIOError(key)
+                elif not turn.acquire(timeout=max(0, until - time.monotonic())):
+                    raise Busy()
+                stack.callback(turn.release)
                 name = hashlib.sha256(key.encode()).hexdigest()
                 fd = os.open(self.directory / name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
                 stack.callback(os.close, fd)
-                fcntl.flock(fd, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+                if until is None:
+                    fcntl.flock(fd, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+                    continue
+                while True:
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        left = until - time.monotonic()
+                        if left <= 0:
+                            raise Busy() from None
+                        time.sleep(min(self.RETRY, left))
             yield
 
 
