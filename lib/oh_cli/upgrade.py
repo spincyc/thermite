@@ -136,7 +136,10 @@ def host_phase(system: System, arguments) -> int:
         return upgrade(system, arguments.dry_run, runtime_token_file=arguments.runtime_token_file,
                        run_approved=arguments._run_approved, native_timeout=arguments.native_timeout,
                        site_before=before)
-    return changeover.pinned(system, AREA, arguments._site_before, arguments.dry_run, body)
+    return changeover.scoped(
+        AREA, system, "upgrade",
+        lambda: changeover.pinned(system, AREA, arguments._site_before, arguments.dry_run, body),
+        dry_run=arguments.dry_run)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -166,7 +169,8 @@ def main(argv: list[str] | None = None) -> int:
             if arguments._run_approved:
                 raise ValueError("run approval is only valid inside the application workflow")
             if not arguments.dry_run:
-                found = changeover.resolve(AREA, system, "upgrade")
+                found = changeover.scoped(AREA, system, "upgrade",
+                                          lambda: changeover.resolve(AREA, system, "upgrade"))
                 if found is not None:
                     return changeover.REFUSED if found == changeover.COMMITTED else found
             import oh_application_update

@@ -7,6 +7,23 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Only one command at a time runs an install transaction for a site. A
+  second `install`, `upgrade`, `uninstall`, `rollback` or `revert`
+  started while one ran had found its transaction open and rolled it
+  back under it. It now names the command in progress, its process and
+  when it started, changes nothing and exits with status 1, and
+  `thermite status` reports the transaction as in progress
+  (`in_progress` in `--json`).
+  - SIGTERM and SIGHUP (a `kill`, a shutdown, a dropped SSH session) no
+    longer end the run wherever it stands. A root command still running
+    is waited for, then an open transaction is rolled back in the same
+    run with `sudo -n`. With sudo's default, terminal-bound credentials
+    a hangup cannot authenticate: the transaction stays open until the
+    command is run again, so run an upgrade over SSH inside `tmux` or
+    `screen`. Ctrl-C is unchanged.
+  - From the moment a transaction begins, the run validates sudo's
+    credentials every minute, so the commit or rollback after a long
+    native wait does not ask for the password again.
 - A house file of the wrong shape is now always a message and exit
   status 2, never a traceback. `devices:` with nothing under it is
   refused ("devices must be a list of devices; write `devices: []` for

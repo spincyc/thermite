@@ -67,6 +67,7 @@ class Fixture(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.site = Path(temporary.name) / "site"
         (self.site / "var").mkdir(parents=True, mode=0o700)
+        txn_fakes.in_scope(self, self.site, "install")
         host = {**self.HOST, "root": str(ROOT)}
         prepared = {name: deploy.Blob(text.encode()) for name, text in deploy.render_units(VERSIONS, host).items()}
         prepared["conf/services/addons.cfg"] = deploy.Blob(b"binding = http\n")

@@ -125,7 +125,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     system = System()
     try:
-        return roll_back(system, args.commit, args.dry_run)
+        return changeover.scoped(AREA, system, "rollback", lambda: roll_back(system, args.commit, args.dry_run),
+                                 dry_run=args.dry_run)
     except (deploy.DeployError, ValueError, OSError) as exc:
         print(f"thermite rollback: {exc}", file=sys.stderr)
         return 2

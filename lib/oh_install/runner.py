@@ -10,7 +10,7 @@ from pathlib import Path
 import shlex
 
 import oh_cli
-from oh_install import progress
+from oh_install import progress, scope
 from oh_install.model import Action, Command, Step, Task
 from oh_install.system import UNATTENDED, System
 
@@ -46,8 +46,10 @@ def perform(action: Action, system: System, area: Path, rerun: str = RERUN, *,
         action = replace(action, argv=action.approved_argv)
     root = isinstance(action, Command) and action.root
     # --yes approved the run: its root commands run under sudo -n, which
-    # never asks for a password. Nothing else that would ask runs.
-    approved = UNATTENDED.get() and root and root_confirmed
+    # never asks for a password. Nothing else that would ask runs. The same
+    # holds once SIGHUP or SIGTERM ended a transaction's run: what is left
+    # is its rollback, and nobody is assumed to be there to answer.
+    approved = (UNATTENDED.get() or scope.ended()) and root and root_confirmed
     if (root or isinstance(action, Task) and action.interactive) and not approved and not system.interactive():
         system.say(f"   {'--yes does not approve' if UNATTENDED.get() else 'needs you at a terminal'}: {action.shown()}")
         system.say(f"Stopped. {rerun}")

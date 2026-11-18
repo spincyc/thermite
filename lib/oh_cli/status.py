@@ -30,8 +30,9 @@ another), the plain-HTTP Guest addresses instance/host.yaml opens,
 Grafana's address on the LAN and whether it answers, Prometheus' scrape
 targets (up of all), on a host with music: whether Music Assistant runs
 with its API on loopback alone, the install transaction that installed
-this version and any upgrade transaction that has not finished, and the
-last deploys (thermite history lists more).
+this version, any install transaction that has not finished and whether a
+command is running one now, and the last deploys (thermite history lists
+more).
 """
 
 EXAMPLES = (
@@ -131,8 +132,10 @@ def show_guest(host: dict, report: dict, say) -> None:
 
 def show_transaction(host: dict, report: dict, say, problems: list[str], *, manifest: Path | None = None) -> None:
     """The install transaction that installed this version, from the
-    installed manifest (`manifest`, by default the system's), and an
-    install transaction that has not finished."""
+    installed manifest (`manifest`, by default the system's), an install
+    transaction that has not finished, and the run that holds the site's
+    transaction scope now: its transaction is in progress, not waiting for
+    a command."""
     import json
     from oh_install import changeover, engine
     root = deploy.installation(host).root
@@ -146,11 +149,19 @@ def show_transaction(host: dict, report: dict, say, problems: list[str], *, mani
         say(f"install  transaction {installed['transaction']} committed {installed.get('committed_at')}; "
             f"the version before it is set aside in {root}/.transaction/{installed.get('kept')}")
     pending = changeover.open_transaction(AREA / "var")
+    holder = changeover.in_progress(AREA)
     report["open_transaction"] = pending
-    if pending:
+    report["in_progress"] = ({"verb": holder.verb, "pid": holder.pid, "since": holder.since}
+                             if holder is not None else None)
+    if pending and holder is not None:
+        problems.append(f"install transaction {pending} is in progress")
+        say(f"install  transaction {pending} is in progress: {holder} runs it")
+    elif pending:
         problems.append(f"install transaction {pending} has not finished")
         say(f"install  transaction {pending} has not finished: {changeover.pending_command(AREA)} commits or "
             "rolls it back, then stops")
+    elif holder is not None:
+        say(f"install  {holder} is in progress; it has not begun a transaction")
 
 
 def _quiet(*_args, **_kwargs) -> None:

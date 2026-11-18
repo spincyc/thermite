@@ -126,7 +126,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     system = System()
     try:
-        return uninstall(system, arguments.dry_run, arguments.purge)
+        return changeover.scoped(AREA, system, "uninstall",
+                                 lambda: uninstall(system, arguments.dry_run, arguments.purge),
+                                 dry_run=arguments.dry_run)
     except (deploy.DeployError, ValueError, OSError) as exc:
         print(f"thermite uninstall: {exc}", file=sys.stderr)
         return 2

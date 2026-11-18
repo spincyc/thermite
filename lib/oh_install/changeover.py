@@ -20,9 +20,17 @@ operator files it set aside (F3) and the gateway's attempt record.
 var/transaction/open names a transaction that has not finished; the next
 owner command that runs a transaction finishes or rolls it back first, then
 stops and says so, and thermite status names it.
+
+All of it runs inside the site's transaction scope (scoped, and
+lib/oh_install/scope.py): one lock from before an earlier transaction is
+looked for until this one has committed or rolled back, so that a second
+run reports the first as in progress instead of rolling it back under its
+owner; SIGHUP and SIGTERM as an interrupt that rolls back in the same run;
+and sudo's credentials kept fresh from begin on.
 """
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import os
@@ -34,7 +42,7 @@ from typing import Callable
 import oh_cli
 import oh_music as music
 import oh_units
-from oh_install import access, bridge, engine, manifest, ownership, runner, steps
+from oh_install import access, bridge, engine, manifest, ownership, runner, scope, steps
 from oh_install.ingress import NativeIngress, NativeIngressPrerequisites
 from oh_install.model import Check, Command, Step, Task
 from oh_install.system import System
@@ -48,6 +56,9 @@ PYTHON = "/usr/bin/python3"
 OPEN = "open"
 #: How long the reinstated version's health waits for initializing Things.
 SETTLE = 120
+#: The engine verbs that only read. Every other one changes the host, and
+#: its command exists only inside the transaction scope (Transaction.argv).
+READING = ("plan", "status")
 
 
 def transactions(var: Path) -> Path:
@@ -75,6 +86,29 @@ def command(site: Path, verb: str = "upgrade") -> str:
     """The owner command, for this site; each resolves an unfinished
     transaction before anything else."""
     return f"thermite {verb} --config {shlex.quote(str(site))}"
+
+
+def scoped(site: Path, system: System, verb: str, body: Callable[[], int | None], *, dry_run: bool = False):
+    """What `body()` returns, run inside the site's transaction scope:
+    whatever looks for, begins, resolves or rolls back a transaction goes
+    through here (resolve, run and roll_back refuse to work outside it).
+    When another run holds the scope, say who and return REFUSED: nothing
+    is changed. A dry run only reads, and takes no scope."""
+    if dry_run:
+        return body()
+    with contextlib.ExitStack() as stack:
+        try:
+            stack.enter_context(scope.Scope(Path(site) / "var", system, verb))
+        except scope.InProgress as busy:
+            system.say(f"Nothing was changed: {busy.holder} is in progress for this site. Run "
+                       f"{command(site, verb)} again once it has ended; thermite status says whether it has.")
+            return REFUSED
+        return body()
+
+
+def in_progress(site: Path) -> scope.Holder | None:
+    """The run that holds the site's transaction scope now, if any."""
+    return scope.running(Path(site) / "var")
 
 
 def upgrade_command(site: Path) -> str:
@@ -181,7 +215,9 @@ class Transaction:
         return command(self.site, self.verb)
 
     def argv(self, verb: str, *args) -> tuple[str, ...]:
-        named = ("--id", self.id) if verb not in ("plan", "status") else ()
+        if verb not in READING:
+            scope.held(self.var)
+        named = ("--id", self.id) if verb not in READING else ()
         return (PYTHON, "-I", "-S", str(self.engine), verb, "--root", str(self.root), *named, *map(str, args))
 
     def command(self, verb: str, *args) -> Command:
@@ -707,6 +743,7 @@ def run(context: steps.Context, system: System, build: Callable[[str], Work], *,
     the site commits of the version that runs and of the one installed;
     `pinned` says `after` is a pin commit made for this transaction, undone
     when it does not commit."""
+    held = scope.held(context.var)
     id = manifest.transaction_id()
     work = build(id)
     after = after or context.head
@@ -741,13 +778,16 @@ def run(context: steps.Context, system: System, build: Callable[[str], Work], *,
     rerun = f"Nothing of Thermite was stopped or changed. Fix that, then run {transaction.rerun} again."
     try:
         code = runner.run(opening, system, context.area, first=first, rerun=rerun, root_confirmed=True)
-    except KeyboardInterrupt:
-        return _interrupted(system, transaction)
+    except KeyboardInterrupt as stop:
+        return _interrupted(system, transaction, stop)
     except (OSError, ValueError) as exc:
         system.say(f"Stopped: {exc}. {rerun}")
         code = REFUSED
     if code:
         return refused(system, transaction)
+    # From here on every wait ends in a root command, the commit or the
+    # rollback last, and the owner may not be watching any more.
+    held.keep_fresh()
     reinstate = [Engine(transaction, "reinstate", "Put the kept version back",
                         "its files, state and live rules, from the last transaction's asides")] if work.reinstate else []
     rest = [Engine(transaction, "guard", "Guard the boot", f"{oh_units.TARGET} stays disabled until the commit"),
@@ -764,8 +804,8 @@ def run(context: steps.Context, system: System, build: Callable[[str], Work], *,
             # passed, whatever the lists above hold.
             code = runner.run([Engine(transaction, "commit", "Commit", "record what is installed now")], system,
                               context.area, first=runner.upcoming(), rerun=failed, root_confirmed=True)
-    except KeyboardInterrupt:
-        return _interrupted(system, transaction)
+    except KeyboardInterrupt as stop:
+        return _interrupted(system, transaction, stop)
     except Exception as exc:  # Every failure rolls back; none leaves a half-installed version.
         system.say(f"   {type(exc).__name__}: {exc}")
         code = REFUSED
@@ -846,8 +886,15 @@ def refused(system: System, transaction: Transaction) -> int:
     return REFUSED
 
 
-def _interrupted(system: System, transaction: Transaction) -> int:
+def _interrupted(system: System, transaction: Transaction, stop: BaseException | None = None) -> int:
+    """Ctrl-C (or a question nobody answered) leaves an open transaction to
+    the owner's next command. SIGHUP or SIGTERM (`stop`, scope.Terminated)
+    rolls it back now: the terminal may be gone, and nobody may come to run
+    that command while Thermite is stopped. The scope raises that once, so
+    this happens once."""
     if open_transaction(transaction.var) == transaction.id:
+        if isinstance(stop, scope.Terminated):
+            return roll_back(system, transaction, f"the run was sent {stop}")
         system.say(f"\nInterrupted. Transaction {transaction.id} is open: Thermite may be stopped, with "
                    f"{oh_units.TARGET} kept from booting. Run {transaction.rerun} to roll it back.")
     else:
@@ -922,6 +969,7 @@ def say_committed(system: System, transaction: Transaction) -> None:
 
 def roll_back(system: System, transaction: Transaction, reason: str) -> int:
     """Put the version that ran before back, in this run, and say how it is."""
+    scope.held(transaction.var)
     system.say(f"Rolling back transaction {transaction.id} ({reason}): "
                + ("the installed version is put back and started again." if transaction.record.get("installed", True)
                   else "what it installed is set aside."))
@@ -934,8 +982,8 @@ def roll_back(system: System, transaction: Transaction, reason: str) -> int:
             return _unauthorized(system, transaction)
         code = runner.staged(system, f"Roll back transaction {transaction.id}", transaction.command("rollback"),
                              site, done=(0, engine.ROLLED_BACK))
-    except KeyboardInterrupt:
-        return _interrupted(system, transaction)
+    except KeyboardInterrupt as stop:
+        return _interrupted(system, transaction, stop)
     if code is None:
         return _interrupted(system, transaction)
     if code not in (0, engine.ROLLED_BACK):
@@ -1029,6 +1077,7 @@ def resolve(site: Path, system: System, verb: str = "upgrade") -> int | None:
     by hand from rollback --print is checked by the engine and completed.
     None when there is none."""
     var = Path(site) / "var"
+    held = scope.held(var)
     id = open_transaction(var)
     if id is None:
         return None
@@ -1042,6 +1091,7 @@ def resolve(site: Path, system: System, verb: str = "upgrade") -> int | None:
         system.say(f"Cannot resolve it: {exc}. As root, {PYTHON} -I -S <engine.py> status --root <root> "
                    "lists the transactions (docs/installation.md#a-stuck-rollback).")
         return STUCK
+    held.keep_fresh()
     if found is None:
         system.say("   It never began: nothing of Thermite was changed.")
         code = refused(system, transaction)
@@ -1073,6 +1123,8 @@ def pinned(system: System, site: Path, before: str | None, dry_run: bool,
     host it installed, its pin commit is recognized instead (wrapper_pin).
     `body` runs the phase from `before`."""
     import oh_source_upgrade
+    if not dry_run:
+        scope.held(Path(site) / "var")
     if before is None and not dry_run and bridge.needed(system):
         before = wrapper_pin(site)
     head = oh_source_upgrade.git(site, "rev-parse", "HEAD") if before else None

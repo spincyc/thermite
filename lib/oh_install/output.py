@@ -10,6 +10,7 @@ detached services, including the sandbox runtime.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+import contextlib
 from pathlib import Path
 import os
 import signal
@@ -106,22 +107,63 @@ def _drain(stream, tail: _Tail, done: threading.Event) -> None:
             done.set()
 
 
-def _signal_group(pid: int, signum: int) -> bool:
+def _signal_group(pid: int, signum: int) -> bool | None:
+    """Whether the group got the signal or is gone; None when this user may
+    not signal it, as a root command under sudo."""
     try:
         os.killpg(pid, signum)
         return True
     except ProcessLookupError:
         return True
+    except PermissionError:
+        return None
     except OSError:
         return False
 
 
+@contextlib.contextmanager
+def _undisturbed():
+    """Stopping a child, or waiting for one that cannot be stopped, runs to
+    its end: Ctrl-C is ignored meanwhile, and a signal this program handles
+    itself (SIGHUP or SIGTERM inside an install transaction, scope.Scope)
+    is held back and delivered when the block ends."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    late: list[int] = []
+    previous = {signal.SIGINT: signal.signal(signal.SIGINT, signal.SIG_IGN)}
+    for number in (signal.SIGHUP, signal.SIGTERM):
+        if callable(signal.getsignal(number)):
+            previous[number] = signal.signal(number, lambda number, frame: late.append(number))
+    try:
+        yield
+    finally:
+        for number, handler in previous.items():
+            if handler is not None:
+                signal.signal(number, handler)
+        if late:
+            signal.raise_signal(late[0])
+
+
+def _outlast(process: subprocess.Popen, deadline: float | None, report: Callable[[str], None]) -> None:
+    """An interrupted run cannot stop a command this user may not signal: a
+    root command under sudo, the install engine among them. Leaving while
+    it still changes the host would let the next command, or a rollback,
+    meet a host in motion; so wait for it, for as long as it was allowed
+    to take."""
+    if _signal_group(process.pid, 0) is not None or process.poll() is not None:
+        return
+    report("Waiting for the command to end: it runs as root, and this run may not stop it.")
+    with _undisturbed():
+        try:
+            process.wait(timeout=None if deadline is None else max(0.0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            pass
+
+
 def _stop(process: subprocess.Popen, reader: threading.Thread | None, signum: int) -> bool:
     """Allow cleanup, then fence every remaining process in this group."""
-    previous = None
-    if threading.current_thread() is threading.main_thread():
-        previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
-    try:
+    with _undisturbed():
         stopped = _signal_group(process.pid, signum)
         deadline = time.monotonic() + STOP_GRACE
         try:
@@ -149,10 +191,7 @@ def _stop(process: subprocess.Popen, reader: threading.Thread | None, signum: in
             for stream in (process.stdout, process.stderr):
                 if stream is not None:
                     stream.close()
-        return stopped and (reader is None or not reader.is_alive())
-    finally:
-        if previous is not None:
-            signal.signal(signal.SIGINT, previous)
+        return bool(stopped) and (reader is None or not reader.is_alive())
 
 
 def _report(tail: _Tail, report: Callable[[str], None]) -> None:
@@ -169,7 +208,9 @@ def run(argv: Sequence[str], cwd: Path, *, timeout: float | None = None,
 
     FileNotFoundError, TimeoutExpired and KeyboardInterrupt retain their
     usual meaning. Cancellation cleans up the isolated child process group
-    before reporting diagnostics and re-raising. No output is written to disk.
+    before reporting diagnostics and re-raising; an interrupt first waits
+    for a child this user may not signal (_outlast). No output is written
+    to disk.
     Preauthenticated sudo uses keep_terminal: its own process group retains
     this session's controlling terminal and the validation process's parent
     PID, so tty/ppid credential timestamps still match. Never read a password
@@ -179,6 +220,7 @@ def run(argv: Sequence[str], cwd: Path, *, timeout: float | None = None,
     done = threading.Event()
     process = None
     reader = None
+    deadline = None if timeout is None else time.monotonic() + timeout
     try:
         isolation = {"process_group": 0} if keep_terminal else {"start_new_session": True}
         separate = show_output == "stderr"
@@ -194,6 +236,8 @@ def run(argv: Sequence[str], cwd: Path, *, timeout: float | None = None,
     except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
         # Python boot checks own detached sandbox instances and stop those
         # in finally. SIGINT reaches that cleanup path for timeouts as well.
+        if process is not None and isinstance(error, KeyboardInterrupt):
+            _outlast(process, deadline, report)
         stopped = process is None or _stop(process, reader, signal.SIGINT)
         if not stopped:
             report("Child process group or output drain did not finish cleanup.")

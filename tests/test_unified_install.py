@@ -9,6 +9,7 @@ from contextlib import ExitStack
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
@@ -106,7 +107,9 @@ class UnifiedInstall(unittest.TestCase):
 
     def test_candidate_host_phase_checks_compatibility_without_recursive_update(self):
         for module, operation in ((install, "install"), (upgrade, "upgrade")):
-            with self.subTest(operation=operation), patch.object(module.os, "geteuid", return_value=1000), \
+            # The host phase holds its site's transaction scope: a site of its own.
+            with self.subTest(operation=operation), tempfile.TemporaryDirectory() as site, \
+                    patch.object(module, "AREA", Path(site)), patch.object(module.os, "geteuid", return_value=1000), \
                     patch.object(oh_application_update, operation) as apply, \
                     patch.object(oh_paths, "require_compatible") as compatible, \
                     patch.object(module, operation, return_value=0) as host:
@@ -118,7 +121,9 @@ class UnifiedInstall(unittest.TestCase):
 
     def test_failed_candidate_child_returns_its_status(self):
         for module, operation in ((install, "install"), (upgrade, "upgrade")):
-            with self.subTest(operation=operation), patch.object(module.os, "geteuid", return_value=1000), \
+            # Before it, the command looks for an open transaction inside the site's scope.
+            with self.subTest(operation=operation), tempfile.TemporaryDirectory() as site, \
+                    patch.object(module, "AREA", Path(site)), patch.object(module.os, "geteuid", return_value=1000), \
                     patch.object(oh_application_update, operation, side_effect=subprocess.CalledProcessError(7, ["fixture"])):
                 self.assertEqual(module.main([]), 7)
 

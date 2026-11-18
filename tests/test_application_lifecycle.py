@@ -10,6 +10,7 @@ import signal
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 import unittest
 from unittest.mock import Mock, patch
@@ -346,7 +347,9 @@ class Commands(unittest.TestCase):
                 index = host_args.index("--native-timeout")
                 self.assertEqual(host_args[index:index + 2], ["--native-timeout", "1200"])
                 self.assertNotIn("--allow-downgrade", host_args)
-            with self.subTest(operation=operation, phase="host"), patch.object(module.os, "geteuid", return_value=1000), \
+            # The host phase holds its site's transaction scope: a site of its own.
+            with self.subTest(operation=operation, phase="host"), tempfile.TemporaryDirectory() as site, \
+                    patch.object(module, "AREA", Path(site)), patch.object(module.os, "geteuid", return_value=1000), \
                     patch("oh_paths.require_compatible"), patch.object(module, operation, return_value=0) as host:
                 self.assertEqual(module.main(["--_host-phase", "--_run-approved", "--native-timeout", "900"]), 0)
                 self.assertEqual(host.call_args.kwargs["native_timeout"], 900)

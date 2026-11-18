@@ -10,6 +10,7 @@ import io
 import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
@@ -199,7 +200,10 @@ class HostPhase(unittest.TestCase):
                               _site_before="1" * 40)
         order = []
         self.resolve.side_effect = lambda *args: order.append("resolve") or changeover.ROLLED_BACK
-        with patch.object(oh_source_upgrade, "git", return_value="2" * 40), \
+        # The host phase takes the site's transaction scope, so the site is real.
+        site = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        with patch.object(upgrade_cli, "AREA", site), \
+                patch.object(oh_source_upgrade, "git", return_value="2" * 40), \
                 patch.object(oh_source_upgrade, "reset_pin",
                              side_effect=lambda *args, **kwargs: order.append(kwargs) or True), \
                 patch.object(changeover, "open_transaction", return_value="20261105T101500Z-3f9a2c"), \
@@ -512,6 +516,9 @@ class Unattended(unittest.TestCase):
         def workflow(site, *, approve, host_args, **kwargs):
             seen.update(approved=approve(), host_args=host_args, unattended=UNATTENDED.get())
             return 0
+        # Both phases hold their site's transaction scope: a site of its own.
+        site = self.enterContext(tempfile.TemporaryDirectory())
+        self.enterContext(patch.object(install_cli, "AREA", Path(site)))
         with patch.object(install_cli.os, "geteuid", return_value=1000), \
                 patch.object(changeover, "resolve", return_value=None), \
                 patch.object(oh_application_update, "install", side_effect=workflow), \

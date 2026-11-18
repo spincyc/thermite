@@ -1005,8 +1005,31 @@ closes one that never began, or rolls back any other, then stops without
 doing anything more and says so, with that outcome's exit status. Run it
 once more to go on.
 
-A rollback after a failed step asks for your sudo password when the
-earlier one has expired. Left unanswered, sudo's prompt times out and
+A run that is ended rather than interrupted is not left for you to resume:
+SIGTERM, from `kill` or a shutdown, and SIGHUP, when its terminal or SSH
+session goes away. The command it was running is stopped first, or waited
+for when it runs as root, as the install engine does. Then an open
+transaction is rolled back in the same run and the version that ran before
+is started, without asking anything: the rollback's sudo commands run with
+`sudo -n`. That needs sudo to know you still. With sudo's default settings
+it does not after a hangup, because its credentials belong to the terminal
+that went away: the rollback cannot authenticate, and the transaction stays
+open, with Thermite stopped if the switch had got that far, until you log in
+and run the command again. Run an upgrade over SSH inside `tmux` or
+`screen`, so that a dropped connection does not end it.
+
+Only one command at a time runs a transaction for a site. While one does, a
+second `install`, `upgrade`, `uninstall`, `rollback` or `revert` names the
+command in progress, its process and when it started, changes nothing and
+exits with status 1. `thermite status` reports the transaction as in
+progress instead of naming a command to run, and `thermite status --json`
+names the run as `in_progress`.
+
+From the moment a transaction begins, the run validates your sudo
+credentials again every minute, so the commit or rollback after a long wait
+does not ask for your password again. Where sudo does not allow that (a
+`timestamp_timeout` of 0), a rollback after a failed step asks for your
+sudo password. Left unanswered, sudo's prompt times out and
 nothing is rolled back: the transaction stays open as after Ctrl-C, with
 Thermite as the failed step left it, perhaps running the new version. Run
 the command again to roll it back. The rollback's own steps continue the

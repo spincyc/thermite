@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -129,6 +130,7 @@ class Fixture(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.site = Path(temporary.name) / "site"
         (self.site / "var").mkdir(parents=True, mode=0o700)
+        self.scope = txn_fakes.in_scope(self, self.site)
         self.context = steps.Context(
             self.site, {"openhab": {"version": "5.2.3"}},
             {"uid": 9001, "gid": 9001, "root": "/srv/thermite-fixture"}, AFTER, "c" * 64, "fixture-host",
@@ -415,15 +417,29 @@ class Rerun(Fixture):
         self.assertIn("Stopped there, without upgrading", self.said())
         self.assertIsNone(self.resolve(), "nothing is left to resolve")
 
-    def test_status_names_it(self):
+    def status(self):
         from oh_cli import status
         report, problems, said = {}, [], []
         with patch.object(status, "AREA", self.site):
             status.show_transaction(self.context.host, report, said.append, problems,
                                     manifest=self.site / "no-installed-manifest")
+        return report, problems, said
+
+    def test_status_names_it(self):
+        self.scope.close()  # No run holds it: it waits for the owner's command.
+        report, problems, said = self.status()
         self.assertEqual(report["open_transaction"], txn_fakes.ID)
+        self.assertIsNone(report["in_progress"])
         self.assertEqual(problems, [f"install transaction {txn_fakes.ID} has not finished"])
         self.assertIn("commits or rolls it back, then stops", said[-1])
+
+    def test_status_says_in_progress_while_a_run_holds_it_and_names_no_command_to_run(self):
+        report, problems, said = self.status()
+        self.assertEqual(report["open_transaction"], txn_fakes.ID)
+        self.assertEqual((report["in_progress"]["verb"], report["in_progress"]["pid"]), ("upgrade", os.getpid()))
+        self.assertEqual(problems, [f"install transaction {txn_fakes.ID} is in progress"])
+        self.assertIn(f"is in progress: thermite upgrade (process {os.getpid()}, since ", said[-1])
+        self.assertNotIn("rolls it back", said[-1])
 
 
 class Health(unittest.TestCase):
@@ -602,6 +618,7 @@ class Unpin(GitSite):
         self.transaction.record.update(id=txn_fakes.ID, verb="upgrade", history=False, installed=True)
         self.transaction.save(phase="open")
         self.transaction.open()
+        txn_fakes.in_scope(self, self.root)
         with patch.object(changeover.Transaction, "journal", return_value={"id": txn_fakes.ID, "phase": "rolled-back"}), \
                 patch.object(changeover, "health", return_value=True):
             self.assertEqual(changeover.resolve(self.root, self.system), changeover.ROLLED_BACK)
@@ -905,6 +922,7 @@ class FreshInstall(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.site = Path(temporary.name) / "site"
         (self.site / "var").mkdir(parents=True, mode=0o700)
+        txn_fakes.in_scope(self, self.site, "install")
         self.context = steps.Context(
             self.site, {"openhab": {"version": "5.2.3"}}, {"uid": 9001, "gid": 9001, "root": txn_fakes.ROOT},
             AFTER, "c" * 64, "fixture-host", "192.0.2.10", application={"version": "1.0", "digest": "d" * 64})

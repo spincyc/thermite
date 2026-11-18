@@ -26,6 +26,7 @@ import oh_release  # noqa: E402
 from oh_cli import deploy as deploy_cli, install as install_cli, health, status  # noqa: E402
 from oh_install import changeover, runner, steps  # noqa: E402
 from oh_testing import boot  # noqa: E402
+from tests import txn_fakes  # noqa: E402
 
 
 class SplitInstaller(unittest.TestCase):
@@ -125,6 +126,9 @@ class SplitInstaller(unittest.TestCase):
         runner.run([steps.DerivedConfiguration(self.context)], self.system, self.site, dry_run=True)
         self.assertFalse(self.context.configuration.parent.exists())
         self.assertFalse((self.site / "var").exists())
+        # A run that may change something holds the site's transaction
+        # scope, whose lock is all a declined one leaves in var.
+        txn_fakes.in_scope(self, self.site, "install")
         with patch.object(install_cli, "AREA", self.site), \
                 patch.object(steps, "committed_context", return_value=self.context), \
                 patch.object(steps, "install_preflight", return_value=[]), \
@@ -135,7 +139,7 @@ class SplitInstaller(unittest.TestCase):
                 patch.object(runner, "confirm_run", return_value=False) as approval:
             self.assertEqual(install_cli.install(self.system, False), 1)
         approval.assert_called_once()
-        self.assertFalse((self.site / "var").exists())
+        self.assertEqual([path.name for path in (self.site / "var").iterdir()], ["transaction.lock"])
 
     def test_existing_build_with_missing_release_is_repaired_after_approval(self):
         self.prepare()

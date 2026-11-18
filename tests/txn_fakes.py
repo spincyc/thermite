@@ -38,6 +38,20 @@ TOOLS = {"systemctl": "/usr/bin/systemctl", "cp": "/usr/bin/cp", "sync": "/usr/b
 OPERATOR = {"uid": 1000, "site": "/home/owner/site", "record": f"/home/owner/site/var/transaction/{ID}/record.json"}
 #: A pin name; versions.json calls each service's image digest its pin.
 PROMETHEUS = "prometheus"
+
+
+def in_scope(test, site, verb: str = "upgrade"):
+    """Hold the site's transaction scope for the rest of `test`, as an owner
+    command does around everything of oh_install.changeover a test calls
+    directly (changeover.scoped). close() what this returns to leave the
+    scope earlier."""
+    from unittest.mock import Mock
+    from oh_install import scope
+    from oh_install.system import System
+    held = contextlib.ExitStack()
+    test.addCleanup(held.close)
+    held.enter_context(scope.Scope(Path(site) / "var", Mock(spec=System), verb))
+    return held
 UNITS = "/etc/systemd/system"
 WANTS = f"{UNITS}/multi-user.target.wants"
 BOUNDARY = "thermite-native-boundary.service"

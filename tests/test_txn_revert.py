@@ -207,6 +207,7 @@ class Transacted(unittest.TestCase):
             "192.0.2.10", application={"version": "1.0", "digest": NEW_APP})
         kept = self.site / "var/transaction" / txn_fakes.OLD
         kept.mkdir(parents=True)
+        txn_fakes.in_scope(self, self.site, "revert")
         (kept / "record.json").write_text(json.dumps({
             "version": 1, "id": txn_fakes.OLD, "kind": "upgrade", "verb": "upgrade", "phase": "committed",
             "site": str(self.site), "root": "/srv/thermite-fixture", "installed": True, "bridged": False,

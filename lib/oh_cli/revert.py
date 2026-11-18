@@ -240,7 +240,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     system = System()
     try:
-        return revert(system, arguments.dry_run)
+        return changeover.scoped(AREA, system, "revert", lambda: revert(system, arguments.dry_run),
+                                 dry_run=arguments.dry_run)
     except (deploy.DeployError, ValueError, OSError) as exc:
         print(f"thermite revert: {exc}", file=sys.stderr)
         return 2

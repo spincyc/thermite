@@ -252,6 +252,10 @@ class WrapperPin(PinnedSite):
         super().setUp()
         self.pin(RELEASE, bridge.PIN_SUBJECT)
         self.after = self.git("rev-parse", "HEAD")
+        # A site ignores its var, where the transaction scope keeps its lock.
+        (self.root / ".git/info").mkdir(exist_ok=True)
+        (self.root / ".git/info/exclude").write_text("/house/var/\n")
+        txn_fakes.in_scope(self, self.site)
         self.system = Mock(spec=System)
         needed = patch.object(bridge, "needed", return_value=True)
         self.needed = needed.start()

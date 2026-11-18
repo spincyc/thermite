@@ -138,7 +138,8 @@ def run(system: System, arguments: argparse.Namespace) -> int:
             if arguments._run_approved:
                 raise ValueError("run approval is only valid inside the application workflow")
             if not arguments.dry_run:
-                found = changeover.resolve(AREA, system, "install")
+                found = changeover.scoped(AREA, system, "install",
+                                          lambda: changeover.resolve(AREA, system, "install"))
                 if found is not None:
                     return changeover.REFUSED if found == changeover.COMMITTED else found
             import oh_application_update
@@ -160,7 +161,10 @@ def run(system: System, arguments: argparse.Namespace) -> int:
                            runtime_token_file=arguments.runtime_token_file, restart_runtime=arguments.restart_runtime,
                            run_approved=arguments._run_approved, native_timeout=arguments.native_timeout,
                            site_before=before)
-        return changeover.pinned(system, AREA, arguments._site_before, arguments.dry_run, body)
+        return changeover.scoped(
+            AREA, system, "install",
+            lambda: changeover.pinned(system, AREA, arguments._site_before, arguments.dry_run, body),
+            dry_run=arguments.dry_run)
     except subprocess.CalledProcessError as exc:
         print(f"thermite install: {changeover.escaped(AREA, 'install', exc)}", file=sys.stderr)
         return exc.returncode if exc.returncode > 0 else 1
