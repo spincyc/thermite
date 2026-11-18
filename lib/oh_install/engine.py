@@ -854,9 +854,6 @@ class Engine:
                               "only an install or upgrade keeps a version to revert to")
         if kept.current is None or not kept.current["installed"]:
             raise EngineError(f"nothing was installed before transaction {kept.id}")
-        if kept.before["source"] == "bridge":
-            raise EngineError(f"the version before transaction {kept.id} was described, not installed by a "
-                              "transaction, so its gateway release is not recorded")
         return kept
 
     def _reverting(self, kept) -> list[dict]:
@@ -982,26 +979,20 @@ class Engine:
         return {"required": required, "available": self.disk.available(self.root), "margin": MARGIN,
                 "extra": extra, "items": items}
 
-    def plan(self, desired, current=None) -> dict:
+    def plan(self, desired) -> dict:
         """What begin would set aside, and whether it fits. Changes nothing."""
         self.check_root()
         desired = self.desired(desired)
-        if current is None:
-            current, _ = self.installed()
-        else:
-            current = validate_manifest(current, root=self.root, system=self.system)
+        current, _ = self.installed()
         return self.space(self.entries(current, desired["items"], kind=desired["kind"]), desired["extra"])
 
     # Verbs ---------------------------------------------------------------
 
-    def begin(self, id, desired, operator, current=None, release=None) -> Journal:
+    def begin(self, id, desired, operator, release=None) -> Journal:
         """Record a transaction before anything changes: what each path's
         collect action is, the boot target's state, what its commit will
         record (Engine.release), and this engine's own bytes, pinned beside
-        the journal to run every later verb.
-
-        `current` describes the running version when no manifest is
-        installed yet (the one-time bridge)."""
+        the journal to run every later verb."""
         if not self.source:
             raise EngineError("begin needs the engine's own source to pin")
         directory = self.directory(id)
@@ -1020,11 +1011,8 @@ class Engine:
             if self.disk.lstat(directory) is not None:
                 raise EngineError(f"{directory} already exists")
             installed, raw = self.installed()
+            # Earlier engines read the journal this one writes, and expect the key.
             source = "installed" if installed else "none"
-            if current is not None:
-                if installed is not None:
-                    raise EngineError(f"{self.manifest_path} exists; only an installation without one is described")
-                installed, source = validate_manifest(current, root=self.root, system=self.system), "bridge"
             desired = self.desired(desired)
             operator = validate_operator(operator)
             entries = self.entries(installed, desired["items"], id, desired["kind"])
@@ -2032,7 +2020,6 @@ def parser() -> argparse.ArgumentParser:
             command.add_argument("--id", required=verb != "rollback", help="the transaction")
         if verb in ("plan", "begin"):
             command.add_argument("--desired", required=True, help="the desired set, JSON")
-            command.add_argument("--current", help="a description of an installation without a manifest")
         if verb == "begin":
             command.add_argument("--operator", required=True, help="the operator's side, JSON")
             command.add_argument("--release", help="the release it installs, JSON (none for an uninstall or a "
@@ -2072,18 +2059,17 @@ def _main(args, argv, here) -> int:
     engine.check_root()
     if args.verb in ("plan", "begin"):
         desired = _input(engine.disk, args.desired)
-        current = _input(engine.disk, args.current) if args.current else None
         tools = trusted_tools(validate_desired(desired, engine.root, engine.system)["tools"])
         engine.disk.tools = engine.host.tools = tools
         if args.verb == "plan":
-            space = engine.plan(desired, current)
+            space = engine.plan(desired)
             print(json.dumps(space, sort_keys=True))
             if space["required"] > space["available"]:
                 print(describe_space(space, engine.root), file=sys.stderr)
                 return SHORT
             return 0
         release = _input(engine.disk, args.release) if args.verb == "begin" and args.release else None
-        journal = engine.begin(args.id, desired, _input(engine.disk, args.operator), current, release)
+        journal = engine.begin(args.id, desired, _input(engine.disk, args.operator), release)
         print(json.dumps({"id": journal.id, "phase": journal.phase, "engine": journal.engine_path}))
         return 0
     if args.verb == "status":

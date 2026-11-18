@@ -20,7 +20,7 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_deploy as deploy  # noqa: E402
 import oh_units  # noqa: E402
 from oh_cli import upgrade as upgrade_cli  # noqa: E402
-from oh_install import bridge, changeover, manifest, runner, steps  # noqa: E402
+from oh_install import changeover, manifest, runner, steps  # noqa: E402
 from oh_install import system as system_module  # noqa: E402
 from oh_install.model import Command, Task  # noqa: E402
 from oh_install.system import UNATTENDED, Stat, System, Unit, UnitOrigin  # noqa: E402
@@ -130,7 +130,6 @@ class HostPhase(unittest.TestCase):
         scope.enter_context(patch.object(steps, "committed_context", return_value=self.context))
         self.resolve = scope.enter_context(patch.object(changeover, "resolve", return_value=None))
         self.manifest = scope.enter_context(patch.object(manifest, "installed", return_value=self.installed))
-        self.bridge = scope.enter_context(patch.object(bridge, "needed", return_value=False))
         self.run = scope.enter_context(patch.object(runner, "run", return_value=0))
         self.confirm = scope.enter_context(patch.object(runner, "confirm_run", return_value=True))
         self.unchanged = scope.enter_context(patch.object(changeover, "unchanged", return_value=False))
@@ -148,7 +147,7 @@ class HostPhase(unittest.TestCase):
         self.confirm.assert_called_once()
         [(context, system, build)] = [self.transaction.call_args.args]
         self.assertEqual((context, system), (self.context, self.system))
-        self.assertEqual(self.transaction.call_args.kwargs, {"installed": self.installed, "bridged": False,
+        self.assertEqual(self.transaction.call_args.kwargs, {"installed": self.installed,
                                                              "before": "1" * 40, "first": 3})
         with patch.object(changeover, "install_work") as work:
             build("20261105T101500Z-3f9a2c")
@@ -188,12 +187,6 @@ class HostPhase(unittest.TestCase):
         self.assertIn("is damaged", said)
         self.transaction.assert_not_called()
 
-    def test_units_json_alone_is_bridged(self):
-        self.manifest.return_value = None
-        self.bridge.return_value = True
-        self.assertEqual(self.upgrade()[0], 0)
-        self.assertTrue(self.transaction.call_args.kwargs["bridged"])
-
     def test_a_rerun_that_resolves_undoes_its_own_pin_commit_first(self):
         import oh_source_upgrade
         arguments = Namespace(dry_run=False, runtime_token_file=None, _run_approved=True, native_timeout=None,
@@ -214,7 +207,7 @@ class HostPhase(unittest.TestCase):
 
 class InstallHostPhase(unittest.TestCase):
     """thermite install's host phase: the same install transaction, with
-    --clean inside it, the bridge, and the refusal without a manifest."""
+    --clean inside it, and the refusal without a manifest."""
 
     def setUp(self):
         from oh_cli import install as install_cli
@@ -234,7 +227,6 @@ class InstallHostPhase(unittest.TestCase):
         scope.enter_context(patch.object(steps, "committed_context", return_value=self.context))
         self.resolve = scope.enter_context(patch.object(changeover, "resolve", return_value=None))
         self.manifest = scope.enter_context(patch.object(manifest, "installed", return_value=self.installed))
-        self.bridge = scope.enter_context(patch.object(bridge, "needed", return_value=False))
         self.present = scope.enter_context(patch.object(manifest, "thermite_present", return_value=[]))
         self.run = scope.enter_context(patch.object(runner, "run", return_value=0))
         self.confirm = scope.enter_context(patch.object(runner, "confirm_run", return_value=True))
@@ -255,7 +247,7 @@ class InstallHostPhase(unittest.TestCase):
 
     def test_an_install_is_one_install_transaction_from_the_pin_it_made(self):
         self.assertEqual(self.install(site_before="1" * 40), 0)
-        self.assertEqual(self.transaction.call_args.kwargs, {"installed": self.installed, "bridged": False,
+        self.assertEqual(self.transaction.call_args.kwargs, {"installed": self.installed,
                                                              "before": "1" * 40, "first": 3})
         self.assertEqual(self.kind(), "install")
         self.assertIn("Thermite's HTTPS gateway is installed", self.said())
@@ -274,14 +266,10 @@ class InstallHostPhase(unittest.TestCase):
         self.assertEqual(self.install(restart_runtime=True), 0)
         self.assertEqual(self.transaction.call_count, 2)
 
-    def test_a_fresh_host_installs_and_units_json_alone_is_bridged(self):
+    def test_a_fresh_host_installs(self):
         self.manifest.return_value = None
         self.assertEqual(self.install(), 0)
-        self.assertFalse(self.transaction.call_args.kwargs["bridged"])
-        self.bridge.return_value = True
-        self.assertEqual(self.install(), 0)
-        self.assertTrue(self.transaction.call_args.kwargs["bridged"])
-        self.assertIn("first install transaction here", self.said())
+        self.assertIsNone(self.transaction.call_args.kwargs["installed"])
 
     def test_thermite_files_without_a_manifest_refuse_with_the_recovery(self):
         self.manifest.return_value = None
@@ -337,7 +325,6 @@ class RollbackHostPhase(unittest.TestCase):
         scope.enter_context(patch.object(deploy, "read_record", return_value={"commit": "b" * 40}))
         self.resolve = scope.enter_context(patch.object(changeover, "resolve", return_value=None))
         self.manifest = scope.enter_context(patch.object(manifest, "installed", return_value=self.installed))
-        scope.enter_context(patch.object(bridge, "needed", return_value=False))
         scope.enter_context(patch.object(manifest, "thermite_present", return_value=[]))
         self.run = scope.enter_context(patch.object(runner, "run", return_value=0))
         self.confirm = scope.enter_context(patch.object(runner, "confirm_run", return_value=True))
@@ -348,7 +335,7 @@ class RollbackHostPhase(unittest.TestCase):
         self.assertEqual(self.contexts.call_args.kwargs, {"revision": "e" * 40})
         (context, _, build), options = self.transaction.call_args
         self.assertIs(context, self.earlier)
-        self.assertEqual(options, {"installed": self.installed, "bridged": False, "before": "b" * 40,
+        self.assertEqual(options, {"installed": self.installed, "before": "b" * 40,
                                    "after": "e" * 40, "first": 3, "pinned": False})
         with patch.object(changeover, "install_work") as work:
             build("20261105T101500Z-3f9a2c")
@@ -400,7 +387,6 @@ class UninstallHostPhase(unittest.TestCase):
         scope.enter_context(patch.object(steps, "committed_context", return_value=self.context))
         self.resolve = scope.enter_context(patch.object(changeover, "resolve", return_value=None))
         self.manifest = scope.enter_context(patch.object(manifest, "installed", return_value=self.installed))
-        self.bridge = scope.enter_context(patch.object(bridge, "needed", return_value=False))
         self.present = scope.enter_context(patch.object(manifest, "thermite_present", return_value=[]))
         self.confirm = scope.enter_context(patch.object(runner, "confirm_run", return_value=True))
         self.transaction = scope.enter_context(patch.object(changeover, "run", return_value=0))
@@ -416,7 +402,7 @@ class UninstallHostPhase(unittest.TestCase):
 
     def test_an_uninstall_is_one_transaction_that_keeps_the_state(self):
         self.assertEqual(self.cli.uninstall(self.system, False, False), 0)
-        self.assertEqual(self.transaction.call_args.kwargs, {"installed": self.installed, "bridged": False,
+        self.assertEqual(self.transaction.call_args.kwargs, {"installed": self.installed,
                                                              "before": None, "first": 1, "pinned": False})
         self.assertFalse(self.purge())
         self.assertIn("Kept: Thermite's state under /srv/thermite-fixture", self.said())
@@ -435,9 +421,6 @@ class UninstallHostPhase(unittest.TestCase):
         self.present.return_value = [deploy.QUADLET]
         self.assertEqual(self.cli.uninstall(self.system, False, True), 2)
         self.assertIn(manifest.missing_recovery(self.context), self.said())
-        self.bridge.return_value = True
-        self.assertEqual(self.cli.uninstall(self.system, False, False), 0)
-        self.assertTrue(self.transaction.call_args.kwargs["bridged"])
 
     def test_an_uninstalled_host_can_still_be_purged(self):
         self.manifest.return_value = {**self.installed, "installed": False}

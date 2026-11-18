@@ -873,13 +873,8 @@ Each commit keeps two versions and removes older ones: the current and the
 previous gateway release in `access/releases/`, the container images the two
 pin, and the application environments of the current and the previous
 release under `~/.local/share/thermite/application/`, with their records and
-source checkouts. An environment that no record names is left alone. The
-first commit on a host installed before the install engine also removes the
-gateway releases staged before it, except the one that version ran;
-`runtime/backups/` is never pruned. The application environments are pruned
-by the owner command once it selects the new application, so that first
-upgrade, which the owner command from before the install engine runs, leaves
-them all; the next upgrade removes the older ones.
+source checkouts. An environment that no record names is left alone, and
+`runtime/backups/` is never pruned.
 
 Upgrades no longer write tar backups of openHAB's and Grafana's state to
 `runtime/backups/`, and nothing reads the ones earlier releases wrote: the
@@ -992,9 +987,7 @@ site its `--config` names and writes nothing at the old path.
 A revert is refused with exit status 2 after an uninstall, a clean install
 or another revert, when the site is not at the commit that transaction
 installed or its Git repository has uncommitted changes, when the previous
-application environment is gone, and after the first transaction on a host
-installed before the install engine: that transaction recorded no gateway
-release for the version before it. Use `thermite rollback` there.
+application environment is gone. Use `thermite rollback` there.
 
 Pinning an application release older than the site's committed one requires
 `--allow-downgrade`, after deliberately restoring state the newer release
@@ -1073,36 +1066,13 @@ transaction; only then can another begin.
 
 ### A missing manifest
 
-An installation from this release on records what it installed in
-`/etc/thermite/installed.json`. The first upgrade of an installation from
-before the install engine describes it instead from `/etc/thermite/units.json`
-and the fixed paths, and refuses before anything stops if any of them is not
-exactly what the installer wrote; that first transaction then sets it aside
-like any later one. Its commit removes the gateway releases staged before
-it, except the one the old version ran; when that one is unknown, it keeps
-them all.
+An installation records what it installed in
+`/etc/thermite/installed.json`. One from before the install engine has only
+`/etc/thermite/units.json`: no release describes it any more, and it takes
+the recovery below like any installation whose manifest is missing.
 
-That first upgrade runs under the owner command from before the install
-engine, whose own messages frame the new upgrade's. When the upgrade stops
-or rolls back, that command then says that "a completed site release commit
-is retained so the same command can resume" and prints a `Resume:` command.
-Unless the transaction is still open (exit status 5, or 130 after it
-began), the site's pin commit was undone instead, as the upgrade said just
-before; the `Resume:` command, like `thermite upgrade`, runs the upgrade
-again.
-
-After that first transaction rolls back, the version from before the
-install engine runs again, and `/srv/thermite/.transaction/` keeps the
-rolled-back transaction until a transaction commits. That version's own
-`thermite install` refuses while it is there ("cannot prove /srv/thermite is
-Thermite's installation root"); `thermite upgrade` does not. Fix what the
-rollback reported and run `thermite upgrade` again, or, to use that
-version's install, first remove the rolled-back transaction as root:
-`sudo rm -rf /srv/thermite/.transaction`. Only after a rollback, exit
-status 3 or 4: after 5 or 130 the transaction is still open.
-
-When Thermite's units and files are here but neither manifest is, or
-`installed.json` is damaged, nothing can prove which of them this
+When Thermite's units and files are here but `installed.json` is missing
+or damaged, nothing can prove which of them this
 installation owns, so `thermite install`, `upgrade`, `uninstall`,
 `rollback` and `revert` refuse with exit status 2 and change nothing, and
 print these steps. To recover, as root: stop Thermite

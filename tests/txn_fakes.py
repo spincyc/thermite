@@ -637,7 +637,7 @@ def empty(disk, *, apparmor=True):
     disk.settle()
 
 
-def install(disk, host, old: Version, *, release=OLD, apparmor=True, manifest=True):
+def install(disk, host, old: Version, *, release=OLD, apparmor=True):
     """A host running `old`, installed by an earlier transaction, all durable."""
     empty(disk, apparmor=apparmor)
     items = []
@@ -666,8 +666,7 @@ def install(disk, host, old: Version, *, release=OLD, apparmor=True, manifest=Tr
             "images": {"current": old.images, "previous": []},
             "application": {"current": f"sha256:{old.label}", "previous": None}}
     data = engine.validate_manifest(data, root=ROOT)
-    if manifest:
-        disk.put("/etc/thermite/installed.json", data=engine.render_manifest(data), durable=True)
+    disk.put("/etc/thermite/installed.json", data=engine.render_manifest(data), durable=True)
     host.active = {engine.TARGET, "thermite-openhab.service", BOUNDARY}
     host.table = old.files[RULES][1].decode()
     if apparmor and POLICY in old.files:

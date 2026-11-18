@@ -7,6 +7,11 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- An installation from before the install engine (one that has
+  `/etc/thermite/units.json` and no `/etc/thermite/installed.json`) is
+  no longer upgraded in place: `thermite install`, `upgrade`,
+  `rollback`, `uninstall` and `revert` print the missing-manifest
+  recovery, which keeps the state and ends in `thermite install`.
 - Terminal remote and installer: a light now says its state by its
   shape as well as its colour (● on, ○ off, ◐ switching, ! a problem,
   ? not confirmed, ◌ not connected), so it reads with `NO_COLOR`, on a

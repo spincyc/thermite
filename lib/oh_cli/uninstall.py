@@ -12,7 +12,7 @@ import sys
 import oh_cli
 import oh_deploy as deploy
 from oh_cli import AREA
-from oh_install import bridge, changeover, manifest, runner, steps
+from oh_install import changeover, manifest, runner, steps
 from oh_install.system import System
 
 RERUN = "Run thermite uninstall again to go on from here."
@@ -87,8 +87,7 @@ def uninstall(system: System, dry_run: bool, purge: bool) -> int:
     except manifest.ManifestError as exc:
         system.say(f"{exc}. {manifest.missing_recovery(context)}")
         return 2
-    bridged = installed is None and bridge.needed(system)
-    if installed is None and not bridged:
+    if installed is None:
         if manifest.thermite_present(context, system):
             system.say(manifest.missing_recovery(context))
             return 2
@@ -108,7 +107,7 @@ def uninstall(system: System, dry_run: bool, purge: bool) -> int:
     if not runner.confirm_run(system, "purge" if purge else "uninstall", RERUN):
         return 1
     code = changeover.run(context, system, lambda id: changeover.uninstall_work(context, id, purge=purge),
-                          installed=installed, bridged=bridged, before=None, first=1, pinned=False)
+                          installed=installed, before=None, first=1, pinned=False)
     if code == changeover.COMMITTED:
         system.say(kept(context, purge, music=steps.music_state(context, system)))
     return code

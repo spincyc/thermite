@@ -36,8 +36,7 @@ and the site's branch goes forward to the pin commit again.
 
 A revert needs the site at that upgrade's pin commit with nothing
 uncommitted, and the upgrade's own record in the site's var/transaction. It
-is refused after an uninstall, a clean install or another revert, and for
-the first transaction on a host installed before the install engine.
+is refused after an uninstall, a clean install or another revert.
 thermite rollback installs an earlier site commit without touching state.
 """
 
@@ -165,7 +164,7 @@ def refusal(context: steps.Context, system: System) -> tuple[str | None, dict | 
     if record.get("phase") != "committed" or record.get("kind") not in ("install", "upgrade"):
         return (f"transaction {kept} is a{'n' if str(record.get('kind'))[:1] in 'aeiou' else ''} {record.get('kind')}"
                 f" ({record.get('phase')}); only a committed install or upgrade keeps a version to revert to"), None
-    if not record.get("installed") or record.get("bridged"):
+    if not record.get("installed"):
         return (f"the version before transaction {kept} was not installed by a transaction, so it cannot be "
                 "reverted to; thermite rollback installs an earlier site commit"), None
     before, after = record.get("head_before"), record.get("head_after")
@@ -228,7 +227,7 @@ def revert(system: System, dry_run: bool) -> int:
     if not runner.confirm_run(system, "revert", f"Run {changeover.command(AREA, 'revert')} again."):
         return 1
     return changeover.run(context, system, lambda id: work, installed=manifest.installed(system, root),
-                          bridged=False, before=after, after=before, first=1)
+                          before=after, after=before, first=1)
 
 
 def main(argv: list[str] | None = None) -> int:

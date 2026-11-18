@@ -1,7 +1,6 @@
 """The owner commands around an install transaction: what each one's dry
-run shows, thermite rollback's choice of commit and its refusals, the
-history record of a rolled-back transaction, and the gateway release a
-bridged version runs.
+run shows, thermite rollback's choice of commit and its refusals, and the
+history record of a rolled-back transaction.
 
 A fictional site in a temporary directory and a Mock host; the
 transaction itself is tests/test_txn_changeover.py's, so changeover.run
@@ -23,14 +22,13 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
 import oh_deploy as deploy  # noqa: E402
-from oh_access import AccessError  # noqa: E402
 from oh_cli import history as history_cli  # noqa: E402
 from oh_cli import install as install_cli  # noqa: E402
 from oh_cli import revert as revert_cli  # noqa: E402
 from oh_cli import rollback as rollback_cli  # noqa: E402
 from oh_cli import uninstall as uninstall_cli  # noqa: E402
 from oh_cli import upgrade as upgrade_cli  # noqa: E402
-from oh_install import access, bridge, changeover, manifest, runner, steps  # noqa: E402
+from oh_install import changeover, manifest, runner, steps  # noqa: E402
 from oh_install.model import Check, Step, Task  # noqa: E402
 from oh_install.system import System  # noqa: E402
 from tests import txn_fakes  # noqa: E402
@@ -148,7 +146,7 @@ class Preview(Fixture):
         directory.mkdir(parents=True)
         (directory / "record.json").write_text(json.dumps({
             "version": 1, "id": txn_fakes.ID, "kind": "upgrade", "verb": "upgrade", "phase": "committed",
-            "site": str(self.site), "root": ROOT, "installed": True, "bridged": False, "head_before": BEFORE,
+            "site": str(self.site), "root": ROOT, "installed": True, "head_before": BEFORE,
             "head_after": AFTER, "application": {"current": NEW_APP, "previous": OLD_APP}, "asides": {}}))
         self.patch(revert_cli, "AREA", new=self.site)
         self.patch(steps, "committed_context", return_value=self.context)
@@ -183,7 +181,6 @@ class DryRuns(Fixture):
         self.patch(steps, "committed_context", return_value=self.context)
         self.patch(manifest, "installed", return_value=self.installed)
         self.patch(manifest, "thermite_present", return_value=[])
-        self.patch(bridge, "needed", return_value=False)
         self.runs = self.patch(runner, "run", return_value=0)
         self.confirm = self.patch(runner, "confirm_run", return_value=True)
         self.resolve = self.patch(changeover, "resolve", return_value=changeover.COMMITTED)
@@ -243,7 +240,7 @@ class DryRuns(Fixture):
         directory.mkdir(parents=True)
         (directory / "record.json").write_text(json.dumps({
             "version": 1, "id": txn_fakes.OLD, "kind": "upgrade", "verb": "upgrade", "phase": "committed",
-            "site": str(self.site), "root": ROOT, "installed": True, "bridged": False, "head_before": BEFORE,
+            "site": str(self.site), "root": ROOT, "installed": True, "head_before": BEFORE,
             "head_after": AFTER, "application": {"current": NEW_APP, "previous": OLD_APP}, "asides": {}}))
         self.patch(revert_cli, "environment", return_value=self.temporary / "environment-old")
         _, work, first = self.previewed(revert_cli.revert(self.system, True))
@@ -313,7 +310,6 @@ class Rollback(Fixture):
         self.resolve = self.patch(changeover, "resolve", return_value=None)
         self.manifest = self.patch(manifest, "installed", return_value=self.installed)
         self.present = self.patch(manifest, "thermite_present", return_value=[])
-        self.bridge = self.patch(bridge, "needed", return_value=False)
         self.runs = self.patch(runner, "run", return_value=0)
         self.confirm = self.patch(runner, "confirm_run", return_value=True)
         self.transaction = self.patch(changeover, "run", return_value=changeover.COMMITTED)
@@ -327,22 +323,17 @@ class Rollback(Fixture):
         self.assertEqual(self.confirm.call_args.args[1], "rollback")
         (context, system, build), options = self.transaction.call_args
         self.assertIs(context, self.earlier)
-        self.assertEqual(options, {"installed": self.installed, "bridged": False, "before": BEFORE,
-                                   "after": EARLIER, "first": 3, "pinned": False})
+        self.assertEqual(options, {"installed": self.installed, "before": BEFORE, "after": EARLIER, "first": 3,
+                                   "pinned": False})
         work = build(txn_fakes.ID)
         self.assertEqual((work.kind, work.verb), ("install", "rollback"))
         self.assertIn(f"Rolling back thermite on this host, fixture-host, to {EARLIER[:12]}, deploy #1 of "
                       "2026-11-01T10:00:00+00:00, step by step:", self.said())
 
-    def test_an_unknown_installed_commit_or_a_bridged_version_starts_from_head(self):
+    def test_an_unknown_installed_commit_starts_from_head(self):
         self.installed["release"] = {}
         self.roll_back()
         self.assertEqual(self.transaction.call_args.kwargs["before"], AFTER)
-        self.manifest.return_value = None
-        self.bridge.return_value = True
-        self.roll_back()
-        self.assertEqual((self.transaction.call_args.kwargs["before"], self.transaction.call_args.kwargs["bridged"],
-                          self.transaction.call_args.kwargs["installed"]), (AFTER, True, None))
 
     def test_a_commit_pinning_another_application_release_names_the_git_revert(self):
         self.earlier = steps.Context(**{**self.earlier.__dict__, "application": {"digest": OLD_APP}})
@@ -457,24 +448,6 @@ class RecordRollback(unittest.TestCase):
                                                  f"{self.layout.history}: "))
                 self.assertIn(words, error)
         self.assertEqual(self.layout.history.read_text(), before)
-
-
-class Gateway(unittest.TestCase):
-    """The gateway release a bridged version runs, recorded at begin."""
-
-    def gateway(self, **kwargs):
-        with patch.object(access, "installed_release", **kwargs):
-            return changeover._gateway(Mock(spec=System))
-
-    def test_the_release_name_only_from_a_releases_directory(self):
-        self.assertEqual(self.gateway(return_value=Path(ROOT) / "access/releases/release-0123"), "release-0123")
-        self.assertIsNone(self.gateway(return_value=Path(ROOT) / "access/current/release-0123"))
-        self.assertIsNone(self.gateway(return_value=None))
-
-    def test_an_unreadable_gateway_is_unknown(self):
-        for error in (OSError("unreadable unit"), ValueError("malformed unit"), AccessError("unexpected overrides")):
-            with self.subTest(error=error):
-                self.assertIsNone(self.gateway(side_effect=error))
 
 
 if __name__ == "__main__":

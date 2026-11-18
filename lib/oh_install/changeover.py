@@ -42,7 +42,7 @@ from typing import Callable
 import oh_cli
 import oh_music as music
 import oh_units
-from oh_install import access, bridge, engine, manifest, ownership, runner, scope, steps
+from oh_install import access, engine, manifest, runner, scope, steps
 from oh_install.ingress import NativeIngress, NativeIngressPrerequisites
 from oh_install.model import Check, Command, Step, Task
 from oh_install.system import System
@@ -253,22 +253,20 @@ class Transaction:
     @classmethod
     def create(cls, context: steps.Context, id: str, *, kind: str, verb: str, before: str | None,
                after: str | None, previous: str | None, gid: int, installed: bool, history: bool,
-               pinned: bool = True, bridged: bool = False, gateway: str | None = None,
-               then: dict | None = None) -> Transaction:
+               pinned: bool = True, then: dict | None = None) -> Transaction:
         """`before`/`after`: the site commits of the version that runs and of
         the one installed. `installed`: whether a version of Thermite runs
         before it, to come back if it rolls back. `history`: whether it
         deploys a site commit, so that a rollback is recorded in thermite
         history. `pinned`: whether the site was moved to `after` for it (a
         pin commit made for it, or a revert's reset back), to undo if it
-        does not commit. `gateway`: the gateway release the
-        bridged version runs, kept until the next commit. `then`: the
-        operator's side of its commit (committed())."""
+        does not commit. `then`: the operator's side of its commit
+        (committed())."""
         transaction = cls(context.var, id, {
             "version": 1, "id": id, "kind": kind, "verb": verb, "site": str(context.area),
             "root": str(context.installation.root), "state": str(context.layout.root), "gid": gid,
             "head_before": before, "head_after": after, "installed": installed, "history": history,
-            "pinned": pinned, "bridged": bridged, "gateway_before": gateway,
+            "pinned": pinned,
             "application": {"current": (context.application or {}).get("digest"), "previous": previous},
             "then": dict(then or {}), "asides": {}, "phase": "preparing"})
         transaction.directory.mkdir(mode=0o700, parents=True)
@@ -311,12 +309,6 @@ class Transaction:
             elif not path.exists() and not path.is_symlink():
                 asides[str(path)] = None
         self.save(asides=asides)
-
-    def discard_copies(self) -> None:
-        """Nothing began: what the gateway's preparation copied into this
-        transaction (Gateway._exported, the installed gateway's TLS key
-        among it) goes now rather than at the next commit."""
-        shutil.rmtree(self.directory / "gateway", ignore_errors=True)
 
     def _own(self, path) -> Path:
         """A file of the operator's that a record may name: one in the site.
@@ -451,9 +443,8 @@ class Room(Step):
         code = runner.perform(Command(("-v",), root=True, terminal=True), system, transaction.site)
         if code:
             return code
-        current = ("--current", transaction.file("current.json")) if transaction.file("current.json").exists() else ()
-        code, out = system.capture(("sudo", "-n", *transaction.argv("plan", "--desired", transaction.file("desired.json"),
-                                                                     *current)), diagnostics=True)
+        code, out = system.capture(("sudo", "-n", *transaction.argv("plan", "--desired",
+                                                                     transaction.file("desired.json"))), diagnostics=True)
         try:
             space = json.loads(out)
         except ValueError:
@@ -482,12 +473,11 @@ class Begin(Step):
 
     def actions(self, system: System) -> list:
         transaction = self.transaction
-        optional = [(f"--{name}", transaction.file(f"{name}.json")) for name in ("current", "release")
-                    if transaction.file(f"{name}.json").exists()]
+        release = (("--release", transaction.file("release.json")) if transaction.file("release.json").exists()
+                   else ())
         return [Task("set aside the operator's own files and mark the transaction open", self.opened),
                 transaction.command("begin", "--desired", transaction.file("desired.json"),
-                                    "--operator", transaction.file("operator.json"),
-                                    *(word for option in optional for word in option))]
+                                    "--operator", transaction.file("operator.json"), *release)]
 
     def opened(self, system: System) -> int:
         self.transaction.set_aside(self.paths)
@@ -595,8 +585,6 @@ class Work:
     release: dict | None
     #: The desired items, when not those the switching steps declare.
     items: Callable[[System], list[manifest.Item]] | None = None
-    #: The steps whose items describe a version 1 installation (the bridge).
-    described: list[Step] | None = None
     pull: bool = True
     confirm: Step | None = None
     #: Whether the engine puts the kept version back (a revert).
@@ -666,7 +654,7 @@ def install_work(context: steps.Context, id: str | None, *, kind: str = "install
     gateway = next((step for step in changes if hasattr(step, "deferred")), None)
     proof = [access.GatewayInputs(gateway)] if gateway is not None else []
     work = Work(kind, verb, [*preparation(context), *proof], changes, verification(context), release(context),
-                described=changes, gateway=gateway)
+                gateway=gateway)
     if kind == "clean":
         root = context.installation.root
         layout = context.layout
@@ -704,7 +692,7 @@ def uninstall_work(context: steps.Context, id: str | None, *, purge: bool = Fals
     images and every transaction."""
     root = context.installation.root
     work = Work("purge" if purge else "uninstall", "uninstall", [], [], [Authorize()], None,
-                items=lambda system: [], described=switching(context, None), pull=False)
+                items=lambda system: [], pull=False)
     if purge:
         work.items = lambda system: [manifest.Item(root / "access", "tree-move"),
                                      manifest.Item(root / "runtime", "tree-move")]
@@ -740,15 +728,8 @@ def unchanged(context: steps.Context, system: System, installed: dict | None) ->
                                                          if music.enabled(context.host) else [])))
 
 
-def previous_application(installed: dict | None, system: System) -> str | None:
-    if installed is not None:
-        return installed["application"]["current"]
-    found = system.unit_file(ownership.MANIFEST)
-    try:
-        value = json.loads(found.content).get("release") if found else None
-    except (ValueError, AttributeError):
-        value = None
-    return value if isinstance(value, str) else None
+def previous_application(installed: dict | None) -> str | None:
+    return installed["application"]["current"] if installed is not None else None
 
 
 def preview(context: steps.Context, system: System, work: Work, *, first: int) -> int:
@@ -770,7 +751,7 @@ def preview(context: steps.Context, system: System, work: Work, *, first: int) -
 # Running one -------------------------------------------------------------------
 
 def run(context: steps.Context, system: System, build: Callable[[str], Work], *, installed: dict | None,
-        bridged: bool, before: str | None, first: int, after: str | None = None, pinned: bool = True) -> int:
+        before: str | None, first: int, after: str | None = None, pinned: bool = True) -> int:
     """Prepare, begin, switch, verify and commit; roll back on failure.
 
     `build` makes the transaction's Work for its id. `before`/`after` are
@@ -783,12 +764,11 @@ def run(context: steps.Context, system: System, build: Callable[[str], Work], *,
     after = after or context.head
     if before is None and not pinned:
         before = after
-    present = bool(installed and installed.get("installed", True)) or bridged
+    present = bool(installed and installed.get("installed", True))
     transaction = Transaction.create(
         context, id, kind=work.kind, verb=work.verb, before=before, after=after,
-        previous=previous_application(installed, system), gid=context.host["gid"], installed=present,
-        history=work.release is not None and work.kind != "revert", pinned=pinned, bridged=bridged,
-        gateway=_gateway(system) if bridged else None, then=work.then)
+        previous=previous_application(installed), gid=context.host["gid"], installed=present,
+        history=work.release is not None and work.kind != "revert", pinned=pinned, then=work.then)
     prefetch = Prefetch(context)
     root = context.installation.root
 
@@ -798,9 +778,6 @@ def run(context: steps.Context, system: System, build: Callable[[str], Work], *,
         _json(transaction.file("desired.json"), {
             "kind": work.kind, "tools": tools, "items": [item.to_json() for item in items],
             "pulled": prefetch.pulled, "extra": _allocated(context.program) if work.release is not None else 0})
-        if bridged:
-            described = manifest.desired(work.described or work.switching, system, root)
-            _json(transaction.file("current.json"), bridge.describe(context, system, described, tools, engine._now()))
         _json(transaction.file("operator.json"), {
             "uid": os.getuid(), "site": str(context.area), "record": str(transaction.file("record.json")),
             "head_before": transaction.record["head_before"], "head_after": transaction.record["head_after"]})
@@ -851,10 +828,10 @@ def run(context: steps.Context, system: System, build: Callable[[str], Work], *,
 
 def retain(system: System, transaction: Transaction) -> None:
     """Retention after a commit (Q13 aside): the gateway releases the
-    installed manifest names as current and previous stay, as does, until
-    the next commit, the one a bridged version ran; the engine prunes
-    older recorded ones, and this removes those staged before the engine,
-    which no manifest records. Old runtime/backups tars stay untouched."""
+    installed manifest names as current and previous stay; the engine
+    prunes older recorded ones, and this removes those no manifest records
+    (an install after a missing manifest finds the earlier ones so). Old
+    runtime/backups tars stay untouched."""
     import oh_deploy
     try:
         installed = manifest.installed(system, transaction.root)
@@ -865,9 +842,7 @@ def retain(system: System, transaction: Transaction) -> None:
     names = system.directory_entries(releases) if item is not None else None
     if not names:
         return
-    if transaction.record.get("bridged") and not transaction.record.get("gateway_before"):
-        return  # The release the described version runs is not known: nothing goes.
-    keep = {item.get("current"), item.get("previous"), transaction.record.get("gateway_before")}
+    keep = {item.get("current"), item.get("previous")}
     older = [releases / name for name in names if name not in keep]
     if not older:
         return
@@ -880,23 +855,13 @@ def retain(system: System, transaction: Transaction) -> None:
         system.say(f"   Could not remove the older gateway releases in {releases}; they stay until the next commit.")
 
 
-def _gateway(system: System) -> str | None:
-    """The release the installed gateway runs, by name; None when unknown."""
-    from oh_access import AccessError
-    try:
-        found = access.installed_release(system)
-    except (OSError, ValueError, AccessError):
-        return None
-    return found.name if found and found.parent.name == "releases" else None
-
-
 def relay(context: steps.Context, system: System, transaction: Transaction, *, first: int) -> int:
     """Commissioning found Sonos event callbacks the committed version did
     not declare a relay for: one more install transaction of the same
     version activates it. The commit stands whatever that one does."""
     system.say("Sonos event callbacks were found: one more install transaction activates their relay.")
     code = run(context, system, lambda id: install_work(context, id, verb=transaction.verb),
-               installed=manifest.installed(system, context.installation.root), bridged=False,
+               installed=manifest.installed(system, context.installation.root),
                before=None, after=context.head, first=first, pinned=False)
     if code in (ROLLED_BACK, UNHEALTHY, REFUSED):
         system.say(f"The relay was not activated, but transaction {transaction.id} stays committed: run "
@@ -905,16 +870,9 @@ def relay(context: steps.Context, system: System, transaction: Transaction, *, f
     return code
 
 
-def _toplevel(site: Path) -> Path:
-    from oh_source_upgrade import git
-    return Path(git(site, "rev-parse", "--show-toplevel"))
-
-
 def refused(system: System, transaction: Transaction) -> int:
-    """Nothing began: the site goes back to pinning the version that runs,
-    and the preparation's gateway copies go."""
+    """Nothing began: the site goes back to pinning the version that runs."""
     transaction.unpin(system)
-    transaction.discard_copies()
     transaction.close("refused")
     system.say(f"{transaction.name} refused: nothing of Thermite was stopped or changed.")
     return REFUSED
@@ -935,7 +893,6 @@ def _interrupted(system: System, transaction: Transaction, stop: BaseException |
         system.say(f"\nInterrupted before the transaction began: nothing of Thermite was stopped or changed. "
                    f"Run {transaction.rerun} again.")
         transaction.unpin(system)
-        transaction.discard_copies()
         transaction.close("refused")
     return INTERRUPTED
 
@@ -1078,15 +1035,6 @@ def rolled_back(system: System, transaction: Transaction) -> int:
                    "but its health check does not pass (above); the engine says so above when it did not even "
                    f"start. It is left as it is: fix what health reports (systemctl start {oh_units.TARGET} if it "
                    "did not start), then run thermite health --production --installation to check again.")
-    if record.get("bridged"):
-        # The version 1 wrapper speaks next, and version 1's own install
-        # proves the root holds only runtime/ and access/.
-        aside = f"{transaction.root}/.transaction"
-        system.say(f"   This was the first transaction on a host installed before the install engine, and that "
-                   "version runs again. Its application workflow may say next that a completed site release "
-                   "commit is retained: the site is where the lines above say. That version's own thermite "
-                   f"install refuses while {aside} exists, which keeps this transaction until one commits: run "
-                   f"{transaction.rerun} again, or, as root, remove {aside} first.")
     return ROLLED_BACK if healthy else UNHEALTHY
 
 
@@ -1151,16 +1099,10 @@ def pinned(system: System, site: Path, before: str | None, dry_run: bool,
     transaction is resolved first and this run stops, so the pin commit is
     undone first, unless it is that transaction's own: a rerun that made no
     new pin commit leaves it to the resolution, which keeps it if that
-    transaction commits.
-
-    The version 1 wrapper commits its pin without naming `before`: on a
-    host it installed, its pin commit is recognized instead (wrapper_pin).
-    `body` runs the phase from `before`."""
+    transaction commits. `body` runs the phase from `before`."""
     import oh_source_upgrade
     if not dry_run:
         scope.held(Path(site) / "var")
-    if before is None and not dry_run and bridge.needed(system):
-        before = wrapper_pin(site)
     head = oh_source_upgrade.git(site, "rev-parse", "HEAD") if before else None
     found = open_transaction(Path(site) / "var") if head and not dry_run else None
     if found is not None:
@@ -1181,18 +1123,6 @@ def pinned(system: System, site: Path, before: str | None, dry_run: bool,
         if head and code in (1, 2, INTERRUPTED) and open_transaction(Path(site) / "var") is None:
             _unpin(system, site, head, before)
     return code
-
-
-def wrapper_pin(site: Path) -> str | None:
-    """The commit before the version 1 wrapper's pin commit, when the
-    site's HEAD is one for the release the site pins (bridge.site_before)."""
-    import subprocess
-    from oh_paths import descriptor
-    try:
-        found = descriptor(site)
-        return bridge.site_before(_toplevel(site), site, (found or {}).get("release"))[0]
-    except (OSError, ValueError, subprocess.CalledProcessError):
-        return None
 
 
 def _unpin(system: System, site: Path, head: str, before: str) -> None:

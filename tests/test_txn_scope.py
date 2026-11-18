@@ -196,7 +196,7 @@ class OnlyInside(Site):
         context.var = self.var
         calls = {
             "resolve": lambda: changeover.resolve(self.site, self.system, "upgrade"),
-            "run": lambda: changeover.run(context, self.system, lambda id: None, installed=None, bridged=False,
+            "run": lambda: changeover.run(context, self.system, lambda id: None, installed=None,
                                           before=None, first=1),
             "roll_back": lambda: changeover.roll_back(self.system, self.transaction(), "a step failed"),
             "pinned": lambda: changeover.pinned(self.system, self.site, "1" * 40, False, lambda before: 0),

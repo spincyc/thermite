@@ -47,7 +47,7 @@ class Fixture(unittest.TestCase):
             {"uid": 9001, "gid": 9001, "root": "/srv/thermite-fixture"}, AFTER, "c" * 64, "fixture-host",
             "192.0.2.10", application={"version": "1.0", "digest": NEW_APP})
         self.record = {"version": 1, "id": txn_fakes.ID, "kind": "upgrade", "verb": "upgrade", "phase": "committed",
-                       "site": str(self.site), "root": "/srv/thermite-fixture", "installed": True, "bridged": False,
+                       "site": str(self.site), "root": "/srv/thermite-fixture", "installed": True,
                        "head_before": BEFORE, "head_after": AFTER,
                        "application": {"current": NEW_APP, "previous": OLD_APP}, "asides": {}}
         directory = self.site / "var/transaction" / txn_fakes.ID
@@ -84,7 +84,6 @@ class Refusals(Fixture):
                                ({"kind": "clean"}, "is a clean"),
                                ({"kind": "revert"}, "is a revert"),
                                ({"phase": "rolled-back"}, "(rolled-back)"),
-                               ({"bridged": True}, "was not installed by a transaction"),
                                ({"installed": False}, "was not installed by a transaction")):
             with self.subTest(changes=changes):
                 original = dict(self.record)
@@ -119,8 +118,7 @@ class Revert(Fixture):
             self.assertEqual(revert_cli.revert(self.system, False), 0)
         self.assertIn("is lost", self.said())
         (context, _, build), options = run.call_args
-        self.assertEqual(options, {"installed": self.installed, "bridged": False, "before": AFTER, "after": BEFORE,
-                                   "first": 1})
+        self.assertEqual(options, {"installed": self.installed, "before": AFTER, "after": BEFORE, "first": 1})
         work = build("20261106T090000Z-00e5f6")
         self.assertEqual((work.kind, work.verb, work.release, work.pull, work.reinstate), ("revert", "revert", None,
                                                                                             False, True))
@@ -210,7 +208,7 @@ class Transacted(unittest.TestCase):
         self.scope = txn_fakes.in_scope(self, self.site, "revert")
         (kept / "record.json").write_text(json.dumps({
             "version": 1, "id": txn_fakes.OLD, "kind": "upgrade", "verb": "upgrade", "phase": "committed",
-            "site": str(self.site), "root": "/srv/thermite-fixture", "installed": True, "bridged": False,
+            "site": str(self.site), "root": "/srv/thermite-fixture", "installed": True,
             "head_before": self.before, "head_after": self.after,
             "application": {"current": NEW_APP, "previous": OLD_APP}, "asides": {}}))
         self.environment = self.temporary / "home/.local/share/thermite/application/environment-old"

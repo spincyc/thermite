@@ -24,7 +24,7 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_deploy as deploy  # noqa: E402
 import oh_source_upgrade  # noqa: E402
 import oh_units  # noqa: E402
-from oh_install import bridge, changeover, engine, manifest, runner, steps  # noqa: E402
+from oh_install import changeover, engine, manifest, runner, steps  # noqa: E402
 from oh_install.model import Check, Command, Step, Task  # noqa: E402
 from oh_install.system import Stat, System, Unit, UnitOrigin  # noqa: E402
 from tests import txn_fakes  # noqa: E402
@@ -156,7 +156,7 @@ class Fixture(unittest.TestCase):
                                items=lambda system: [])
 
     def transact(self, work, installed=INSTALLED, before=BEFORE, **options):
-        return changeover.run(self.context, self.host.system, lambda id: work, installed=installed, bridged=False,
+        return changeover.run(self.context, self.host.system, lambda id: work, installed=installed,
                               before=before, first=3, **options)
 
     def run_upgrade(self, *, prepare=(), switch=(), verify=(), **answers):
@@ -229,22 +229,6 @@ class Refused(Fixture):
     def test_a_failed_preparation_never_begins(self):
         self.assertEqual(self.run_upgrade(prepare=[("packages", 1)]), changeover.REFUSED)
         self.assertEqual(self.log, ["packages"])
-
-    def exported(self, system):
-        """What GatewayInputs leaves: the installed gateway's adoption export."""
-        export = self.directory / "gateway/adopted-0a1b2c"
-        export.mkdir(parents=True, mode=0o700)
-        (export / "tls-key.pem").write_text("fixture key\n")
-        return 0
-
-    def test_a_refusal_or_an_interrupt_before_begin_drops_the_gateway_copies(self):
-        for outcome, code in ((1, changeover.REFUSED), (KeyboardInterrupt(), changeover.INTERRUPTED)):
-            with self.subTest(outcome=outcome):
-                shutil.rmtree(self.site / "var/transaction", ignore_errors=True)
-                self.assertEqual(self.run_upgrade(prepare=[("gateway inputs", self.exported),
-                                                           ("packages", outcome)]), code)
-                self.assertFalse((self.directory / "gateway").exists())
-                self.assertEqual(self.record()["phase"], "refused", "its record stays")
 
 
 class RolledBack(Fixture):
@@ -808,37 +792,6 @@ class Kinds(Fixture):
         self.assertIn("Nothing of Thermite was installed before it, and nothing is now", self.said())
         self.assertEqual((self.record()["kind"], self.record()["verb"]), ("install", "install"))
 
-    def bridged(self, **answers):
-        """The first transaction on a host installed before the engine,
-        rolled back by its switch."""
-        self.host = Host(self, **answers)
-        work = self.work([], [Fake("switch", self.log, 1)], [])
-        with patch.object(bridge, "describe", return_value={}), patch.object(changeover, "_gateway", return_value=None):
-            return changeover.run(self.context, self.host.system, lambda id: work, installed=None, bridged=True,
-                                  before=None, first=3)
-
-    def test_a_bridged_run_given_no_pin_commit_still_records_the_head_it_installs(self):
-        # changeover.pinned recognizes the version 1 wrapper's pin commit;
-        # run itself never guesses, so `after` stays the head.
-        self.assertEqual(self.bridged(), changeover.ROLLED_BACK)
-        self.assertEqual((self.record()["head_before"], self.record()["head_after"], self.record()["bridged"]),
-                         (None, AFTER, True))
-
-    def test_a_bridged_rollback_says_how_version_1_installs_again(self):
-        # Version 1's own install refuses a root holding .transaction.
-        for health, code in ((0, changeover.ROLLED_BACK), (1, changeover.UNHEALTHY)):
-            with self.subTest(health=health):
-                shutil.rmtree(self.site / "var/transaction", ignore_errors=True)
-                self.assertEqual(self.bridged(health=health), code)
-                said = self.said()
-                self.assertIn("may say next that a completed site release commit is retained", said)
-                self.assertIn(f"refuses while /srv/thermite-fixture/.transaction exists, which keeps this transaction "
-                              f"until one commits: run {changeover.command(self.site, 'upgrade')} again, or, as "
-                              "root, remove /srv/thermite-fixture/.transaction first.", said)
-        shutil.rmtree(self.site / "var/transaction")
-        self.run_upgrade(switch=[("switch", 1)])
-        self.assertNotIn("installed before the install engine", self.said())
-
     def test_an_uninstall_commits_what_is_installed_and_records_no_deploy(self):
         self.host = Host(self)
         work = changeover.uninstall_work(self.context, txn_fakes.ID)
@@ -975,24 +928,13 @@ class Kinds(Fixture):
         releases = self.context.installation.access / "releases"
         installed = {**INSTALLED, "items": [{"path": str(releases), "class": "versioned",
                                              "current": txn_fakes.ID, "previous": txn_fakes.OLD}]}
-        self.host.system.directory_entries.return_value = [txn_fakes.OLD, txn_fakes.ID, "20250101-staged",
-                                                            "fixture-v1"]
+        self.host.system.directory_entries.return_value = [txn_fakes.OLD, txn_fakes.ID, "20250101-staged"]
         transaction = changeover.Transaction(self.site / "var", txn_fakes.ID, {
-            "gateway_before": "fixture-v1", "root": "/srv/thermite-fixture", "site": str(self.site)})
+            "root": "/srv/thermite-fixture", "site": str(self.site)})
         with patch.object(manifest, "installed", return_value=installed):
             changeover.retain(self.host.system, transaction)
         self.assertEqual(self.log, [f"sudo rm -rf --one-file-system -- {releases}/20250101-staged"],
-                         "the release the bridged version ran stays until the next commit")
-        self.log.clear()
-        transaction.record["gateway_before"] = None
-        with patch.object(manifest, "installed", return_value=installed):
-            changeover.retain(self.host.system, transaction)
-        self.assertEqual(self.log, [f"sudo rm -rf --one-file-system -- {releases}/20250101-staged {releases}/fixture-v1"])
-        self.log.clear()
-        transaction.record["bridged"] = True
-        with patch.object(manifest, "installed", return_value=installed):
-            changeover.retain(self.host.system, transaction)
-        self.assertEqual(self.log, [], "a bridged version's own release unknown: nothing is removed")
+                         "only the one no manifest records")
 
     def test_a_transaction_that_rolled_back_before_its_deploy_is_shown_under_the_one_that_ran(self):
         from oh_cli import history
@@ -1127,7 +1069,7 @@ class FreshInstall(unittest.TestCase):
             items=lambda system: [item(each) for each in txn_fakes.desired_items(self.new)],
             pull=False)
         self.assertNotIn(txn_fakes.ROOT, self.disk.nodes)
-        code = changeover.run(self.context, self.system, lambda id: work, installed=None, bridged=False, before=None,
+        code = changeover.run(self.context, self.system, lambda id: work, installed=None, before=None,
                               first=1)
         self.assertEqual(code, changeover.COMMITTED, self.log)
         self.assertEqual(self.log, [f"sudo mkdir {txn_fakes.ROOT}",

@@ -18,7 +18,7 @@ import oh_cli
 import oh_music
 import oh_ports
 from oh_access import AccessError, guest, staging
-from oh_access.files import atomic_private, json_private, private_directory, read_private, service_identity
+from oh_access.files import atomic_private, json_private, private_directory, read_private
 from oh_install import manifest
 from oh_install.model import Check, Command, Step, Task
 
@@ -183,8 +183,6 @@ class Gateway(Step):
         #: transaction: one installs only the units it declared before it
         #: began, so a newly found map waits in access/inputs.
         self.deferred = False
-        #: The installed release's adoption export (_exported), once made.
-        self.adopted = None
 
     def check(self, system):
         try:
@@ -257,39 +255,29 @@ class Gateway(Step):
         return hosts
 
     def _derived(self):
-        """Settings derived from this host each run, as the ports are. An
-        upgrade never adopts them from the release it replaces."""
+        """Settings derived from this host each run, as the ports are, never
+        taken from the release an upgrade replaces."""
         return {"allowed_hosts": self._hosts(), "bind_host": "0.0.0.0",
                 "port": oh_ports.gateway_port(self.context.host), "timezone": self.context.host["timezone"]}
 
     def prove(self, system):
         """Refuse, before the transaction begins, what this run could not
-        carry over from the installed gateway: identity state anywhere but
-        access/state, or a callback relay without its exact map. Root reads
-        the release a gateway installed before its inputs had fixed paths
-        runs (_exported); nothing of Thermite's is written."""
-        old = installed_release(system)
-        if old is not None and not (self.inputs / "tls-key.pem").exists():
-            mapped = self._exported(system, old)[1]["callbacks"]
-        else:
-            mapped = (self.inputs / "callbacks.json").exists()
-        if not mapped:
+        carry over from the installed gateway: a callback relay without its
+        exact map in access/inputs. Nothing is written."""
+        if not (self.inputs / "callbacks.json").exists():
             origin = system.unit_origin(staging.ACCESS_UNITS[2])
             if not origin.known or origin.load_state != "not-found":
                 raise AccessError("installed callback service has no recoverable exact callback map; refusing to retire it")
 
-    def _metadata(self, system, old):
+    def _metadata(self, system):
         """The identity state and served TLS material at their fixed paths,
         and the hosts, bind address, port and timezone derived from this
-        host. The first run on a gateway installed before the inputs had
-        fixed paths takes them from the release it runs (_adopt)."""
+        host."""
         inputs = private_directory(self.inputs)
         derived = self._derived()
         certificate, key, callbacks = inputs / "tls-cert.pem", inputs / "tls-key.pem", inputs / "callbacks.json"
         authority = self._authority(system, derived["allowed_hosts"][0])
-        if not key.exists() and old is not None:
-            self._adopt(system, old, derived)
-        elif not key.exists() or not certificate.exists():
+        if not key.exists() or not certificate.exists():
             self._replace_leaf(system, derived["allowed_hosts"], authority)
         if callbacks.exists():
             self._relocate_callbacks(system, callbacks)
@@ -297,49 +285,16 @@ class Gateway(Step):
                 "tls_ca": str(authority[0]), "callbacks": callbacks.exists(),
                 "callback_file": str(callbacks) if callbacks.exists() else None}
 
-    def _exported(self, system, old):
-        """The release `old`'s adoption export (deployment.py adopt, as
-        root, into this run's own directory) and what it says, made once:
-        its identity state must already be access/state."""
-        if self.adopted is None:
-            self._workspace()
-            destination = self.directory / ("adopted-" + secrets.token_hex(6))
-            uid, _ = service_identity(required=True)
-            self._helper(system, "adopt", Path(old) / "config.json", destination,
-                         "--uid", os.geteuid(), "--gid", os.getegid(), "--service-uid", uid)
-            adopted = json.loads(read_private(destination / "adopted.json"))
-            if Path(adopted["state"]) != self.root / "state":
-                raise AccessError(f"the installed gateway keeps its identity state in {adopted['state']}, not "
-                                  f"{self.root / 'state'}; move it there before upgrading")
-            self.adopted = destination, adopted
-        return self.adopted
-
-    def _adopt(self, system, old, derived):
-        """Once, for a gateway installed before its inputs had fixed paths:
-        copy its TLS leaf and key and its callback map out of the release it
-        runs (_exported) into access/inputs. Only those are adopted; the
-        port, hosts and timezone are this host's. Deleted with
-        oh_install.bridge once every installation has run a release with
-        fixed inputs."""
-        destination, adopted = self._exported(system, old)
-        if adopted["port"] != derived["port"]:
-            system.say(f"   Gateway HTTPS moves from port {adopted['port']} to {derived['port']}: "
-                       "update bookmarks, home-screen apps and terminal --url")
-        if adopted["callbacks"]:
-            atomic_private(self.inputs / "callbacks.json", read_private(destination / "callbacks.json", 256 * 1024))
-        atomic_private(self.inputs / "tls-key.pem", read_private(adopted["tls_key"], 65536))
-        atomic_private(self.inputs / "tls-cert.pem", read_private(adopted["tls_cert"], 65536))
-
     def _relocate_callbacks(self, system, path):
-        """Keep the adopted map's verified routes; take its listener port and
-        native upstream from this allocation, never the replaced release."""
+        """Keep the map's verified routes; take its listener port and native
+        upstream from this allocation, never the replaced release."""
         from oh_access.callback_service import load_config
         from oh_access.native_boundary import relocated_callbacks
-        adopted = load_config(path)
+        kept = load_config(path)
         port = oh_ports.effective(self.context.host)["callbacks"]
-        if adopted["port"] != port:
-            system.say(f"   Sonos event callbacks move from port {adopted['port']} to {port}")
-        json_private(path, relocated_callbacks(adopted, self.context.url, port))
+        if kept["port"] != port:
+            system.say(f"   Sonos event callbacks move from port {kept['port']} to {port}")
+        json_private(path, relocated_callbacks(kept, self.context.url, port))
 
     def _authority(self, system, name):
         """The site's private signing authority, created once in owner custody.
@@ -683,7 +638,7 @@ class Gateway(Step):
             self._run(system, "sudo", "install", "-d", "-o", os.geteuid(), "-g", os.getegid(), "-m", "0755",
                       self.root, self.root / "releases")
             self._credentials(record)
-            metadata = self._certificate(system, self._metadata(system, old))
+            metadata = self._certificate(system, self._metadata(system))
             self._save(record, metadata=metadata, phase="inputs")
             self._boundary(system, record, metadata)
             self._verify_boundary(system)

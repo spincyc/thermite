@@ -12,7 +12,7 @@ import sys
 import oh_cli
 import oh_deploy as deploy
 from oh_cli import AREA
-from oh_install import bridge, changeover, manifest, runner, steps
+from oh_install import changeover, manifest, runner, steps
 from oh_install.system import System
 
 DESCRIPTION = """\
@@ -89,8 +89,7 @@ def roll_back(system: System, commit: str | None, dry_run: bool) -> int:
     except manifest.ManifestError as exc:
         system.say(f"{exc}. {manifest.missing_recovery(context)}")
         return 2
-    bridged = installed is None and bridge.needed(system)
-    if (installed is None or not installed["installed"]) and not bridged:
+    if installed is None or not installed["installed"]:
         if manifest.thermite_present(context, system):
             system.say(manifest.missing_recovery(context))
         else:
@@ -110,7 +109,7 @@ def roll_back(system: System, commit: str | None, dry_run: bool) -> int:
     if not runner.confirm_run(system, "rollback", f"Run {changeover.command(AREA, 'rollback')} again."):
         return 1
     return changeover.run(context, system, lambda id: changeover.install_work(context, id, verb="rollback"),
-                          installed=installed, bridged=bridged, before=running or head.head, after=wanted,
+                          installed=installed, before=running or head.head, after=wanted,
                           first=len(preflight) + 1, pinned=False)
 
 

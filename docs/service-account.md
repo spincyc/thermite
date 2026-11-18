@@ -104,8 +104,8 @@ which of them are Thermite's: every one of those commands refuses before
 anything stops and prints the recovery steps, which move Thermite's units,
 rule file and AppArmor files aside by hand and leave the state in place; see
 [a missing manifest](installation.md#a-missing-manifest). An installation
-from before the install engine has no `installed.json`; its first
-transaction describes it from `/etc/thermite/units.json` instead.
+from before the install engine has no `installed.json` and takes the same
+recovery.
 
 Before changing or removing a unit, the installer proves it is Thermite's.
 It records each unit file it installs, with its digest and the application

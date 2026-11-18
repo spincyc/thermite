@@ -37,7 +37,6 @@ class Case:
     kind: str = "upgrade"
     apparmor: bool = True
     mounts: dict = dataclasses.field(default_factory=dict)
-    bridge: bool = False
     purge: bool = False
     switch: bool = True
 
@@ -46,7 +45,7 @@ class Case:
             fakes.empty(disk, apparmor=self.apparmor)
             self.current = None
             return
-        self.current = fakes.install(disk, host, self.old, apparmor=self.apparmor, manifest=not self.bridge)
+        self.current = fakes.install(disk, host, self.old, apparmor=self.apparmor)
 
     def desired(self):
         return {"kind": self.kind, "tools": fakes.TOOLS, "items": fakes.desired_items(self.new, purge=self.purge),
@@ -59,12 +58,6 @@ class Case:
     def paths(self):
         versions = [version for version in (self.old, self.new) if version]
         return fakes.managed_paths(*versions, pinned=len({version.pins.get(fakes.PROMETHEUS) for version in versions} - {None}) > 1)
-
-
-def bridged():
-    old = fakes.version("old")
-    old.files["/etc/thermite/units.json"] = ("file", b'{"version": 1}\n', {})
-    return old
 
 
 def gone():
@@ -92,7 +85,6 @@ CASES = {
     "uninstall_listing_nothing": Case(fakes.version("old"), nothing(), kind="uninstall", switch=False),
     "purge": Case(fakes.version("old"), gone(), kind="purge", purge=True, switch=False),
     "clean": Case(fakes.version("old"), fakes.version("new", tree_class="tree-move"), kind="clean"),
-    "bridge_first_upgrade": Case(bridged(), fakes.version("new"), bridge=True),
 }
 
 
@@ -117,8 +109,7 @@ def engine_on(disk, host, messages=None):
 def transaction(disk, host, case, *, gate=True):
     """One transaction as changeover runs it; `gate` False fails the gate."""
     run = engine_on(disk, host)
-    run.begin(ID, case.desired(), fakes.OPERATOR, current=case.current if case.bridge else None,
-              release=case.release())
+    run.begin(ID, case.desired(), fakes.OPERATOR, release=case.release())
     run.guard(ID)
     assert host.run(("systemctl", "stop", engine.TARGET, engine.SLICE)) == 0  # Halt
     run.collect(ID)
@@ -251,9 +242,6 @@ class CrashAnywhere(Harness):
 
     def test_clean(self):
         self.run_case("clean")
-
-    def test_bridge_first_upgrade(self):
-        self.run_case("bridge_first_upgrade")
 
     def test_a_failed_gate_rolls_back_and_survives_a_crash_anywhere_in_it(self):
         for name in ("upgrade_same_pins", "fresh_install", "upgrade_across_filesystems"):

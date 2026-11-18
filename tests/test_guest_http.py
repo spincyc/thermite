@@ -8,7 +8,6 @@ import http.server
 import io
 import ipaddress
 import json
-import os
 from pathlib import Path
 import socket
 import sys
@@ -23,8 +22,8 @@ sys.path.insert(0, str(AREA / "lib"))
 
 import oh_deploy
 import oh_ports
-from oh_access import AccessError, deployment, guest
-from oh_access.files import json_private, private_directory
+from oh_access import AccessError, guest
+from oh_access.files import json_private
 from oh_access.service import CONFIG_VERSION, load_config, validate_listeners
 from oh_cli import status
 from oh_install.access import Gateway
@@ -216,28 +215,6 @@ class GatewayConfiguration(unittest.TestCase):
         self.assertEqual((loaded["port"], loaded["guest_http"]["port"]), (16301, 13601))
         with self.assertRaises(AccessError):
             self.load(port=13601, guest_http=settings)
-
-    def test_upgrade_adopts_version_one_and_two_configurations(self):
-        release = private_directory(self.root / "release")
-        for name in ("cert", "key"):
-            json_private(release / name, {})
-        base = {**self.config, "tls_cert": str(release / "cert"), "tls_key": str(release / "key"),
-                "state": str(private_directory(self.root / "state"))}
-        old = dict(base)
-        del old["guest_http"]
-        accepted = ({**old, "version": 1}, {**base, "version": 2}, {**base, "guest_http": guest.settings(SINGLE)})
-        refused = ({**base, "version": 1}, {**old, "version": 2}, {**base, "version": 3}, {**base, "version": "2"})
-        for index, config in enumerate((*accepted, *refused)):
-            json_private(release / "config.json", config)
-            destination = self.root / f"adopted-{index}"
-            adopt = lambda: deployment.adopt(release / "config.json", destination, uid=os.geteuid(), gid=os.getegid(),  # noqa: E731
-                                             service_uid=os.geteuid())
-            with self.subTest(version=config["version"], guest_http="guest_http" in config):
-                if config in accepted:
-                    self.assertNotIn("guest_http", adopt())
-                else:
-                    with self.assertRaises(deployment.DeploymentError):
-                        adopt()
 
 
 class Answer(http.server.BaseHTTPRequestHandler):

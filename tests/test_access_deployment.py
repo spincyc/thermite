@@ -2,7 +2,7 @@
 
 import json
 import hashlib
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 import http.server
 import os
 from pathlib import Path
@@ -128,40 +128,6 @@ class PrivateFiles(PrivateFixture):
             self.private("record.json", "unsynced")
         self.assertEqual(unsynced.exception.errno, errno.EIO)
         self.assertEqual((self.root / "record.json").read_text(), "unsynced")
-
-
-class Adoption(PrivateFixture):
-    def config(self):
-        release = private_directory(self.root / "old-release")
-        state = private_directory(self.root / "existing-state")
-        cert = self.private("old-release/cert", "existing public certificate")
-        key = self.private("old-release/key", "existing private key")
-        self.private("old-release/callbacks.json", '{"exact":"route and peer"}')
-        config = {"version": 1, "state": str(state), "contract_file": str(release / "contract.json"),
-                  "runtime_url": "http://127.0.0.1:13602", "runtime_token_file": str(release / "bearer"),
-                  "allowed_hosts": ["house.example.test"], "bind_host": "192.0.2.5", "port": 13601,
-                  "timezone": "UTC", "tls_cert": str(cert), "tls_key": str(key)}
-        json_private(release / "config.json", config)
-        return release, state
-
-    def test_adopt_retains_private_state_and_exact_tls_callback_material(self):
-        release, state = self.config()
-        self.private("existing-state/site-id", "permanent-site")
-        result = deployment.adopt(release / "config.json", self.root / "adopted", uid=os.geteuid(), gid=os.getegid(), service_uid=os.geteuid())
-        self.assertEqual(result["state"], str(state))
-        self.assertFalse({"allowed_hosts", "bind_host", "timezone"} & set(result),
-                         "the installer derives them from the host each run")
-        self.assertEqual((self.root / "adopted/tls-key.pem").read_text(), "existing private key")
-        self.assertEqual((self.root / "adopted/callbacks.json").read_bytes(), (release / "callbacks.json").read_bytes())
-        self.assertEqual((state / "site-id").read_text(), "permanent-site")
-        self.assertFalse((state / "secret-key").exists(), "adoption must not initialize Django")
-
-    def test_adoption_rejects_symlinked_inputs(self):
-        release, _ = self.config()
-        (release / "key").unlink()
-        (release / "key").symlink_to(self.private("outside", "secret"))
-        with self.assertRaises(OSError):
-            deployment.adopt(release / "config.json", self.root / "adopted", uid=os.geteuid(), gid=os.getegid(), service_uid=os.geteuid())
 
 
 class StagedUpstream(PrivateFixture):
@@ -442,40 +408,24 @@ class Lifecycle(GatewayFixture):
         self.assertEqual(gateway.release, gateway.root / f"releases/{TRANSACTION}")
         self.assertEqual(gateway.directory, gateway.context.var / f"transaction/{TRANSACTION}/gateway")
 
-    def test_upgrade_moves_https_to_the_host_files_port_and_checks_readiness_there(self):
-        gateway, system = self.gateway(inputs=False), real_openssl(Host())
-        # The installed version 2 release serves HTTPS on 13601, with TLS
-        # material in its own release: the inputs had no fixed paths then.
+    def test_upgrade_serves_https_on_the_host_files_port_and_checks_readiness_there(self):
+        gateway, system = self.gateway(), real_openssl(Host())
+        # The installed release served HTTPS on another port; the leaf and
+        # key it served are the ones in access/inputs.
         old = private_directory(self.root / "old-release")
-        authority = gateway._authority(system, "house.example.test")
-        cert, key = gateway._issue(system, old / "tls", HOSTS, authority)
-        json_private(old / "config.json", {
-            "version": 2, "state": str(gateway.root / "state"), "contract_file": str(old / "contract.json"),
-            "runtime_url": "http://127.0.0.1:13602", "runtime_token_file": str(old / "runtime-bearer"),
-            "allowed_hosts": HOSTS, "bind_host": "0.0.0.0", "port": 13601,
-            "tls_cert": str(cert), "tls_key": str(key), "timezone": "UTC", "guest_http": None})
+        cert, key = gateway.inputs / "tls-cert.pem", gateway.inputs / "tls-key.pem"
+        served = key.read_bytes()
         system.installed, system.active = old, True
-        helper = gateway._helper
-
-        def adopt_or_helper(system, *argv):
-            if argv[0] != "adopt":
-                return helper(system, *argv)
-            deployment.adopt(argv[1], argv[2], uid=os.geteuid(), gid=os.getegid(), service_uid=os.geteuid())
-
-        with https_security(cert, key) as (port, requests), \
-                patch.object(gateway, "_helper", side_effect=adopt_or_helper), \
-                patch("oh_install.access.service_identity", return_value=(os.geteuid(), os.getegid())):
+        with https_security(cert, key) as (port, requests):
             gateway.context.host = {"timezone": "UTC", "gateway": {"port": port}}
             self.assertEqual(gateway.perform(system), 0, system.messages)
         [staged] = self.staged
         self.assertEqual((staged["port"], staged["host_ports"]["access"]), (port, port))
         self.assertEqual((staged["tls_cert"], staged["tls_key"]),
                          (str(gateway.inputs / "tls-cert.pem"), str(gateway.inputs / "tls-key.pem")))
-        self.assertEqual((gateway.inputs / "tls-key.pem").read_bytes(), key.read_bytes(), "the served key is kept")
+        self.assertEqual(key.read_bytes(), served, "the served key is kept")
         journal = self.journal(gateway)
         self.assertEqual((journal["metadata"]["port"], journal["previous_release"]), (port, str(old)))
-        self.assertIn(f"   Gateway HTTPS moves from port 13601 to {port}: update bookmarks, home-screen apps "
-                      "and terminal --url", system.messages)
         # The old listener's process stops before the new release starts, and
         # readiness is checked, and the terminal profile saved, on the new port.
         stops = [index for index, command in enumerate(system.commands) if "stop" in command]
@@ -487,80 +437,24 @@ class Lifecycle(GatewayFixture):
         profile = json.loads((gateway.context.var / "gateway/current.json").read_bytes())
         self.assertEqual(profile["url"], f"https://house.example.test:{port}")
 
-    def test_an_adopted_callback_map_moves_to_this_allocations_port_and_runtime(self):
-        gateway, system = self.gateway(inputs=False), real_openssl(Host())
-        authority = gateway._authority(system, "house.example.test")
-        # Installed when the native runtime had 13601 and the relay 13614.
-        old = private_directory(self.root / "old-release")
-        cert, key = gateway._issue(system, old / "tls", HOSTS, authority)
-        # Its hosts, bind address and timezone are another host's.
-        json_private(old / "config.json", {
-            "version": 2, "state": str(gateway.root / "state"), "contract_file": str(old / "contract.json"),
-            "runtime_url": "http://127.0.0.1:13601", "runtime_token_file": str(old / "runtime-bearer"),
-            "allowed_hosts": ["old-name.example.test", "192.0.2.5"], "bind_host": "192.0.2.5", "port": 13600,
-            "tls_cert": str(cert), "tls_key": str(key), "timezone": "America/Chicago",
-            "guest_http": None})
+    def test_a_kept_callback_map_moves_to_this_allocations_port_and_runtime(self):
+        gateway, system = self.gateway(), real_openssl(Host())
+        # Written when the native runtime had 13601 and the relay 13614.
         routes = {"/upnpcallback/dev/RINCON_02000000000101400_MR/svc/upnp-org/RenderingControl/event/cb": "192.0.2.40"}
-        json_private(old / "callbacks.json", {"version": 1, "routes": routes, "upstream": "http://127.0.0.1:13601",
-                                              "hosts": ["192.0.2.10:13614"], "bind_host": "192.0.2.10", "port": 13614})
-        system.installed = old
-        adopted = []
-
-        def adopt(system, *argv):
-            self.assertEqual(argv[0], "adopt")
-            adopted.append(argv)
-            deployment.adopt(argv[1], argv[2], uid=os.geteuid(), gid=os.getegid(), service_uid=os.geteuid())
-
-        private_directory(gateway.directory)
-        with patch.object(gateway, "_helper", side_effect=adopt), \
-                patch("oh_install.access.service_identity", return_value=(os.geteuid(), os.getegid())):
-            metadata = gateway._metadata(system, old)
-            self.assertEqual(gateway._metadata(system, old)["callback_file"], metadata["callback_file"])
-        self.assertEqual(len(adopted), 1, "inputs at their fixed paths are adopted once")
+        json_private(gateway.inputs / "callbacks.json", {
+            "version": 1, "routes": routes, "upstream": "http://127.0.0.1:13601", "hosts": ["192.0.2.10:13614"],
+            "bind_host": "192.0.2.10", "port": 13614})
+        metadata = gateway._metadata(system)
+        self.assertEqual(gateway._metadata(system)["callback_file"], metadata["callback_file"])
         self.assertEqual((metadata["port"], metadata["callbacks"]), (oh_ports.ACCESS_PORT, True))
         self.assertEqual((metadata["allowed_hosts"], metadata["bind_host"], metadata["timezone"]),
-                         (HOSTS, "0.0.0.0", "UTC"), "derived from this host, never adopted")
-        self.assertEqual(metadata["state"], str(gateway.root / "state"), "identity state is adopted")
+                         (HOSTS, "0.0.0.0", "UTC"), "derived from this host")
+        self.assertEqual(metadata["state"], str(gateway.root / "state"))
         self.assertEqual(metadata["callback_file"], str(gateway.inputs / "callbacks.json"))
         self.assertEqual(json.loads(Path(metadata["callback_file"]).read_bytes()), {
             "version": 1, "routes": routes, "upstream": "http://127.0.0.1:13602",
             "hosts": [f"192.0.2.10:{oh_ports.CALLBACK_PORT}"], "bind_host": "192.0.2.10", "port": oh_ports.CALLBACK_PORT})
         self.assertIn(f"   Sonos event callbacks move from port 13614 to {oh_ports.CALLBACK_PORT}", system.messages)
-        self.assertIn(f"   Gateway HTTPS moves from port 13600 to {oh_ports.ACCESS_PORT}: update bookmarks, "
-                      "home-screen apps and terminal --url", system.messages)
-
-    def exported(self, gateway, old, *, state=None, callbacks=False):
-        """The adopt helper, as root would answer for release `old`: its
-        identity state at `state` (access/state by default)."""
-        calls = []
-
-        def adopt(system, *argv):
-            self.assertEqual(argv[0], "adopt")
-            calls.append(argv)
-            destination = private_directory(argv[2])
-            for name in ("tls-cert.pem", "tls-key.pem", *(("callbacks.json",) if callbacks else ())):
-                atomic_private(destination / name, b"fixture")
-            json_private(destination / "adopted.json", {
-                "state": str(state or gateway.root / "state"), "runtime_url": "http://127.0.0.1:13602",
-                "port": oh_ports.ACCESS_PORT, "previous_release": str(old), "callbacks": callbacks,
-                "tls_cert": str(destination / "tls-cert.pem"), "tls_key": str(destination / "tls-key.pem")})
-        scope = ExitStack()
-        self.addCleanup(scope.close)
-        scope.enter_context(patch.object(gateway, "_helper", side_effect=adopt))
-        scope.enter_context(patch("oh_install.access.service_identity", return_value=(os.geteuid(), os.getegid())))
-        return calls
-
-    def test_identity_state_elsewhere_is_refused_before_anything_stops(self):
-        # The install's preparation proves the gateway (GatewayInputs),
-        # before its transaction begins and stops anything.
-        gateway, system = self.gateway(inputs=False), Host()
-        system.installed = private_directory(self.root / "old-release")
-        self.exported(gateway, system.installed, state=self.root / "elsewhere")
-        self.assertEqual(GatewayInputs(gateway).perform(system), 1)
-        self.assertIn(f"   the installed gateway keeps its identity state in {self.root / 'elsewhere'}, not "
-                      f"{gateway.root / 'state'}; move it there before upgrading", system.messages)
-        self.assertEqual(system.commands, [], "only the export ran, as root")
-        self.assertFalse(gateway.inputs.exists(), "nothing of Thermite's is written before the transaction")
 
     def test_a_relay_without_its_exact_map_is_refused_before_anything_stops(self):
         relay = UnitOrigin(fragment="/etc/systemd/system/" + staging.ACCESS_UNITS[2], active="active")
@@ -569,23 +463,9 @@ class Lifecycle(GatewayFixture):
                 gateway, system = self.gateway(inputs=inputs), Host()
                 system.installed = private_directory(self.root / "old-release")
                 system.overrides[staging.ACCESS_UNITS[2]] = relay
-                self.exported(gateway, system.installed)
                 self.assertEqual(GatewayInputs(gateway).perform(system), 1)
                 self.assertIn("   installed callback service has no recoverable exact callback map; refusing to "
                               "retire it", system.messages)
-
-    def test_a_proven_export_is_what_the_switch_adopts(self):
-        gateway, system = self.gateway(inputs=False), real_openssl(Host())
-        system.installed = private_directory(self.root / "old-release")
-        calls = self.exported(gateway, system.installed, callbacks=True)
-        self.assertEqual(GatewayInputs(gateway).perform(system), 0, system.messages)
-        self.assertFalse(gateway.inputs.exists())
-        with patch.object(gateway, "_relocate_callbacks"):
-            metadata = gateway._metadata(system, system.installed)
-        self.assertEqual(len(calls), 1, "the release is exported once, before the transaction")
-        self.assertEqual((metadata["state"], metadata["callback_file"]),
-                         (str(gateway.root / "state"), str(gateway.inputs / "callbacks.json")))
-        self.assertEqual((gateway.inputs / "tls-key.pem").read_bytes(), b"fixture")
 
     def test_callbacks_found_new_wait_for_the_next_transaction(self):
         # Commissioning finds Sonos callbacks no installed relay serves: the
@@ -806,7 +686,7 @@ class CertificateProfile(GatewayFixture):
     def served(self, system):
         """The gateway and the inputs it serves now."""
         gateway = self.gateway()
-        return gateway, gateway._metadata(system, None)
+        return gateway, gateway._metadata(system)
 
     def test_authority_signs_only_a_short_lived_server_leaf(self):
         system = real_openssl(Host())

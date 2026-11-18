@@ -16,7 +16,7 @@ from pathlib import Path
 import oh_cli
 import oh_deploy as deploy
 from oh_cli import AREA
-from oh_install import bridge, changeover, manifest, ownership, progress, runner, steps
+from oh_install import changeover, manifest, progress, runner, steps
 from oh_install.system import UNATTENDED, System
 
 DESCRIPTION = """\
@@ -218,8 +218,7 @@ def install(system: System, dry_run: bool, *, clean: bool = False, runtime_token
     except manifest.ManifestError as exc:
         system.say(f"{exc}. {manifest.missing_recovery(context)}")
         return 2
-    bridged = installed is None and bridge.needed(system)
-    present = [] if installed is not None or bridged else manifest.thermite_present(context, system)
+    present = [] if installed is not None else manifest.thermite_present(context, system)
     # The state under the installation root alone does not refuse an install:
     # the recovery it prints ends with this command, on the state that
     # stayed. The preconditions prove the root Thermite's, and the install
@@ -244,13 +243,10 @@ def install(system: System, dry_run: bool, *, clean: bool = False, runtime_token
         system.say(f"Nothing differs from the installed version (transaction {installed['transaction']}); "
                    "checking its health.")
         return runner.run([steps.Health(context)], system, AREA, first=len(preflight) + 1)
-    if bridged:
-        system.say("This is the first install transaction here: the installed version is described from "
-                   f"{ownership.MANIFEST} and its fixed paths, and set aside like any other.")
     if not run_approved and not approve(system, context, clean):
         return 1
     code = changeover.run(context, system, lambda id: changeover.install_work(context, id, kind=kind),
-                          installed=installed, bridged=bridged, before=site_before or None, first=len(preflight) + 1)
+                          installed=installed, before=site_before or None, first=len(preflight) + 1)
     if code == changeover.COMMITTED:
         completion(context, system)
         if context.host["gid"] not in system.process_groups():

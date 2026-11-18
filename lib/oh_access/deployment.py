@@ -70,67 +70,6 @@ def read(value, *, maximum=2 * 1024 * 1024, owner=None, private=False):
             return content
 
 
-def _write(parent, name, content, uid, gid):
-    descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
-    with os.fdopen(descriptor, "wb") as destination:
-        os.fchmod(destination.fileno(), 0o600)
-        os.fchown(destination.fileno(), uid, gid)
-        destination.write(content)
-        destination.flush()
-        os.fsync(destination.fileno())
-
-
-def adopt(config, destination, *, uid, gid, service_uid):
-    """Export only bounded gateway inputs to a new operator-owned directory.
-
-    The service controls these data bytes, so none are interpreted as commands,
-    executable paths, unit sources, or ownership instructions.
-    """
-    config, destination = absolute(config), absolute(destination)
-    original = json.loads(read(config, maximum=65536, owner=service_uid))
-    fields = {"version", "state", "contract_file", "runtime_url", "runtime_token_file", "allowed_hosts",
-              "bind_host", "port", "tls_cert", "tls_key", "timezone"}
-    # Upgrades adopt the installed release's configuration, so version 1 is
-    # read until a release with version 2 (the Guest listener) is installed.
-    # guest_http is not adopted: host.yaml supplies it afresh.
-    known = {1: fields, 2: fields | {"guest_http"}}
-    if not isinstance(original, dict) or type(original.get("version")) is not int or known.get(original["version"]) != set(original):
-        raise DeploymentError("installed gateway configuration is not recognized")
-    state = absolute(original["state"])
-    if state == config.parent or config.parent in state.parents:
-        raise DeploymentError("installed authority must be separate from its release")
-    material = {"tls-cert.pem": read(original["tls_cert"], maximum=65536, owner=service_uid),
-                "tls-key.pem": read(original["tls_key"], maximum=65536, owner=service_uid)}
-    callback_path = config.parent / "callbacks.json"
-    try:
-        material["callbacks.json"] = read(callback_path, maximum=256 * 1024, owner=service_uid)
-    except FileNotFoundError:
-        pass
-    # The installer derives the hosts, bind address and timezone from the host
-    # each run; the port is returned only to say when it moves.
-    result = {key: original[key] for key in ("state", "runtime_url", "port")}
-    result.update(previous_release=str(config.parent), callbacks="callbacks.json" in material,
-                  tls_cert=str(destination / "tls-cert.pem"), tls_key=str(destination / "tls-key.pem"))
-    with directory(destination.parent) as parent:
-        parent_info = os.fstat(parent)
-        if parent_info.st_uid != uid or stat.S_IMODE(parent_info.st_mode) != 0o700:
-            raise DeploymentError("adoption parent must be private to the operator")
-        os.mkdir(destination.name, 0o700, dir_fd=parent)
-        child = os.open(destination.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
-        try:
-            os.fchmod(child, 0o700)
-            # Keep the directory root-owned until every input is durable.
-            for name, content in material.items():
-                _write(child, name, content, uid, gid)
-            _write(child, "adopted.json", (json.dumps(result) + "\n").encode(), uid, gid)
-            os.fchown(child, uid, gid)
-            os.fsync(child)
-            os.fsync(parent)
-        finally:
-            os.close(child)
-    return result
-
-
 def live(release, pids):
     expected = str(absolute(release))
     for pid in pids:
@@ -214,11 +153,6 @@ def upstream(config, expectations, *, service=None, connection_factory=http.clie
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
-    command = sub.add_parser("adopt")
-    command.add_argument("config")
-    command.add_argument("destination")
-    for name in ("uid", "gid", "service-uid"):
-        command.add_argument("--" + name, type=int, required=True)
     command = sub.add_parser("live")
     command.add_argument("release")
     command.add_argument("pids", nargs="+")

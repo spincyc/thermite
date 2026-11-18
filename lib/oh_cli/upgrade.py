@@ -17,7 +17,7 @@ from pathlib import Path
 import oh_cli
 import oh_deploy as deploy
 from oh_cli import AREA
-from oh_install import bridge, changeover, manifest, ownership, progress, runner, steps
+from oh_install import changeover, manifest, progress, runner, steps
 from oh_install.system import System
 
 RERUN = "Run thermite upgrade again to go on from here."
@@ -97,8 +97,7 @@ def upgrade(system: System, dry_run: bool, *, runtime_token_file: Path | None = 
     except manifest.ManifestError as exc:
         print(f"thermite upgrade: {exc}. {manifest.missing_recovery(context)}", file=sys.stderr)
         return 2
-    bridged = installed is None and bridge.needed(system)
-    if installed is None and not bridged:
+    if installed is None:
         if manifest.thermite_present(context, system):
             print(f"thermite upgrade: {manifest.missing_recovery(context)}", file=sys.stderr)
         else:
@@ -117,13 +116,10 @@ def upgrade(system: System, dry_run: bool, *, runtime_token_file: Path | None = 
         system.say(f"Nothing differs from the installed version (transaction {installed['transaction']}); "
                    "checking its health.")
         return runner.run([steps.Health(context)], system, AREA, first=3, rerun=RERUN)
-    if bridged:
-        system.say("This is the first upgrade with the install engine: the installed version is described from "
-                   f"{ownership.MANIFEST} and its fixed paths, and set aside like any other.")
     if not run_approved and not runner.confirm_run(system, "upgrade", RERUN):
         return 1
     return changeover.run(context, system, lambda id: changeover.install_work(context, id, kind="upgrade"),
-                          installed=installed, bridged=bridged, before=site_before if site_before else None,
+                          installed=installed, before=site_before if site_before else None,
                           first=3)
 
 

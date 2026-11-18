@@ -30,7 +30,7 @@ import oh_apparmor  # noqa: E402
 import oh_deploy as deploy  # noqa: E402
 import oh_service  # noqa: E402
 from oh_cli import install as install_cli  # noqa: E402
-from oh_install import bridge, changeover, engine, manifest, ownership, steps  # noqa: E402
+from oh_install import changeover, engine, manifest, ownership, steps  # noqa: E402
 from oh_install.model import Check, Step, Task  # noqa: E402
 from oh_install.system import Stat, System, UnitFile, UnitOrigin  # noqa: E402
 from tests import txn_fakes  # noqa: E402
@@ -148,8 +148,6 @@ class Fixture(unittest.TestCase):
 
         try:
             self.engine.check_root()
-            if options.verb in ("plan", "begin"):
-                self.assertIsNone(options.current, "no installation here is described without a manifest")
             if options.verb == "plan":
                 return 0, json.dumps(self.engine.plan(read(options.desired)))
             if options.verb == "begin":
@@ -269,7 +267,6 @@ class FirstInstall(Fixture):
         self.assertEqual(self.entries(ROOT), [steps.TRANSACTIONS], "only what the engine set aside is left")
         self.assertEqual(self.below_root(), [])
         self.assertIsNone(manifest.installed(self.system, ROOT))
-        self.assertFalse(bridge.needed(self.system))
         self.assertEqual(manifest.thermite_present(self.context, self.system), [])
         # What steps.Preconditions asks of the root. Nothing is left under
         # runtime/, which an owner not yet logged in again for the thermite
@@ -351,6 +348,13 @@ class MissingManifest(Fixture):
     def test_with_neither_manifest_the_printed_recovery_ends_in_an_install_on_the_state_that_stayed(self):
         self.disk.drop(manifest.INSTALLED)
         self.disk.drop(ownership.MANIFEST)
+        self.recovered()
+
+    def test_an_installation_from_before_the_manifest_takes_the_same_way(self):
+        # /etc/thermite/units.json and no installed manifest: what a release
+        # before the install engine left. Nothing describes it any more.
+        self.disk.drop(manifest.INSTALLED)
+        self.assertIsNotNone(self.read(ownership.MANIFEST))
         self.recovered()
 
     def test_with_a_damaged_manifest_it_does_too(self):
