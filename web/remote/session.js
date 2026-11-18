@@ -22,13 +22,15 @@
  * one on show in every room, of kinds(), those any room has; setMode() or
  * toggleMode() chooses it, and it is kept ("remote.mode", as Home keeps
  * it). listed() are the rooms of that mode, those the room lists show,
- * where view() gives what each plays in Listen and its source in Watch.
+ * where view() gives what each plays in Listen and its source in Watch,
+ * with what has failed: the house not heard (connected(), and each view's
+ * connected), a choice never read back (unconfirmed).
  * Choosing a room of the other mode alone brings its mode; choosing the
  * mode the room lacks goes to the room last on show in it. In Listen the
  * digits choose a speaker and the keys (pressKey) go to listen.
  * subscribe(callback) hears:
  *
- *   {type: "change"}                     rooms, states or the buttons changed: draw it all again
+ *   {type: "change"}                     rooms, states, the buttons or the connection changed: draw it all again
  *   {type: "audio"}                      only the volume or Mute changed (audioView())
  *   {type: "device", device}             a device's state changed (audio, and its input list)
  *   {type: "toast", title, body, tone, tag}   tone "", "muted" or "bad"
@@ -105,6 +107,8 @@
   const OFF_AGAIN_MS = 3000;
   // How long lockOn() waits for the room to report a source it chose.
   const LOCK_WAIT_MS = 45000;
+  // What a room's alert says while the house is not heard, as Listen's does.
+  const NOT_CONNECTED = "Not connected to thermite. Reconnecting\u2026";
 
   function memoryStore() {
     const memory = {};
@@ -459,8 +463,9 @@
         return;
       }
       if (event.type === "connection") {
-        toast(event.connected ? "Connected to thermite again" : "Lost the connection to thermite",
-          event.connected ? "Every room is read again" : "Trying again; rooms may be out of date", event.connected ? "" : "bad");
+        // Not a passing message: view() says it for as long as it lasts.
+        emit({ type: "change" });
+        announce(event.connected ? "Connected to thermite again" : "Not connected to thermite");
         return;
       }
       if (event.type === "matrix") {
@@ -502,7 +507,14 @@
     }
 
     function differs(before, after) {
-      return !before || before.value !== after.value || before.pending !== after.pending || before.status !== after.status;
+      return !before || before.value !== after.value || before.pending !== after.pending || before.status !== after.status
+        || (before.unconfirmed || null) !== (after.unconfirmed || null);
+    }
+
+    // Whether the house is heard: false once the backend has lost its stream,
+    // until it reads the house again. What the rooms show is from before then.
+    function connected() {
+      return backend.connected !== false;
     }
 
     function option(room, id) {
@@ -512,22 +524,37 @@
     // What a room shows, for the room list, announcements and the alert line.
     // In Listen (and in a room of speakers alone), what its speakers play
     // (listen status). Else its source: the alert names the source's problem,
-    // then each of the room's devices openHAB cannot drive (backend
-    // problemOf), after its label; playing is what its source plays, else
-    // its audio device ("Disney+ · DuckTales"), or null.
+    // then a choice that was never read back, then each of the room's
+    // devices openHAB cannot drive (backend problemOf), after its label;
+    // playing is what its source plays, else its audio device ("Disney+ ·
+    // DuckTales"), or null. Failure is part of what a room shows, for as long
+    // as it lasts: connected is false while the house is not heard, when led
+    // and short are what was last read and the alert says only that;
+    // unconfirmed is the label of a source chosen, sent and never read back
+    // (backend getState), or null.
     function view(room, state) {
       if (room.listenOnly || (listen && room.speakers.length && mode() === "listen")) {
         return listen ? Object.assign({}, listen.status(room.id)) : { led: "off", short: "\u2026", spoken: "reading", playing: null };
       }
       const shown = sourceView(room, state);
+      shown.connected = connected();
+      const unread = state.unconfirmed ? option(room, state.unconfirmed) : null;
+      shown.unconfirmed = state.unconfirmed ? (unread ? unread.label : state.unconfirmed) : null;
       shown.playing = state.status === "current" && option(room, state.value) ? playing(room, state.value) : null;
       // Nothing on the screen that says what plays: what its speakers play.
       if (!shown.playing && listen && room.speakers.length) shown.playing = listen.status(room.id).playing;
-      const problems = [shown.problem].concat(room.devices.map((device) => {
+      const unconfirmed = shown.unconfirmed
+        ? shown.unconfirmed + " was not confirmed: " + room.label + " did not report it. Check the room before choosing again" : null;
+      if (unconfirmed) shown.spoken += ". " + shown.unconfirmed + " was not confirmed";
+      const problems = [shown.problem, unconfirmed].concat(room.devices.map((device) => {
         const problem = backend.problemOf(device.id);
         return problem ? device.label + " " + problem : null;
       })).filter(Boolean);
       if (problems.length) shown.problem = problems.join(". ");
+      if (!shown.connected) {
+        shown.problem = NOT_CONNECTED;
+        shown.spoken += ". Not connected to thermite";
+      }
       return shown;
     }
 
@@ -1168,6 +1195,7 @@
       inputsOf: () => inputsOf,
       allOffArmed: () => Boolean(allOffArmed.at),
       view: view,
+      connected: connected,
       selectRoom: selectRoom,
       stepRoom: stepRoom,
       choose: choose,
@@ -1231,6 +1259,7 @@
     SLIDE_HOLD: SLIDE_HOLD,
     OFF_AGAIN_MS: OFF_AGAIN_MS,
     LOCK_WAIT_MS: LOCK_WAIT_MS,
+    NOT_CONNECTED: NOT_CONNECTED,
     keyHints: keyHints,
     memoryStore: memoryStore,
     create: create

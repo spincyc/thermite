@@ -11,11 +11,14 @@
  *                         Off, as the remote lists them (house.js order, else the options).
  *   operate(room, control, action)
  *                         resolves with {room, control, action, label, device, sent, note}
- *   getState(room)        {room, item, value, pending, status, reason}
+ *   getState(room)        {room, item, value, pending, unconfirmed, status, reason}
  *                         value   what the house last read back: "off", a source id,
  *                                 "UNDEF" (the room's matrix or devices did not say) or
  *                                 "NULL" (not read yet)
  *                         pending the source chosen and not yet confirmed, or null
+ *                         unconfirmed the source chosen last, sent and never read back
+ *                                 (confirmMs() passed), or null: until the room reads
+ *                                 something else or another choice is made
  *                         status  "current", "switching", "unavailable" or "unknown"
  *   choose(room, source)  sends the choice; resolves with the state once it is read back
  *   press(room, device, button)
@@ -39,8 +42,11 @@
  *   allOff()              turns every room Off and every device with a control.power off;
  *                         resolves with {label, note, sent, tag} once that is sent, while each
  *                         room shows "switching" to Off until it is read back, as after choose()
- *   problemOf(device)     why openHAB cannot drive the device, as its house.js problem Item
- *                         last said (a phrase to follow its label), or null
+ *   problemOf(device)     why openHAB cannot drive the device: the words of the code its
+ *                         house.js problem Item last held (a phrase to follow its label:
+ *                         activity.js problemWords, from the Item's options in the activity
+ *                         manifest), or null. Without options (a gateway from before the
+ *                         codes, or no activity.js) it is the Item's state as it is
  *   audioOf(device)       {item: value} for each Item the device's audio page reads (house.js
  *                         audio: its state, track, settings, facts and what their `when`
  *                         reads) that is not one of its control's, as openHAB last read it
@@ -57,6 +63,10 @@
  *                         callback({type: "matrix", answering}) (mock only) and
  *                         callback({type: "connection", connected}) (openHAB only);
  *                         returns an unsubscribe function
+ *   connected             (openHAB only) whether the house is heard: null until it is
+ *                         first read and while a page shown again reads it afresh, true
+ *                         while its stream is current, false once the stream is lost or,
+ *                         for a hidden page, let go
  *
  * A choice is never assumed: the room shows "switching" until the matrix is
  * read back, as openHAB's routing.js does. A command left unanswered is
@@ -507,6 +517,7 @@
         item: sourceItem(roomId),
         value: item.value,
         pending: item.pending,
+        unconfirmed: item.unconfirmed || null,
         status: status,
         reason: status === "unavailable" ? sourceProblem(this.house, item.diagnosis) : ""
       };
@@ -629,7 +640,23 @@
       this.aims[deviceId + " " + step.field] = { value: step.field === "volume" ? step.volume : step.command, at: Date.now() };
     },
     problemOf: function (deviceId) {
-      return this.problems[deviceId] || null;
+      const state = this.problems[deviceId] || null;
+      if (!state || !global.RemoteActivity) return state;
+      // The words are the activity manifest's: nothing is said of a code before they are known.
+      if (!this.problemOptions) return null;
+      return global.RemoteActivity.problemWords(this.problemOptions[deviceId], state);
+    },
+    // Each device's problem codes and their words, from the activity
+    // manifest's Items; said again for what is already wrong.
+    describeProblems: function (items) {
+      this.problemOptions = Object.create(null);
+      Object.keys(this.house.devices).forEach((id) => {
+        const item = this.house.devices[id].problem;
+        this.problemOptions[id] = item && items && items[item] && items[item].kind === "problem" ? items[item].options || null : null;
+      });
+      Object.keys(this.problems).forEach((id) => {
+        if (this.problems[id]) this.emit({ type: "problem", device: id, problem: this.problemOf(id) });
+      });
     },
     audioOf: function (deviceId) {
       return Object.assign({}, this.audio[deviceId]);
@@ -657,13 +684,13 @@
     // NULL, UNDEF or an empty state is no problem.
     updateProblem: function (deviceId, value) {
       const problem = value && value !== NULL_STATE && value !== UNDEF ? value : null;
-      if (this.problemOf(deviceId) === problem) return;
-      const before = this.problemOf(deviceId);
+      const before = this.problems[deviceId] || null;
+      if (before === problem) return;
       this.problems[deviceId] = problem;
       if (this.mock && this.activity && this.house.devices[deviceId].problem) this.activity.accept(
         "openhab/items/" + this.house.devices[deviceId].problem + "/statechanged",
         JSON.stringify({ value: problem || UNDEF, oldValue: before || UNDEF }));
-      this.emit({ type: "problem", device: deviceId, problem: problem });
+      this.emit({ type: "problem", device: deviceId, problem: this.problemOf(deviceId) });
     },
     updateDevice: function (deviceId, field, value) {
       const state = this.devices[deviceId];
@@ -764,10 +791,12 @@
       });
     });
     Object.keys(config.audio || {}).forEach((item) => { if (pages[item]) this.audio[pages[item]][item] = String(config.audio[item]); });
-    if (global.RemoteActivity) this.activity = global.RemoteActivity.create({
-      items: global.RemoteActivity.preview(house).items, layouts: global.REMOTE_LAYOUTS,
-      now: config.now, emit: (event) => this.emit(event)
-    });
+    if (global.RemoteActivity) {
+      const items = global.RemoteActivity.preview(house).items;
+      this.activity = global.RemoteActivity.create({ items: items, layouts: global.REMOTE_LAYOUTS,
+        now: config.now, emit: (event) => this.emit(event) });
+      this.describeProblems(items);
+    }
   }
 
   Object.assign(MockBackend.prototype, Common);
@@ -933,6 +962,8 @@
     this.timers = {};
     this.waiting = {};
     this.connected = null;
+    // The stream was let go while the page was hidden (setActive).
+    this.away = false;
     this.now = config.now || (() => Date.now());
     this.source = null;
     this.streamGeneration = 0;
@@ -965,7 +996,7 @@
         if (event.type === "unauthorized") {
           this.stop(); this.connected = false; this.devices = unread(house); this.problems = {}; this.playing = {}; this.aims = {}; this.activity = null;
           this.audio = unheard(this.audioItems);
-          Object.values(this.items).forEach((item) => { item.value = NULL_STATE; item.pending = null; });
+          Object.values(this.items).forEach((item) => { item.value = NULL_STATE; item.pending = null; item.unconfirmed = null; });
         }
         this.emit({ type: "access", unauthorized: event.type === "unauthorized", guest: event.guest === true });
       });
@@ -1203,23 +1234,28 @@
     this.release();
   };
 
+  // connected changes before its event is sent: who hears the event draws
+  // from connected, and would draw the state that has just ended.
   OpenHabBackend.prototype.reconnected = function () {
-    if (this.connected === false) {
+    const news = this.connected === false || this.away;
+    this.connected = true;
+    this.away = false;
+    if (news) {
       this.emit({ type: "connection", connected: true });
       if (this.activity) this.activityNotice("Connected to thermite again", "Events during the gap may be missing");
     }
-    this.connected = true;
   };
 
   OpenHabBackend.prototype.disconnected = function () {
     this.synced = false;
     this.touched = null;
     this.cancelReads("snapshot");
-    if (this.connected !== false) {
+    const news = this.connected !== false;
+    this.connected = false;
+    if (news) {
       this.emit({ type: "connection", connected: false });
       if (this.activity) this.activityNotice("Lost the connection to thermite", "Events during the gap may be missing", "bad");
     }
-    this.connected = false;
   };
 
   OpenHabBackend.prototype.eventsUrl = function () {
@@ -1257,6 +1293,8 @@
       this.activityRetryDelay = 1000;
     }).catch(() => {
       if (this.stopped) return;
+      // Without the manifest a problem's code has no words: it is said as it is, not kept back.
+      if (!this.problemOptions) this.describeProblems(null);
       if (!this.activityNoticed) {
         this.activityNoticed = true;
         this.activityNotice("Activity feed unavailable", "Remote controls still work; retrying", "bad");
@@ -1280,6 +1318,7 @@
       now: this.now, emit: (event) => this.emit(event) });
     Object.keys(this.values).forEach((item) => activity.seed(item, this.values[item]));
     this.activity = activity;
+    this.describeProblems(manifest.items);
   };
 
   // The view's one event stream, open while the page is shown.
@@ -1330,7 +1369,10 @@
     const next = Boolean(active);
     if (next === this.active || this.stopped) return;
     this.active = next;
-    if (!next) { this.connected = false; this.cancelDiagnostics(); }
+    if (!next) { this.connected = false; this.away = true; this.cancelDiagnostics(); }
+    // Shown again, the page is reading, not lost: its stream's first snapshot
+    // says connected (after a gap, so with its notice), its error says lost.
+    else if (this.connected === false) this.connected = null;
     this.listen();
   };
 
@@ -1382,10 +1424,12 @@
   // ends it when the matrix does not answer.
   OpenHabBackend.prototype.update = function (roomId, value) {
     const item = this.items[roomId];
-    const before = item.value + "\n" + item.pending;
+    const before = item.value + "\n" + item.pending + "\n" + item.unconfirmed;
+    // The room reads something else: what was not confirmed no longer matters.
+    if (value !== item.value) item.unconfirmed = null;
     item.value = value;
     if (item.pending !== null && (value === item.pending || value === UNDEF)) this.settle(roomId);
-    if (before !== item.value + "\n" + item.pending) this.emitState(roomId);
+    if (before !== item.value + "\n" + item.pending + "\n" + item.unconfirmed) this.emitState(roomId);
   };
 
   OpenHabBackend.prototype.settle = function (roomId) {
@@ -1418,6 +1462,7 @@
   OpenHabBackend.prototype.expectChoice = function (roomId, sourceId) {
     this.settle(roomId);
     this.items[roomId].pending = sourceId;
+    this.items[roomId].unconfirmed = null;
     this.emitState(roomId);
     return new Promise((resolve) => { this.waiting[roomId] = resolve; });
   };
@@ -1436,6 +1481,8 @@
     this.timers[roomId] = setTimeout(() => {
       delete this.timers[roomId];
       if (item.pending !== sourceId) return;
+      // Sent and never read back: the room shows what it last read, and says so.
+      item.unconfirmed = sourceId;
       this.settle(roomId);
       this.emitState(roomId);
     }, this.timeout);

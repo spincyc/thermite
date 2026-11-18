@@ -21,6 +21,7 @@ import subprocess
 import unittest
 
 from tests.test_listen_session import AMP, MINI, OWNED, ROOM, WIIM, house, model
+from oh_integrations._commands import CODES
 
 AREA = Path(__file__).resolve().parents[1]
 REMOTE = AREA / "web/remote"
@@ -73,6 +74,7 @@ class ListenPage(unittest.TestCase):
         self.assertEqual(out["watch"], [[["Example West", "", "Off", "Room off"], ["Example East", "", "Off", "Room off"]], False,
                                         "Reported source", ["remotes?room=example_west", "remotes?room=example_east"]])
         self.assertEqual(out["unread"], [["Example West", "", "Unknown", "Source unknown"], "unavailable"])
+        self.assertEqual(out["switching"], [["Example West", "", "Switching to Player", "Switching"], "switching"])
         rows, what, stored, status, radios = out["listen"]
         self.assertEqual(rows, [["Example East", "", "Harbour Lights · The Lanterns", "Playing"],
                                 ["Fixture Den", "", "Nothing playing", "Paused"], ["Fixture Patio", "", "Nothing playing", "Idle"]])
@@ -85,6 +87,73 @@ class ListenPage(unittest.TestCase):
         self.assertEqual(out["focus"], ["button:Watch", "watch", True])
         # Its switch is two icons, as the remote's, each radio named by its label and tooltip.
         self.assertEqual(out["icons"], [["Watch", "Watch (Y)", "", "#i-tv"], ["Listen", "Listen (Y)", "", "#i-note"]])
+
+    def test_home_says_for_as_long_as_it_lasts_that_the_house_is_not_heard(self):
+        """Each row is the session's view of its room: while the house is
+        not heard none shows what was last read, and the line above the
+        rooms, where the house's alerts belong, says why."""
+        out = self.out["home"]
+        self.assertEqual(out["lost"], [[["Unknown", "Not connected"]] * 2, ["unavailable"] * 2,
+                                       "Not connected to thermite. Reconnecting…"])
+        self.assertEqual(out["heard"], [[["Off", "Room off"]] * 2, ["off"] * 2, "Sample room sources · no device commands"])
+
+    def test_the_house_not_heard_is_what_every_room_shows_until_it_is_heard_again(self):
+        """Not a toast: the alert line says it and every light loses its
+        colour for as long as it lasts, and the room's words carry it."""
+        out = self.out["failure"]
+        self.assertEqual(out["live"], [[False, "", False, None], True, True, None])
+        lost = [True, "Not connected to thermite. Reconnecting…", True, None]
+        self.assertEqual(out["lost"], [lost, False, False, ["off", "Off", "Example West, Off. Not connected to thermite"]])
+        self.assertEqual(out["still"], lost)
+        self.assertEqual(out["back"], [[False, "", False, None], True,
+                                       ["Not connected to thermite", "Connected to thermite again"]])
+        # More specific than any rule that lights an LED, so it wins wherever one stands.
+        rule = {selector: values for media, selector, values in css_rules((REMOTE / "remote.css").read_text())
+                if media is None}["body[data-stale] :is([data-led], .target) .led"]
+        self.assertEqual((rule["background"], rule["animation"]), ("var(--led-off)", "none"))
+
+    def test_a_choice_never_read_back_is_named_until_the_room_reads_something_else(self):
+        out = self.out["failure"]
+        said = "Player was not confirmed: Example West did not report it. Check the room before choosing again"
+        self.assertEqual(out["unconfirmed"], [[True, said, False, None], "Player", "off",
+                                              ["off", "Off", "Example West, Off. Player was not confirmed"],
+                                              ["Example West: Off. Player was not confirmed"]])
+        self.assertEqual(out["read"], [[False, "", False, None], None])
+
+    def test_every_problem_code_is_said_in_its_options_words_and_never_as_a_code(self):
+        """The codes and their words are the options the page was given:
+        the alert says the device's label and the words, the log the words,
+        and a state that is no code the last code's words. Once on the
+        sample backend, whose options are activity.js's copy, and once on a
+        house's own page with the committed activity.json, its codes
+        arriving on the stream."""
+        out = self.out["problems"]
+        sample = out["sample"]
+        for name, part in (("preview", out), ("activity.json", sample)):
+            self.assertGreaterEqual(len(part["codes"]), 2, name)
+            drawn = []
+            for code, words, alert, line, *label in part["codes"]:
+                with self.subTest(options=name, code=code):
+                    self.assertEqual((alert, line), (f"{out['device']} {words}", f"Problem: {words}"))
+                    drawn += [alert, line, *label]
+            last = part["codes"][-1][1]
+            self.assertEqual(part["unknown"][:2], [f"{out['device']} {last}", f"Problem: {last}"], name)
+            self.assertEqual(part["over"][:2], [None, "Problem: none now"], name)
+            # One line for each code and one for its end; the unknown state says the last code's words again.
+            self.assertEqual(part["lines"], len(part["codes"]) + 1, name)
+            # A code that is not also a word of its own words would show as an underscore.
+            for text in drawn + part["unknown"] + part["over"][1:]:
+                self.assertNotIn("_", text)
+        # The house's page was given the sample's own Item, and said nothing of it before a code came.
+        manifest = json.loads((REMOTE / "activity.json").read_text())["items"][sample["item"]]
+        self.assertEqual([code[:2] for code in sample["codes"]], [list(pair) for pair in manifest["options"].items()])
+        self.assertIsNone(sample["quiet"][0])
+
+    def test_the_previews_problem_words_are_the_scripts_own(self):
+        """A preview has no activity.json: activity.js carries a copy of the
+        codes and their words (PREVIEW_PROBLEMS), in the scripts' order,
+        since the last is what any other state says."""
+        self.assertEqual([tuple(code[:2]) for code in self.out["problems"]["codes"]], list(CODES.items()))
 
     def test_the_padlock_has_its_own_column_and_the_light_follows_the_source_at_the_right_edge(self):
         # The room, its padlock, its source, then what plays; the light after the source's words, in its cell.

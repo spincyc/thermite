@@ -38,6 +38,19 @@ needs no further reads; a page in the background closes its connection and
 catches up when shown again. When thermite loses openHAB the page says the
 live reports are unavailable and refreshes itself once they return.
 
+What has failed is part of what a room shows, for as long as it lasts, and
+never only a passing message. While the house is not heard, Remotes' alert
+line says “Not connected to thermite. Reconnecting…” and every light keeps
+its place and loses its colour, since what it shows was read before; Home
+shows no source and says the same above its rooms. A source that was chosen
+and sent but never read back is named in the alert (“Player was not
+confirmed”) until the room reads something else or another choice is made.
+A device openHAB cannot drive is named there with why: its problem is one of
+a few codes, and the page says the words the house's `activity.json` gives
+that code (`items.<id>_problem.options`, the last one for a problem of any
+other kind), as the activity log does. The terminal and the handheld remote
+read all of it from the same place (`session.js` `view()`).
+
 Volume is each audio device's own number on its own scale: 38 on a WiiM or a
 Sonos, 69.5 on a Denon or Marantz receiver, or −10.5 dB when the receiver's
 own display is set to show dB. The slider runs from the device's minimum to

@@ -1,5 +1,7 @@
-/* Home observes reported room sources, or what each room's speakers play.
-   Module and room links only navigate. */
+/* Home observes reported room sources, or what each room's speakers play:
+   each row is the session's view of its room (session.js view(), in Listen
+   listen-session.js status()), as Remotes' room list draws it, with one
+   word for it in the last column. Module and room links only navigate. */
 (function (global) {
   "use strict";
   const house = global.REMOTE_HOUSE, rooms = document.querySelector("[data-home-rooms]"), notice = document.querySelector("[data-home-status]");
@@ -22,11 +24,15 @@
   let mode = kinds.includes(store.get("remote.mode")) ? store.get("remote.mode") : kinds[0] || "watch";
   // The "home" view: only the rooms' Sources, and no activity feed; its stream runs only in Watch (live()).
   const backend = global.RemoteBackend.create(house, { backend: mock ? "mock" : undefined, view: "home", active: document.visibilityState !== "hidden" && mode === "watch" });
-  // Home starts no remote; an idle session still words each room's lock as the remote does.
-  const session = global.RemoteSession?.create({ backend, house });
+  // Home starts no remote; an idle session still says what each room shows and words its lock as the remote does.
+  const session = global.RemoteSession.create({ backend, house });
   access?.ready().then(() => access.watchLocks(true)).catch(() => {});
-  const values = Object.create(null), turns = Object.create(null), rows = new Map();
-  let connected = document.visibilityState === "hidden" ? false : null, paused = connected === false;
+  // The rooms as the session's view reads them (backend getRooms), and what each last read.
+  const described = Object.create(null), values = Object.create(null), turns = Object.create(null), rows = new Map();
+  // A room not read yet, or whose read failed: "Reading…" until its next update, as on Remotes.
+  const UNREAD = { value: "NULL", pending: null, status: "unknown", reason: "" };
+  // The last column's word for what a room's LED says.
+  const WORDS = { reported: "Reported", off: "Room off", switching: "Switching", unavailable: "Source unknown", unknown: "Reading…" };
   // Listen's sessions on a remote-view backend, made when Listen is first shown.
   let heard = null;
 
@@ -50,26 +56,30 @@
     svg.setAttribute("class", "home__lock"); svg.setAttribute("role", "img"); use.setAttribute("href", "#i-lock"); svg.appendChild(use);
     return svg;
   }
+  // A row's state, for its colours, from a view: its LED, and unavailable while the house is not heard.
+  function stateOf(shown) {
+    if (shown.connected === false || shown.led === "bad") return "unavailable";
+    return shown.led === "ok" ? "reported" : shown.led === "busy" ? "switching" : shown.short === "…" ? "unknown" : "off";
+  }
+  // What a room shows (session.js view): its source as the remote's list
+  // words it, and nothing of what was last read while the house is not heard.
   function update(id) {
-    const row = rows.get(id), value = values[id]; if (!row || mode !== "watch") return;
-    const room = house.rooms.find(room => room.id === id);
-    const choice = room.sources.includes(value?.value) ? house.sources[value.value] : null;
-    row.source.textContent = connected === false ? "Unknown" : choice?.label || (value?.value === "off" ? "Off" : "Unknown");
-    // A room whose source cannot be read is a problem, as in Remotes' list.
-    const unread = value?.status === "unavailable" && !value?.pending;
-    row.status.textContent = connected === false ? "Live unavailable" : value?.pending ? "Switching" : unread ? "Source unknown" : choice ? "Reported" : value?.value === "off" ? "Room off" : "Unknown";
-    row.element.dataset.state = connected === false || unread ? "unavailable" : value?.pending ? "switching" : choice ? "reported" : value?.value === "off" ? "off" : "unknown";
+    const row = rows.get(id); if (!row || mode !== "watch" || !described[id]) return;
+    const shown = session.view(described[id], values[id] || UNREAD), state = stateOf(shown);
+    row.source.textContent = shown.connected === false ? "Unknown" : state === "unknown" ? "Reading…" : shown.short;
+    row.status.textContent = shown.connected === false ? "Not connected" : WORDS[state];
+    row.element.dataset.state = state;
   }
   // What a room's speakers play (listen-session.js status): its title, else nothing or not known.
   function hear(id) {
     const row = rows.get(id); if (!row || mode !== "listen" || !heard) return;
-    const shown = heard.sessions.listen.status(id), reading = shown.short === "…";
-    row.source.textContent = shown.playing ? shown.playing.replace(/^♪ /, "") : reading || shown.led === "bad" ? "Unknown" : "Nothing playing";
-    row.status.textContent = reading ? "Reading…" : shown.short;
-    row.element.dataset.state = shown.led === "ok" ? "reported" : shown.led === "bad" ? "unavailable" : reading ? "unknown" : "off";
+    const shown = heard.sessions.listen.status(id), state = stateOf(shown);
+    row.source.textContent = shown.playing ? shown.playing.replace(/^♪ /, "") : state === "unknown" || state === "unavailable" ? "Unknown" : "Nothing playing";
+    row.status.textContent = state === "unknown" ? WORDS.unknown : shown.short;
+    row.element.dataset.state = state;
   }
   function showLock(row, id) {
-    const lock = session ? session.roomLocked(id) : { locked: false, text: "" };
+    const lock = session.roomLocked(id);
     row.element.toggleAttribute("data-locked", lock.locked); row.lock.setAttribute("aria-label", lock.text);
   }
   function hearing() {
@@ -81,11 +91,20 @@
     heard.sessions.start().catch(console.warn);
     return heard;
   }
+  // What the house has to say above its rooms, most pressing first. Now
+  // only that it is not heard; alerts the house is firing belong in this
+  // list, which says nothing of them yet.
+  function alerts() {
+    return mode === "watch" && !session.connected() ? [global.RemoteSession.NOT_CONNECTED] : [];
+  }
   function words() {
     if (!listed[mode].length) return "No rooms configured";
     if (mode === "listen") return mock ? "Sample speakers · no device commands" : "What each room's speakers play";
-    return connected === false ? (paused ? "Live room reports paused" : "Live room reports unavailable")
-      : mock ? "Sample room sources · no device commands" : "Reported room sources";
+    return mock ? "Sample room sources · no device commands" : "Reported room sources";
+  }
+  // The line above the rooms: what is wrong, else what the table is.
+  function say() {
+    notice.textContent = alerts().join(" · ") || words();
   }
   // Watch or Listen: its rooms, its column and note, and the switch.
   function show(next, focus) {
@@ -101,8 +120,8 @@
     if (mode === "listen") hearing();
     build();
     rows.forEach((row, id) => (mode === "listen" ? hear(id) : update(id)));
-    notice.textContent = words();
     live();
+    say();
   }
   switcher.addEventListener("click", event => {
     const option = event.target.closest("[data-mode]");
@@ -124,8 +143,9 @@
   backend.subscribe(event => {
     if (event.type === "state") { turns[event.room] = (turns[event.room] || 0) + 1; values[event.room] = event.state; update(event.room); }
     if (event.type === "access") rows.forEach(showLock);
-    if (event.type === "connection") { connected = event.connected; paused = false; house.rooms.forEach(room => update(room.id)); notice.textContent = words(); }
+    if (event.type === "connection") { house.rooms.forEach(room => update(room.id)); say(); }
   });
+  backend.getRooms().then(list => { list.forEach(room => { described[room.id] = room; update(room.id); }); });
   house.rooms.forEach(room => {
     const turn = turns[room.id] || 0;
     backend.getState(room.id).then(state => { if ((turns[room.id] || 0) === turn) { values[room.id] = state; update(room.id); } })
@@ -136,14 +156,6 @@
     const visible = document.visibilityState !== "hidden";
     backend.setActive?.(visible && mode === "watch");
     if (heard) { heard.backend.setActive?.(visible && mode === "listen"); heard.sessions.setActive(visible && mode === "listen"); }
-  }
-  function setActive(visible) {
-    if (!visible || backend.mock) {
-      connected = visible; paused = !visible;
-      house.rooms.forEach(room => update(room.id));
-      notice.textContent = words();
-    }
-    live();
   }
   function storage() {
     try {
@@ -156,8 +168,9 @@
     }
   }
   show(mode, false);
-  const active = () => setActive(document.visibilityState !== "hidden");
-  document.addEventListener("visibilitychange", active);
-  global.addEventListener("pagehide", () => setActive(false));
-  global.addEventListener("pageshow", active);
+  // A page shown again reads the house afresh; until then its rows are what
+  // was last read, and once its stream fails they say so (the connection event).
+  document.addEventListener("visibilitychange", live);
+  global.addEventListener("pagehide", () => { backend.setActive?.(false); if (heard) { heard.backend.setActive?.(false); heard.sessions.setActive(false); } });
+  global.addEventListener("pageshow", live);
 })(globalThis);

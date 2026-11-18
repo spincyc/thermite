@@ -692,7 +692,20 @@ async function home(out) {
   const west = p.made.home.snapshot('example_west');
   p.made.home.emit({type: 'state', room: 'example_west', state: Object.assign({}, west, {value: 'UNDEF', status: 'unavailable'})});
   out.unread = [rows()[0], $('[data-home-rooms] tr').dataset.state];
+  // A room switching says where to, as the remote's list does.
+  p.made.home.emit({type: 'state', room: 'example_west', state: Object.assign({}, west, {pending: 'example_player', status: 'switching'})});
+  out.switching = [rows()[0], $('[data-home-rooms] tr').dataset.state];
   p.made.home.emit({type: 'state', room: 'example_west', state: west});
+  // The house not heard: no row shows what was last read, and the line above them says why, for as long as it lasts.
+  const said = () => [rows().map((row) => row.slice(2)), all('[data-home-rooms] tr').map((row) => row.dataset.state), words($('[data-home-status]'))];
+  // The sample backend has no stream to lose; connected changes before its event, as the real one's does (backend_stream_harness).
+  p.made.home.connected = false;
+  p.made.home.emit({type: 'connection', connected: false});
+  await time.tick(5000);
+  out.lost = said();
+  p.made.home.connected = true;
+  p.made.home.emit({type: 'connection', connected: true});
+  out.heard = said();
   // Two icons, as the remote's; each radio named by its label.
   out.icons = all('[data-home-modes] [data-mode]').map((option) => [option.getAttribute('aria-label'), option.title, words(option),
     option.querySelector('use').getAttribute('href')]);
@@ -762,6 +775,103 @@ async function link(out) {
   out.real = [real.made.remote.chosen, real.made.session.state(WATCH).value, real.words(real.$('[data-room-name]'))];
 }
 
+// What has failed is part of what a room shows, for as long as it lasts: the
+// house not heard greys every light and the alert says so; a choice never
+// read back is named there until the room reads something else. No toast.
+async function failure(out) {
+  const p = page(WATCH);
+  const {time, $, all, words, shown, made} = p;
+  await time.tick(1500);
+  const backend = made.remote, session = made.session;
+  const view = () => session.view(session.current(), session.state(WATCH));
+  const drawn = () => [shown($('#alert')), words($('#alert-text')), p.document.body.hasAttribute('data-stale'), p.toast()[0]];
+  const row = () => { const button = all('[data-room-list] .room')[0]; return [button.getAttribute('data-led'), words(button.querySelector('.room__source-text')), button.getAttribute('aria-label')]; };
+  const heard = [];
+  session.subscribe((event) => { if (event.type === 'announce') heard.push(event.message); });
+  out.live = [drawn(), session.connected(), view().connected, view().unconfirmed];
+  backend.connected = false;
+  backend.emit({type: 'connection', connected: false});
+  await time.tick(50);
+  out.lost = [drawn(), session.connected(), view().connected, row()];
+  // Long after a toast would have gone.
+  await time.tick(60000);
+  out.still = drawn();
+  backend.connected = true;
+  backend.emit({type: 'connection', connected: true});
+  await time.tick(50);
+  out.back = [drawn(), view().connected, heard.splice(0)];
+  // A choice that was sent and never read back (backend getState): the room shows what it last read, and says so.
+  const state = backend.snapshot(WATCH);
+  backend.emit({type: 'state', room: WATCH, state: Object.assign({}, state, {unconfirmed: 'example_player'})});
+  await time.tick(60000);
+  out.unconfirmed = [drawn(), view().unconfirmed, view().led, row(), heard.splice(0)];
+  backend.emit({type: 'state', room: WATCH, state: state});
+  await time.tick(50);
+  out.read = [drawn(), view().unconfirmed];
+}
+
+// A device's problem is a code, and the page says the code's words after
+// the device's label: each code of the options the page was given, in the
+// alert and in the log; a state that is no code says the last code's words.
+// First the sample backend, whose options are activity.js's own copy; then
+// a house's own page, whose options are its activity.json's (here the
+// committed sample's) and whose codes arrive on its stream.
+async function problems(out) {
+  const drawing = (p) => {
+    const alert = () => (p.shown(p.$('#alert')) ? p.words(p.$('#alert-text')) : null);
+    const logged = () => p.all('.activity-log__entry').map((row) => p.words(row.querySelector('p')));
+    return {logged, drawn: () => [alert(), logged().at(-1), p.all('[data-room-list] .room')[0].getAttribute('aria-label')]};
+  };
+  const p = page(WATCH);
+  const {time, made} = p;
+  await time.tick(1500);
+  const backend = made.remote, room = made.session.current();
+  const device = room.devices.find((entry) => house.devices[entry.id].problem);
+  const options = backend.problemOptions[device.id];
+  const {logged, drawn} = drawing(p);
+  out.device = device.label;
+  out.codes = [];
+  for (const [code, said] of Object.entries(options)) {
+    backend.simulateProblem(device.id, code);
+    await time.tick(50);
+    out.codes.push([code, said].concat(drawn()));
+  }
+  backend.simulateProblem(device.id, 'never_heard_of');
+  await time.tick(50);
+  out.unknown = drawn();
+  backend.simulateProblem(device.id, 'UNDEF');
+  await time.tick(50);
+  out.over = drawn();
+  out.lines = logged().length;
+
+  // A gateway without authentication: no lock to read, and every room the viewer's to control.
+  const access = Object.assign(locking(null), {authEnabled: () => false, canControl: () => true, policy: () => null, policyStatus: () => 'off', watchRoom() {}, stop() {}});
+  const real = page(WATCH, {real: true, search: '&backend=openhab', access});
+  await real.time.tick(1500);
+  const manifest = JSON.parse(fs.readFileSync(path.join(WEB, 'activity.json'), 'utf8'));
+  const item = house.devices[device.id].problem, states = {[item]: 'UNDEF'};
+  house.rooms.forEach((each) => { states['loc_' + each.id + '_source'] = 'off'; });
+  // As the page's own read of activity.json and its stream's first frame would.
+  real.made.remote.activateActivity(manifest);
+  real.made.remote.onMessage(JSON.stringify({type: 'snapshot', view: 'remote', states}));
+  await real.time.tick(50);
+  const shown = drawing(real);
+  const before = shown.logged().length;
+  let last = 'UNDEF';
+  const report = async (value) => {
+    real.made.remote.onMessage(JSON.stringify({topic: 'openhab/items/' + item + '/statechanged', type: 'ItemStateChangedEvent',
+      payload: JSON.stringify({type: 'String', value, oldValue: last})}));
+    last = value;
+    await real.time.tick(50);
+    return shown.drawn().slice(0, 2);
+  };
+  out.sample = {item, codes: [], quiet: shown.drawn().slice(0, 2)};
+  for (const [code, said] of Object.entries(manifest.items[item].options)) out.sample.codes.push([code, said].concat(await report(code)));
+  out.sample.unknown = await report('never_heard_of');
+  out.sample.over = await report('UNDEF');
+  out.sample.lines = shown.logged().length - before;
+}
+
 // A session stopped lets its backend go: it hears no more of the house, its
 // slider's last volume is sent, and All off forgets its first press.
 async function stopped(out) {
@@ -800,7 +910,7 @@ async function sideways(out) {
 (async () => {
   const report = {};
   for (const [name, run] of Object.entries({rooms, modes, bar, face, alone, watch, locks, library, browse, pages, group, covers, music, inputs, signal,
-    sideways, home, keys, policy, link, stopped})) {
+    sideways, home, keys, policy, link, failure, problems, stopped})) {
     report[name] = {};
     // A scenario that throws says where, and the rest still run.
     await run(report[name]).catch((error) => { report[name].error = error.stack.split('\n').slice(0, 3).join(' '); });

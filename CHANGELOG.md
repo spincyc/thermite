@@ -7,6 +7,21 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Remotes: what has failed stays on the screen for as long as it
+  lasts, where it was a message that left after two seconds.
+  - While the house is not heard, the alert line says "Not connected
+    to thermite. Reconnecting…" and every light keeps its place and
+    loses its colour. Home shows no source and says the same above its
+    rooms, in place of its own "Live room reports unavailable".
+  - A source that was chosen and sent but never reported by the room
+    is named as not confirmed until the room reports something else or
+    another choice is made.
+  - A device's problem is said in words after its name ("Example Tv
+    does not answer"), in the alert and in the activity log, from the
+    house's own table of problem codes; the log no longer says "Device
+    control unavailable" for every one.
+  - The terminal and the handheld remote show the same sentences in
+    their alert line.
 - A page left open across an upgrade now replaces itself. `thermite
   generate` gives the pages' files one build and writes it into every
   page; the gateway repeats the build of the pages it serves on each

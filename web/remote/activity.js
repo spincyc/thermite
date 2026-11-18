@@ -20,6 +20,26 @@
     return typeof value === "string"
       ? value.replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, " ").slice(0, limit) : "";
   }
+  // What a device's problem says, to follow the device's label ("Example Tv
+  // does not answer"). The problem Item's state is a code, and the Item's
+  // options (activity.json items[<id>_problem].options, from
+  // oh_integrations) give each code its words, the last for a problem of
+  // any other kind: a state not among them says those, never itself, and a
+  // new code needs no change here. An Item without options, as a gateway
+  // from before the codes describes it, says its state as it is.
+  function problemWords(options, value) {
+    const codes = options && typeof options === "object" ? Object.keys(options) : [];
+    if (!codes.length) return clean(value, 160);
+    return clean(options[own(options, value) ? value : codes[codes.length - 1]], 160);
+  }
+  // The sample's codes and words, as a generated house's activity.json
+  // gives them to a served page; a preview has only this copy, which
+  // tests/test_listen_page.py holds to oh_integrations._commands.CODES.
+  const PREVIEW_PROBLEMS = {
+    unreachable: "cannot be reached", no_answer: "does not answer", refused: "refused the command", busy: "is busy",
+    not_ready: "is not ready for that command", auth: "is not paired or refuses openHAB",
+    protocol: "answered in a way openHAB does not understand", other: "has a problem"
+  };
   function numeric(value) {
     return typeof value === "string" && /^(?:\d+(?:\.\d+)?|\.\d+)$/.test(value) ? Number(value) : NaN;
   }
@@ -105,10 +125,17 @@
       if (verb === "statechanged" && (typeof payload.oldValue !== "string" || payload.oldValue === payload.value)) return;
       if (desc.kind === "pairing_result") { result(desc, payload.value); return; }
       if (desc.kind === "problem") {
-        const problem = (value) => value !== "UNDEF" && value !== "NULL" && value.trim() !== "";
-        const bad = problem(payload.value);
-        if (bad === problem(payload.oldValue)) return;
-        push(desc, "problem", bad ? "Device control unavailable" : "Device control available again", bad ? "bad" : "");
+        const problem = (value) => typeof value === "string" && value !== "UNDEF" && value !== "NULL" && value.trim() !== "";
+        const bad = problem(payload.value), was = problem(payload.oldValue);
+        if (!desc.options) {
+          // No codes: the state is some text, and only that there is a problem is said.
+          if (bad !== was) push(desc, "problem", bad ? "Device control unavailable" : "Device control available again", bad ? "bad" : "");
+          return;
+        }
+        // The words the remote's alert says after the device's label; another code is another thing to say.
+        const words = bad ? problemWords(desc.options, payload.value) : null;
+        if (words === (was ? problemWords(desc.options, payload.oldValue) : null)) return;
+        push(desc, "problem", words || "none now", bad ? "bad" : "");
         return;
       }
       const value = valueOf(desc, payload.value, false);
@@ -147,8 +174,8 @@
     Object.keys(house.devices || {}).forEach((id) => {
       const device = house.devices[id];
       const control = device.control || {};
-      if (device.problem) items[device.problem] = { label: "Device control", device: device.label,
-        kind: "problem", states: true, commands: false };
+      if (device.problem) items[device.problem] = { label: "Problem", device: device.label,
+        kind: "problem", states: true, commands: false, options: Object.assign({}, PREVIEW_PROBLEMS) };
       for (const field of ["power", "mute", "key"]) {
         if (control[field]) items[control[field]] = { label: field, device: device.label,
           kind: field === "key" ? "key" : "switch", states: field !== "key", commands: true };
@@ -162,5 +189,5 @@
     items.house_all_off = { label: "All off", kind: "switch", states: false, commands: true };
     return { version: 1, items };
   }
-  global.RemoteActivity = { create, clean, preview };
+  global.RemoteActivity = { create, clean, preview, problemWords };
 })(globalThis);

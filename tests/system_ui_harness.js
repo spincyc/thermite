@@ -156,7 +156,8 @@ function response(value = manifest) {
     "[data-home-modes]": { hidden: false, querySelectorAll: () => [], addEventListener() {}, contains: () => false },
     "[data-home-what]": { textContent: "" }, "[data-home-note]": { textContent: "" } };
   const context = { URLSearchParams, REMOTE_HOUSE: { rooms: [] }, location: { search: "" },
-    RemoteBackend: { create: () => ({ subscribe() {}, setActive() {} }) },
+    RemoteBackend: { create: () => ({ subscribe() {}, setActive() {}, getRooms: async () => [] }) },
+    RemoteSession: { create: () => ({ connected: () => true }) },
     document: { visibilityState: "visible", querySelector: name => parts[name] || null,
       addEventListener: (name, fn) => { listeners[name] = fn; } }, addEventListener() {} };
   vm.createContext(context); vm.runInContext(fs.readFileSync(path.join(__dirname, "../web/remote/home.js"), "utf8"), context);

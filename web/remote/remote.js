@@ -141,6 +141,8 @@
     all("[data-room-name]").forEach((node) => { node.textContent = current.label; });
     all('.thermite-nav-link[data-view="settings"]').forEach((link) => { link.href = globalThis.ThermiteShell.href("settings", location.search, current.id); });
     document.title = current.label + " · thermite";
+    // While the house is not heard every LED is what was last read (remote.css); the alert says so.
+    document.body.toggleAttribute("data-stale", !session.connected());
     $("#room-switch").setAttribute("aria-label", "Room: " + current.label + ". Choose another room");
     updateRoomLists();
     updateNow();
@@ -252,8 +254,10 @@
     $("#now").title = playing || "";
   }
 
-  // The bubbles show what is on and a locked room's padlock; only a source
-  // that cannot be known, or a lock with no lit bubble to carry it, needs words.
+  // The bubbles show what is on and a locked room's padlock; only what has
+  // failed (the house not heard, a source that cannot be known, a choice
+  // never read back) or a lock with no lit bubble to carry it needs words.
+  // They stay for as long as that lasts: a toast is gone in two seconds.
   function updateAlert() {
     const current = session.current();
     const words = session.mode() === "listen" ? listenPage.alert()

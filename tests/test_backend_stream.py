@@ -38,6 +38,15 @@ class BackendStream(unittest.TestCase):
     def test_a_reconnects_snapshot_replaces_state_and_what_it_lacks_is_unknown(self):
         self.assertEqual(self.cases["reconnect_snapshot_replaces_state"], {"unknown": 9})
 
+    def test_a_page_shown_again_is_reading_until_its_stream_answers_or_fails(self):
+        self.assertEqual(self.cases["shown_again_reads_before_it_says_lost"], {"connections": [True, False, True]})
+
+    def test_a_choice_never_read_back_stays_unconfirmed_until_the_room_reads_otherwise(self):
+        self.assertEqual(self.cases["choice_never_read_back_stays_unconfirmed"], {"unconfirmed": ["other", "source"]})
+
+    def test_a_problem_code_says_its_options_words_and_an_unknown_one_the_last(self):
+        self.assertEqual(self.cases["problem_codes_say_the_words_of_their_options"], {"codes": 3})
+
     def test_a_native_command_is_aborted_when_unanswered(self):
         self.assertEqual(self.cases["native_command_deadline"], {"deadline_ms": 15000})
 

@@ -61,7 +61,7 @@ function client(options = {}) {
   };
   const backend = new context.RemoteBackend.OpenHabBackend(house, {
     EventSource: Events, access, active: options.active !== false, view: options.view,
-    ...(options.activity ? { activityManifest: { version: 1, items: activityItems } } : {}),
+    ...(options.activity ? { activityManifest: { version: 1, items: options.activity === true ? activityItems : options.activity } } : {}),
     ...(options.diagnostics ? { diagnosticsManifest: diagnosticManifest } : {}),
     fetch(url, init) {
       if (init.method !== "GET") {
@@ -89,7 +89,10 @@ function client(options = {}) {
       return promise;
     },
   });
-  backend.subscribe(event => events.push(event));
+  // held: what backend.connected said as each connection event was heard
+  // (the backend keeps a listener's own failure to itself, so it is kept here).
+  const held = [];
+  backend.subscribe(event => { events.push(event); if (event.type === "connection") held.push(backend.connected); });
   const live = () => streams.filter(stream => !stream.closed);
   const pending = () => reads.filter(request => !request.settled);
   function event(item, value, verb = "stateupdated", old) {
@@ -106,7 +109,7 @@ function client(options = {}) {
     timers.delete(entry[0]); entry[1].fn();
     return true;
   }
-  return { backend, reads, writes, authorized, streams, events, recorded, timers, live, pending, event, itemReads, fire,
+  return { backend, reads, writes, authorized, streams, events, held, recorded, timers, live, pending, event, itemReads, fire,
     active: () => active, peak: () => peak,
     async stop() { backend.stop(); pending().forEach(request => request.finish("UNDEF")); await tick(); assert.equal(timers.size, 0, "stop clears every timer"); } };
 }
@@ -257,6 +260,98 @@ async function probe(name, run, options) {
     assert.equal((await c.backend.getState("room_0")).value, "source");
     assert.equal(c.reads.length, 0);
     return { streams_opened: c.streams.length };
+  });
+
+  // A page shown again is reading, not lost: connected is not known until
+  // its stream's snapshot, which follows a gap, or its stream's error.
+  await probe("shown_again_reads_before_it_says_lost", async c => {
+    const connections = () => c.events.filter(event => event.type === "connection").map(event => event.connected);
+    assert.equal(c.backend.connected, null, "not known before the first read");
+    c.live()[0].open(); c.live()[0].send({ type: "snapshot", view: "remote", states: snapshotStates("remote") });
+    assert.equal(c.backend.connected, true); assert.deepEqual(connections(), [], "a first read is no reconnection");
+    c.backend.setActive(false);
+    assert.equal(c.backend.connected, false, "a hidden page hears nothing");
+    c.backend.setActive(true);
+    assert.equal(c.backend.connected, null); assert.deepEqual(connections(), []);
+    c.live()[0].open(); c.live()[0].send({ type: "snapshot", view: "remote", states: snapshotStates("remote") });
+    assert.equal(c.backend.connected, true); assert.deepEqual(connections(), [true], "the snapshot after a gap says so");
+    // Shown again while the gateway is away: the stream's error says lost, once.
+    c.backend.setActive(false); c.backend.setActive(true);
+    c.live()[0].onerror({}); c.live()[0].onerror({});
+    assert.equal(c.backend.connected, false); assert.deepEqual(connections(), [true, false]);
+    c.live()[0].open(); c.live()[0].send({ type: "snapshot", view: "remote", states: snapshotStates("remote") });
+    assert.equal(c.backend.connected, true); assert.deepEqual(connections(), [true, false, true]);
+    // Who hears the event draws from connected: it has changed by then.
+    assert.deepEqual(c.held, connections(), "connected says what its event says, as the event is heard");
+    return { connections: connections() };
+  });
+
+  // A device's problem is a code; its words are the Item's options in the
+  // activity manifest, so a code this page never heard of needs no change
+  // to it. The alert (problemOf) and the feed say the same words.
+  const codes = { no_answer: "does not answer", asleep: "is asleep", other: "has a problem" };
+  await probe("problem_codes_say_the_words_of_their_options", async c => {
+    c.live()[0].open(); c.live()[0].send({ type: "snapshot", view: "remote", states: snapshotStates("remote") });
+    const said = () => c.events.filter(event => event.type === "problem").map(event => [event.device, event.problem]);
+    const lines = () => c.events.filter(event => event.type === "activity" && event.kind === "problem").map(event => [event.title, event.body, event.tone]);
+    for (const [code, words] of Object.entries(codes)) {
+      c.event("display_0_problem", code, "statechanged", "UNDEF");
+      assert.equal(c.backend.problemOf("display_0"), words, code);
+      c.event("display_0_problem", "UNDEF", "statechanged", code);
+      assert.equal(c.backend.problemOf("display_0"), null);
+    }
+    assert.deepEqual(lines().map(line => line[1]), Object.values(codes).flatMap(words => [words, "none now"]));
+    // One code after another is another thing to say; a state that is no code says the last code's words, never itself.
+    c.events.length = 0;
+    c.event("display_0_problem", "no_answer", "statechanged", "UNDEF");
+    c.event("display_0_problem", "asleep", "statechanged", "no_answer");
+    c.event("display_0_problem", "never_heard_of", "statechanged", "asleep");
+    c.event("display_0_problem", "nor_of_this", "statechanged", "never_heard_of");
+    assert.deepEqual(said(), [["display_0", "does not answer"], ["display_0", "is asleep"], ["display_0", "has a problem"], ["display_0", "has a problem"]]);
+    assert.deepEqual(lines(), [["Problem", "does not answer", "bad"], ["Problem", "is asleep", "bad"], ["Problem", "has a problem", "bad"]]);
+    // An Item without options, as a gateway from before the codes describes it, is said as it was.
+    c.events.length = 0;
+    c.event("display_1_problem", "Device control unavailable", "statechanged", "UNDEF");
+    assert.equal(c.backend.problemOf("display_1"), "Device control unavailable");
+    assert.deepEqual(lines(), [["Device control", "Device control unavailable", "bad"]]);
+    return { codes: Object.keys(codes).length };
+  }, { activity: {
+    display_0_problem: { label: "Problem", device: "Display 0", kind: "problem", states: true, commands: false, options: codes },
+    display_1_problem: { label: "Device control", device: "Display 1", kind: "problem", states: true, commands: false } } });
+
+  // A choice the gateway took and the room never read back is not gone
+  // without a word: the room's state names it until the room reads
+  // something else or another choice is made.
+  await probe("choice_never_read_back_stays_unconfirmed", async c => {
+    c.live()[0].open(); c.live()[0].send({ type: "snapshot", view: "remote", states: snapshotStates("remote") });
+    const states = () => c.events.filter(event => event.type === "state" && event.room === "room_1").map(event => event.state);
+    assert.equal(c.backend.snapshot("room_1").unconfirmed, null);
+    const first = c.backend.choose("room_1", "other");
+    await tick();
+    assert.deepEqual([c.backend.snapshot("room_1").status, c.backend.snapshot("room_1").unconfirmed], ["switching", null]);
+    assert(c.fire(16000), "the choice waits confirmMs() for its read-back");
+    const settled = await first;
+    assert.deepEqual([settled.value, settled.pending, settled.status, settled.unconfirmed], ["source", null, "current", "other"]);
+    assert.equal(states().at(-1).unconfirmed, "other", "listeners hear it as state");
+    // The same reading again, and a reconnect's snapshot of it, change nothing.
+    const heard = states().length;
+    c.event("loc_room_1_source", "source");
+    c.live()[0].onerror({}); c.live()[0].open(); c.live()[0].send({ type: "snapshot", view: "remote", states: snapshotStates("remote") });
+    assert.equal(c.backend.snapshot("room_1").unconfirmed, "other"); assert.equal(states().length, heard);
+    // A late read-back of the choice, or of anything else, ends it.
+    c.event("loc_room_1_source", "other");
+    assert.deepEqual([c.backend.snapshot("room_1").value, c.backend.snapshot("room_1").unconfirmed], ["other", null]);
+    // So does the next choice, at once.
+    const second = c.backend.choose("room_1", "source");
+    await tick(); assert(c.fire(16000)); assert.equal((await second).unconfirmed, "source");
+    const third = c.backend.choose("room_1", "source");
+    await tick();
+    assert.deepEqual([c.backend.snapshot("room_1").pending, c.backend.snapshot("room_1").unconfirmed], ["source", null]);
+    c.event("loc_room_1_source", "source");
+    assert.equal((await third).unconfirmed, null);
+    // A room read back in time never was unconfirmed.
+    assert.equal(c.backend.snapshot("room_0").unconfirmed, null);
+    return { unconfirmed: ["other", "source"] };
   });
 
   await probe("snapshot_deadline", async c => {

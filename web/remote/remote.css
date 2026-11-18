@@ -218,6 +218,14 @@ button {
   box-shadow: none;
 }
 
+/* The house is not heard: an LED keeps its place and loses its colour, as
+   what it showed was read before the connection was lost. */
+body[data-stale] :is([data-led], .target) .led {
+  background: var(--led-off);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  animation: none;
+}
+
 @keyframes blink {
   to { opacity: 0.35; }
 }
