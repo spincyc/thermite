@@ -7,6 +7,13 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Terminal remote and installer: a light now says its state by its
+  shape as well as its colour (● on, ○ off, ◐ switching, ! a problem,
+  ? not confirmed, ◌ not connected), so it reads with `NO_COLOR`, on a
+  console of 16 colours and in the focused row. On, switching and a
+  problem have colours of their own in 256-colour terminals, where
+  switching, a problem and the hotkeys were one colour. Without
+  colour the focus is reverse video, where it was only bold.
 - Home shows the house's firing alerts above its rooms: one sentence
   for what is firing, then each alert with its severity in a word,
   what it is, and its room, device and check by name; it opens to the

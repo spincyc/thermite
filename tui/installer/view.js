@@ -7,11 +7,9 @@
 "use strict";
 
 const { Grid, box, fit, wrap, length } = require("../remote/grid");
-const { METER } = require("../remote/theme");
+const { METER, light } = require("../remote/theme");
 const Torch = require("../remote/torch");
 
-const LIT = "●";
-const UNLIT = "○";
 const STEPS_WIDTH = 24;
 const LABEL = 18;
 
@@ -58,7 +56,8 @@ function stepsPanel(g, ctx, rect) {
     const current = index === ctx.ui.step;
     const style = current ? "row.current" : "row";
     g.fill(rect.x + 1, y, rect.w - 2, 1, style);
-    g.put(rect.x + 2, y, current ? "▸" : done ? LIT : UNLIT, current ? style : done ? "led.ok" : "led.off");
+    const [glyph, tone] = light(done ? "ok" : "off");
+    g.put(rect.x + 2, y, current ? "▸" : glyph, current ? style : tone);
     g.put(rect.x + 4, y, fit(step.title, rect.w - 6), current ? style : done ? "base" : "dim");
   });
 }
@@ -239,12 +238,12 @@ function network(g, ctx) {
   const state = ui.network || { interfaces: [], online: false };
   state.interfaces.forEach((entry) => {
     const up = entry.addresses.length > 0;
-    g.line(2, y++, [[up ? LIT : UNLIT, up ? "led.ok" : "led.off"], [" " + fit(entry.name, 12), "base"],
+    g.line(2, y++, [light(up ? "ok" : "off"), [" " + fit(entry.name, 12), "base"],
       [fit((entry.wireless ? "Wi-Fi " : "wired ") + (entry.addresses.join(", ") || "no address"), g.width - 20), "dim"]]);
   });
   if (!state.interfaces.length) g.put(2, y++, "No network interfaces found", "alert");
   y += 1;
-  g.line(2, y++, [[state.online ? LIT : UNLIT, state.online ? "led.ok" : "led.bad"],
+  g.line(2, y++, [light(state.online ? "ok" : "bad"),
     [state.online ? " The Internet is reachable." : " The Internet is not reachable yet.", "base"]]);
   y = paragraph(g, y, "The installation downloads Arch Linux packages, and the first boot downloads Thermite's "
     + "runtime and container images, so the host needs the Internet now and after it restarts.", "dim") + 1;
@@ -258,7 +257,7 @@ function network(g, ctx) {
       const on = first + index === ui.wifi.cursor;
       const style = on && active ? "row.focus" : on ? "row.current" : "row";
       const joined = state.wifi ? state.wifi.ssid === entry.ssid : entry.connected;
-      g.put(4, y++, fit(entry.hidden ? "  A hidden network…" : (joined ? LIT + " " : "  ") + entry.ssid + "  "
+      g.put(4, y++, fit(entry.hidden ? "  A hidden network…" : (joined ? light("ok")[0] + " " : "  ") + entry.ssid + "  "
         + entry.security + "  " + "▂▄▆█".slice(0, entry.signal), g.width - 6), style);
     });
     y += 1;
@@ -359,7 +358,7 @@ function install(g, ctx) {
   });
   seen.forEach((label, index) => {
     const done = index < seen.length - 1 || progress.percent === 100;
-    g.line(2, y++, [[done ? LIT : "◐", done ? "led.ok" : "led.busy"], [" " + fit(label, g.width - 6), done ? "dim" : "base"]]);
+    g.line(2, y++, [light(done ? "ok" : "busy"), [" " + fit(label, g.width - 6), done ? "dim" : "base"]]);
   });
   logTail(g, y + 1, progress.lines);
   return null;
@@ -377,7 +376,7 @@ function done(g, ctx) {
   const answers = ui.answers;
   let y = 1;
   if (ui.result) {
-    g.line(2, y++, [[LIT, "led.ok"], [" Thermite is installed on " + answers.hostname + ".", "strong"]]);
+    g.line(2, y++, [light("ok"), [" Thermite is installed on " + answers.hostname + ".", "strong"]]);
     y += 1;
     y = paragraph(g, y, "Remove the installation medium, then press Enter to restart.", "base") + 1;
     y = row(g, y, "Name", answers.hostname + ".local");
@@ -397,7 +396,7 @@ function done(g, ctx) {
     paragraph(g, y, "This run's answers, without passwords, and its logs are kept in /var/log/thermite-install.");
     return null;
   }
-  g.line(2, y++, [[LIT, "led.bad"], [" The installation stopped.", "strong"]]);
+  g.line(2, y++, [light("bad"), [" The installation stopped.", "strong"]]);
   y = paragraph(g, y + 1, ui.failure || "", "alert") + 1;
   y = paragraph(g, y, "The logs are /run/thermite-installer/installer.log and /var/log/archinstall/install.log on this "
     + "live system. Esc returns to the review to try again; Ctrl-C leaves for a shell.") + 1;

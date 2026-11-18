@@ -273,6 +273,12 @@ class RemoteTUI(unittest.TestCase):
         self.assertEqual(failure["again"], [["\u25cf", "row.focus"], ["\u25cb", "led.off"], " 2 \u25cf Computer ", "led.ok", []],
                          "heard again, the lights say what the house reads now")
 
+    def test_a_room_switching_and_a_source_that_cannot_be_read_have_glyphs_of_their_own(self):
+        states = self.proof["failure"]["states"]
+        # Switching goes between its two glyphs; neither is on's or off's.
+        self.assertEqual(states["switching"], ["\u25d0", " 2 \u25d0 Computer ", "\u25d1"])
+        self.assertEqual(states["unread"], ["!", "led.bad"])
+
     def test_not_heard_home_shows_no_source_and_listen_no_speaker_as_playing(self):
         failure = self.proof["failure"]
         said, unknown, source = failure["home"]

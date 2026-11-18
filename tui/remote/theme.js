@@ -15,7 +15,7 @@ const path = require("path");
 
 const ENV = "THERMITE_REMOTE_LOOK";
 const DEFAULT_FILE = path.join(__dirname, "..", "..", "lib", "oh_brand", "palettes", "thermite.json");
-const { styles, mix, PANELS, METER } = require("./styles");
+const { styles, light, mix, LIGHTS, PANELS, METER } = require("./styles");
 
 // A theme as lib/oh_brand writes it ({name, dark, light}), and the torch's
 // cells if it has them, as both modes' styles.
@@ -36,7 +36,9 @@ function load(env) {
 let fallback = null;
 
 // A cell's style as {fg, bg, bold, underline}, from a name or names joined
-// by "+" ("bubble.current+underline"); "meter.N" is the meter's Nth color
+// by "+" ("bubble.current+underline"), with what the painter needs where
+// colour is short: hue, when its foreground says a state, and reverse,
+// when it is the focus (paint.js sgr); "meter.N" is the meter's Nth color
 // and "torch.FG.BG" a cell of the torch: FG a role, BG a role, "ROLE%N"
 // (N percent of the role over the background) or empty. Rasterized torch
 // cells give their antialiased foreground/background as literal #rrggbb.
@@ -56,12 +58,14 @@ function resolve(look, mode, style) {
       const color = (value) => /^#[0-9a-fA-F]{6}$/.test(value || "") ? value : colors[value];
       own = { fg: color(roles[0]), bg: share ? mix(colors.bg, colors[role], Number(share) / 100) : color(role) || null };
     }
-    if (own.fg) out.fg = own.fg;
+    // The foreground's hue goes with the foreground.
+    if (own.fg) { out.fg = own.fg; out.hue = Boolean(own.hue); }
     if (own.bg) out.bg = own.bg;
     if (own.bold) out.bold = true;
+    if (own.reverse) out.reverse = true;
     if (typeof own.underline === "boolean") out.underline = own.underline;
   });
   return out;
 }
 
-module.exports = { ENV, PANELS, METER, create, load, resolve, styles, mix };
+module.exports = { ENV, LIGHTS, PANELS, METER, create, light, load, resolve, styles, mix };

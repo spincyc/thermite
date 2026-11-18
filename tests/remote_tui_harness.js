@@ -768,6 +768,17 @@ async function failure(proof) {
   site.send("loc_" + WEST + "_source", "off");
   await until(parts, () => session.state(WEST).value === "off", "the room read off");
   proof.failure.confirmed = [said("bubble:example_computer"), alert()];
+  // Each state its own glyph: switching (two, where motion is on), and a source that cannot be read.
+  parts.backend.timeout = 60000;
+  key(parts, "2");
+  await until(parts, () => session.state(WEST).pending === "example_computer", "the room switching");
+  const switching = [light(WEST)[0], said("bubble:example_computer")];
+  ui.blink = !ui.blink;
+  switching.push(light(WEST)[0]);
+  site.send("loc_" + EAST + "_source", "UNDEF");
+  await until(parts, () => session.state(EAST).status === "unavailable", "a source that cannot be read");
+  proof.failure.states = { switching, unread: light(EAST) };
+  site.send("loc_" + EAST + "_source", "off");
   site.send("loc_" + WEST + "_source", "example_player");
   await until(parts, () => session.state(WEST).value === "example_player", "the player again");
   // The stream lost: nothing the house said before is said of now.

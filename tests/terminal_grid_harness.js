@@ -5,9 +5,13 @@
 // terminal that writes each character where its cursor stands and moves
 // the cursor the columns glibc's wcwidth gives the character. Every write must land in the
 // cell the grid has it in, and every frame must show what the grid holds.
-// The PRNG is seeded, so a run is the same each time. Prints what it found;
+// The PRNG is seeded, so a run is the same each time. And the lights
+// (styles.js LIGHTS) and the focus where colour is short: without any, and
+// in xterm's 256, for every palette thermite ships. Prints what it found;
 // nothing leaves the process.
-const Grid = require("../tui/remote/grid"), { Painter } = require("../tui/remote/paint");
+const fs = require("node:fs"), path = require("node:path");
+const Grid = require("../tui/remote/grid"), Paint = require("../tui/remote/paint"), Theme = require("../tui/remote/theme");
+const { Painter } = Paint;
 
 // The model's widths, apart from grid.js's: glibc 2.44's wcwidth for each
 // code point the frames use, written out. None is drawn in the cell
@@ -216,6 +220,32 @@ grid.put(0, 0, "\u2764\ufe0f ab");
 const wider = new Wider(5, 1);
 new Painter((out) => wider.play(out, (x) => grid.rows[0][x].ch), 1).paint(grid.rows, 5, 1, () => "\x1b[0m");
 proof.wider = [wider.text(), wider.faults];
+// The lights: each state's glyphs and the columns they take; and for each
+// shipped palette and mode, each state's style without colour, its colour
+// in xterm's 256 beside the hotkeys' accent, which of them are grays there,
+// and the focus styles that are not reverse video without colour.
+const palettes = path.join(__dirname, "..", "lib", "oh_brand", "palettes");
+const index = (code) => Number((/38;5;(\d+)/.exec(code) || [])[1]);
+const gray = (at) => at >= 232 || (at >= 16 && Math.floor((at - 16) / 36) === Math.floor((at - 16) / 6) % 6 && Math.floor((at - 16) / 6) % 6 === (at - 16) % 6);
+proof.lights = {
+  glyphs: Object.fromEntries(Object.entries(Theme.LIGHTS).map(([name, entry]) => [name, [entry.glyph].concat(entry.blink || [])])),
+  columns: Object.values(Theme.LIGHTS).flatMap((entry) => [entry.glyph].concat(entry.blink || [])).map((glyph) => Grid.length(glyph)),
+  drawn: Object.keys(Theme.LIGHTS).concat(["no such state"]).map((name) => Theme.light(name).concat(Theme.light(name, true)[0])),
+  palettes: {}
+};
+fs.readdirSync(palettes).filter((name) => name.endsWith(".json")).sort().forEach((file) => {
+  const look = Theme.create(JSON.parse(fs.readFileSync(path.join(palettes, file), "utf8")));
+  ["dark", "light"].forEach((mode) => {
+    const base = Theme.resolve(look, mode, "base"), code = (name, depth) => Paint.sgr(Theme.resolve(look, mode, name), depth, base);
+    const states = Object.keys(Theme.LIGHTS), colors = Object.fromEntries(states.map((name) => [name, index(code("led." + name, 256))]));
+    proof.lights.palettes[file.replace(/\.json$/, "") + " " + mode] = {
+      mono: Object.fromEntries(states.map((name) => [name, code("led." + name, 0).replace("\x1b", "")])),
+      colors: Object.assign(colors, { hotkey: index(code("hotkey", 256)), alert: index(code("alert", 256)) }),
+      grays: Object.keys(colors).filter((name) => gray(colors[name])),
+      unseen: Object.keys(look.modes[mode]).filter((name) => /\.focus$/.test(name) && !/;7m$/.test(code(name, 0)))
+    };
+  });
+});
 // Random frames, in color and without.
 proof.fuzz = [[1, 1], [2, 1], [3, 0], [4, 1], [5, 0]].map(([seed, depth]) => fuzz(seed, 200, depth));
 process.stdout.write(JSON.stringify(proof) + "\n");

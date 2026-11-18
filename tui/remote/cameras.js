@@ -4,6 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const { fit, wrap } = require("./grid");
+const { light } = require("./theme");
 const Backend = require("../../web/remote/cameras");
 
 function create(options = {}) {
@@ -43,9 +44,10 @@ function content(g, width, ctx) {
     const focused = ctx.ui.focusVisible && ctx.ui.focus === key;
     const style = focused ? "row.focus" : state.selected === camera.id ? "row.current" : "row";
     const label = camera.online === true ? "Connected" : camera.online === false ? "Offline" : "Unknown";
-    const tone = camera.online === true ? "led.ok" : camera.online === false ? "led.bad" : "dim";
+    // Connected, offline and unknown each have their light's glyph (styles.js LIGHTS).
+    const [glyph, tone] = light(camera.online === true ? "ok" : camera.online === false ? "bad" : "off");
     g.fill(0, y, width, 1, style);
-    g.put(1, y, camera.online === null ? "○" : "●", focused ? style : tone);
+    g.put(1, y, glyph, focused ? style : tone);
     g.put(3, y, fit(camera.label, Math.max(4, width - label.length - 5)), style);
     g.put(Math.max(3, width - label.length - 1), y, label, focused ? style : tone);
     g.hit(0, y, width, 1, { kind: "camera", camera: camera.id, key, focus: true, label: camera.label + ", " + label });

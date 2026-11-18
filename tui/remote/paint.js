@@ -59,9 +59,22 @@ function tmux(file, args) {
 }
 
 // The nearest of xterm's 6x6x6 cube and gray ramp (16-255), never one of
-// the 16 the terminal's theme sets; as oh_brand.xterm256.
-function xterm256(color) {
+// the 16 the terminal's theme sets; as oh_brand.xterm256. hue: the nearest
+// of the cube's colours that is not a gray, for a colour that says a state:
+// a quiet palette's green or red is nearer a gray than any colour there,
+// and as grays its states are told apart by nothing.
+function xterm256(color, hue) {
   const [r, g, b] = rgb(color);
+  if (hue) {
+    let best = null, least = Infinity;
+    for (let index = 0; index < 216; index += 1) {
+      const levels = [Math.floor(index / 36), Math.floor(index / 6) % 6, index % 6];
+      if (levels[0] === levels[1] && levels[1] === levels[2]) continue;
+      const far = levels.reduce((sum, level, at) => sum + (LEVELS[level] - [r, g, b][at]) ** 2, 0);
+      if (far < least) { least = far; best = index; }
+    }
+    return 16 + best;
+  }
   const near = (value, count, level) => {
     let best = 0;
     for (let index = 1; index < count; index += 1) {
@@ -91,24 +104,25 @@ function contrast(a, b) {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-function color(value, depth, background) {
+function color(value, depth, background, hue) {
   if (!hex(value)) return null;
   const lead = background ? "48" : "38";
-  return depth === 24 ? lead + ";2;" + rgb(value).join(";") : lead + ";5;" + xterm256(value);
+  return depth === 24 ? lead + ";2;" + rgb(value).join(";") : lead + ";5;" + xterm256(value, hue);
 }
 
-// A style ({fg, bg, bold, underline}) as one SGR sequence, from a reset,
-// so that each one stands alone. Without color a ground that stands out
-// from the base's (the focus, a lit key) is reverse video.
+// A style ({fg, bg, bold, underline, hue, reverse}) as one SGR sequence,
+// from a reset, so that each one stands alone. Without color the focus
+// (reverse), and a ground that stands out from the base's (a lit key), is
+// reverse video.
 function sgr(style, depth, base) {
   const codes = ["0"];
   if (style.bold) codes.push("1");
   if (style.underline) codes.push("4");
   if (depth) {
-    [color(style.fg, depth, false), color(style.bg, depth, true)].forEach((code) => {
+    [color(style.fg, depth, false, style.hue), color(style.bg, depth, true)].forEach((code) => {
       if (code) codes.push(code);
     });
-  } else if (hex(style.bg) && base && hex(base.bg) && contrast(style.bg, base.bg) >= 3) {
+  } else if (style.reverse || hex(style.bg) && base && hex(base.bg) && contrast(style.bg, base.bg) >= 3) {
     codes.push("7");
   }
   return "\x1b[" + codes.join(";") + "m";

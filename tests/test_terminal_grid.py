@@ -7,6 +7,10 @@ cursor and moves it the columns glibc's wcwidth gives the character (a
 table of its own, not grid.js's classes): every write must land
 in the grid's cell for it, and every frame show what the grid holds.
 Nothing leaves the process.
+
+And what says a state where colour is short (tui/remote/styles.js LIGHTS,
+theme.js, paint.js sgr): each light's glyph, the focus without colour, and
+the states' colours in xterm's 256, for every palette thermite ships.
 """
 
 import json
@@ -66,6 +70,40 @@ class TerminalGrid(unittest.TestCase):
     def test_a_cell_a_terminal_draws_wider_keeps_the_rest_of_the_row_in_place(self):
         # kitty draws the heart with VS16 two columns wide: the space after clears it, and a and b keep their columns.
         self.assertEqual(self.proof["wider"], ["  ab", []])
+
+    def test_no_two_states_of_a_light_share_a_glyph_and_each_takes_one_column(self):
+        lights = self.proof["lights"]
+        self.assertEqual(sorted(lights["glyphs"]), ["bad", "busy", "off", "ok", "stale", "unconfirmed"])
+        glyphs = [glyph for state in lights["glyphs"].values() for glyph in state]
+        self.assertEqual(len(set(glyphs)), len(glyphs), lights["glyphs"])
+        self.assertEqual(set(lights["columns"]), {1})
+        # A state the table lacks draws as off; only switching has a second glyph, for where motion is on.
+        self.assertEqual(lights["drawn"][-1], [lights["glyphs"]["off"][0], "led.off", lights["glyphs"]["off"][0]])
+        self.assertEqual([entry[1] for entry in lights["drawn"][:-1]], ["led." + name for name in lights["glyphs"]])
+        self.assertEqual([name for name, state in lights["glyphs"].items() if len(state) > 1], ["busy"])
+
+    def test_without_colour_every_state_is_told_apart_and_the_focus_is_reverse_video(self):
+        lights = self.proof["lights"]
+        self.assertEqual(sorted(lights["palettes"]), ["contrast dark", "contrast light", "thermite dark", "thermite light"])
+        for name, palette in lights["palettes"].items():
+            with self.subTest(palette=name):
+                # What a cell shows without colour is its glyph and its attributes: no two states the same.
+                shown = [(glyph, palette["mono"][state]) for state, glyphs in lights["glyphs"].items() for glyph in glyphs]
+                self.assertEqual(len(set(shown)), len(shown))
+                self.assertEqual(palette["mono"]["bad"], "[0;1m", "a problem is bold as well")
+                self.assertEqual(palette["unseen"], [], "focus styles that are not reverse video without colour")
+
+    def test_in_256_colours_on_switching_and_a_problem_are_colours_of_their_own(self):
+        for name, palette in self.proof["lights"]["palettes"].items():
+            with self.subTest(palette=name):
+                colors = palette["colors"]
+                told = [colors[state] for state in ("ok", "busy", "bad", "hotkey")]
+                self.assertEqual(len(set(told)), 4, colors)
+                self.assertEqual(colors["alert"], colors["bad"])
+                self.assertEqual(colors["unconfirmed"], colors["bad"])
+                # A state's colour is never one of the grays; a light that is off or stale has none.
+                self.assertEqual(sorted(palette["grays"]), ["off", "stale"])
+                self.assertEqual(colors["stale"], colors["off"])
 
     def test_random_frames_show_on_a_terminal_as_the_grid_holds_them(self):
         for run in self.proof["fuzz"]:

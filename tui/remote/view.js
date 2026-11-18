@@ -15,7 +15,7 @@
 "use strict";
 
 const { Grid, LOCK, box, inset, fit, wrap, length } = require("./grid");
-const { METER } = require("./theme");
+const { METER, LIGHTS, light } = require("./theme");
 const Cameras = require("./cameras");
 const Day = require("./day");
 const Topology = require("./topology");
@@ -29,12 +29,9 @@ const GLYPHS = {
   play: "\u25b6", pause: "\u2016", "play-pause": "\u25b6\u2016", stop: "\u25a0", rewind: "\u25c0\u25c0",
   forward: "\u25b6\u25b6", previous: "|\u25c0", next: "\u25b6|"
 };
-const LIT = "\u25cf";
-const UNLIT = "\u25cb";
-// A light read before the house was lost: neither on nor off.
-const STALE = "\u25cc";
-// A source chosen, sent and never read back: on its bubble, in its light's place.
-const UNCONFIRMED = "?";
+// A list's marks, the chosen row's and the others': the lights' on and off (styles.js LIGHTS).
+const LIT = LIGHTS.ok.glyph;
+const UNLIT = LIGHTS.off.glyph;
 const ARROW = { left: "\u2039", right: "\u203a" };
 // A block's left eighths, one to eight.
 const EIGHTHS = ["\u258f", "\u258e", "\u258d", "\u258c", "\u258b", "\u258a", "\u2589", "\u2588"];
@@ -203,15 +200,13 @@ function paragraph(g, x, y, width, text, style) {
   return y + wrap(text, Math.max(4, width)).length;
 }
 
+// A light's style and its glyph, each state its own (styles.js LIGHTS).
 function ledStyle(led) {
-  return "led." + (led || "off");
+  return light(led)[1];
 }
 
 function ledChar(led, blink) {
-  if (led === "stale") return STALE;
-  if (led === "unconfirmed") return UNCONFIRMED;
-  if (led === "busy") return blink ? UNLIT : LIT;
-  return led === "off" || led === "muted" || !led ? UNLIT : LIT;
+  return light(led, blink)[0];
 }
 
 // Whether the house is heard (session.js connected()). While it is not,
@@ -274,7 +269,7 @@ function header(frame, ctx, width) {
   // The connection's own light: reading until the session can be drawn, then whether the house is heard.
   const connected = ctx.ui.target.mock ? "mock" : !ctx.ui.ready ? "busy" : heard(ctx) ? "ok" : "bad";
   const room = ctx.ui.screen === "remote" && current ? [current.label + "  ", "header.title"] : null;
-  const led = remotes ? [ctx.ui.target.mock ? UNLIT : LIT, connected === "mock" ? "header.dim" : "header+" + ledStyle(connected)] : null;
+  const led = remotes ? (connected === "mock" ? [UNLIT, "header.dim"] : [ledChar(connected, ctx.ui.blink), "header+" + ledStyle(connected)]) : null;
   const target = remotes ? [" " + ctx.ui.target.label + " ", "header.dim"] : null;
   const theme = [" \u25d0 ", focused(ctx, "theme") ? "key.focus" : "header.hotkey",
     { kind: "theme", key: "theme", focus: true, label: "Switch to the " + (ctx.ui.theme === "dark" ? "light" : "dark") + " theme (t)" }];
@@ -601,8 +596,8 @@ function keyLabel(ctx, id) {
 
 function keyStyle(ctx, id, options) {
   // A key that is refused is dim; the focus still shows where n and N stand.
-  if (ctx.session.controlBlock()) return focused(ctx, "key:" + id) ? "dim key.focus" : "dim";
-  if (ctx.session.canPress && !ctx.session.canPress(id)) return focused(ctx, "key:" + id) ? "dim key.focus" : "dim";
+  if (ctx.session.controlBlock()) return focused(ctx, "key:" + id) ? "key.focus+dim" : "dim";
+  if (ctx.session.canPress && !ctx.session.canPress(id)) return focused(ctx, "key:" + id) ? "key.focus+dim" : "dim";
   const key = "key:" + id;
   if (ctx.ui.pressed[key]) return "key.pressed";
   if (focused(ctx, key)) return "key.focus";
@@ -652,7 +647,7 @@ function flat(g, x, y, text, width, style, hit) {
   const size = Math.max(3, width);
   const label = fit(text, Math.min(length(text), size));
   const pad = Math.floor((size - length(label)) / 2);
-  g.put(x, y, " ".repeat(pad) + label + " ".repeat(size - pad - length(label)), style.indexOf("focus") >= 0 ? "key.focus" : style, hit);
+  g.put(x, y, " ".repeat(pad) + label + " ".repeat(size - pad - length(label)), style, hit);
   return x + size;
 }
 
