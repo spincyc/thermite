@@ -12,6 +12,10 @@ const admin = { id: 1, username: "Admin", admin: true, can_edit: true, is_guest:
 const answer = (value, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => value, text: async () => JSON.stringify(value),
   clone() { return answer(value, status); }, headers: { get: () => null, getSetCookie: () => [] } });
 
+// The gateway's front door refusing in plain text: a status, and no JSON to read.
+const plain = (status, text) => ({ ok: false, status, json: async () => { throw new SyntaxError("not JSON"); }, text: async () => text,
+  clone() { return plain(status, text); }, headers: { get: () => null, getSetCookie: () => [] } });
+
 // A script in a context of its own, with fake timers and two fake clocks:
 // the wall clock (now, which can be stepped) and a monotonic one
 // (performance.now), which timers follow.
@@ -43,7 +47,7 @@ function sandbox(files) {
 
 // A gateway whose answers a test steers; a held route never answers until released.
 function gateway() {
-  const site = { calls: [], held: [], hold: new Set() };
+  const site = { calls: [], held: [], hold: new Set(), refuse: new Map() };
   site.fetch = async (url, init = {}) => {
     const route = new URL(url).pathname, method = (init.method || "GET").toUpperCase();
     site.calls.push({ method, route, init });
@@ -52,6 +56,7 @@ function gateway() {
       init.signal?.addEventListener("abort", () => { entry.aborted = true; reject(Object.assign(new Error("aborted"), { name: "AbortError" })); });
       site.held.push(entry);
     });
+    if (site.refuse.has(route)) return site.refuse.get(route);
     if (route === "/api/v1/security") return answer({ enabled: true, revision: 1, bootstrap_required: false, setup_available: false, guest_text: true, csrf });
     if (route === "/api/v1/session") return answer({ csrf });
     if (route === "/api/v1/me") return answer(admin);
@@ -256,6 +261,28 @@ function sources() {
     assert.equal(backend.localOf("tv").busy, null);
     backend.stop();
     proof.pairDeadline = { post_ms: 15000 };
+  }
+
+  {
+    // What the gateway refuses has words that say what happened to the
+    // command: a room held by another command (runtime_busy), one address's
+    // too many requests (429) and an overdue body (408), the last two in
+    // plain text from the gateway's front door.
+    const { site, client, Access } = accessClient();
+    const route = "/api/v1/rooms/den/commands", refused = {};
+    for (const [name, response] of Object.entries({ runtime_busy: answer({ error: "runtime_busy" }, 503),
+      too_many_requests: plain(429, "Too Many Requests"), request_overdue: plain(408, "Request Timeout") })) {
+      site.refuse.set(route, response);
+      const error = await client.command("den", "source", "off").catch(error => error);
+      assert.equal(error.code, name); assert.equal(error.status, response.status);
+      assert.equal(error.message, Access.MESSAGES[name]);
+      assert.notEqual(error.message, Access.MESSAGES.invalid_response);
+      refused[name] = error.message;
+    }
+    // Any other answer without JSON is still one the client cannot read.
+    site.refuse.set(route, plain(502, "Bad Gateway"));
+    assert.equal((await client.command("den", "source", "off").catch(error => error)).code, "invalid_response");
+    proof.refusals = refused;
   }
 
   process.stdout.write(JSON.stringify(proof));

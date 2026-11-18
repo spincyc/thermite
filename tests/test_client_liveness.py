@@ -46,6 +46,13 @@ class ClientLiveness(unittest.TestCase):
     def test_commands_lock_switches_and_all_off_are_aborted_when_unanswered(self):
         self.assertEqual(self.proof["commandDeadline"], {"command_ms": 15000, "all_off_ms": 30000, "lock_ms": 15000})
 
+    def test_what_the_gateway_refuses_says_that_nothing_was_sent_and_to_try_again(self):
+        refused = self.proof["refusals"]
+        self.assertEqual(sorted(refused), ["request_overdue", "runtime_busy", "too_many_requests"])
+        self.assertEqual(refused["runtime_busy"], "Another command was still running there, so this one was not sent. Try again.")
+        for words in refused.values():
+            self.assertRegex(words, r"was not (sent|taken)\. Try again")
+
     def test_the_pairing_page_replaces_its_statuses_with_each_snapshot(self):
         self.assertTrue(self.proof["pairSnapshot"])
 

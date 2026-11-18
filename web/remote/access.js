@@ -11,6 +11,11 @@
     room_state_unavailable: "Wait until the room reports a current source or Off before locking it.",
     room_state_changed: "The room changed before it could be locked. Check what it shows and try again.",
     runtime_unavailable: "The room could not be read. Try again when it is connected.",
+    // Refused before anything ran: another command held the room or its devices for 8 s (oh_access.service).
+    runtime_busy: "Another command was still running there, so this one was not sent. Try again.",
+    // The gateway's front door, which answers in plain text: one address's 41st request at once, and a request whose body was overdue.
+    too_many_requests: "thermite is answering too many requests from this address, so this one was not taken. Try again in a moment.",
+    request_overdue: "The request did not reach thermite whole in time, so it was not taken. Try again.",
     revision_conflict: "The room policy changed. Review its current state and try again.", last_admin: "Keep at least one active administrator.",
     invalid_password: "Choose a stronger password.", invalid_policy: "Check the schedule times, days and sources.",
     invalid_user: "Check the username and password.",
@@ -64,6 +69,8 @@
   // confirmMs). All off, up to two waves of rooms on the gateway's four
   // command workers (oh_identity.batches), has twice as long.
   const COMMAND_DEADLINE_MS = 15000;
+  // The gateway's front door refuses with a status and no code (oh_access.service Admission).
+  const REFUSALS = { 408: "request_overdue", 429: "too_many_requests" };
   function problem(code, status) {
     const error = new Error(MESSAGES[code] || "The action could not be completed.");
     error.code = Object.prototype.hasOwnProperty.call(MESSAGES, code) ? code : "access_unavailable";
@@ -339,7 +346,7 @@
       try { value = await response.json(); } catch (_) { /* reported below */ }
       if (check) stale(revision);
       if (check && response.status === 401 && !guestRefusal(value)) lost("session_expired");
-      if (value === null) throw problem(response.status === 401 ? "session_expired" : "invalid_response", response.status);
+      if (value === null) throw problem(response.status === 401 ? "session_expired" : REFUSALS[response.status] || "invalid_response", response.status);
       if (!response.ok) throw problem(response.status === 404 && ["/api/v1/session", "/api/v1/security"].includes(path) ? "access_not_configured" : value.error, response.status);
       return value;
     }

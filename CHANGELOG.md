@@ -7,6 +7,12 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A command refused because another was still running in its room now
+  says so, and that it was not sent. A request refused because one
+  address had too many open at once, or because it arrived too
+  slowly, says that it was not taken and to try again. These said
+  "The action could not be completed." and "The access service could
+  not answer."
 - Remotes: what has failed stays on the screen for as long as it
   lasts, where it was a message that left after two seconds.
   - While the house is not heard, the alert line says "Not connected
