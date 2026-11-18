@@ -236,10 +236,11 @@ thermite health --production
 
 The account and group entries should show 9001 (`getent passwd thermite-node`
 shows node_exporter's 9000), your new login should include
-group `thermite`, and status should show the expected services. The unified
-installer adopts recognized gateway units, preserving their existing private
-state, TLS and callback settings. Unknown ownership or unsafe overrides stop
-for review; an existing identity is never bootstrapped again.
+group `thermite`, and status should show the expected services. The
+installer replaces the gateway units it recognizes with those of the release
+it stages, on the identity state, TLS material and callback routes at their
+fixed paths under `access/`. Unknown ownership or unsafe overrides stop for
+review; an existing identity is never bootstrapped again.
 
 ## Service registration
 

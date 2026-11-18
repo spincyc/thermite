@@ -67,7 +67,8 @@ Install selects its current application release, prepares its private owner
 environment, and reconciles the site's application requirement under the one
 approval. When the release already matches, it makes no duplicate pin commit.
 It recreates a missing application cache from the verified release, reconnects
-the native services and adopts the installed gateway's identity and TLS state.
+the native services and stages a gateway release on the identity state and
+TLS material the installation holds.
 To retain a specific historical application, launch that exact verified release;
 to move the whole installation to current official source, use
 `thermite upgrade --config /path/to/private-site`.
@@ -158,10 +159,13 @@ verification. An upgrade runs it as one install transaction that sets the
 installed version aside first and either commits the new one or puts the
 installed one back in the same run; see
 [how an upgrade runs](installation.md#how-an-upgrade-runs).
-Existing identity, security settings, certificates and callback routes are
-adopted. The gateway's hosts, listening address and timezone come from the
-host on every run, and a certificate whose names no longer match is reissued
-by the same authority. A fresh gateway has no account until owner-authorized first
+The gateway's identity state, with its security settings, and its served
+certificate and verified callback routes stay at fixed paths under the
+installation's `access/` (`state/` and `inputs/`): every run stages a new
+release on them and takes nothing from the release it replaces. The gateway's
+hosts, listening address, port and timezone come from the host on every run,
+and a certificate whose names no longer match is reissued by the same
+authority. A fresh gateway has no account until owner-authorized first
 administrator setup on Security; it prints its HTTPS URL and the path of its
 private certificate authority's certificate, which each client trusts once.
 The authority lives in the site's `var/gateway/authority/`; see

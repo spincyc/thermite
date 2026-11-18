@@ -118,7 +118,7 @@ def openhab(use_sandbox: bool) -> sandbox.Http:
     else:
         host = deploy.load(render.AREA)[1]
         url, token_file = deploy.production_url(host), render.AREA / deploy.token_file(deploy.hostname())
-        hint = "bin/thermite install saves production's API token there (docs/deploy.md)"
+        hint = "bin/thermite install saves production's API token there (docs/installation.md)"
     if not token_file.is_file():
         raise OpenHABError(f"no API token in {token_file}: {hint}")
     return sandbox.Http(url, token=sandbox.read_token(token_file), timeout=10, allow_write=True)
