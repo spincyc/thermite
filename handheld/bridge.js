@@ -50,27 +50,6 @@ class Applied {
   }
 }
 
-// The backend as one session sees it: its own subscribe, so forgetting a
-// remote stops its session hearing the house.
-function facade(backend, subscriptions) {
-  const bound = new Map();
-  return new Proxy(backend, {
-    get(target, name) {
-      if (name === "subscribe") {
-        return (callback) => {
-          const stop = target.subscribe(callback);
-          subscriptions.push(stop);
-          return stop;
-        };
-      }
-      const value = Reflect.get(target, name, target);
-      if (typeof value !== "function") return value;
-      if (!bound.has(name)) bound.set(name, value.bind(target));
-      return bound.get(name);
-    }
-  });
-}
-
 function create(options) {
   const shared = options.shared;
   const backend = options.backend;
@@ -87,12 +66,11 @@ function create(options) {
 
   function add(entry) {
     if (remotes.has(entry.mac)) remove(entry.mac);
-    const subscriptions = [];
     const session = shared.Session.create(Object.assign({
-      backend: facade(backend, subscriptions), house: shared.house, layouts: shared.layouts, store: entry.store
+      backend: backend, house: shared.house, layouts: shared.layouts, store: entry.store
     }, timers));
     const remote = {
-      name: entry.name, mac: entry.mac, session, subscriptions,
+      name: entry.name, mac: entry.mac, session, unsubscribe: null,
       end: new Link.BridgeEnd({ key: entry.key, random: options.random }),
       ready: false, awake: false, applied: new Applied(), status: Object.assign({}, entry.status),
       // What the remote shows: the screen id it has (as it said, or as sent), and the audio sent.
@@ -102,7 +80,7 @@ function create(options) {
       stale: true, ack: null, toast: null, inputs: null, sleeping: false, removed: false
     };
     remotes.set(entry.mac, remote);
-    subscriptions.push(session.subscribe((event) => heard(remote, event)));
+    remote.unsubscribe = session.subscribe((event) => heard(remote, event));
     session.start().then(() => {
       if (remote.removed) return;
       remote.ready = true;
@@ -116,8 +94,10 @@ function create(options) {
     const remote = remotes.get(mac);
     if (!remote) return false;
     remote.removed = true;
-    remote.subscriptions.forEach((stop) => stop());
-    remote.session.closeDiagnostics();
+    // The bridge leaves the session, and the session the shared backend
+    // (stop() sends a volume it still held, which nothing here need hear).
+    remote.unsubscribe();
+    remote.session.stop();
     remotes.delete(mac);
     dirty.delete(remote);
     return true;

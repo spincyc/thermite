@@ -622,12 +622,24 @@ async function run(name, body) {
   await run("forget_stops_the_session", async () => {
     const state = world(shared.house);
     const a = await connected(state, MAC_A, KEY_A);
+    const b = await connected(state, MAC_B, KEY_B);
+    // The forgotten remote's session, watched from here: it shares the backend the other remote goes on using.
+    const session = state.bridge.remote(MAC_A).session, events = [];
+    session.subscribe((event) => events.push(event.type));
+    b.send({ bubble: "example_player" });
+    await settle(LATENCY * 4);
+    const before = events.length;
+    assert.ok(before > 0, "a session hears the house the other remote changed");
     assert.equal(state.bridge.remove(MAC_A), true);
     const frames = state.base.frames;
-    a.send({ bubble: "example_player" });
+    a.send({ bubble: "example_computer" });
     await settle();
     assert.equal(state.base.frames, frames);
     assert.equal(state.bridge.remote(MAC_A), null);
+    b.send({ bubble: "off" });
+    await settle(LATENCY * 4);
+    assert.equal(events.length, before, "a forgotten remote's session hears no more of the house");
+    assert.ok(state.base.frames > frames, "the other remote is still sent its screens");
     return {};
   });
 
