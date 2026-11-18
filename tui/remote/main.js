@@ -99,6 +99,8 @@ function clientLabel(hostname) {
 function assemble(args, env) {
   const options = env || {};
   const shared = options.shared || Shared.load();
+  // The sample house is files of its own, run only for --mock.
+  if (args.mock) Shared.mocks();
   const store = options.store || (args.state ? fileStore(args.state) : memoryStore());
   const Source = options.EventSource || EventSource;
   const environ = options.environ || process.env;
@@ -126,7 +128,7 @@ function assemble(args, env) {
   const audio = shared.Audio.create(Object.assign({ backend: backend, house, access, store: store, watchLocks: false }, later, clock));
   const music = speakers ? shared.Music.create(Object.assign({ access, house, store: store, watchLocks: false,
     backend: shared.MusicBackend.create(Object.assign(args.mock
-      ? { backend: "mock", latency: args.latency != null ? Number(args.latency) : undefined, speakers: shared.MusicBackend.speakersOf(house) }
+      ? { backend: "mock", latency: args.latency != null ? Number(args.latency) : undefined, house }
       : { backend: "gateway", access, base: args.url, EventSource: Events }, later, clock)) }, later, clock)) : null;
   const listen = shared.Listen.create(Object.assign({ audio, music, house, store: store }, later));
   const session = shared.Session.create(Object.assign({

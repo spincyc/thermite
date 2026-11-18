@@ -8,6 +8,8 @@ const assert = require("node:assert/strict"), fs = require("node:fs"), path = re
 const { clock } = require("./remote_dom");
 const house = JSON.parse(fs.readFileSync(0, "utf8"));
 const source = fs.readFileSync(path.resolve(__dirname, "../web/remote/alerts.js"), "utf8");
+// The sample feed, as a page asked for the mock loads it.
+const sample = fs.readFileSync(path.resolve(__dirname, "../web/remote/alerts-mock.js"), "utf8");
 const ROOM = house.rooms[0], DEVICE = ROOM.display;
 
 // The model with a feed whose next answers are queued: an object is
@@ -17,6 +19,7 @@ function feed() {
   const context = vm.createContext({ console, Promise, JSON, Math, Object, Array, Number, String, Boolean, Error, Set, Map,
     Date: class extends Date { static now() { return time.now(); } } });
   vm.runInContext(source, context, { filename: "alerts.js" });
+  vm.runInContext(sample, context, { filename: "alerts-mock.js" });
   const made = { time, Alerts: context.RemoteAlerts, queue: [], reads: 0, last: null };
   made.model = context.RemoteAlerts.create({ house, now: time.now, setTimeout: time.setTimeout, clearTimeout: time.clearTimeout,
     read() {

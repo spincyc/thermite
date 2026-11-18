@@ -270,27 +270,16 @@
         return false;
       } finally { clearTimeout(timer); if (!leaving) reporting = false; }
     }
-    const demo = { users: [{ id: 1, username: "Demo", admin: true, active: true }], policies: {} };
-    function demoRequest(path, method, value) {
-      const policy = /^\/api\/v1\/rooms\/([^/]+)\/policy$/.exec(path);
-      if (policy) {
-        const id = policy[1], old = demo.policies[id] || { room: id, revision: 0, config: null, can_edit: true, effective: { allowed: true, locked: false } };
-        if (method === "PUT") { if (value.revision !== old.revision) throw problem("revision_conflict", 409); demo.policies[id] = { ...old, revision: old.revision + 1, config: { ...value.config, room: id, timezone: "UTC", revision: old.revision + 1 } }; }
-        return Promise.resolve(demo.policies[id] || old);
-      }
-      const match = /^\/api\/v1\/users(?:\/(\d+))?$/.exec(path);
-      if (match) {
-        const list = demo.users, id = Number(match[1]);
-        if (method === "GET") return Promise.resolve({ users: JSON.parse(JSON.stringify(list)) });
-        const clean = { ...value }; delete clean.password;
-        if (method === "POST") { const item = { admin: false, active: true, ...clean, id: Math.max(0, ...list.map((entry) => entry.id)) + 1 }; list.push(item); return Promise.resolve(item); }
-        const item = list.find((entry) => entry.id === id);
-        if (!item) throw problem("invalid_response", 404);
-        if (method === "DELETE") item.active = false; else Object.assign(item, clean);
-        return Promise.resolve(item);
-      }
-      if (path === "/api/v1/logout") return Promise.resolve({ ok: true });
-      throw problem("access_not_configured", 404);
+    // The demo account and its answers are access-mock.js's, a file no phone
+    // loads: a page loads it when asked for the sample (navigation.js), the
+    // terminal with --mock. One for each client, made when first needed.
+    let demo = null;
+    function fake() {
+      if (demo) return demo;
+      const make = global.ThermiteMocks && global.ThermiteMocks.access;
+      if (!make) throw new Error("The demo account is not loaded. Open the page with ?backend=mock, which loads access-mock.js.");
+      demo = make({ problem, PERMISSIONS });
+      return demo;
     }
     const notify = (type, extra) => listeners.slice().forEach((fn) => fn({ type, user, security, ...extra }));
     function lost(code) {
@@ -374,7 +363,7 @@
     }
     async function loadSecurity() {
       if (legacy) return null;
-      if (mock) return security || (security = { enabled: true, bootstrap_required: false, setup_available: false, guest_text: true, guest_cameras: false });
+      if (mock) return security || (security = fake().security);
       if (!discovering) discovering = (async () => {
         const revision = authRevision, answer = await firstRead("/api/v1/security", false, true); stale(revision);
         security = securityStatus(answer);
@@ -385,7 +374,7 @@
     }
     async function ready() {
       if (legacy) return null;
-      if (mock) { await loadSecurity(); user = { id: 1, username: "Demo", admin: true, can_edit: true, is_guest: false, permissions: PERMISSIONS.slice() }; return user; }
+      if (mock) { await loadSecurity(); user = fake().user; return user; }
       if (ended) throw problem("login_required", 401);
       if (user) return user;
       if (!loading) loading = (async () => {
@@ -421,7 +410,7 @@
       await ready();
       if (legacy) throw problem("access_not_configured", 404);
       if (!client.accountsExist() && (/^\/api\/v1\/(users|tokens)(\/|$)/.test(path) || /\/(policy|lock)$/.test(path))) throw problem("auth_disabled", 403);
-      if (mock) return (config.mockRequest || demoRequest)(path, method || "GET", value);
+      if (mock) return (config.mockRequest || fake().request)(path, method || "GET", value);
       const init = { ...(options || {}), method: method || "GET", headers: { Accept: "application/json" } };
       if (value !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(value); }
       return data(path, init, true);
@@ -606,7 +595,7 @@
       async logout() {
         try {
           if (legacy) throw problem("access_not_configured", 404);
-          if (mock) return await demoRequest("/api/v1/logout");
+          if (mock) return await fake().request("/api/v1/logout");
           if (!token) { const session = await data("/api/v1/session"); csrf = session.csrf; }
           return await data("/api/v1/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }, true);
         } finally { token = null; lost("login_required"); }

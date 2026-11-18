@@ -28,6 +28,23 @@
     return global.document?.documentElement?.dataset?.thermiteHosted === "true";
   }
   function asset(name) { return (hosted() ? "/static/remote/" : "") + name; }
+  // What the sample fakes is in files of its own (*-mock.js), which no
+  // phone loads: a page names its own in its head before this script
+  // (<link rel="thermite-mock">), and they are written into it, to run in
+  // order before its deferred scripts, only for ?backend=mock or a source
+  // preview, which has no house (README.md).
+  function mocked(location = global.location) {
+    return new URLSearchParams(location?.search || "").get("backend") === "mock" || !hosted(location);
+  }
+  function loadMocks(document) {
+    if (!document || document.readyState !== "loading" || typeof document.write !== "function" || !mocked()) return;
+    document.querySelectorAll('link[rel="thermite-mock"]').forEach((link) => {
+      const address = link.getAttribute("href") || "";
+      // Only a file of this site's, as the generator writes its address.
+      if (/^(?:\/static\/remote\/)?[a-z-]+-mock\.js(?:\?v=[0-9a-f]+)?$/.test(address)) document.write('<script defer src="' + address + '"><\/script>');
+    });
+  }
+  loadMocks(global.document);
   function canonical(path) {
     const page = pages.find(entry => entry.path === path || "/static/remote/" + (entry.href === "./" ? "" : entry.href) === path
       || entry.id === "remotes" && path === "/static/remote/index.html");
@@ -51,7 +68,7 @@
     if (key && typeof target === "string" && /^[a-z][a-z0-9_]{0,79}$/.test(target)) params.set(key, target);
     return (hosted() ? page.path : page.href) + (params.size ? "?" + params.toString() : "");
   }
-  const api = { pages: Object.freeze(pages), allowed, href, hosted, canonical, asset };
+  const api = { pages: Object.freeze(pages), allowed, href, hosted, canonical, asset, mocked };
   global.ThermiteNavigation = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(globalThis);

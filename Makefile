@@ -11,7 +11,7 @@ check:
 check-identity:
 	@PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=lib DJANGO_SETTINGS_MODULE=oh_identity.test_settings $(PYTHON) -m django test oh_identity --noinput
 # The example house's pages in the system's Chromium, at a phone's and a
-# desktop's size: about twenty seconds, so not part of check. Skipped, with
+# desktop's size: about half a minute, so not part of check. Skipped, with
 # the reason, where there is no Chromium.
 check-browser:
 	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) -m unittest tests.browser_smoke

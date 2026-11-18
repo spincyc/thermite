@@ -169,7 +169,7 @@ class ListenPage(unittest.TestCase):
         """The codes and their words are the options the page was given:
         the alert says the device's label and the words, the log the words,
         and a state that is no code the last code's words. Once on the
-        sample backend, whose options are activity.js's copy, and once on a
+        sample backend, whose options are backend-mock.js's copy, and once on a
         house's own page with the committed activity.json, its codes
         arriving on the stream."""
         out = self.out["problems"]
@@ -195,8 +195,8 @@ class ListenPage(unittest.TestCase):
         self.assertIsNone(sample["quiet"][0])
 
     def test_the_previews_problem_words_are_the_scripts_own(self):
-        """A preview has no activity.json: activity.js carries a copy of the
-        codes and their words (PREVIEW_PROBLEMS), in the scripts' order,
+        """A preview has no activity.json: backend-mock.js carries a copy of the
+        codes and their words (PROBLEMS), in the scripts' order,
         since the last is what any other state says."""
         self.assertEqual([tuple(code[:2]) for code in self.out["problems"]["codes"]], list(CODES.items()))
 

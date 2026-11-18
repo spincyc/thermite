@@ -7,6 +7,13 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The web remote no longer sends the preview's sample house to every
+  phone. The fakes behind `?backend=mock` (the sample house, its
+  music library, Home's sample alerts, the sample pairing and the
+  demo account) are files of their own (`*-mock.js`) that a page
+  downloads only when opened with `?backend=mock`; `thermite remote
+  --mock` loads them the same way. Home's and Remotes' scripts are
+  about 39 kB smaller (9 kB as sent, compressed).
 - The clients say "accounts" where they said "authentication":
   Security is "Accounts and access" on Home and in the menu. Where
   no account exists yet, Cameras points to Security to create the

@@ -9,7 +9,7 @@ const WEB = path.join(__dirname, '..', 'web', 'remote');
 console.info = console.warn = () => {};
 const house = JSON.parse(fs.readFileSync(0, 'utf8'));
 globalThis.REMOTE_HOUSE = house;
-for (const name of ['navigation.js', 'remotes.js', 'backend.js', 'audio-session.js', 'music-backend.js', 'music-session.js',
+for (const name of ['navigation.js', 'remotes.js', 'backend.js', 'backend-mock.js', 'audio-session.js', 'music-backend.js', 'music-backend-mock.js', 'music-session.js',
   'listen-session.js', 'session.js']) {
   vm.runInThisContext(fs.readFileSync(path.join(WEB, name), 'utf8'), {filename: name});
 }
@@ -38,7 +38,7 @@ async function remote(options = {}) {
   const backend = recording(RemoteBackend.create(house, {backend: 'mock', latency: 4}));
   const audio = RemoteAudio.create({backend, house, watchLocks: false, access: options.access});
   // The mock plays the first of its speakers: options.playing puts that one first.
-  const speakers = MusicBackend.speakersOf(house).filter((spec) => !(options.unknown || []).includes(spec.id))
+  const speakers = MusicBackend.MockMusic.speakersOf(house).filter((spec) => !(options.unknown || []).includes(spec.id))
     .map((spec) => ((options.away || []).includes(spec.id) ? {...spec, away: true} : spec))
     .sort((a, b) => (b.id === options.playing) - (a.id === options.playing));
   const musicBackend = new MusicBackend.MockMusic({speakers, latency: 4});

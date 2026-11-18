@@ -20,14 +20,16 @@ from .auth import failure
 
 READ, GET, POST = ("GET", "HEAD"), ("GET",), ("POST",)
 #: The Home and Remotes pages (Remotes to watch and to listen) and every file
-#: they load. Account, Security, camera, pairing, site and administration
-#: pages stay on the HTTPS site.
+#: they load, with the sample's (*-mock.js) that they load for ?backend=mock.
+#: Account, Security, camera, pairing, site and administration pages stay on
+#: the HTTPS site.
 ASSETS = frozenset({
     "home.html", "index.html", "access-config.js", "access.js", "navigation.js", "appearance.js", "shell.js",
     "house.js", "remotes.js", "activity.js", "activity.json", "diagnostics.js", "diagnostics.json", "backend.js",
     "session.js", "log.js", "remote.js", "home.js", "alerts.js", "theme.css", "shell.css", "remote.css", "home.css",
     "audio-session.js", "music-backend.js", "music-session.js", "listen-session.js", "listen.js", "listen.css",
-    "manifest.webmanifest", "icon.svg", "mark.svg", "mark-light.svg", "apple-touch-icon.png"})
+    "manifest.webmanifest", "icon.svg", "mark.svg", "mark-light.svg", "apple-touch-icon.png",
+    "access-mock.js", "alerts-mock.js", "backend-mock.js", "music-backend-mock.js"})
 #: The routes, as urls.py writes them, a guest-listener request may use, and
 #: their methods. Anything else is not found. Opening another read or control
 #: to guests is one entry here.

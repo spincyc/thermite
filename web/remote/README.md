@@ -143,6 +143,19 @@ controls without sending commands. There `&choose=<source>` opens the room on
 that source, as the documentation's screenshot does; on a real house the page
 ignores it, so no link can switch a room.
 
+Everything the sample fakes is in files of its own, which a phone never
+downloads: `backend-mock.js` (the house), `music-backend-mock.js` (speakers
+and a library), `alerts-mock.js` (Home's alerts), `pair-mock.js` (pairing)
+and `access-mock.js` (the demo account). A page names the ones it can use in
+its head (`<link rel="thermite-mock" href="…">`, before `navigation.js`), and
+`navigation.js` loads them only for `?backend=mock` or a page opened from
+its sources. Each registers what it fakes; the script it stands in for
+(`backend.js`, `music-backend.js`, `alerts.js`, `pair.js`, `access.js`) takes
+it when asked for a mock, and says which file is missing when it is not
+there. The terminal remote loads them for `--mock`
+(`tui/remote/shared.js`). A new fake goes in a `*-mock.js` file, in `FILES`
+(`lib/oh_features/remote.py`) and in the head of each page that uses it.
+
 A page that hears nothing on its event stream for 15 s (the gateway sends a
 heartbeat every 5 s) reconnects it, and one shown again, such as the iPhone
 app back from the background, reconnects at once if its stream went silent.
@@ -187,7 +200,9 @@ whose heading says it in other words ("Site topology") marks its own.
 
 `make check-browser` holds the pages to this in a real browser: each of the
 example house's pages at a phone's and a desktop's size, behind the gateway's
-Content-Security-Policy header (`tests/browser_smoke.py`).
+Content-Security-Policy header (`tests/browser_smoke.py`). It also opens
+each page without `?backend=mock` and fails if a `*-mock.js` file is
+downloaded then.
 
 Added to an iPhone home screen, every page draws under the translucent status
 bar: the bar (or sidebar) pads itself by the safe-area inset and the remote

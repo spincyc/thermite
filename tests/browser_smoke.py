@@ -1,11 +1,13 @@
 """Every page of the example house in a real browser, as a phone and as a desktop.
 
 `make check-browser` runs this; `make check` does not, because it starts a
-browser and takes about twenty seconds. tests/browser_smoke.cjs drives the
+browser and takes about half a minute. tests/browser_smoke.cjs drives the
 system's Chromium (no package is installed) through the ten generated pages
 at 390x844 and 1440x900, served on loopback behind the gateway's
 Content-Security-Policy header with the sample backend, and says what each
-page did; the tests here say what it must not do.
+page did; the tests here say what it must not do. It opens each page once
+more as a phone does, without ?backend=mock, to see that none of the
+sample's files (*-mock.js) is downloaded then.
 
 Without a Chromium on PATH (or named by THERMITE_CHROMIUM), or with a Node
 older than 22, every test is skipped and says why. Where a skip would hide
@@ -14,6 +16,7 @@ makes it a failure.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -101,6 +104,16 @@ class BrowserSmoke(unittest.TestCase):
         for size in SIZES:
             self.assertTrue(self.pages["index.html"][size]["toast"], size)
         self.each("under", [])
+
+    def test_the_sample_house_is_downloaded_only_by_a_page_asked_for_it(self):
+        for page in PAGES:
+            named = sorted(re.findall(r'<link rel="thermite-mock" href="([^"]+)">', (AREA / "web/remote" / page).read_text()))
+            with self.subTest(page=page):
+                self.assertTrue(named, "every page has at least the demo account")
+                for size in SIZES:
+                    self.assertEqual(self.pages[page][size]["mocks"], named, size)
+                # As a phone opens it, without ?backend=mock: none of them.
+                self.assertEqual(self.pages[page]["plain"]["mocks"], [])
 
 
 if __name__ == "__main__":

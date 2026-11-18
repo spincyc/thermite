@@ -359,7 +359,7 @@
     const speakers = (house.speakerRooms || []).concat(house.rooms || []).some((room) => (room.speakers || []).length);
     const audio = global.RemoteAudio.create({ backend: options.backend, house: house, access: options.access, store: options.store, watchLocks: false });
     const musicBackend = speakers ? global.MusicBackend.create({ backend: options.mock ? "mock" : undefined, access: options.access,
-      active: options.active, speakers: global.MusicBackend.speakersOf(house) }) : null;
+      active: options.active, house: house }) : null;
     const music = musicBackend ? global.RemoteMusic.create({ backend: musicBackend, access: options.access, house: house,
       store: options.store, watchLocks: false }) : null;
     return {

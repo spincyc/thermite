@@ -8,7 +8,7 @@
 const fs = require('fs'), path = require('path'), vm = require('vm');
 const WEB = path.join(__dirname, '..', 'web', 'remote');
 console.info = console.warn = () => {};
-for (const name of ['navigation.js', 'remotes.js', 'backend.js', 'audio-session.js']) {
+for (const name of ['navigation.js', 'remotes.js', 'backend.js', 'backend-mock.js', 'audio-session.js']) {
   vm.runInThisContext(fs.readFileSync(path.join(WEB, name), 'utf8'), {filename: name});
 }
 const house = JSON.parse(fs.readFileSync(0, 'utf8'));

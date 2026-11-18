@@ -156,6 +156,7 @@ const Shared = require("./tui/remote/shared");
 console.info = () => {};
 (async () => {
   const shared = Shared.load(), house = JSON.parse(fs.readFileSync(0, "utf8"));
+  Shared.mocks();
   const backend = shared.Remote.create(house, { backend: "mock", latency: 0 });
   const session = shared.Session.create({ backend, house, layouts: shared.layouts, volume: "slider" });
   await session.start("example_east");
@@ -198,6 +199,7 @@ console.info = () => {};
 const HOLD = Number(process.argv[1]);
 (async () => {
   const shared = Shared.load(), house = JSON.parse(fs.readFileSync(0, "utf8")), Remote = shared.Remote;
+  Shared.mocks();
   assert.equal(Remote.heldMs(null, 6000), 6000);
   assert.equal(Remote.heldMs({ volume: {} }, 6000), 6000);
   assert.equal(Remote.heldMs(Remote.controlOf(house, "example_avr"), 6000), HOLD);

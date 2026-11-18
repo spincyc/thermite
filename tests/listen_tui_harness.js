@@ -19,6 +19,7 @@ const WIDTH = 110, HEIGHT = 70;
 // access client whose lockSummary says the rooms in locks are locked.
 function assemble(options = {}) {
   const shared = options.shared || Shared.load();
+  Shared.mocks();
   const parts = { backends: [], locks: new Set(options.locks || []) };
   const create = shared.MusicBackend.create;
   shared.MusicBackend = Object.assign({}, shared.MusicBackend, { create: (settings) => {

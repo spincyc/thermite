@@ -17,6 +17,10 @@
  *   small     at a phone's size, controls a thumb is meant to hit that are under 44 px
  *   under     fixed boxes in sight that overlap the bar or sidebar without being
  *             above it; Remotes is first made to show a toast
+ *   mocks     the sample's files (*-mock.js) the page downloaded
+ *
+ * and under "plain" the mocks of the page opened once more as a phone opens
+ * it, without ?backend=mock: none.
  *
  * It drives the system's Chromium over the DevTools protocol with Node's
  * own WebSocket (Node 22 or later): no package is installed. Exit status 77
@@ -68,6 +72,8 @@ function serve(root, policy) {
     const url = new URL(request.url, "http://127.0.0.1");
     const name = url.pathname.startsWith("/static/remote/") ? url.pathname.slice("/static/remote/".length) : null;
     const file = name && /^[A-Za-z0-9._-]+$/.test(name) ? path.join(root, name) : null;
+    // Each file asked for, so a look can say which of the sample's it downloaded.
+    if (name) server.asked.push(name);
     const headers = { "Content-Security-Policy": policy, "Cache-Control": "no-store" };
     if (!["GET", "HEAD"].includes(request.method) || !file || !fs.existsSync(file)) {
       response.writeHead(404, Object.assign({ "Content-Type": "application/json" }, headers));
@@ -77,6 +83,7 @@ function serve(root, policy) {
     response.writeHead(200, Object.assign({ "Content-Type": TYPES[path.extname(file)] || "application/octet-stream" }, headers));
     response.end(request.method === "HEAD" ? undefined : fs.readFileSync(file));
   });
+  server.asked = [];
   return new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", () => resolve(server)); });
 }
 
@@ -175,7 +182,12 @@ function probe() {
     small, wide, under, csp: window.__csp || [], toast: Boolean(document.querySelector(".toast.is-visible")) };
 }
 
-async function look(tools, origin, page, size, shots) {
+// One page at one size, asked for the sample house. Without `sample` it is
+// opened as a phone opens it and only what it downloaded is told: there is
+// no gateway behind it to draw anything from.
+async function look(tools, server, page, size, shots, sample = true) {
+  const origin = "http://127.0.0.1:" + server.address().port;
+  const mocks = () => [...new Set(server.asked.filter((name) => name.endsWith("-mock.js")))].sort();
   const [width, height] = SIZES[size], phone = size === "phone";
   const { targetId } = await tools.send("Target.createTarget", { url: "about:blank" });
   const { sessionId } = await tools.send("Target.attachToTarget", { targetId, flatten: true });
@@ -194,9 +206,11 @@ async function look(tools, origin, page, size, shots) {
     await tools.send("Emulation.setTouchEmulationEnabled", phone ? { enabled: true, maxTouchPoints: 5 } : { enabled: false }, sessionId);
     await tools.send("Page.addScriptToEvaluateOnNewDocument", { source:
       "window.__csp = []; document.addEventListener('securitypolicyviolation', (event) => window.__csp.push(event.violatedDirective + ' ' + event.blockedURI));" }, sessionId);
-    await tools.send("Page.navigate", { url: origin + "/static/remote/" + page + "?backend=mock" }, sessionId);
+    server.asked.length = 0;
+    await tools.send("Page.navigate", { url: origin + "/static/remote/" + page + (sample ? "?backend=mock" : "") }, sessionId);
     await within(fired, LOAD_MS, "loading " + page);
     await wait(SETTLE_MS);
+    if (!sample) return { mocks: mocks() };
     // A key no page acts on but Remotes, whose sample room is off: it answers
     // with a toast, which the probe then finds where the bar is or clear of it.
     for (const type of ["keyDown", "keyUp"]) await tools.send("Input.dispatchKeyEvent", { type, key: "ArrowUp", code: "ArrowUp", windowsVirtualKeyCode: 38 }, sessionId);
@@ -207,7 +221,7 @@ async function look(tools, origin, page, size, shots) {
       const shot = await tools.send("Page.captureScreenshot", { format: "png" }, sessionId);
       fs.writeFileSync(path.join(shots, page.replace(/\.html$/, "") + "-" + size + ".png"), Buffer.from(shot.data, "base64"));
     }
-    return Object.assign(answer.result.value, { errors });
+    return Object.assign(answer.result.value, { errors, mocks: mocks() });
   } finally {
     stop();
     await tools.send("Target.closeTarget", { targetId }).catch(() => {});
@@ -240,10 +254,11 @@ async function main() {
   try {
     tools = devtools(await browser.address);
     await tools.opened;
-    const origin = "http://127.0.0.1:" + server.address().port, out = { browser: binary, pages: {} };
+    const out = { browser: binary, pages: {} };
     for (const page of pages) {
       out.pages[page] = {};
-      for (const size of Object.keys(SIZES)) out.pages[page][size] = await look(tools, origin, page, size, shots);
+      for (const size of Object.keys(SIZES)) out.pages[page][size] = await look(tools, server, page, size, shots);
+      out.pages[page].plain = await look(tools, server, page, "phone", null, false);
     }
     // Asked to close, the browser takes its other processes with it.
     await tools.send("Browser.close").catch(() => {});

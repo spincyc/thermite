@@ -20,6 +20,7 @@ const vectors = require(path.join(area, "handheld/vectors.json"));
 
 console.info = console.log = () => {};
 const shared = Shared.load();
+Shared.mocks();
 const layouts = shared.layouts;
 const LATENCY = 4;
 const turn = () => new Promise((resolve) => setImmediate(resolve));

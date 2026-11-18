@@ -67,6 +67,8 @@ function clientLabel(hostname) {
 function assemble(args, env) {
   const options = env || {};
   const shared = options.shared || Shared.load();
+  // The sample house is files of its own, run only for --mock.
+  if (args.mock) Shared.mocks();
   const Source = options.EventSource || EventSource;
   const environ = options.environ || process.env;
   const access = args.mock ? shared.Access.create({ mock: true, base: "http://127.0.0.1" })

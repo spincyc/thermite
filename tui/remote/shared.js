@@ -5,7 +5,7 @@
  * the page runs them, so the terminal remote and the page share one house,
  * one set of remotes, one backend, one session, one pairing backend and
  * one Listen over the device's own session and Music Assistant's. Nothing
- * of them is copied.
+ * of them is copied. The sample's files (*-mock.js) run only for --mock.
  */
 "use strict";
 
@@ -16,6 +16,19 @@ const vm = require("vm");
 const WEB = path.join(__dirname, "..", "..", "web", "remote");
 const SCRIPTS = ["navigation.js", "access.js", "house.js", "remotes.js", "activity.js", "diagnostics.js", "backend.js", "audio-session.js", "session.js", "pair.js",
   "music-backend.js", "music-session.js", "listen-session.js"];
+
+// The sample house, its music, its pairing and its demo account
+// (web/remote/*-mock.js) are run only where a mock is asked for: thermite
+// tui --mock, and a test. The scripts above make their mocks of them when
+// first asked, so these may run before or after load().
+const MOCKS = ["access-mock.js", "backend-mock.js", "music-backend-mock.js", "pair-mock.js"];
+
+function mocks() {
+  MOCKS.forEach((name) => {
+    const file = path.join(WEB, name);
+    vm.runInThisContext(fs.readFileSync(file, "utf8"), { filename: file });
+  });
+}
 
 function load(dir) {
   const from = dir || WEB;
@@ -40,4 +53,4 @@ function load(dir) {
   };
 }
 
-module.exports = { WEB, SCRIPTS, load };
+module.exports = { WEB, SCRIPTS, MOCKS, load, mocks };

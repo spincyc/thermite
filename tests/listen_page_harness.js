@@ -11,8 +11,9 @@ const {clock, Document} = require('./remote_dom');
 const WEB = path.join(__dirname, '..', 'web', 'remote');
 const house = JSON.parse(fs.readFileSync(0, 'utf8'));
 const [MINI, OWNED, MIXED, WATCH, AMP, DEN, PATIO_MINI, PATIO] = process.argv.slice(2);
-// The scripts a page loads, but the house (stdin's) and, unless asked for, the shell's frame.
-const scripts = (html, shell) => [...fs.readFileSync(path.join(WEB, html), 'utf8').matchAll(/<script[^>]*\ssrc="([^"]+)"/g)].map((match) => match[1])
+// The scripts a page loads, but the house (stdin's) and, unless asked for, the shell's frame: with the sample's
+// files it names (rel="thermite-mock"), which navigation.js loads for a page opened from its sources, as here.
+const scripts = (html, shell) => [...fs.readFileSync(path.join(WEB, html), 'utf8').matchAll(/<(?:script[^>]*\ssrc|link rel="thermite-mock" href)="([^"]+)"/g)].map((match) => match[1])
   .filter((name) => !['house.js', 'access-config.js'].concat(shell ? [] : ['shell.js']).includes(name));
 
 // An access client whose only lock is room's, as listen_session_harness.js's;
@@ -861,7 +862,7 @@ async function alerts(out) {
 // A device's problem is a code, and the page says the code's words after
 // the device's label: each code of the options the page was given, in the
 // alert and in the log; a state that is no code says the last code's words.
-// First the sample backend, whose options are activity.js's own copy; then
+// First the sample backend, whose options are backend-mock.js's own copy; then
 // a house's own page, whose options are its activity.json's (here the
 // committed sample's) and whose codes arrive on its stream.
 async function problems(out) {

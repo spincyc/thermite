@@ -23,7 +23,9 @@ After a change under `web/remote`, also run `make check-browser`. It opens
 every page of the example house in the system's Chromium at 390x844 and at
 1440x900, behind the gateway's Content-Security-Policy header and with the
 sample backend, and fails on a policy violation, an error, a page that scrolls
-sideways, a control under 44 pixels on the phone, or anything painted under
-the bar (`tests/browser_smoke.py`). It installs nothing, takes about twenty
-seconds and is not part of `make check`; without Chromium, or with Node.js
-older than 22, it skips and says why. The nightly Boot workflow runs it.
+sideways, a control under 44 pixels on the phone, anything painted under
+the bar, or a page that downloads the sample's files (`*-mock.js`) without
+being asked for the sample (`tests/browser_smoke.py`). It installs nothing,
+takes about half a minute and is not part of `make check`; without Chromium,
+or with Node.js older than 22, it skips and says why. The nightly Boot
+workflow runs it.

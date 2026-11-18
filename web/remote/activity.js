@@ -32,14 +32,6 @@
     if (!codes.length) return clean(value, 160);
     return clean(options[own(options, value) ? value : codes[codes.length - 1]], 160);
   }
-  // The sample's codes and words, as a generated house's activity.json
-  // gives them to a served page; a preview has only this copy, which
-  // tests/test_listen_page.py holds to oh_integrations._commands.CODES.
-  const PREVIEW_PROBLEMS = {
-    unreachable: "cannot be reached", no_answer: "does not answer", refused: "refused the command", busy: "is busy",
-    not_ready: "is not ready for that command", auth: "is not paired or refuses openHAB",
-    protocol: "answered in a way openHAB does not understand", other: "has a problem"
-  };
   function numeric(value) {
     return typeof value === "string" && /^(?:\d+(?:\.\d+)?|\.\d+)$/.test(value) ? Number(value) : NaN;
   }
@@ -164,30 +156,5 @@
     }
     return { accept, seed };
   }
-  function preview(house) {
-    const items = Object.create(null);
-    (house.rooms || []).forEach((room) => {
-      const options = { off: "Off" };
-      room.sources.forEach((id) => { options[id] = house.sources[id].label; });
-      items["loc_" + room.id + "_source"] = { label: "Source", room: room.label, kind: "enum", options, states: true, commands: true };
-    });
-    Object.keys(house.devices || {}).forEach((id) => {
-      const device = house.devices[id];
-      const control = device.control || {};
-      if (device.problem) items[device.problem] = { label: "Problem", device: device.label,
-        kind: "problem", states: true, commands: false, options: Object.assign({}, PREVIEW_PROBLEMS) };
-      for (const field of ["power", "mute", "key"]) {
-        if (control[field]) items[control[field]] = { label: field, device: device.label,
-          kind: field === "key" ? "key" : "switch", states: field !== "key", commands: true };
-      }
-      if (control.volume) items[control.volume.item] = { label: "Volume", device: device.label, kind: "volume",
-        states: true, commands: true, min: control.volume.min, max: control.volume.max, step: control.volume.step,
-        unit: control.volume.unit };
-      if (control.input) items[control.input.item] = { label: "Input", device: device.label, kind: "enum",
-        states: true, commands: true, options: Object.fromEntries(control.input.options) };
-    });
-    items.house_all_off = { label: "All off", kind: "switch", states: false, commands: true };
-    return { version: 1, items };
-  }
-  global.RemoteActivity = { create, clean, preview, problemWords };
+  global.RemoteActivity = { create, clean, problemWords };
 })(globalThis);
