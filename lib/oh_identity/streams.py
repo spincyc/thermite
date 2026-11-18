@@ -39,6 +39,11 @@ clock = time.monotonic
 # MAX_REQUESTS); the total leaves over half of them for ordinary requests.
 # Over plain HTTP (the Guest listener) a browser allows six connections per
 # origin across its tabs, so one stream per page leaves room for requests.
+# The cap counts a peer's streams on any HTTP version and is above that six:
+# a peer that holds six over HTTP/1.1 is admitted, and the critical alert
+# ThermiteRemoteStarved says so (oh_metrics/alerts.py HTTP1_CONNECTIONS). A
+# cap below it would refuse the sixth stream and the alert could never fire:
+# oh_identity/tests/test_stream_limits.py holds the two together.
 PEER_STREAMS = 8
 TOTAL_STREAMS = 48
 ERROR = b'data: {"type":"unavailable","error":"runtime_unavailable"}\n\n'

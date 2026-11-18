@@ -102,7 +102,10 @@ OFF = "off"
 #: node_exporter is scraped every 30, so a healthy one reads 40 old at most
 #: and one whose service is restarting a little over two minutes.
 TEXTFILE_STALE = 120
-#: A browser opens at most six HTTP/1.1 connections to one origin.
+#: A browser opens at most six HTTP/1.1 connections to one origin. The
+#: gateway admits one peer at least that many event streams
+#: (oh_identity/streams.py PEER_STREAMS), or ThermiteRemoteStarved could
+#: never fire: oh_identity/tests/test_stream_limits.py holds the two together.
 HTTP1_CONNECTIONS = 6
 #: The client events (oh_access.metrics.CLIENT_KINDS) that are a remote
 #: giving up on the gateway, and those that are its event stream failing:

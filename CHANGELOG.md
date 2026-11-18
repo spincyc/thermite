@@ -7,6 +7,9 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A test holds the gateway's cap on one address's event streams to the
+  alert that reads it: a cap lowered below a browser's six HTTP/1.1
+  connections would have kept ThermiteRemoteStarved from ever firing.
 - Alerts: a device that fails while its room uses it stays that room's
   failure. A room's devices were required only while its source readback
   named a source that uses them, and a device that stops answering takes

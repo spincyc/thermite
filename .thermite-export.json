@@ -239,6 +239,7 @@
     "lib/oh_identity/tests/test_room_history.py",
     "lib/oh_identity/tests/test_security_headers.py",
     "lib/oh_identity/tests/test_shared_zone_source.py",
+    "lib/oh_identity/tests/test_stream_limits.py",
     "lib/oh_identity/tests/test_telemetry.py",
     "lib/oh_identity/tests/test_trail.py",
     "lib/oh_identity/tests/test_transport.py",
