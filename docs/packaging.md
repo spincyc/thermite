@@ -39,7 +39,7 @@ commissioning hardware. Init creates no account or service and does not
 initialize or publish Git.
 
 Run `thermite install --config /path/to/private-site` from any directory.
-Use `--config DIR` to select a site; `--site DIR` remains an alias.
+Use `--config DIR` to select a site.
 Access service commands name their release's service descriptor with
 `--descriptor FILE`, so `--config` means the site in every command.
 `THERMITE_SITE` or working inside the site also selects it. The application

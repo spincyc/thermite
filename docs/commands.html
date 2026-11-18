@@ -105,7 +105,7 @@ this program:
   completion           print a completion script for bash, zsh or fish
 
 switches that mean the same in every verb that has them:
-  --config DIR                      select private configuration (--site is an alias; also THERMITE_SITE)
+  --config DIR                      select private configuration (also THERMITE_SITE)
   --json                            print the report as JSON
   -n, --dry-run                     report what it would do; change nothing
   --check                           change nothing; exit 1 if what it writes is stale
@@ -144,21 +144,20 @@ examples:
 Create a separate private site, or explicitly select an installed upgrade.
 
 positional arguments:
-  directory             new private site directory, or the existing site for --upgrade
+  directory      new private site directory, or the existing site for --upgrade
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
-  --empty               start with no rooms or devices instead of the fictional example
-                        house
-  --upgrade             update the release pin and ignore rules; preserve configuration
-                        and state
-  --json                print the report as JSON
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
+  --empty        start with no rooms or devices instead of the fictional example house
+  --upgrade      update the release pin and ignore rules; preserve configuration and
+                 state
+  --json         print the report as JSON
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite init ~/my-site           write a fictional private site; start no service
@@ -176,13 +175,13 @@ output, where a file an earlier generate wrote that nothing generates now is
 removed; any other file there stops the check.
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite check --config /path/to/private-site
@@ -208,19 +207,18 @@ wrote it) or lies in conf/html/remote/, which the remote page&#x27;s copies fill
 whole, and only reports any other.
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
-  --check               change nothing; exit 1 if conf/, metrics/ or deploy/ is stale
-  --prune               also remove files under conf/, metrics/ and deploy/ with the
-                        generated header, or in conf/html/remote/, that nothing
-                        generates now
-  --house FILE          the house file (default: instance/devices.yaml)
-  --conf DIR            the runtime conf directory (default: conf/)
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
+  --check        change nothing; exit 1 if conf/, metrics/ or deploy/ is stale
+  --prune        also remove files under conf/, metrics/ and deploy/ with the generated
+                 header, or in conf/html/remote/, that nothing generates now
+  --house FILE   the house file (default: instance/devices.yaml)
+  --conf DIR     the runtime conf directory (default: conf/)
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
   0  conf/, metrics/ and deploy/ are what the house file, the host file and
@@ -241,16 +239,16 @@ examples:
 Check instance/devices.yaml, and that conf/ agrees with it.
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
-  --house FILE          the house file (default: instance/devices.yaml)
-  --conf DIR            the runtime conf directory (default: conf/)
-  --json                print the report as JSON
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
+  --house FILE   the house file (default: instance/devices.yaml)
+  --conf DIR     the runtime conf directory (default: conf/)
+  --json         print the report as JSON
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
   0  the house file is valid and conf/ agrees with it
@@ -280,13 +278,13 @@ if either finds anything:
     defines.
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite lint                     scan the area&#x27;s files Git has or would add, and check the docs&#x27; make targets
@@ -307,22 +305,22 @@ test runtime, reports each, and exits with the worst status. Then
 conf/ itself). An action&#x27;s own switches go after it: thermite help test boot.
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
-  --timeout SECONDS     seconds to wait for each test&#x27;s runtime (default: 300)
-  --house FILE          the house file (default: instance/devices.yaml)
+  -h, --help         show this help message and exit
+  --config DIR       use this private configuration directory
+  --timeout SECONDS  seconds to wait for each test&#x27;s runtime (default: 300)
+  --house FILE       the house file (default: instance/devices.yaml)
 
 actions:
   ACTION
-    boot                boot conf/ on a test runtime and report how it loads
-    routing             the room Source selectors end to end, against simulated matrices
-    controls            receiver, streamer, projector, TV and audio page controls, plus
-                        Sonos Item contracts, against stand-ins
+    boot             boot conf/ on a test runtime and report how it loads
+    routing          the room Source selectors end to end, against simulated matrices
+    controls         receiver, streamer, projector, TV and audio page controls, plus
+                     Sonos Item contracts, against stand-ins
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet        print only errors
+  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
+  --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
   0  every test passed
@@ -587,25 +585,23 @@ from the distribution template when empty), openhab.pid, console.log,
 api-token and admin-password.
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
 
 actions:
   ACTION
-    fetch               download, verify (sha256 from versions.json) and extract JRE +
-                        distribution
-    start               start the sandbox in the background and wait for REST
-    reload              refresh var/sandbox/conf from conf/, in the mode the sandbox
-                        started in
-    stop                stop gracefully (SIGTERM), SIGKILL after --timeout
-    status              report whether the sandbox runs and REST answers (exit 3 if
-                        stopped)
-    logs                show userdata/logs/openhab.log
+    fetch        download, verify (sha256 from versions.json) and extract JRE +
+                 distribution
+    start        start the sandbox in the background and wait for REST
+    reload       refresh var/sandbox/conf from conf/, in the mode the sandbox started in
+    stop         stop gracefully (SIGTERM), SIGKILL after --timeout
+    status       report whether the sandbox runs and REST answers (exit 3 if stopped)
+    logs         show userdata/logs/openhab.log
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 REST authentication:
   runtime 5 lets anonymous clients use &#x27;user&#x27; endpoints (implicit user role)
@@ -822,7 +818,7 @@ only use --dry-run; they never run sudo.
 
 options:
   -h, --help                    show this help message and exit
-  --config, --site DIR          use this private configuration directory
+  --config DIR                  use this private configuration directory
   -n, --dry-run                 report what it would do; change nothing
   --clean                       delete native state and local API/Grafana credential
                                 copies, then reinstall; pairings are lost
@@ -918,7 +914,7 @@ host. Run as your ordinary user. Use -v for details. Agents only use --dry-run.
 
 options:
   -h, --help                    show this help message and exit
-  --config, --site DIR          use this private configuration directory
+  --config DIR                  use this private configuration directory
   -n, --dry-run                 report what it would do; change nothing
   --runtime-token-file RUNTIME_TOKEN_FILE
                                 advanced: import an existing internal runtime API token
@@ -981,16 +977,15 @@ only reads: it reports what it would do. An agent uses only that: agents
 never run sudo.
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
-  -n, --dry-run         report what it would do; change nothing
-  --purge               also remove runtime/ and access/, the images and every
-                        transaction
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
+  -n, --dry-run  report what it would do; change nothing
+  --purge        also remove runtime/ and access/, the images and every transaction
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
   0  committed, or nothing is installed here
@@ -1017,22 +1012,22 @@ application release. The old partial-conf deployment switches are reserved
 for the installer&#x27;s internal phase and are not a separate deployment path.
 
 positional arguments:
-  REV                   the commit (default: HEAD)
+  REV            the commit (default: HEAD)
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
-  -n, --dry-run         report what it would do; change nothing
-  --yes                 approve the ownership handoff for this invocation;
-                        install/upgrade use their run approval
-  --force               install a conf thermite test boot has not passed on here
-  --state DIR           the runtime state (default: runtime/ in instance/host.yaml&#x27;s
-                        root, /srv/thermite)
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
+  -n, --dry-run  report what it would do; change nothing
+  --yes          approve the ownership handoff for this invocation; install/upgrade use
+                 their run approval
+  --force        install a conf thermite test boot has not passed on here
+  --state DIR    the runtime state (default: runtime/ in instance/host.yaml&#x27;s root,
+                 /srv/thermite)
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite install --config /path/to/private-site
@@ -1060,18 +1055,18 @@ state as it was before the last upgrade, see thermite revert and
 docs/installation.md#update-or-remove. Runtime data stays as it is.
 
 positional arguments:
-  COMMIT                the commit to install (default: the one deployed before the
-                        current one)
+  COMMIT         the commit to install (default: the one deployed before the current
+                 one)
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
-  -n, --dry-run         report what it would do; change nothing
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
+  -n, --dry-run  report what it would do; change nothing
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
   0  committed and verified
@@ -1115,14 +1110,14 @@ the first transaction on a host installed before the install engine.
 thermite rollback installs an earlier site commit without touching state.
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
-  -n, --dry-run         report what it would do; change nothing
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
+  -n, --dry-run  report what it would do; change nothing
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
   0  committed: the previous version runs again, with its state
@@ -1157,16 +1152,16 @@ this version and any upgrade transaction that has not finished, and the
 last deploys (thermite history lists more).
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
-  --json                print the report as JSON
-  --state DIR           the runtime state (default: runtime/ in instance/host.yaml&#x27;s
-                        root, /srv/thermite)
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
+  --json         print the report as JSON
+  --state DIR    the runtime state (default: runtime/ in instance/host.yaml&#x27;s root,
+                 /srv/thermite)
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
   0  what HEAD (or the selected commit) holds is deployed, unchanged, and
@@ -1211,18 +1206,18 @@ have no details. Each deploy also writes a start and an end line to the
 journal: journalctl -t thermite-deploy.
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
-  --last N              the last N deploys; 0 for every one (default: 10)
-  --details             also what each deploy changed, reloaded, backed up and activated
-  --json                print the report as JSON
-  --state DIR           the runtime state (default: runtime/ in instance/host.yaml&#x27;s
-                        root, /srv/thermite)
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
+  --last N       the last N deploys; 0 for every one (default: 10)
+  --details      also what each deploy changed, reloaded, backed up and activated
+  --json         print the report as JSON
+  --state DIR    the runtime state (default: runtime/ in instance/host.yaml&#x27;s root,
+                 /srv/thermite)
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite history                  the last 10 deploys here
@@ -1271,7 +1266,7 @@ health checks do; they remain strict.
 
 options:
   -h, --help                   show this help message and exit
-  --config, --site DIR         use this private configuration directory
+  --config DIR                 use this private configuration directory
   --production                 production runtime on this host
   --sandbox                    the sandbox, http://127.0.0.1:13616 (thermite sandbox)
   --url URL                    runtime at URL, e.g. http://thermite.example:13602
@@ -1321,15 +1316,15 @@ examples:
 List the UniFi DHCP reservations instance/devices.yaml needs.
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
-  --csv                 print CSV: alias, mac, ip
-  --house FILE          the house file (default: instance/devices.yaml)
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
+  --csv          print CSV: alias, mac, ip
+  --house FILE   the house file (default: instance/devices.yaml)
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
   0  every device with its own address has a reservation
@@ -1359,7 +1354,7 @@ apply when nobody is watching.
 
 options:
   -h, --help             show this help message and exit
-  --config, --site DIR   use this private configuration directory
+  --config DIR           use this private configuration directory
   --apply                send the settings to the matrices (without it: only show them)
   --device ID            only this device id
   --address HOST[:PORT]  talk to this address instead of the device&#x27;s ip (a simulator);
@@ -1386,19 +1381,19 @@ examples:
 Export the Control4 project read-only and compare it with devices.yaml.
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
 
 actions:
   ACTION
-    setup               create build/control4-venv with the pinned pyControl4
-    fetch               read the Director&#x27;s items (prompts for the account)
-    summary             rooms, classes and devices.yaml stubs
+    setup        create build/control4-venv with the pinned pyControl4
+    fetch        read the Director&#x27;s items (prompts for the account)
+    summary      rooms, classes and devices.yaml stubs
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite control4                 set up and fetch as needed, then the summary
@@ -1470,20 +1465,20 @@ examples:
 Scan the LAN read-only and compare what answers with instance/devices.yaml.
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
-  --no-ping             use the neighbour table only; do not ping the network
-  --quick               listen for device announcements for less time
-  --network CIDR        the network to scan (default: this host&#x27;s, on its default route)
-  --save                write scan.json under var/discovery/&lt;UTC time&gt;/
-  --output DIR          write scan.json in DIR
-  --house FILE          the house file (default: instance/devices.yaml)
-  --json                print the report as JSON
+  -h, --help      show this help message and exit
+  --config DIR    use this private configuration directory
+  --no-ping       use the neighbour table only; do not ping the network
+  --quick         listen for device announcements for less time
+  --network CIDR  the network to scan (default: this host&#x27;s, on its default route)
+  --save          write scan.json under var/discovery/&lt;UTC time&gt;/
+  --output DIR    write scan.json in DIR
+  --house FILE    the house file (default: instance/devices.yaml)
+  --json          print the report as JSON
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet     print only errors
+  -v, --verbose   also print, on stderr, the commands and HTTP requests it runs
+  --no-color      no color in what it prints (as NO_COLOR=1 does)
 
 It pings every address of this host&#x27;s network only when that network is a
 /22 or narrower; name a wider one with --network to ping it.
@@ -1536,26 +1531,26 @@ Pair a device with thermite, as its integration in the house file
     page, through the Apple TV helper (thermite apple-tv).
 
 positional arguments:
-  DEVICE                the device&#x27;s id in the house file
-  CODE                  the code the device shows: a Sony TV&#x27;s four digits, an Android
-                        TV&#x27;s six letters and digits (omit to ask the device for them)
+  DEVICE             the device&#x27;s id in the house file
+  CODE               the code the device shows: a Sony TV&#x27;s four digits, an Android TV&#x27;s
+                     six letters and digits (omit to ask the device for them)
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
-  --check               change nothing; exit 1 if a Sony TV&#x27;s pairing (DEVICE&#x27;s, or any
-                        one&#x27;s) is stale
-  --production          production thermite on this host, with the API token
-                        bin/thermite install saved (default)
-  --sandbox             the sandbox, and its Android TV pairings
-  --house FILE          the house file (default: instance/devices.yaml)
-  --timeout SECONDS     seconds to wait for an Android TV to come ONLINE after its code
-                        (default: 30)
+  -h, --help         show this help message and exit
+  --config DIR       use this private configuration directory
+  --check            change nothing; exit 1 if a Sony TV&#x27;s pairing (DEVICE&#x27;s, or any
+                     one&#x27;s) is stale
+  --production       production thermite on this host, with the API token bin/thermite
+                     install saved (default)
+  --sandbox          the sandbox, and its Android TV pairings
+  --house FILE       the house file (default: instance/devices.yaml)
+  --timeout SECONDS  seconds to wait for an Android TV to come ONLINE after its code
+                     (default: 30)
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet        print only errors
+  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
+  --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
   0  done: the TV is paired, every TV checked is paired, or the TV was
@@ -1590,18 +1585,18 @@ DEVICE, each such device: whether it restarts nightly, and its last
 reboot.
 
 positional arguments:
-  DEVICE                the device&#x27;s id in the house file
+  DEVICE             the device&#x27;s id in the house file
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
-  --house FILE          the house file (default: instance/devices.yaml)
-  --timeout SECONDS     seconds to wait for the device to answer again (default: 480)
+  -h, --help         show this help message and exit
+  --config DIR       use this private configuration directory
+  --house FILE       the house file (default: instance/devices.yaml)
+  --timeout SECONDS  seconds to wait for the device to answer again (default: 480)
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet        print only errors
+  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
+  --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
   0  the device is back, or the list was shown
@@ -1630,19 +1625,19 @@ The native binding manages WebRTC stream sessions when explicitly enabled
 with configure or streams; see docs/cameras.md for resource and permission needs.
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
 
 actions:
   ACTION
-    list                read the configured camera status
-    configure           configure native Protect privately
-    streams             enable or stop native camera WebRTC sessions
+    list         read the configured camera status
+    configure    configure native Protect privately
+    streams      enable or stop native camera WebRTC sessions
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite cameras list             read the configured cameras&#x27; status
@@ -1775,19 +1770,18 @@ was built from other pins or another Python, as the helper&#x27;s container in
 production does at every start.
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
 
 actions:
   ACTION
-    setup               create build/pyatv-venv (or $OPENHAB_ATV_VENV) with the pinned
-                        pyatv
-    serve               run the helper (in build/pyatv-venv)
+    setup        create build/pyatv-venv (or $OPENHAB_ATV_VENV) with the pinned pyatv
+    serve        run the helper (in build/pyatv-venv)
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 pairing:
   Pairing happens from the thermite Pairing page, through this helper: the
@@ -1887,7 +1881,7 @@ positional arguments:
 
 options:
   -h, --help                    show this help message and exit
-  --config, --site DIR          use this private configuration directory
+  --config DIR                  use this private configuration directory
   --json                        print the report as JSON
   -n, --dry-run                 report what it would do; change nothing
   --key {audio,back,blue,bluetooth,display,down,eject,fast_forward,favorite,green,home,left,netflix,next,ok,options,pause,play,popup_menu,power,previous,red,rewind,right,stop,subtitle,top_menu,up,yellow}
@@ -1954,7 +1948,7 @@ tui/remote/package-lock.json into build/tui-remote with npm ci
 
 options:
   -h, --help                 show this help message and exit
-  --config, --site DIR       use this private configuration directory
+  --config DIR               use this private configuration directory
   --production               production runtime on this host (default)
   --sandbox                  the sandbox, http://127.0.0.1:13616 (thermite sandbox)
   --url URL                  runtime at URL, e.g. http://thermite.example:13602
@@ -2043,7 +2037,7 @@ for the same address, that account&#x27;s personal credential is used.
 
 options:
   -h, --help                 show this help message and exit
-  --config, --site DIR       use this private configuration directory
+  --config DIR               use this private configuration directory
   --url URL                  the gateway: https://HOST:PORT, HOST:PORT or HOST (default:
                              https://thermite:13601, or a selected site&#x27;s gateway.port)
   --ca-file FILE             trust this copy of the server&#x27;s tls-cert.pem; remembered
@@ -2137,20 +2131,20 @@ Without --url serve opens https://thermite:13601, as thermite tui does, and
 trusts the gateway&#x27;s certificate the same way (thermite help tui).
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
 
 actions:
   ACTION
-    serve               run the bridge between the base and the house
-    enroll              enroll a remote, or a simulated one
-    list                list the enrolled remotes and the base
-    forget              forget an enrolled remote
+    serve        run the bridge between the base and the house
+    enroll       enroll a remote, or a simulated one
+    list         list the enrolled remotes and the base
+    forget       forget an enrolled remote
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 the base:
   Without --port, serve uses the Espressif USB serial port in
@@ -2288,33 +2282,33 @@ the native network boundary. Stage, migrate, verify, serve and worker here
 are service and recovery primitives, not a separate deployment sequence.
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
 
 actions:
   ACTION
-    bootstrap           initialize the first admin locally
-    setup               issue a one-use code for first admin setup on the Security page
-    migrate             upgrade identity schema after backing up state and stopping
-                        access services
-    serve               serve one HTTPS site
-    worker              run the single room-policy worker
-    verify              verify service custody without initializing state
-    prune               delete saved policies for rooms the compiled house no longer has
-    audit               read the security audit (logins, tokens, accounts, locks, the
-                        security switch)
-    music-tidal         sign the site&#x27;s Music Assistant into TIDAL: show a code to
-                        approve at link.tidal.com and wait
-    callbacks           run the explicitly configured plaintext UPnP NOTIFY listener
-    login               log this terminal into a site
-    logout              revoke this terminal&#x27;s site credential
-    status              read this terminal&#x27;s current site identity and policies
-    stage               prepare a persistent release and owner-installable units
+    bootstrap    initialize the first admin locally
+    setup        issue a one-use code for first admin setup on the Security page
+    migrate      upgrade identity schema after backing up state and stopping access
+                 services
+    serve        serve one HTTPS site
+    worker       run the single room-policy worker
+    verify       verify service custody without initializing state
+    prune        delete saved policies for rooms the compiled house no longer has
+    audit        read the security audit (logins, tokens, accounts, locks, the security
+                 switch)
+    music-tidal  sign the site&#x27;s Music Assistant into TIDAL: show a code to approve at
+                 link.tidal.com and wait
+    callbacks    run the explicitly configured plaintext UPnP NOTIFY listener
+    login        log this terminal into a site
+    logout       revoke this terminal&#x27;s site credential
+    status       read this terminal&#x27;s current site identity and policies
+    stage        prepare a persistent release and owner-installable units
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite access login --url https://thermite.example:13601 --user operator
@@ -2645,20 +2639,20 @@ change only the roles you want; `thermite theme check` tells you what is
 wrong with it, including text too faint to read.
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
 
 actions:
   ACTION
-    show                draw the flaming bowl and a theme&#x27;s swatches in this terminal
-    list                the built-in themes
-    check               check theme files: their shape, and that text stays readable
-    export              write the theme or the flaming bowl for another program
+    show         draw the flaming bowl and a theme&#x27;s swatches in this terminal
+    list         the built-in themes
+    check        check theme files: their shape, and that text stays readable
+    export       write the theme or the flaming bowl for another program
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 a theme file:
   {&quot;name&quot;: &quot;harbor&quot;, &quot;extends&quot;: &quot;thermite&quot;,
@@ -2797,21 +2791,20 @@ or a word in instance/private-words.txt (list the host&#x27;s name there if the
 site must not name it).
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
 
 actions:
   ACTION
-    build               write the site into a directory
-    serve               preview the site on 127.0.0.1, without writing it anywhere
-    check               build the site in memory and refuse anything naming this house
-    export              write the site, README.md and FAQ.md into the thermite
-                        repository
+    build        write the site into a directory
+    serve        preview the site on 127.0.0.1, without writing it anywhere
+    check        build the site in memory and refuse anything naming this house
+    export       write the site, README.md and FAQ.md into the thermite repository
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 export writes docs/ (the site), README.md, FAQ.md and the Pages workflow
 into a checkout of the thermite repository, and removes the site&#x27;s own
@@ -2915,15 +2908,15 @@ reports, or that nothing answers there. thermite --version (-V) prints only
 the first line; without Git, or outside a repository, it has no commit.
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
-  --json                print the report as JSON
-  --timeout SECONDS     seconds to wait for production runtime to answer (default: 2)
+  -h, --help         show this help message and exit
+  --config DIR       use this private configuration directory
+  --json             print the report as JSON
+  --timeout SECONDS  seconds to wait for production runtime to answer (default: 2)
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet        print only errors
+  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
+  --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite version                  thermite&#x27;s version, the pinned runtime and the one running here
@@ -2936,14 +2929,14 @@ examples:
 Build the reviewed portable application wheel; never package the private inventory.
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
-  --out OUT             owned directory for the wheel and release receipt
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
+  --out OUT      owned directory for the wheel and release receipt
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite package --out .scratch/releases
@@ -2971,18 +2964,18 @@ accepts SSH logins as root with that key alone, straight into the installer,
 and the installed host&#x27;s owner gets the key, with password SSH turned off.
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
 
 actions:
   ACTION
-    fetch               download and verify pinned installer inputs
-    build               build a bootable ISO from the verified cache
+    fetch        download and verify pinned installer inputs
+    build        build a bootable ISO from the verified cache
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite iso fetch --cache .scratch/iso/cache
@@ -3046,16 +3039,16 @@ parsers, so it completes what this thermite has. Install it again after an
 update that adds verbs or switches.
 
 positional arguments:
-  SHELL                 bash, zsh or fish
+  SHELL          bash, zsh or fish
 
 options:
-  -h, --help            show this help message and exit
-  --config, --site DIR  use this private configuration directory
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 installing it:
   bash  for this shell: source &lt;(thermite completion bash)

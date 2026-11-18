@@ -7,6 +7,9 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The switch that selects a site is spelled `--config`. `--site` is no
+  longer documented or shown in help; the launcher still takes it, for a
+  release from before this one that checks a version it has put back.
 - A switch must be spelled in full. `thermite lint --confi DIR` had been
   accepted and the directory ignored, so the command ran against
   whichever site the working directory or `THERMITE_SITE` selected; it is

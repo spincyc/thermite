@@ -105,7 +105,7 @@ VERBS = {
 #: Switches that mean the same in every verb that has them (the add_*
 #: helpers), as `thermite --help` explains them.
 STANDARD_SWITCHES = (
-    ("--config DIR", "select private configuration (--site is an alias; also THERMITE_SITE)"),
+    ("--config DIR", "select private configuration (also THERMITE_SITE)"),
     ("--json", "print the report as JSON"),
     ("-n, --dry-run", "report what it would do; change nothing"),
     ("--check", "change nothing; exit 1 if what it writes is stale"),
@@ -351,7 +351,7 @@ def command(verb: str, description: str, examples: Examples, notes: str = "") ->
                     epilog=epilog(examples, notes), formatter_class=Help)
     # The bootstrap consumes this before importing modules with site paths.
     # Keep it in each parser so help and shell completion expose the option.
-    parser.add_argument("--config", "--site", metavar="DIR", help="use this private configuration directory")
+    parser.add_argument("--config", metavar="DIR", help="use this private configuration directory")
     add_global(parser)
     return parser
 

@@ -2,6 +2,7 @@
 import argparse
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import unittest
@@ -21,20 +22,36 @@ class ConfigParameter(unittest.TestCase):
         self.selected.start()
         self.addCleanup(self.selected.stop)
 
-    def test_config_before_or_after_verb_and_site_alias_select_the_same_directory(self):
+    def test_config_before_or_after_verb_selects_the_same_directory(self):
         for args in (["--config", "config with spaces", "install", "--dry-run"],
                      ["install", "--config=config with spaces", "--dry-run"],
-                     ["install", "--site", "config with spaces", "--dry-run"]):
+                     ["install", "--dry-run", "--config", "config with spaces"]):
             with self.subTest(args=args):
                 self.assertEqual(oh_paths.select_args(args), ["install", "--dry-run"])
                 self.assertEqual(oh_paths.SITE, Path("config with spaces").absolute())
 
+    def test_the_retired_spelling_an_older_release_still_sends_selects_the_site(self):
+        # A downgrade that rolled back: the older release's changeover.health
+        # asks the owner command, still the newer release, with --site.
+        import oh_cli
+        health = ["health", "--production", "--installation", "--settle", "120", "--revision", "0" * 40]
+        for args in (["--site", "config with spaces", *health], [health[0], "--site", "config with spaces", *health[1:]],
+                     ["--site=config with spaces", *health]):
+            with self.subTest(args=args):
+                os.environ.pop("THERMITE_SITE", None)
+                self.assertEqual(oh_paths.select_args(args), health)
+                self.assertEqual(oh_paths.SITE, Path("config with spaces").absolute())
+        asked = oh_cli.parser_of("health").parse_args(health[1:])
+        self.assertTrue(asked.production and asked.installation)
+
     def test_duplicate_or_missing_config_is_rejected_without_selecting_a_site(self):
         for args in (["install", "--config"], ["install", "--config", "--dry-run"],
-                     ["install", "--config="], ["--config", "first", "install", "--site", "second"]):
-            with self.subTest(args=args), self.assertRaises(oh_paths.SiteError):
+                     ["install", "--config="], ["--config", "first", "install", "--config=second"],
+                     ["--config", "first", "install", "--site", "second"], ["--site", "first", "--site", "second"]):
+            with self.subTest(args=args), self.assertRaises(oh_paths.SiteError) as refused:
                 oh_paths.select_args(args)
             self.assertNotIn("THERMITE_SITE", os.environ)
+        self.assertEqual(str(refused.exception), "pass --config exactly once")
 
     def test_a_selector_is_the_site_wherever_it_stands_and_whatever_the_verb(self):
         # The scanner once kept --config for some access actions, found by
@@ -91,7 +108,8 @@ class SelectorSpelling(unittest.TestCase):
         # select_args takes --config and --site out of every command line
         # before any parser sees it, so a parser that declared either for
         # something else could never be given it. Each verb's parser shows
-        # the selector in its help (oh_cli.command); nothing below it may.
+        # --config in its help (oh_cli.command); nothing below it may, and
+        # none declares --site, the retired spelling.
         import oh_cli
         selectors, walked = set(oh_paths.SELECTORS), 0
         for verb in oh_cli.VERBS:
@@ -100,10 +118,20 @@ class SelectorSpelling(unittest.TestCase):
                 declared = [action.option_strings for action in parser._actions
                             if selectors & set(action.option_strings)]
                 with self.subTest(command=" ".join(path)):
-                    self.assertEqual(declared, [list(oh_paths.SELECTORS)] if len(path) == 1 else [],
+                    self.assertEqual(declared, [["--config"]] if len(path) == 1 else [],
                                      f"thermite {' '.join(path)} declares a site selector for itself: the launcher "
                                      "would take it as the site; give the switch another name")
         self.assertGreater(walked, len(oh_cli.VERBS), "the walk reached no action's parser")
+
+    def test_no_help_shows_the_retired_spelling(self):
+        import oh_cli
+        retired = re.compile(r"--site(?![\w-])")
+        self.assertIn("--config DIR", oh_cli.overview())
+        self.assertIsNone(retired.search(oh_cli.overview()))
+        for verb in oh_cli.VERBS:
+            for path, parser in parsers(oh_cli.parser_of(verb), (verb,)):
+                with self.subTest(command=" ".join(path)):
+                    self.assertIsNone(retired.search(parser.format_help()))
 
     def test_no_parser_takes_part_of_a_switch_for_the_whole(self):
         # Each verb's parser declares the selector for its help and is never

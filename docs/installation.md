@@ -92,7 +92,7 @@ commit automatically.
 
 Use the installed `thermite` command with `--config /path/to/site` from any
 directory. The application remains outside the private repository; the site
-needs no launcher or Makefile. `--site` remains a compatible alias.
+needs no launcher or Makefile.
 
 ## Deploy the complete site
 

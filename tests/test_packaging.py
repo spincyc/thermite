@@ -450,8 +450,10 @@ class Packaging(unittest.TestCase):
         self.assertFalse((site / "Makefile").exists())
         command("--config", site, "check")
         command("check", "--config=" + str(site))
-        command("--site", site, "generate", "--check")
+        command("--config", site, "generate", "--check")
+        # The retired spelling, which an older release still sends (oh_paths.SELECTORS).
         self.assertEqual(json.loads(command("--site", site, "validate", "--json"))["status"], "ok")
+        self.assertEqual(json.loads(command("validate", "--json", "--site", site))["status"], "ok")
         # A config argument selects the site before module-level paths are imported.
         subprocess.run(["git", "-C", str(site), "init", "--initial-branch=fixture"],
                        check=True, capture_output=True)
@@ -467,6 +469,6 @@ class Packaging(unittest.TestCase):
         description = json.loads((site / oh_paths.SITE_FILE).read_text()); description["application"] = "9.9.9"
         (site / oh_paths.SITE_FILE).write_text(json.dumps(description))
         current = hashes(site)
-        command("--site", site, "generate", expected=2)
+        command("--config", site, "generate", expected=2)
         self.assertEqual(hashes(site), current)
         self.assertEqual(hashes(program), before, "installed program files must not receive configuration, cache or state")

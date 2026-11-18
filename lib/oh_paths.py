@@ -20,6 +20,12 @@ REEXEC = "THERMITE_PINNED_RELEASE"
 #: The launcher's own arguments, when it handed select_args all of sys.argv.
 LAUNCHED: list[str] | None = None
 #: The switches that select the private site, in every verb (select_args).
+#: --config is the switch. --site is its retired spelling: taken, and shown
+#: in no help, document or message. Releases before 2026-11-18 still send
+#: it: after a downgrade to one of them rolls back, its changeover.health
+#: checks the version it put back through ~/.local/bin/thermite, which is
+#: still this release, and a refusal there would report a restored house
+#: as unhealthy. It can go when no such release can be downgraded to.
 SELECTORS = ("--config", "--site")
 
 
@@ -53,7 +59,7 @@ def select_args(argv: list[str]) -> list[str]:
             value = word.split("=", 1)[1]
         else:
             out.append(word); index += 1; continue
-        if chosen is not None or not value: raise SiteError("pass --config (or --site) exactly once")
+        if chosen is not None or not value: raise SiteError("pass --config exactly once")
         chosen = str(Path(value).expanduser().absolute())
         index += 1
     if chosen is not None: os.environ["THERMITE_SITE"] = chosen

@@ -63,7 +63,7 @@ git init --initial-branch=main
 git add .
 git commit -m 'Initialize private Thermite site'</code></pre>
 <p>Configure your Git author name and email if Git requests them. Keep this repository private. Commit the site manifest, instance configuration and <code>versions.json</code>. Generated <code>conf/</code>, <code>deploy/</code>, <code>metrics/</code>, credentials, caches and runtime state stay outside Git. Init supplies the ignore rules. It creates no Git repository or commit automatically.</p>
-<p>Use the installed <code>thermite</code> command with <code>--config /path/to/site</code> from any directory. The application remains outside the private repository; the site needs no launcher or Makefile. <code>--site</code> remains a compatible alias.</p>
+<p>Use the installed <code>thermite</code> command with <code>--config /path/to/site</code> from any directory. The application remains outside the private repository; the site needs no launcher or Makefile.</p>
 <h2 id="deploy-the-complete-site">Deploy the complete site</h2>
 <p>Use a terminal on the server, as the owner account, with Internet access:</p>
 <pre><code class="language-sh">thermite install --config "$HOME/thermite-site" --dry-run
