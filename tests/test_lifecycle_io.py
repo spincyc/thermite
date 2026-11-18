@@ -13,7 +13,7 @@ from unittest import mock
 
 AREA=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(AREA/'lib'))
-from oh_conf import House, Conf, YamlFile  # noqa: E402
+from oh_conf import House, Conf, YamlFile, unfilled  # noqa: E402
 from oh_features.routing import lifecycle_io  # noqa: E402
 import oh_integrations as integrations  # noqa: E402
 from oh_integrations import ukm404_http, avpro_telnet, sony_adcp, sony_ip_control, pyatv_http, sony_rest, denonmarantz_http  # noqa: E402
@@ -171,7 +171,7 @@ def fictional(kind='http'):
     module.render, module.fields = render, fields
     if kind != 'http':
         module.rule_path = lambda device: f"automation/js/example_relay_{device['id']}.js"
-        module.files = lambda devices, house: {module.rule_path(d): "const SEND = true;\n" + lifecycle_io.CUSTOM_MARK + "\n" for d in devices}
+        module.files = lambda devices, house: {module.rule_path(d): "const SEND = true;\n" + unfilled(lifecycle_io.CUSTOM) + "\n" for d in devices}
     return module
 
 
@@ -227,7 +227,7 @@ class Declarations(unittest.TestCase):
             conf.files.update(module.files(data['devices'], house))
             lifecycle_io.configure(house, conf, {'resources': {'desk_relay_relay': {}}})
             text = conf.files['automation/js/example_relay_desk_relay.js']
-            self.assertNotIn(lifecycle_io.CUSTOM_MARK, text)
+            self.assertNotIn(unfilled(lifecycle_io.CUSTOM), text)
             self.assertIn('"desk_relay_relay":{"kind":"relay","allowed":["ON","OFF"],"settle":{"ON":5000}}', text)
             self.assertNotIn('automation/js/thermite_routing_io_desk_relay.js', conf.files)
             del module.rule_path
@@ -242,7 +242,7 @@ class Denon(unittest.TestCase):
         text = denonmarantz_http.rule()
         line = next(line for line in text.splitlines() if line.startswith('const INPUT_ALIASES = '))
         self.assertEqual(json.loads(line[len('const INPUT_ALIASES = '):-1]), denonmarantz_http.INPUT_ALIASES)
-        self.assertEqual(text.splitlines().count(lifecycle_io.CUSTOM_MARK), 1)
+        self.assertEqual(text.splitlines().count(unfilled(lifecycle_io.CUSTOM)), 1)
         self.assertEqual(text.count('const SEND = true;'), 1)
         self.assertNotIn('GAME', denonmarantz_http.SOURCE.read_text(encoding='utf-8'))
 

@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 
 from oh_conf import Addon, House, LIB, YamlFile, point, retarget, uses
-from . import _commands, _io
+from . import _commands, _script
 
 NAME = "ir"
 PHASE = "control"
@@ -183,7 +183,7 @@ def files(devices: list[dict], house: House) -> dict[str, str]:
         table.append({"id": device["id"], "thing": thing_uid(device), "channel": f"ir-m1#c{profile['connector']}", "keys": keys})
         result[f"transform/{map_name(device)}"] = "\n".join(f"{key}={profile['commands'][key]}" for key in keys) + "\n"
     if table:
-        result[RULE] = _io.shared(SOURCE.read_text(), NAME).replace("const DEVICES = null;", "const DEVICES = " + json.dumps(table) + ";")
+        result[RULE] = _script.rule(SOURCE, NAME, {"DEVICES": table}, connects=False, encode=json.dumps, header=False)
     return result
 
 

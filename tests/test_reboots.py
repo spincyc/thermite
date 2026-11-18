@@ -23,7 +23,7 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_render as render  # noqa: E402
 import yaml  # noqa: E402
 from oh_cli import reboot as cli  # noqa: E402
-from oh_conf import House  # noqa: E402
+from oh_conf import House, unfilled  # noqa: E402
 from oh_features import reboots  # noqa: E402
 from oh_integrations import _io, ukm404_http  # noqa: E402
 from tests.test_zone_sync import HOUSE as ROUTED  # noqa: E402
@@ -187,7 +187,7 @@ class Render(unittest.TestCase):
         conf = render.build(house())
         files = conf.render()
         text = files[reboots.RULE]
-        self.assertNotIn(reboots.MARK, text)
+        self.assertNotIn(unfilled("TABLE"), text)
         line = text[text.index("const TABLE = "):]
         self.assertEqual(json.loads(line[len("const TABLE = "):line.index(";\n")]), reboots.table(House(house())))
         self.assertEqual(conf.yaml[reboots.ITEMS].items, {reboots.ITEM: {

@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 
 from oh_conf import Addon, House, YamlFile, point, retarget, uses
-from . import _commands, _io
+from . import _commands, _script
 from . import _instr as instr
 from . import globalcache_ir as ir
 
@@ -119,7 +119,7 @@ def files(devices: list[dict], house: House) -> dict[str, str]:
     if validate_house(house.data):
         raise ValueError("CEC wiring must validate before rendering command rules")
     table = [{"id": d["id"], "thing": thing_uid(d), "requests": {button: request(d, button) for button in KEYS}} for d in devices]
-    return {RULE: _io.shared(SOURCE.read_text(), NAME).replace("const DEVICES = null;", "const DEVICES = " + json.dumps(table) + ";")}
+    return {RULE: _script.rule(SOURCE, NAME, {"DEVICES": table}, connects=False, encode=json.dumps, header=False)}
 
 
 def remote(device: dict) -> dict | None:

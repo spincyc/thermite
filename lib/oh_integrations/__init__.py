@@ -13,8 +13,9 @@ table and its readers to this).
 A module renders exactly the devices that list NAME under controls.<PHASE>.
 Adding an integration is one module, one line in REGISTRY, its name in the
 `order` of each hook it defines that only one integration answers for a
-device, and its test. Modules whose names start with an underscore are
-helpers shared by integrations, not integrations.
+device, and its test; one with a rule of its own adds the rule's source
+and renders it through _script. Modules whose names start with an
+underscore are helpers shared by integrations, not integrations.
 """
 
 from __future__ import annotations

@@ -235,7 +235,8 @@ _TABLE = (
     Hook("files", FUNCTION, """
         files(devices, house) -> {path under conf/: text}: files rendered
         from all the devices it renders at once, such as its rule under
-        automation/js/"""),
+        automation/js/ (_script.rule() renders one from its source, and
+        _script.per_device() one for each device)"""),
     Hook("RULE", CONSTANT, "its rule's path under conf/, or the path its devices' rules are named after"),
     Hook("NEEDS", CONSTANT, """
         the integration modules whose Things and Items its rule needs

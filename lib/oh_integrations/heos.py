@@ -35,7 +35,7 @@ from pathlib import Path
 
 from oh_conf import Addon, House, YamlFile, point, uses
 
-from . import _commands, _io, denonmarantz_http
+from . import _commands, _script, denonmarantz_http
 
 NAME = "heos"
 PHASE = "control"
@@ -156,7 +156,7 @@ def files(devices: list[dict], house: House) -> dict[str, str]:
     table = [{"id": d["id"], "thing": thing_uid(d, house), "receiver": denonmarantz_http.thing_uid(d),
               "host": str(ipaddress.IPv4Address(d["ip"])),
               "readURL": f"http://{ipaddress.IPv4Address(d['ip'])}:8080/goform/AppCommand.xml"} for d in devices]
-    return {RULE: _io.shared(SOURCE.read_text(), NAME).replace("const DEVICES = null;", "const DEVICES = " + json.dumps(table) + ";")}
+    return {RULE: _script.rule(SOURCE, NAME, {"DEVICES": table}, connects=False, encode=json.dumps, header=False)}
 
 
 def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:

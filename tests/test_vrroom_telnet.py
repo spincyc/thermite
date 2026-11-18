@@ -23,7 +23,7 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_integrations as integrations  # noqa: E402
 import oh_matrix_sim as sim  # noqa: E402
 import oh_render as render  # noqa: E402
-from oh_conf import RULE_SENDS, RULE_SILENT, Conf, House, YamlFile  # noqa: E402
+from oh_conf import RULE_SENDS, RULE_SILENT, Conf, House, YamlFile, unfilled  # noqa: E402
 from oh_features import routing  # noqa: E402
 from oh_features.routing import lifecycle_io  # noqa: E402
 from oh_integrations import _io, vrroom_http, vrroom_telnet  # noqa: E402
@@ -140,7 +140,7 @@ class Rendering(unittest.TestCase):
         self.assertEqual(capabilities["example_switch_input"]["manual"], 2)
         lifecycle_io.configure(built, conf, {"resources": {"example_switch_input": {}}})
         text = conf.files[vrroom_telnet.rule_path(SWITCH)]
-        self.assertNotIn(lifecycle_io.CUSTOM_MARK, text)
+        self.assertNotIn(unfilled(lifecycle_io.CUSTOM), text)
         self.assertIn("routingLifecycleActor.legacy(", text)
         config = next(line for line in text.splitlines() if line.startswith("const ROUTING_EXECUTOR = "))
         self.assertNotIn(SWITCH["ip"], config)

@@ -35,8 +35,6 @@ device nothing (a TV in standby), so that no reading outlives its read.
 
 from __future__ import annotations
 
-import json
-
 from oh_conf import YamlFile, options_text
 
 #: Why openHAB cannot command, or read, a device: the states of
@@ -73,8 +71,8 @@ DROPS = ("invalid", "read_only", "held")
 OUTCOMES = ("applied", "sent", "dropped", "unsent", "refused", "busy", "unknown")
 #: The state of a problem Item while nothing is wrong.
 CLEAR = "UNDEF"
-#: The line of _device.js the table replaces (_io.device()).
-MARK = "const COMMANDS = null;"
+#: The constant of _device.js that table() fills (_io.device()).
+TABLE = "COMMANDS"
 
 
 def problem_item(ident: str) -> str:
@@ -86,12 +84,11 @@ def tally_item(ident: str, integration: str) -> str:
     return f"{ident}_{integration}_commands"
 
 
-def table(integration: str) -> str:
-    """MARK's replacement in the copy of _device.js `integration`'s script
-    embeds: the vocabulary, and the suffix of the tally Items it posts."""
-    return "const COMMANDS = " + json.dumps({
-        "problems": list(CODES), "drops": list(DROPS), "outcomes": list(OUTCOMES),
-        "tally": f"{integration}_commands"}, separators=(",", ":")) + ";"
+def table(integration: str) -> dict:
+    """TABLE in the copy of _device.js `integration`'s script embeds: the
+    vocabulary, and the suffix of the tally Items it posts."""
+    return {"problems": list(CODES), "drops": list(DROPS), "outcomes": list(OUTCOMES),
+            "tally": f"{integration}_commands"}
 
 
 def problem(device: dict) -> str | None:

@@ -12,7 +12,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from oh_conf import House, GUARD_PROFILE, RULE_SENDS, Addon, uses
+from oh_conf import House, GUARD_PROFILE, RULE_SENDS, Addon, fill, uses
 import oh_integrations as integrations
 from oh_integrations import _commands, _io
 
@@ -21,9 +21,9 @@ MODULE = "automation/js/node_modules/thermite-routing-io/index.js"
 ITEMS = "yaml/routing_io.yaml"
 EVENT_ITEM = "house_routing_io_events"
 STATUS_ITEM = "house_routing_io_status"
-#: The line an integration's own rule (rule_path()) carries for its actor's
-#: configuration.
-CUSTOM_MARK = "const ROUTING_EXECUTOR = null;"
+#: The constant an integration's own rule (rule_path()) takes its actor's
+#: configuration in.
+CUSTOM = "ROUTING_EXECUTOR"
 #: The longest settle a field may declare (lifecycle.js SETTLE_MAX_MS).
 SETTLE_MAX_MS = 300000
 
@@ -135,10 +135,11 @@ def configure(house: House, conf, descriptor: dict) -> dict:
                 "record: thermiteDevice.recorder(CONFIG.key)});\n", provider.NAME)
         else:
             path = provider.rule_path(device) if "http" not in kinds and provider.rule_path else key
-            text = conf.files.get(path, "")
-            if text.splitlines().count(CUSTOM_MARK) != 1:
-                raise ValueError("routing executor adapter is absent: " + path)
-            conf.files[path] = text.replace(CUSTOM_MARK, "const ROUTING_EXECUTOR = " + encoded + ";")
+            try:
+                # The rule has its header already: its integration rendered it.
+                conf.files[path] = fill(conf.files.get(path, ""), {CUSTOM: config}, path, header=False)
+            except ValueError as error:
+                raise ValueError("routing executor adapter is absent: " + path) from error
         # The actor hands each command it concludes to its script's command
         # record (lifecycle_io.js, env.record): the device's problem Item and
         # the script's tally, rendered here for a device whose integration

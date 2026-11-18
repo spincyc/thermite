@@ -20,7 +20,7 @@ import oh_integrations as integrations  # noqa: E402
 import oh_inventory  # noqa: E402
 import oh_metrics  # noqa: E402
 import oh_render  # noqa: E402
-from oh_conf import YamlFile, parse_options  # noqa: E402
+from oh_conf import YamlFile, parse_options, unfilled  # noqa: E402
 from oh_features import remote_model  # noqa: E402
 from oh_features.routing import lifecycle_io  # noqa: E402
 from oh_integrations import _commands, _io  # noqa: E402
@@ -83,7 +83,7 @@ class Seam(unittest.TestCase):
         for path, text in generic.items():
             self.assertEqual(text.count("const thermiteDevice = "), 1, path)
             self.assertIn("httpActor(CONFIG, {readonly: !SEND, record: thermiteDevice.recorder(CONFIG.key)});", text)
-            self.assertNotIn(_commands.MARK, text)
+            self.assertNotIn(unfilled(_commands.TABLE), text)
         self.assertIn('"tally":"bk808_http_commands"', generic["automation/js/thermite_routing_io_example_matrix.js"])
         self.assertIn('"tally":"ukm404_http_commands"', generic["automation/js/thermite_routing_io_example_usb.js"])
 
@@ -97,7 +97,7 @@ class Seam(unittest.TestCase):
 class Vocabulary(unittest.TestCase):
     def test_the_scripts_table_is_this_one_with_the_integrations_tally(self):
         source = _io.device("example")
-        self.assertNotIn(_commands.MARK, source)
+        self.assertNotIn(unfilled(_commands.TABLE), source)
         line = next(line.strip() for line in source.splitlines() if line.strip().startswith("const COMMANDS = "))
         self.assertEqual(json.loads(line[len("const COMMANDS = "):-1]),
                          {"problems": list(_commands.CODES), "drops": list(_commands.DROPS),
@@ -165,7 +165,7 @@ class Items(unittest.TestCase):
         # Each script has its table, and none the unfilled line.
         for path, text in conf.files.items():
             if isinstance(text, str) and path.endswith(".js") and "const thermiteDevice = " in text:
-                self.assertNotIn(_commands.MARK, text, path)
+                self.assertNotIn(unfilled(_commands.TABLE), text, path)
                 self.assertEqual(text.count('"tally":"'), 1, path)
 
     def test_two_scripts_of_one_device_share_its_problem_item_and_count_apart(self):

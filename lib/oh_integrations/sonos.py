@@ -19,7 +19,7 @@ from pathlib import Path
 import yaml
 
 from oh_conf import GUARD_PROFILE, Addon, House, YamlFile, options_text, point, uses, volume_js
-from . import _commands, _io
+from . import _commands, _script
 
 NAME = "sonos"
 PHASE = "observe"
@@ -90,7 +90,6 @@ TV_SILENT = ("noSignal", "silence")
 ARC_KEYS = {**KEYS, "tv": "TV"}
 RULE = "automation/js/sonos_control.js"
 SOURCE = Path(__file__).with_name("sonos_control.js")
-MARK = "const DEVICES = null;"
 READ_BACK = 60
 #: Seconds between the controls check's stand-in polls of the settings;
 #: each is read again a second after its command (refreshAfterCommand).
@@ -217,7 +216,8 @@ def files(devices: list[dict], house: House) -> dict[str, str]:
                   if uses(d, "control", NAME)]
     if not controlled:
         return {}
-    return {RULE: _io.shared(SOURCE.read_text(), NAME).replace(MARK, "const DEVICES = " + json.dumps(controlled, indent=2) + ";")}
+    return {RULE: _script.rule(SOURCE, NAME, {"DEVICES": controlled}, connects=False,
+                               encode=lambda value: json.dumps(value, indent=2), header=False)}
 
 
 def playing(device: dict) -> dict:

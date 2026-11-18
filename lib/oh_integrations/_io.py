@@ -3,6 +3,7 @@ device's independent rule context."""
 
 from pathlib import Path
 
+from oh_conf import fill
 from . import _commands
 
 SOURCE = Path(__file__).with_suffix(".js")
@@ -18,10 +19,8 @@ DEVICE_MARK = "// THERMITE_DEVICE"
 def device(integration: str) -> str:
     """_device.js as `integration`'s script embeds it: with the command
     record's vocabulary and the suffix of its tally Items (_commands)."""
-    source = DEVICE.read_text(encoding="utf-8")
-    if [line.strip() for line in source.splitlines()].count(_commands.MARK) != 1 or source.count(_commands.MARK) != 1:
-        raise ValueError(f"{DEVICE} must contain the line {_commands.MARK!r} exactly once")
-    return source.replace(_commands.MARK, _commands.table(integration))
+    return fill(DEVICE.read_text(encoding="utf-8"), {_commands.TABLE: _commands.table(integration)}, DEVICE,
+                header=False)
 
 
 def _marked(source: str) -> int:
