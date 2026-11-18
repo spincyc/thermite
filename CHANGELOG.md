@@ -7,6 +7,9 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A nightly workflow, Boot, generates the example house and runs `thermite
+  test boot` on it, so generated configuration is loaded into the pinned
+  openHAB every night, which the tests never do.
 - The copies in `web/remote/` of the files `thermite generate` writes itself
   are checked against the example house's and are current again: `house.js`
   has `speakers` and `speakerRooms`, `activity.json` each Item's `power`.

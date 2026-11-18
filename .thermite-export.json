@@ -1,6 +1,7 @@
 {
   "version": 1,
   "paths": [
+    ".github/workflows/boot.yml",
     ".github/workflows/ci.yml",
     ".github/workflows/pages.yml",
     ".gitignore",

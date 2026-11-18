@@ -1,0 +1,45 @@
+name: Boot
+
+# Check (ci.yml) runs the tests and never starts openHAB. Every night, and on
+# request, this generates the fictional example house and boots its conf/ on
+# the pinned openHAB distribution (thermite test boot): the add-ons install,
+# every Thing gets a handler, and the rules and YAML load without a problem.
+on:
+  schedule:
+    # Off the hour, when scheduled runs start late.
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boot-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  boot:
+    name: Boot the example house
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      # conf/ is generated, never committed.
+      - run: python bin/thermite generate
+      # The first boot on a runner downloads the JRE and the distribution
+      # that versions.json pins, then builds the warmed userdata, installing
+      # the add-ons from openHAB's repositories. The 900 seconds cover that
+      # build and the boot; the downloads come before them.
+      - run: python bin/thermite test boot --timeout 900
+      - if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: boot-check-logs
+          path: |
+            var/boot-check/console.log
+            var/boot-check/userdata/logs/
+          if-no-files-found: ignore
