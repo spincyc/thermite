@@ -252,7 +252,7 @@ class TemplateKey(unittest.TestCase):
         changed = {
             "an add-on more": self.cfg.replace("binding = http", "binding = http,network"),
             "an add-on less": self.cfg.replace("misc = metrics", ""),
-            "a setting": self.cfg + "remote = false\n",
+            "a setting": self.cfg.replace("remote = false", "remote = true"),
         }
         for what, text in changed.items():
             with self.subTest(what=what):
@@ -260,6 +260,16 @@ class TemplateKey(unittest.TestCase):
         self.assertEqual(lib.template_key(self.rt, self.cfg.replace("binding = http", "binding = http,network")),
                          lib.template_key(self.rt, self.cfg.replace("binding = http", "binding = network, http")))
         self.assertNotEqual(lib.template_key(lib.Runtime("5.2.4", self.rt.dist, self.rt.java_home), self.cfg), self.key)
+
+    def test_the_pins_of_the_files_its_addons_are_installed_from_change_the_key(self):
+        path = "org/example/http/1/http-1.jar"
+        pins = {"requires": {"binding-http": [path], "binding-network": [path]},
+                "files": {path: {"sha256": "0" * 64, "size": 1}}}
+        pinned = lib.Runtime("5.2.3", self.rt.dist, self.rt.java_home, pins)
+        other = lib.Runtime("5.2.3", self.rt.dist, self.rt.java_home,
+                            {**pins, "files": {path: {"sha256": "1" * 64, "size": 1}}})
+        self.assertNotEqual(lib.template_key(pinned, self.cfg), self.key)
+        self.assertNotEqual(lib.template_key(pinned, self.cfg), lib.template_key(other, self.cfg))
 
 
 if __name__ == "__main__":

@@ -109,6 +109,9 @@ EXAMPLES = (
 
 
 def cmd_fetch(args) -> int:
+    if args.pin_addons is not None:
+        lib.pin_addons(lib.VERSIONS_FILE, args.pin_addons)
+        return 0
     lib.fetch(lib.load_versions())
     return 0
 
@@ -272,7 +275,16 @@ def main(argv=None) -> int:
     sub = oh_cli.actions(parser)
 
     p = oh_cli.action(sub, "fetch", "download, verify (sha256 from versions.json) and extract JRE + distribution",
-                      examples=(("thermite sandbox fetch", "fetch the pinned runtime into build/sandbox/"),))
+                      examples=(("thermite sandbox fetch", "fetch the pinned runtime into build/sandbox/"),
+                                ("thermite sandbox fetch --pin-addons", "after versions.json pins another openHAB: "
+                                 "pin its add-on files anew"),
+                                ("thermite sandbox fetch --pin-addons binding-zwave", "pin the files of an add-on a "
+                                 "new integration asks for")))
+    p.add_argument("--pin-addons", nargs="*", metavar="ADDON",
+                   help="write versions.json's addons entry: the files each named add-on (binding-http; none named: "
+                        "every add-on pinned already) needs beyond the distribution, with the SHA-256 of each not "
+                        "pinned yet, fetched now and checked against the checksum its repository publishes. Review "
+                        "the change before committing it")
     p.set_defaults(func=cmd_fetch)
 
     p = oh_cli.action(sub, "start", "start the sandbox in the background and wait for REST", examples=(

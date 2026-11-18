@@ -30,6 +30,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+import oh_addons
 import oh_cli
 import oh_http
 import oh_logging
@@ -44,6 +45,8 @@ SECRETS = VAR / "secrets"
 BUILD = AREA / "build"
 CACHE = BUILD / "sandbox"
 DOWNLOADS = CACHE / "downloads"
+#: The pinned add-on files, fetched and verified, as a Maven repository.
+ADDONS = DOWNLOADS / "addons"
 VERSIONS_FILE = AREA / "versions.json"
 
 KARAF_USER = "openhab"
@@ -218,6 +221,8 @@ class Runtime:
     openhab_version: str
     dist: Path
     java_home: Path
+    #: versions.json's `addons`: the files each add-on needs, pinned.
+    addons: dict | None = dataclasses.field(default=None, compare=False, repr=False)
 
     @property
     def karaf(self) -> Path:
@@ -231,7 +236,7 @@ class Runtime:
 def runtime_paths(versions: dict) -> Runtime:
     oh = versions["openhab"]["version"]
     java = versions["java"]["version"]
-    return Runtime(oh, CACHE / f"openhab-{oh}", CACHE / f"jre-{java}")
+    return Runtime(oh, CACHE / f"openhab-{oh}", CACHE / f"jre-{java}", versions.get("addons"))
 
 
 def fetch(versions: dict, log=print) -> Runtime:
@@ -248,6 +253,53 @@ def fetch(versions: dict, log=print) -> Runtime:
             raise SandboxError(f"{script} is not executable after extraction")
     log(f"ready   {rt.dist} on {rt.java_home} ({time.monotonic() - started:.1f}s to verify/extract)")
     return rt
+
+
+def pin_addons(versions_file: Path, uids, log=print) -> dict:
+    """Pin the files of the add-ons `uids` in versions.json, or with none
+    named of every add-on it pins already: after openHAB's pin moved, or
+    for an add-on a new integration asks for. Each add-on's files are those
+    the pinned distribution's feature files name; a file not pinned yet is
+    fetched and pinned to its SHA-256, and must be the file the repository's
+    own checksum beside it names; a file pinned already keeps its pin. This is the
+    one place a digest is taken from the network: review the change to
+    versions.json before committing it."""
+    text = Path(versions_file).read_text(encoding="utf-8")
+    versions = json.loads(text)
+    rt = fetch(load_versions(versions_file), log=log)
+    current = versions.get("addons") if isinstance(versions.get("addons"), dict) else {}
+    uids = sorted(set(uids) or set(current.get("requires") or ()))
+
+    def get(url: str, target: Path) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        log(f"fetch   {url}")
+        request = urllib.request.Request(url, headers={"User-Agent": "homelab-openhab-sandbox"})
+        oh_cli.trace_http("GET", url)
+        part = target.with_name(target.name + ".part")
+        with urllib.request.urlopen(request, timeout=60) as response, open(part, "wb") as out:
+            shutil.copyfileobj(response, out, 1 << 20)
+        part.rename(target)
+
+    try:
+        made = oh_addons.pin(versions, rt.dist / "runtime", uids, ADDONS, get, log=log)
+    except oh_addons.AddonError as exc:
+        raise SandboxError(str(exc)) from None
+    if made == current:
+        log(f"pins    the {len(made['files'])} files of {len(made['requires'])} add-ons are pinned as they are")
+        return made
+    # Beside the other pins: before the notes on where each came from.
+    out = {}
+    for key, value in versions.items():
+        if key != "addons":
+            if key == "_sources" and "addons" not in out:
+                out["addons"] = made
+            out[key] = value
+        else:
+            out[key] = made
+    out.setdefault("addons", made)
+    Path(versions_file).write_text(json.dumps(out, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    log(f"pins    wrote {versions_file}: the {len(made['files'])} files of {len(made['requires'])} add-ons")
+    return made
 
 
 def require_runtime(versions: dict) -> Runtime:
@@ -845,7 +897,21 @@ def init_userdata(rt: Runtime, inst: Instance, log=print) -> bool:
     (inst.userdata / "etc" / "org.apache.karaf.features.xml").write_text(FEATURES_PROCESSING, encoding="utf-8")
     # The sandbox's stdout is its unrotated console.log beside openhab.log.
     oh_logging.install(inst.userdata, journal=False)
+    install_addons(rt, inst, log=log)
     return created
+
+
+def install_addons(rt: Runtime, inst: Instance, log=print) -> None:
+    """Give userdata the pinned files of the add-ons conf lists, and no
+    other source for them: a start installs its add-ons from userdata's own
+    repository (lib/oh_addons.py). A file the cache lacks is fetched and
+    must match its pin."""
+    uids = addon_uids(read_requested_addons(inst.conf))
+    try:
+        files = oh_addons.ensure({"addons": rt.addons}, uids, ADDONS, download, log=log) if uids else {}
+        oh_addons.provision(inst.userdata, files, ADDONS)
+    except oh_addons.AddonError as exc:
+        raise SandboxError(str(exc)) from None
 
 
 # The LSP model server (org.openhab.core.model.lsp) binds new ServerSocket(5007)
@@ -1414,10 +1480,12 @@ TEMPLATE_SCRUB = ("logs", "jsondb/backup", "jsondb/org.openhab.core.config.disco
 def template_key(rt: Runtime, addons_cfg: str) -> str:
     """Name a warmed userdata after everything that shapes it: of
     addons.cfg, the add-ons in each category, in any order, and every other
-    setting (remote, say), never a comment. Each add-on's reason is a
-    comment, so rewording one reuses the template rather than installing
-    the same add-ons again."""
+    setting (remote, say), never a comment; and the pins of the files those
+    add-ons are installed from. Each add-on's reason is a comment, so
+    rewording one reuses the template rather than installing the same
+    add-ons again."""
     requested = parse_addons_cfg(addons_cfg)
+    pins = (rt.addons or {}).get("requires", {}), (rt.addons or {}).get("files", {})
     settings = {key: value for key, value in addons_settings(addons_cfg).items() if key not in ADDON_CATEGORIES}
     material = json.dumps({
         "format": TEMPLATE_FORMAT,
@@ -1425,6 +1493,8 @@ def template_key(rt: Runtime, addons_cfg: str) -> str:
         "java": rt.java_home.name,
         "addons": {category: sorted(set(names)) for category, names in requested.items()},
         "settings": settings,
+        "files": sorted((pins[1].get(path) or {}).get("sha256", "") for uid in addon_uids(requested)
+                        for path in pins[0].get(uid, ())),
         "features": FEATURES_PROCESSING,
     }, sort_keys=True)
     return hashlib.sha256(material.encode()).hexdigest()[:16]

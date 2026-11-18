@@ -11,6 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+import oh_addons
 import oh_cli
 import oh_deploy as deploy
 import oh_apparmor
@@ -1292,6 +1293,103 @@ class NativePreparation(Step):
         return [manifest.Item(self.context.layout.userdata, "tree"), manifest.Item(self.context.layout.addons, "tree"),
                 manifest.Item(self.context.layout.root / oh_service.RECEIPT, "file"),
                 manifest.Item(oh_ports.CONSOLE_PASSWORD, "file")]
+
+
+def addon_uids(context: Context) -> list[str]:
+    """The add-ons this version's conf/services/addons.cfg lists, as
+    versions.json names them (binding-http)."""
+    import oh_sandbox as sandbox
+    name = "conf/services/addons.cfg"
+    if context.prepared is not None:
+        text = context.prepared[name].data.decode("utf-8") if name in context.prepared else ""
+    else:
+        text = (context.area / name).read_text(encoding="utf-8") if (context.area / name).is_file() else ""
+    return sandbox.addon_uids(sandbox.parse_addons_cfg(text))
+
+
+def addon_store(context: Context) -> Path:
+    """The operator's cache of fetched add-on files: the boot check's."""
+    return context.area / "build" / "sandbox" / "downloads" / "addons"
+
+
+def addon_pin(context: Context) -> str:
+    """What the installed manifest records of this version's add-on files:
+    one digest over the pins of every file its add-ons are installed from.
+    A version whose add-ons are not all pinned is never installed
+    (AddonFiles refuses it, with what to do), so it has none to record."""
+    try:
+        return oh_addons.digest(oh_addons.pinned(context.versions, addon_uids(context)))
+    except oh_addons.AddonError:
+        return "unpinned"
+
+
+class AddonFiles(Step):
+    """Every file the conf's add-ons are installed from, in the operator's
+    cache and verified against versions.json, while Thermite still runs: a
+    file that cannot be fetched or is not the pinned one refuses the
+    transaction before anything stops."""
+    title = "Add-on files"
+
+    def __init__(self, context: Context, download=None):
+        self.context = context
+        self.download = download
+
+    def missing(self, system: System) -> list[str]:
+        # The operator's own cache, read whole: a file of the right size
+        # and other content is as missing as one that is not there.
+        store = addon_store(self.context)
+        return [path for path, pin in oh_addons.pinned(self.context.versions, addon_uids(self.context)).items()
+                if not oh_addons.stored(store, path, pin)]
+
+    def check(self, system: System) -> Check:
+        try:
+            missing = self.missing(system)
+        except oh_addons.AddonError as exc:
+            return Check(False, "", str(exc))
+        count = len(oh_addons.pinned(self.context.versions, addon_uids(self.context)))
+        if missing:
+            return Check(False, f"to fetch and verify: {len(missing)} of the {count} pinned add-on files")
+        return Check(True, f"the {count} pinned files of {len(addon_uids(self.context))} add-ons are fetched")
+
+    def actions(self, system: System) -> list[Action]:
+        return [Task("fetch each pinned add-on file that is not here yet, and verify every one", self.fetch)]
+
+    def fetch(self, system: System) -> int:
+        import oh_sandbox as sandbox
+        import urllib.error
+        try:
+            oh_addons.ensure(self.context.versions, addon_uids(self.context), addon_store(self.context),
+                             self.download or sandbox.download, log=lambda line: system.say("   " + line))
+        except (oh_addons.AddonError, sandbox.SandboxError, urllib.error.URLError, OSError) as exc:
+            system.say(f"   An add-on file could not be fetched and verified: {exc}. Nothing was changed. With no "
+                       "network here, copy build/sandbox/downloads/addons from a site that has them and run the "
+                       "command again: every file is checked against versions.json wherever it came from.")
+            return 1
+        return 0
+
+
+class AddonRepository(Step):
+    """The pinned add-on files, in userdata's own repository, and Karaf's
+    resolver pointed at it alone (lib/oh_addons.py): after openHAB's
+    offline preparation, which may have replaced the resolver's settings
+    with the distribution's, and before anything starts. It is inside
+    userdata, so it is set aside and put back with it."""
+    title = "Add-on repository"
+    always = True
+
+    def __init__(self, context: Context):
+        self.context = context
+
+    def check(self, system: System) -> Check:
+        return Check(False, f"the pinned files of {len(addon_uids(self.context))} add-ons, installed from "
+                            "the verified cache while openHAB is stopped")
+
+    def actions(self, system: System) -> list[Action]:
+        host = self.context.host
+        return [Command(("python3", str(self.context.program / "lib/oh_addons.py"), str(self.context.layout.userdata),
+                         "--versions", str(self.context.configuration / "versions.json"),
+                         "--store", str(addon_store(self.context)),
+                         "--uid", str(host["uid"]), "--gid", str(host["gid"]), *addon_uids(self.context)), root=True)]
 
 
 def _secret_wrong(system: System, context: Context, path: Path) -> str | None:

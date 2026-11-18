@@ -651,20 +651,31 @@ examples:
   thermite sandbox reload           after thermite generate: the running sandbox picks up conf/
   thermite sandbox stop             stop it
 </pre>
-<details id="sandbox-fetch"><summary><code>thermite sandbox fetch</code></summary><pre class="help">usage: thermite sandbox fetch [-h]
+<details id="sandbox-fetch"><summary><code>thermite sandbox fetch</code></summary><pre class="help">usage: thermite sandbox fetch [-h] [--pin-addons [ADDON ...]]
 
 Download, verify (sha256 from versions.json) and extract JRE + distribution.
 
 options:
-  -h, --help     show this help message and exit
+  -h, --help                show this help message and exit
+  --pin-addons [ADDON ...]  write versions.json&#x27;s addons entry: the files each named
+                            add-on (binding-http; none named: every add-on pinned
+                            already) needs beyond the distribution, with the SHA-256 of
+                            each not pinned yet, fetched now and checked against the
+                            checksum its repository publishes. Review the change before
+                            committing it
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet               print only errors
+  -v, --verbose             also print, on stderr, the commands and HTTP requests it
+                            runs
+  --no-color                no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite sandbox fetch            fetch the pinned runtime into build/sandbox/
+  thermite sandbox fetch --pin-addons
+                                    after versions.json pins another openHAB: pin its add-on files anew
+  thermite sandbox fetch --pin-addons binding-zwave
+                                    pin the files of an add-on a new integration asks for
 </pre></details>
 <details id="sandbox-start"><summary><code>thermite sandbox start</code></summary><pre class="help">usage: thermite sandbox start [-h] [--conf DIR] [--userdata DIR] [--fresh]
                               [--timeout SECONDS] [--no-token] [--live]

@@ -81,6 +81,185 @@
     "size": 52181297,
     "sha256": "a535a1df9c6284d9618872984e026ae0352d1f7e9e0605425c0e6114f47351dd"
   },
+  "addons": {
+    "repository": "https://openhab.jfrog.io/openhab/libs-release",
+    "requires": {
+      "automation-jsscripting": [
+        "org/openhab/addons/bundles/org.openhab.automation.jsscripting/5.2.3/org.openhab.automation.jsscripting-5.2.3.jar",
+        "org/openhab/osgiify/org.graalvm.js.js-language/25.0.1/org.graalvm.js.js-language-25.0.1.jar",
+        "org/openhab/osgiify/org.graalvm.js.js-scriptengine/25.0.1/org.graalvm.js.js-scriptengine-25.0.1.jar",
+        "org/openhab/osgiify/org.graalvm.polyglot.polyglot/25.0.1/org.graalvm.polyglot.polyglot-25.0.1.jar",
+        "org/openhab/osgiify/org.graalvm.regex.regex/25.0.1/org.graalvm.regex.regex-25.0.1.jar",
+        "org/openhab/osgiify/org.graalvm.sdk.collections/25.0.1/org.graalvm.sdk.collections-25.0.1.jar",
+        "org/openhab/osgiify/org.graalvm.sdk.jniutils/25.0.1/org.graalvm.sdk.jniutils-25.0.1.jar",
+        "org/openhab/osgiify/org.graalvm.sdk.nativeimage/25.0.1/org.graalvm.sdk.nativeimage-25.0.1.jar",
+        "org/openhab/osgiify/org.graalvm.sdk.word/25.0.1/org.graalvm.sdk.word-25.0.1.jar",
+        "org/openhab/osgiify/org.graalvm.shadowed.icu4j/25.0.1/org.graalvm.shadowed.icu4j-25.0.1.jar",
+        "org/openhab/osgiify/org.graalvm.shadowed.json/25.0.1/org.graalvm.shadowed.json-25.0.1.jar",
+        "org/openhab/osgiify/org.graalvm.shadowed.xz/25.0.1/org.graalvm.shadowed.xz-25.0.1.jar",
+        "org/openhab/osgiify/org.graalvm.tools.chromeinspector-tool/25.0.1/org.graalvm.tools.chromeinspector-tool-25.0.1.jar",
+        "org/openhab/osgiify/org.graalvm.tools.profiler-tool/25.0.1/org.graalvm.tools.profiler-tool-25.0.1.jar",
+        "org/openhab/osgiify/org.graalvm.truffle.truffle-api/25.0.1/org.graalvm.truffle.truffle-api-25.0.1.jar",
+        "org/openhab/osgiify/org.graalvm.truffle.truffle-compiler/25.0.1/org.graalvm.truffle.truffle-compiler-25.0.1.jar",
+        "org/openhab/osgiify/org.graalvm.truffle.truffle-runtime/25.0.1/org.graalvm.truffle.truffle-runtime-25.0.1.jar"
+      ],
+      "binding-androidtv": [
+        "org/openhab/addons/bundles/org.openhab.binding.androidtv/5.2.3/org.openhab.binding.androidtv-5.2.3.jar"
+      ],
+      "binding-chromecast": [
+        "org/openhab/addons/bundles/org.openhab.binding.chromecast/5.2.3/org.openhab.binding.chromecast-5.2.3.jar"
+      ],
+      "binding-denonmarantz": [
+        "org/openhab/addons/bundles/org.openhab.binding.denonmarantz/5.2.3/org.openhab.binding.denonmarantz-5.2.3.jar"
+      ],
+      "binding-globalcache": [
+        "org/openhab/addons/bundles/org.openhab.binding.globalcache/5.2.3/org.openhab.binding.globalcache-5.2.3.jar",
+        "org/openhab/addons/bundles/org.openhab.transform.map/5.2.3/org.openhab.transform.map-5.2.3.jar"
+      ],
+      "binding-heos": [
+        "org/openhab/addons/bundles/org.openhab.binding.heos/5.2.3/org.openhab.binding.heos-5.2.3.jar"
+      ],
+      "binding-http": [
+        "org/openhab/addons/bundles/org.openhab.binding.http/5.2.3/org.openhab.binding.http-5.2.3.jar"
+      ],
+      "binding-network": [
+        "org/openhab/addons/bundles/org.openhab.binding.network/5.2.3/org.openhab.binding.network-5.2.3.jar"
+      ],
+      "binding-sonos": [
+        "org/openhab/addons/bundles/org.openhab.binding.sonos/5.2.3/org.openhab.binding.sonos-5.2.3.jar"
+      ],
+      "binding-unifi": [
+        "org/openhab/addons/bundles/org.openhab.binding.unifi/5.2.3/org.openhab.binding.unifi-5.2.3.jar"
+      ],
+      "misc-metrics": [
+        "org/openhab/addons/bundles/org.openhab.io.metrics/5.2.3/org.openhab.io.metrics-5.2.3.jar"
+      ],
+      "transformation-jsonpath": [
+        "org/openhab/addons/bundles/org.openhab.transform.jsonpath/5.2.3/org.openhab.transform.jsonpath-5.2.3.jar"
+      ],
+      "transformation-map": [
+        "org/openhab/addons/bundles/org.openhab.transform.map/5.2.3/org.openhab.transform.map-5.2.3.jar"
+      ]
+    },
+    "files": {
+      "org/openhab/addons/bundles/org.openhab.automation.jsscripting/5.2.3/org.openhab.automation.jsscripting-5.2.3.jar": {
+        "sha256": "1d66db03198d55b0a0998eb7a22b847a9c264cdf4bd1c209e2b62ef53d5370c1",
+        "size": 224295
+      },
+      "org/openhab/addons/bundles/org.openhab.binding.androidtv/5.2.3/org.openhab.binding.androidtv-5.2.3.jar": {
+        "sha256": "240c6551637341a167b0634c894122b57b0ec274f6dc5ff6f9436dc32356d27e",
+        "size": 14548542
+      },
+      "org/openhab/addons/bundles/org.openhab.binding.chromecast/5.2.3/org.openhab.binding.chromecast-5.2.3.jar": {
+        "sha256": "c5d4e12ea48fa33beb26b68b8413e36da388740b179cb06cd0cad1572ddb3025",
+        "size": 877865
+      },
+      "org/openhab/addons/bundles/org.openhab.binding.denonmarantz/5.2.3/org.openhab.binding.denonmarantz-5.2.3.jar": {
+        "sha256": "1a7990d805b4e09096a7f12304fd4c0f168ef80797d841daaf4deb1103e2abbe",
+        "size": 81345
+      },
+      "org/openhab/addons/bundles/org.openhab.binding.globalcache/5.2.3/org.openhab.binding.globalcache-5.2.3.jar": {
+        "sha256": "a442593ceb762b042e7e941d9a4ad4b0548ce5735d7088d22af822852d2f9cfe",
+        "size": 72685
+      },
+      "org/openhab/addons/bundles/org.openhab.binding.heos/5.2.3/org.openhab.binding.heos-5.2.3.jar": {
+        "sha256": "46abdfea05454be2154404634bfc2d385832bc736bde61917944af2cad45dfce",
+        "size": 163007
+      },
+      "org/openhab/addons/bundles/org.openhab.binding.http/5.2.3/org.openhab.binding.http-5.2.3.jar": {
+        "sha256": "3e53a139cca7a44385d22e16df6029f63a087970ccb18cdc151600504fc50170",
+        "size": 55496
+      },
+      "org/openhab/addons/bundles/org.openhab.binding.network/5.2.3/org.openhab.binding.network-5.2.3.jar": {
+        "sha256": "b568c62b88ddf03537369fbcb552df6e55b7a5a6d97311323cb5fa807ed09e45",
+        "size": 165540
+      },
+      "org/openhab/addons/bundles/org.openhab.binding.sonos/5.2.3/org.openhab.binding.sonos-5.2.3.jar": {
+        "sha256": "0aef71af3865631673e062c69a338bdb41f98117d7e1edf6ad38bf0951225962",
+        "size": 141020
+      },
+      "org/openhab/addons/bundles/org.openhab.binding.unifi/5.2.3/org.openhab.binding.unifi-5.2.3.jar": {
+        "sha256": "08ef9c6225599d321589e3b7c7098b2dbe846fee6b2fa001713e838eeec24afe",
+        "size": 725772
+      },
+      "org/openhab/addons/bundles/org.openhab.io.metrics/5.2.3/org.openhab.io.metrics-5.2.3.jar": {
+        "sha256": "6609dbdbe45da7f6ee31772e218c26ee25f66d35f2527e9e94a7238d3ebe2b88",
+        "size": 2720882
+      },
+      "org/openhab/addons/bundles/org.openhab.transform.jsonpath/5.2.3/org.openhab.transform.jsonpath-5.2.3.jar": {
+        "sha256": "6488781b7d521fc1189f0e870c24131fb951a44c1c00156944dcb1faebfbc9ae",
+        "size": 438173
+      },
+      "org/openhab/addons/bundles/org.openhab.transform.map/5.2.3/org.openhab.transform.map-5.2.3.jar": {
+        "sha256": "b0d98de4ff589f9f69e96f60f0366eb84763fb074e9c99be1d666e088b71a73b",
+        "size": 18398
+      },
+      "org/openhab/osgiify/org.graalvm.js.js-language/25.0.1/org.graalvm.js.js-language-25.0.1.jar": {
+        "sha256": "263b917c2cc40f9f6a95ea8317101ee1682ff56786e3ba9043e82246beec35d8",
+        "size": 10337565
+      },
+      "org/openhab/osgiify/org.graalvm.js.js-scriptengine/25.0.1/org.graalvm.js.js-scriptengine-25.0.1.jar": {
+        "sha256": "95768d9eaa05047bcb6c036a9454cc86b3ee0b2e94f7c23adac7ca74b2a845bf",
+        "size": 36032
+      },
+      "org/openhab/osgiify/org.graalvm.polyglot.polyglot/25.0.1/org.graalvm.polyglot.polyglot-25.0.1.jar": {
+        "sha256": "27b53047bf739fb10e3e0dc149b2daf8583d4f8511d04a42aa4e646e7f3e5f23",
+        "size": 226031
+      },
+      "org/openhab/osgiify/org.graalvm.regex.regex/25.0.1/org.graalvm.regex.regex-25.0.1.jar": {
+        "sha256": "011d0bec1f990c2df29d78911c4fcdf5f867385c44852225098a2b709b226665",
+        "size": 1679091
+      },
+      "org/openhab/osgiify/org.graalvm.sdk.collections/25.0.1/org.graalvm.sdk.collections-25.0.1.jar": {
+        "sha256": "0469799dfdb7cb5bd4fef76d3927b1424e9f2e8747b426c4f31d050b1bc79ede",
+        "size": 61909
+      },
+      "org/openhab/osgiify/org.graalvm.sdk.jniutils/25.0.1/org.graalvm.sdk.jniutils-25.0.1.jar": {
+        "sha256": "a13089ae163b1d656420141f0dc92469887206b318c512228c23cf988306d663",
+        "size": 129140
+      },
+      "org/openhab/osgiify/org.graalvm.sdk.nativeimage/25.0.1/org.graalvm.sdk.nativeimage-25.0.1.jar": {
+        "sha256": "c67609a71e2136d03ec16d0d9a9c9154e7515168fecf272796b293c6f2f4e795",
+        "size": 133746
+      },
+      "org/openhab/osgiify/org.graalvm.sdk.word/25.0.1/org.graalvm.sdk.word-25.0.1.jar": {
+        "sha256": "43fc6d4e83bd714ead1291dcf3f82325da7dfb322e8139c6edb019ab994fde87",
+        "size": 15617
+      },
+      "org/openhab/osgiify/org.graalvm.shadowed.icu4j/25.0.1/org.graalvm.shadowed.icu4j-25.0.1.jar": {
+        "sha256": "71a7e0c9bb03195acf5e536e7864cf85ea29ed03acf8bb17b944ba52183557d5",
+        "size": 18131611
+      },
+      "org/openhab/osgiify/org.graalvm.shadowed.json/25.0.1/org.graalvm.shadowed.json-25.0.1.jar": {
+        "sha256": "136ad875b1d81e6d523809324eb7aa84b7782eb83b6c086e78565e50c3f39b29",
+        "size": 87579
+      },
+      "org/openhab/osgiify/org.graalvm.shadowed.xz/25.0.1/org.graalvm.shadowed.xz-25.0.1.jar": {
+        "sha256": "e575e9d796c5c1e670cc90186d883c2da97f1d4dcaa5f6f741b569f3f7251bc2",
+        "size": 181904
+      },
+      "org/openhab/osgiify/org.graalvm.tools.chromeinspector-tool/25.0.1/org.graalvm.tools.chromeinspector-tool-25.0.1.jar": {
+        "sha256": "9bc653e16a3a4e0fbe380f3614771642a76cf659bd074e77cf682b3e2c6d44b8",
+        "size": 501105
+      },
+      "org/openhab/osgiify/org.graalvm.tools.profiler-tool/25.0.1/org.graalvm.tools.profiler-tool-25.0.1.jar": {
+        "sha256": "b400ee4256f739704675d5bcb68883c1ad44d754d0b9cf7e7ec68908d4231978",
+        "size": 231159
+      },
+      "org/openhab/osgiify/org.graalvm.truffle.truffle-api/25.0.1/org.graalvm.truffle.truffle-api-25.0.1.jar": {
+        "sha256": "c85703a276103fe9142f405ec16aca797f67d5853a03311c79b8f5e1a85af93d",
+        "size": 5586864
+      },
+      "org/openhab/osgiify/org.graalvm.truffle.truffle-compiler/25.0.1/org.graalvm.truffle.truffle-compiler-25.0.1.jar": {
+        "sha256": "a8c92115293f9883bcbc50e9255da30cad748776c663395c50c6f213eb1ad08b",
+        "size": 36112
+      },
+      "org/openhab/osgiify/org.graalvm.truffle.truffle-runtime/25.0.1/org.graalvm.truffle.truffle-runtime-25.0.1.jar": {
+        "sha256": "83cdc7d75dd192557a7b4c02435f52188d2f135766dd5ba29961059efbc943aa",
+        "size": 385405
+      }
+    }
+  },
   "_sources": {
     "retrieved": "2026-10-28",
     "openhab.distribution.url": "GitHub release openhab/openhab-distro tag 5.2.3 (published 2026-10-10T08:03:40Z), https://github.com/openhab/openhab-distro/releases/tag/5.2.3",
@@ -98,7 +277,8 @@
     "node_exporter.image.platforms": "Per-platform manifest digests listed in that manifest list",
     "blackbox_exporter.image.platforms": "Per-platform manifest digests listed in that manifest list",
     "grafana.image.platforms": "Per-platform manifest digests listed in that manifest list",
-    "java.sha256": "Adoptium API api.adoptium.net/v3/assets/latest/21/hotspot (jre, linux, x64) and the published https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13%2B9/OpenJDK21U-jre_x64_linux_hotspot_21.0.13_9.tar.gz.sha256.txt"
+    "java.sha256": "Adoptium API api.adoptium.net/v3/assets/latest/21/hotspot (jre, linux, x64) and the published https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13%2B9/OpenJDK21U-jre_x64_linux_hotspot_21.0.13_9.tar.gz.sha256.txt",
+    "addons": "requires: resolved by thermite sandbox fetch --pin-addons from the pinned distribution's feature files (runtime/system, openhab-addons-5.2.3-features.xml and those it depends on), less what the distribution carries. files: SHA-256 and size computed on 2026-11-18 over the files a 5.2.3 runtime had fetched on this host from https://openhab.jfrog.io/openhab/libs-release between 2026-10-09 and 2026-11-18; the globalcache binding and the map transformation were fetched on 2026-11-18 by thermite sandbox fetch --pin-addons. Every file's SHA-256 equals the .sha256 the repository published beside it on 2026-11-18, and the androidtv and heos bindings equal the SHA-256 already pinned in lib/oh_androidtv_patch/inputs.json and lib/oh_heos_patch/inputs.json"
   },
   "music_assistant": {
     "version": "2.10.12",

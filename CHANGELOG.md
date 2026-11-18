@@ -7,6 +7,16 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- openHAB's add-on files are pinned. `versions.json` lists, under
+  `addons`, the files each add-on needs and their SHA-256; an install
+  fetches and verifies them before it stops anything and openHAB
+  installs its add-ons from a repository inside its own state, so a
+  start downloads nothing. A private site must copy the `addons`
+  entry from Thermite's `versions.json` into its own before
+  upgrading, or the upgrade refuses and says so. `thermite sandbox
+  fetch --pin-addons [ADDON ...]` writes the entry after a change of
+  the openHAB pin or for a new add-on. A host without network access
+  installs from a copy of `build/sandbox/downloads/addons`.
 - Dashboards: on Devices, **Last problem** says which problem the
   remotes still show, in their words ("Does not answer", "Is busy"),
   where it read "Still shown" for any; it reads "Still shown" only on

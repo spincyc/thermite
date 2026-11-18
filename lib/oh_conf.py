@@ -47,6 +47,11 @@ ADDONS_HEADER = (
     "(openHAB 3.0 removed the old `package = minimal|standard|expert` key; an",
     "empty or absent list now means nothing extra is installed.)",
 )
+#: Why addons.cfg turns openHAB's online repository off.
+ADDONS_LOCAL = (
+    "Every file these add-ons need is pinned in versions.json and installed from",
+    "userdata's own repository (lib/oh_addons.py); openHAB fetches none of them.",
+)
 
 #: Keys whose lists of scalars are written in flow style, `[a, b]`.
 FLOW_KEYS = frozenset({"groups", "tags"})
@@ -490,7 +495,7 @@ class Conf:
         return any(file.guarded for file in self.yaml.values())
 
     def addons_cfg(self) -> str:
-        lines = comment([RENDERED, "", *ADDONS_HEADER])
+        lines = comment([RENDERED, "", *ADDONS_HEADER]) + ["", *comment(ADDONS_LOCAL), "remote = false"]
         for kind in sorted(self.addons):
             names = self.addons[kind]
             lines.append("")

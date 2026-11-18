@@ -601,7 +601,8 @@ def release(context: steps.Context) -> dict:
     """What commit records about this version."""
     return {"release": {"site": context.head, "configuration": context.conf_digest,
                         "hostname": context.hostname, "address": context.address},
-            "pins": manifest.pins(context), "images": manifest.images(context),
+            "pins": {**manifest.pins(context), "addons": steps.addon_pin(context)},
+            "images": manifest.images(context),
             "application": (context.application or {}).get("digest")}
 
 
@@ -611,7 +612,8 @@ def preparation(context: steps.Context) -> list[Step]:
     transaction plans and begins inside."""
     return [*steps.configuration_steps(context), steps.ShareLogins(context), steps.Packages(context),
             NativeIngressPrerequisites(context),
-            steps.AppArmorService(), steps.BootTest(context), steps.Account(context), steps.InstallationRoot(context)]
+            steps.AppArmorService(), steps.AddonFiles(context), steps.BootTest(context), steps.Account(context),
+            steps.InstallationRoot(context)]
 
 
 def switching(context: steps.Context, transaction: str | None, how: str = "upgrade") -> list[Step]:
@@ -624,7 +626,7 @@ def switching(context: steps.Context, transaction: str | None, how: str = "upgra
     return [steps.StateDirectories(context), steps.MetricsDirectories(context),
             *([steps.MusicDirectories(context)] if playing else []),
             steps.Units(context), steps.ShareCredentials(context), steps.NodeConfinement(context),
-            steps.NativePreparation(context),
+            steps.NativePreparation(context), steps.AddonRepository(context),
             NativeIngress(context), deployment, steps.Services(context, restart_runtime=context.restart_runtime),
             *([steps.MusicServices(context)] if playing else []), steps.Answers(context, native),
             steps.Token(context, native), *steps.gateway_steps(context, native, transaction=transaction),

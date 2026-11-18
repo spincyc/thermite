@@ -248,7 +248,22 @@ always its children. Unit files, `/etc/thermite`, the owner's
 
 ### Startup and recovery
 
-The native boot test downloads its pinned runtime and JRE. Before starting
+The native boot test downloads its pinned runtime and JRE. The files of
+openHAB's add-ons are pinned too: `versions.json` lists, for each add-on the
+configuration asks for, the files it needs beyond openHAB's distribution and
+the SHA-256 of each. The installer fetches the missing ones into the site's
+`build/sandbox/downloads/addons/` while Thermite still runs, checks every one
+against its pin, and with openHAB stopped copies them, checked again, into a
+repository inside the runtime's own state. openHAB installs its add-ons from
+there and from nowhere else: a start downloads nothing, and a file that is not
+the pinned one stops the installation before anything is stopped. On a host
+without network access, copy that directory from a site that has the files.
+A private site pins its own native versions: copy the `addons` entry from
+Thermite's `versions.json` into the site's and commit it, or the installation
+refuses, before it stops anything, with those words. After a change of the
+openHAB pin, or for an add-on no entry names yet,
+`thermite sandbox fetch --pin-addons` writes the entry.
+Before starting
 or restarting a service, the installer downloads any missing pinned container
 image with visible progress. Downloads finish before the service startup
 timer begins. This can take several minutes. Pending steps explain their work,
