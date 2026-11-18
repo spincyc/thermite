@@ -13,6 +13,8 @@
   const Remote = globalThis.RemoteBackend;
   const Session = globalThis.RemoteSession;
   const params = new URLSearchParams(window.location.search);
+  // ?backend=mock: the sample house, where nothing reaches a device.
+  const mock = params.get("backend") === "mock";
   const backend = Remote.create(house, {
     backend: { mock: "mock", openhab: "openhab" }[params.get("backend")],
     active: document.visibilityState !== "hidden",
@@ -22,7 +24,7 @@
   const store = storage();
   const activityLog = globalThis.RemoteLog.create({ document: document, store: store });
   const heard = globalThis.RemoteListen.sessions({ backend: backend, house: house, store: store,
-    access: globalThis.ThermiteAccess && globalThis.ThermiteAccess.client, mock: params.get("backend") === "mock",
+    access: globalThis.ThermiteAccess && globalThis.ThermiteAccess.client, mock: mock,
     active: document.visibilityState !== "hidden" });
   const session = Session.create({ backend: backend, house: house, layouts: layouts, store: store, volume: params.get("volume"),
     listen: heard.listen });
@@ -81,11 +83,13 @@
       listenPage = globalThis.RemoteListenPage.create({ session: session, sessions: heard,
         ui: { $: $, all: all, node: node, icon: icon, openSheet: openSheet } });
       bind();
-      applyTheme(document.documentElement.getAttribute("data-theme"), false);
+      applyTheme(document.documentElement.getAttribute("data-theme"));
       ready = true;
       update();
       document.documentElement.classList.add("is-ready");
-      const chosen = params.get("choose");
+      // ?choose= opens the sample on a source, for a screenshot. Only there: a
+      // link must never send the house a command.
+      const chosen = mock && params.get("choose");
       if (chosen) session.choose(chosen);
       checkForUpdate();
     })
@@ -412,7 +416,9 @@
           const primary = node("div", { class: "labels labels--grouped" });
           remote.keyGroups.forEach((group) => {
             const grid = node("div", { class: "keygroup", role: "group", "aria-label": group.label,
-              "data-key-group": group.label, style: "--key-columns:" + group.columns }, group.keys.map((id) => key(id)));
+              "data-key-group": group.label }, group.keys.map((id) => key(id)));
+            // Through the CSSOM: the gateway's Content-Security-Policy refuses a style attribute.
+            grid.style.setProperty("--key-columns", String(group.columns));
             (group.primary ? primary : auxiliary).appendChild(grid);
           });
           if (primary.childNodes.length) box.appendChild(primary);
@@ -822,9 +828,6 @@
   // ---- input -------------------------------------------------------------
 
   function bind() {
-    if (session.demo) ["cameras.html", "topology.html"].forEach((page) => {
-      all('a[href="' + page + '"]').forEach((link) => link.setAttribute("href", page + "?backend=mock"));
-    });
     document.addEventListener("click", onClick);
     document.addEventListener("pointerdown", onPointerDown);
     ["pointerup", "pointercancel"].forEach((type) => document.addEventListener(type, stopRepeat));
@@ -862,9 +865,6 @@
     });
     window.addEventListener("pagehide", () => { signalRunning = false; session.closeDiagnostics(); });
     window.addEventListener("pageshow", syncSignal);
-    $("#theme-toggle").addEventListener("click", () => {
-      applyTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark", true);
-    });
     all("dialog").forEach((dialog) => {
       dialog.addEventListener("close", () => {
         if (dialog.id === "info-sheet" && !inlineSignal()) signalFocus = false;
@@ -877,7 +877,7 @@
     const scheme = window.matchMedia("(prefers-color-scheme: light)");
     if (scheme.addEventListener) {
       scheme.addEventListener("change", (event) => {
-        if (!store.get("remote.theme") && !params.get("theme")) applyTheme(event.matches ? "light" : "dark", false);
+        if (!store.get("remote.theme") && !params.get("theme")) applyTheme(event.matches ? "light" : "dark");
       });
     }
   }
@@ -1210,13 +1210,11 @@
 
   // ---- chrome ------------------------------------------------------------
 
-  function applyTheme(theme, save) {
+  // The frame's menu holds the theme switch (shell.js); the page follows the
+  // system's scheme and gives the browser's own chrome the theme's colour.
+  function applyTheme(theme) {
     const root = document.documentElement;
     root.setAttribute("data-theme", theme);
-    if (save) store.set("remote.theme", theme);
-    const toggle = $("#theme-toggle");
-    toggle.setAttribute("aria-label", "Switch to " + (theme === "dark" ? "light" : "dark") + " theme");
-    toggle.querySelector("use").setAttribute("href", theme === "dark" ? "#i-sun" : "#i-moon");
     const chrome = getComputedStyle(root).getPropertyValue("--chrome").trim();
     const meta = $('meta[name="theme-color"]');
     if (meta && chrome) meta.setAttribute("content", chrome);

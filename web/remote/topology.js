@@ -408,12 +408,6 @@
       global.addEventListener("pageshow", active);
       active();
       global.addEventListener("resize", draw);
-      $("[data-theme-toggle]").addEventListener("click", () => {
-        const theme = document.documentElement.dataset.theme === "light" ? "dark" : "light";
-        document.documentElement.dataset.theme = theme;
-        try { localStorage.setItem("remote.theme", theme); } catch (_) {}
-      });
-      if (params.get("backend") === "mock") document.querySelectorAll("nav a, a.brand").forEach(link => { link.search = "?backend=mock"; });
       $("[data-catalogue]").open = false;
       draw();
     } catch (error) {

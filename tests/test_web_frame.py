@@ -32,16 +32,24 @@ class WebFrame(unittest.TestCase):
                 with self.subTest(page=asset, tag=tag):
                     self.assertIn(tag, head)
 
-    def test_only_the_frame_and_overlays_keep_the_top_inset(self):
+    def test_only_the_frame_keeps_the_top_inset(self):
         for sheet in sorted(REMOTE.glob("*.css")):
             if sheet.name == "shell.css":
                 continue
-            css = re.sub(r"/\*.*?\*/", "", sheet.read_text(), flags=re.S)
-            for match in re.finditer(r"safe-area-inset-top", css):
-                rule = css[:match.start()].rsplit("}", 1)[-1]
-                selector = rule.split("{", 1)[0].strip()
-                with self.subTest(sheet=sheet.name, selector=selector):
-                    self.assertEqual(selector, ".toast", "a page under the bar must not add the inset again")
+            with self.subTest(sheet=sheet.name):
+                self.assertNotIn("safe-area-inset-top", re.sub(r"/\*.*?\*/", "", sheet.read_text(), flags=re.S),
+                                 "a page under the frame must not add the inset again")
+
+    def test_a_toast_opens_below_the_bar_and_the_inset(self):
+        # Below 1180 px the bar is drawn over the top of the page, and a toast placed from the top of the
+        # window was hidden behind it. The frame's header height is the bar's 44 px and the inset.
+        shell = (REMOTE / "shell.css").read_text()
+        self.assertIn("--thermite-inset-top: env(safe-area-inset-top, 0px)", shell)
+        self.assertRegex(shell, r"@media\(max-width:1179px\) \{\s*body\.thermite-app \{ --thermite-header-height: "
+                                r"calc\(44px \+ var\(--thermite-inset-top\)\); \}")
+        remote = (REMOTE / "remote.css").read_text()
+        # From 820 px the toast is at the foot of the window, clear of the bar.
+        self.assertEqual(re.findall(r"\.toast \{[^}]*?\btop: ([^;]+);", remote), ["calc(var(--thermite-header-height) + 6px)", "auto"])
 
     def test_remotes_lends_the_bar_its_room_its_switch_info_and_log(self):
         page = (REMOTE / "index.html").read_text()

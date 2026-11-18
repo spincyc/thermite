@@ -12,7 +12,8 @@
  * memory if absent; volume is "slider" or "buttons", else what the store
  * holds; listen is a RemoteListen, listen-session.js, for the rooms'
  * speakers). start(room) reads every room and device and resolves once the
- * session can be drawn, on that room, the stored one or the first.
+ * session can be drawn, on that room, the stored one or the first. stop()
+ * ends it: it lets the backend go and is not started again.
  *
  * rooms() are the routed rooms, then the rooms of speakers alone
  * (house.js speakerRooms, listenOnly). Each room has speakers, and modes()
@@ -137,6 +138,8 @@
     const demo = Boolean(backend.simulateExternalSwitch);
 
     const listeners = [];
+    // Ends what start() began hearing from the backend.
+    let unsubscribe = null;
     const rooms = [];
     const roomsById = {};
     const states = {};
@@ -381,7 +384,7 @@
     }
 
     function start(roomId) {
-      backend.subscribe(onEvent);
+      unsubscribe = backend.subscribe(onEvent);
       return backend.getRooms()
         .then((list) => {
           list.forEach((room) => {
@@ -420,6 +423,19 @@
             .map((id) => roomsById[id]).find((room) => room && (!modeKept || modes(room).includes(shown)));
           setRoom(roomId || (kept && kept.id));
         });
+    }
+
+    // The session hears no more of the house and reads no more signal, so a
+    // front end that forgets one need not keep its backend from it. The
+    // slider's last volume is sent first, as Listen's sessions send theirs;
+    // All off forgets its first press, which only its timer would have.
+    function stop() {
+      if (unsubscribe) unsubscribe();
+      unsubscribe = null;
+      closeDiagnostics();
+      if (fader.timer) { cancel(fader.timer); sendVolume(); }
+      [fader.timer, fader.release, muteRelease, allOffArmed.timer].forEach(cancel);
+      fader.timer = fader.release = muteRelease = allOffArmed.timer = allOffArmed.at = 0;
     }
 
     // ---- state -------------------------------------------------------------
@@ -1132,6 +1148,7 @@
     return {
       demo: demo,
       start: start,
+      stop: stop,
       subscribe: subscribe,
       rooms: () => rooms,
       listed: listed,

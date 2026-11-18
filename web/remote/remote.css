@@ -258,36 +258,6 @@ button {
   padding: var(--space-1) var(--space-3);
 }
 
-/* Every application mark uses the same canonical vector asset. */
-.torch {
-  display: flex;
-  flex: none;
-}
-
-.torch img {
-  display: block;
-  width: 44px;
-  height: 35px;
-  object-fit: contain;
-}
-
-[data-theme="light"] .torch img { content: url("mark-light.svg"); }
-
-.remote__torch {
-  padding: 0 var(--space-1);
-}
-
-.remote__mark {
-  display: none;
-  margin: 0;
-  text-align: center;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  color: var(--key-ink-muted);
-  opacity: 0.7;
-}
-
 .room-switch {
   flex: 1;
   min-width: 0;
@@ -417,7 +387,6 @@ button {
 
 @media (max-width: 450px) {
   .remote__top { gap: var(--space-1); padding-inline: var(--space-2); }
-  .remote__torch { padding-inline: 0; }
   .room-switch { padding-inline: var(--space-2); }
   .room-switch__name { font-size: 19px; }
 }
@@ -1921,10 +1890,12 @@ kbd {
   from { transform: translateY(32px); opacity: 0; }
 }
 
+/* Below the frame's bar, which is drawn over the page and keeps the top
+   safe-area inset (shell.css): its height holds both. */
 .toast {
   position: fixed;
   z-index: 20;
-  top: calc(env(safe-area-inset-top) + 6px);
+  top: calc(var(--thermite-header-height) + 6px);
   left: 0;
   right: 0;
   display: grid;
@@ -2152,10 +2123,6 @@ kbd {
     gap: var(--space-2);
   }
 
-  .remote__mark {
-    display: block;
-  }
-
   .sheet {
     margin: auto;
     border-radius: var(--radius-sheet);
@@ -2188,10 +2155,6 @@ kbd {
     gap: var(--space-2);
     padding: var(--space-3) var(--space-5) var(--space-2);
   }
-
-  .remote__mark {
-    display: none;
-  }
 }
 
 @media (min-width: 820px) and (max-height: 960px) {
@@ -2205,10 +2168,6 @@ kbd {
   :root {
     --dpad: 180px;
     --rocker-h: 108px;
-  }
-
-  .remote__mark {
-    display: none;
   }
 }
 
@@ -2261,20 +2220,6 @@ kbd {
   color: var(--accent);
 }
 
-/* ---- the link to the Pairing page (pair.html), under each All off ---------- */
-
-.link--pair {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: var(--tap);
-  margin-top: var(--space-2);
-  font-size: 14px;
-  color: var(--ink-muted);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
 /* ---- a phone on its side --------------------------------------------------
    Under 500px tall the device's keys sit beside the volume and playback
    instead of above them, so the remote fits without scrolling (shell.css
@@ -2320,10 +2265,6 @@ kbd {
     align-self: center;
     grid-template-columns: var(--rocker-w) auto var(--rocker-w);
     width: auto;
-  }
-
-  .remote__mark {
-    display: none;
   }
 }
 

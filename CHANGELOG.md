@@ -7,6 +7,16 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Remotes: a device remote's labelled keys are laid out in their columns
+  again. The gateway's Content-Security-Policy dropped the inline style
+  that carried each group's column count, so every group was one column
+  and a TV remote's number pad was twelve full-width keys.
+  - A message (toast) on a phone or tablet opens below the bar, clear of
+    an iPhone's status bar; the bar had covered its title.
+  - `?choose=<source>` in a Remotes address is honoured only with
+    `?backend=mock`, so no link can switch a room.
+  - Cameras, Site, Pair devices and Remotes no longer ship the header,
+    links and theme button that the shared frame replaced and hid.
 - A refused deploy names the site by its own path instead of one site's
   private directory.
 - Command line: `--config DIR` (or `--site DIR`) now means the private site

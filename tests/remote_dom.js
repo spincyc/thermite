@@ -2,7 +2,8 @@
 // A small stand-in for a browser, for the remote page's scripts: a page's
 // HTML read into elements that keep their attributes, children, listeners
 // and the focus, as much of the DOM as the scripts (and shell.js, the frame)
-// use, and a clock the harness moves for every timer.
+// use, and a clock the harness moves for every timer. It refuses what the
+// gateway's Content-Security-Policy refuses (allowed(), below).
 // listen_page_harness.js runs the remote on it; nothing leaves the process.
 const START = Date.UTC(2026, 10, 15, 12, 0, 0);
 const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
@@ -81,6 +82,21 @@ function matches(element, groups) {
 
 // ---- elements -----------------------------------------------------------------
 
+// The gateway serves every page under "default-src 'self'" with no
+// 'unsafe-inline' (lib/oh_identity/hardening.py). A browser then drops a
+// style attribute and an inline event handler and only logs it, so the page
+// runs on without the style or the handler. Here that is an error, however
+// the attribute arrives: setAttribute, a map of attributes written through
+// it, or markup (the page's own, or a string given to innerHTML). The CSSOM
+// (element.style.setProperty) and addEventListener are what the policy allows.
+function allowed(tag, name) {
+  if (/^(style$|on[a-z])/i.test(name)) {
+    throw new Error('Content-Security-Policy: <' + tag + '> may not carry the attribute "' + name + '": the gateway\'s policy refuses '
+      + (/^style$/i.test(name) ? 'inline styles; use element.style.setProperty' : 'inline event handlers; use addEventListener'));
+  }
+  return name;
+}
+
 // What an element and a text have alike: a place among their parent's children.
 class Node {
   get nextSibling() { const list = this.parentNode ? this.parentNode.childNodes : []; return list[list.indexOf(this) + 1] || null; }
@@ -128,7 +144,7 @@ class Element extends Node {
     this.nodeName = this.tagName;
     this.scrollLeft = 0;
     this.scrollTop = 0;
-    this.attributes = new Map(attributes || []);
+    this.attributes = new Map((attributes || []).map(([name, value]) => [allowed(this.localName, name), value]));
     this.childNodes = [];
     this.parentNode = null;
     this.listeners = {};
@@ -177,7 +193,7 @@ class Element extends Node {
   get namespaceURI() { return ['svg', 'use', 'path', 'symbol'].includes(this.localName) ? 'http://www.w3.org/2000/svg' : 'http://www.w3.org/1999/xhtml'; }
   getAttribute(name) { return this.attributes.has(name) ? this.attributes.get(name) : null; }
   setAttribute(name, value) {
-    this.attributes.set(name, String(value));
+    this.attributes.set(allowed(this.localName, name), String(value));
     if (this.localName === 'img' && name === 'src') this.ownerDocument.fetchImage(this, String(value));
   }
   removeAttribute(name) { this.attributes.delete(name); }

@@ -27,7 +27,8 @@ function locking(room, guest) {
 // music (the mock music's settings), wide (a window 1200 px wide), short
 // (and 500 px tall, a phone on its side), narrow (under 1180 px, in the
 // shell's frame and its bar), stored, html (another page: Home's home.html,
-// room null).
+// room null), search (more of the address, as "&choose=…"), real (the address
+// does not ask for the mock backend, as a link to a house's own remote).
 function page(room, options = {}) {
   const time = clock();
   const html = options.html || 'index.html';
@@ -37,7 +38,7 @@ function page(room, options = {}) {
   const toasts = [];
   const context = {
     document, console: {log() {}, info() {}, warn() {}, error: (...args) => { throw new Error(args.map((arg) => (arg && arg.stack) || arg).join(' ')); }},
-    location: {search: '?backend=mock&latency=4' + (room ? '&room=' + room : ''), href: 'file:///remote/' + html, protocol: 'file:', origin: 'null'},
+    location: {search: (options.real ? '?latency=4' : '?backend=mock&latency=4') + (room ? '&room=' + room : '') + (options.search || ''), href: 'file:///remote/' + html, protocol: 'file:', origin: 'null'},
     URLSearchParams, URL, Promise, JSON, Math, Map, Set, WeakMap, Array, Object, String, Number, Boolean, Error, RegExp, Symbol,
     setTimeout: time.setTimeout, clearTimeout: time.clearTimeout,
     setInterval: (callback, ms) => { const again = () => { callback(); time.setTimeout(again, ms); }; return time.setTimeout(again, ms); },
@@ -86,8 +87,20 @@ function page(room, options = {}) {
         backend.command = (device, action, value) => { backend.sent.push([device, action, String(value)]); return command(device, action, value); };
         const setInput = backend.setInput.bind(backend);
         backend.setInput = (room, device, value) => { backend.sent.push([device, 'input', String(value)]); return setInput(room, device, value); };
+        // Each source a room was sent, and each volume.
+        backend.chosen = [];
+        const choose = backend.choose.bind(backend);
+        backend.choose = (id, source) => { backend.chosen.push([id, source]); return choose(id, source); };
+        backend.volumes = [];
+        const setVolume = backend.setVolume.bind(backend);
+        backend.setVolume = (id, value) => { backend.volumes.push([id, value]); return setVolume(id, value); };
         return backend;
       };
+    }
+    // The page's session kept, as its backends are.
+    if (name === 'session.js') {
+      const create = context.RemoteSession.create;
+      context.RemoteSession.create = (...args) => (made.session = create(...args));
     }
     if (name === 'music-backend.js') {
       const create = context.MusicBackend.create;
@@ -701,6 +714,80 @@ async function home(out) {
   out.focus = [p.focus(), stored.get('remote.mode'), streaming(p.made)];
 }
 
+// A remote's key groups: each grid carries its column count where remote.css
+// reads it (--key-columns), set as the gateway's policy allows.
+async function keys(out) {
+  const p = page(WATCH);
+  await p.time.tick(1500);
+  const groups = () => p.all('#controls .keygroup').map((grid) => [grid.dataset.keyGroup, grid.styles['--key-columns'], grid.children.length]);
+  p.$('#target-example_tv').click();
+  await p.time.tick(100);
+  out.tv = groups();
+  p.$('#target-example_player').click();
+  await p.time.tick(400);
+  out.player = groups();
+}
+
+// What the gateway's Content-Security-Policy refuses the stand-in refuses,
+// however it arrives; what the policy allows it allows. No page's own markup
+// asks for either.
+async function policy(out) {
+  const document = new Document('<html><body><p id="at"></p></body></html>');
+  const at = document.querySelector('#at');
+  const refused = (attempt) => { try { attempt(); return ''; } catch (error) { return error.message; } };
+  out.refused = [
+    refused(() => at.setAttribute('style', '--key-columns:3')),
+    refused(() => at.setAttribute('onclick', 'press()')),
+    refused(() => { at.innerHTML = '<b style="color: red">key</b>'; }),
+    refused(() => { at.innerHTML = '<button type="button" onclick="press()">key</button>'; }),
+    refused(() => new Document('<html><body><main STYLE="margin: 0"></main></body></html>')),
+  ];
+  out.allowed = [
+    refused(() => at.style.setProperty('--key-columns', '3')),
+    refused(() => at.addEventListener('click', () => {})),
+    refused(() => at.setAttribute('data-style', 'wide')),
+    refused(() => { at.innerHTML = '<svg viewBox="0 0 24 24"><use href="#i-on"></use></svg>'; }),
+  ];
+  out.pages = fs.readdirSync(WEB).filter((name) => name.endsWith('.html')).sort()
+    .map((name) => [name, refused(() => new Document(fs.readFileSync(path.join(WEB, name), 'utf8')))]);
+}
+
+// ?choose= opens the sample on a source; on a house's own remote the same link sends nothing.
+async function link(out) {
+  const sample = page(WATCH, {search: '&choose=example_player'});
+  await sample.time.tick(1500);
+  out.sample = [sample.made.remote.chosen, sample.made.session.state(WATCH).value];
+  const real = page(WATCH, {search: '&choose=example_player', real: true, access: locking(null)});
+  await real.time.tick(1500);
+  out.real = [real.made.remote.chosen, real.made.session.state(WATCH).value, real.words(real.$('[data-room-name]'))];
+}
+
+// A session stopped lets its backend go: it hears no more of the house, its
+// slider's last volume is sent, and All off forgets its first press.
+async function stopped(out) {
+  const p = page(WATCH, {search: '&volume=slider&choose=example_player'});
+  const {time, made} = p;
+  await time.tick(1500);
+  const session = made.session, backend = made.remote;
+  const heard = [];
+  session.subscribe((event) => heard.push(event.type));
+  const listeners = backend.listeners.length;
+  // Two volumes within the slider's pace: the first is sent, the second waits.
+  session.slide(21, false);
+  session.slide(23, true);
+  session.allOff();
+  out.before = [backend.volumes.map((sent) => sent[1]), session.allOffArmed()];
+  session.stop();
+  out.stopped = [listeners - backend.listeners.length, backend.volumes.map((sent) => sent[1]), session.allOffArmed()];
+  heard.length = 0;
+  backend.choose(WATCH, 'example_computer');
+  await time.tick(10000);
+  // The backend switched the room; the session neither heard it nor drew anything on a timer.
+  out.after = [backend.snapshot(WATCH).value, session.state(WATCH).value, heard, backend.volumes.length];
+  session.stop();
+  out.again = backend.listeners.length - listeners;
+}
+
 // 1200 px wide but 500 tall (a phone on its side): no right column, so the library opens its sheet.
 async function sideways(out) {
   const p = page(MIXED, {wide: true, short: true, stored: {'remote.mode': 'listen'}});
@@ -713,7 +800,7 @@ async function sideways(out) {
 (async () => {
   const report = {};
   for (const [name, run] of Object.entries({rooms, modes, bar, face, alone, watch, locks, library, browse, pages, group, covers, music, inputs, signal,
-    sideways, home})) {
+    sideways, home, keys, policy, link, stopped})) {
     report[name] = {};
     // A scenario that throws says where, and the rest still run.
     await run(report[name]).catch((error) => { report[name].error = error.stack.split('\n').slice(0, 3).join(' '); });

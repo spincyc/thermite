@@ -110,7 +110,9 @@ the track, + and − step the volume, M mutes, S shuffles, R repeats, G opens th
 group, / searches, 1 to 9 choose the speaker and [ and ] the room.
 
 Source previews use the fictional sample. Add `?backend=mock` to simulate
-controls without sending commands.
+controls without sending commands. There `&choose=<source>` opens the room on
+that source, as the documentation's screenshot does; on a real house the page
+ignores it, so no link can switch a room.
 
 A page that hears nothing on its event stream for 15 s (the gateway sends a
 heartbeat every 5 s) reconnects it, and one shown again, such as the iPhone

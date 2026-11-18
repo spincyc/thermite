@@ -354,6 +354,46 @@ class ListenPage(unittest.TestCase):
         self.assertEqual(self.out["music"]["tidal"], [True, "TIDAL is not signed in.", True,
                                                       "Approve this code at link.tidal.com on any device."])
 
+    def test_a_key_group_carries_its_column_count_as_the_gateways_policy_allows(self):
+        out = self.out["keys"]
+        # Each grid's --key-columns, set through the CSSOM: as a style attribute the policy drops it and every grid is one column.
+        self.assertEqual(out["tv"], [["Apps", "2", 2], ["TV", "2", 4], ["Audio", "2", 2], ["Channels", "3", 12], ["Color keys", "4", 4]])
+        self.assertEqual(out["player"], [["Apps", "2", 2]])
+
+    def test_the_stand_in_refuses_what_the_gateways_policy_refuses(self):
+        out = self.out["policy"]
+        policy = (AREA / "lib/oh_identity/hardening.py").read_text()
+        # The guard stands for this policy: one that came to allow inline styles or handlers would need neither.
+        self.assertIn("default-src 'self'", policy)
+        self.assertNotIn("unsafe-inline", policy)
+        self.assertNotIn("unsafe-hashes", policy)
+        # Set as an attribute, written as markup, and in a page's own markup (in any case); each says what to use.
+        told = [re.fullmatch(r'Content-Security-Policy: <(\w+)> may not carry the attribute "(\w+)": .*; use ([\w.]+)', message).groups()
+                for message in out["refused"]]
+        self.assertEqual(told, [("p", "style", "element.style.setProperty"), ("p", "onclick", "addEventListener"),
+                                ("b", "style", "element.style.setProperty"), ("button", "onclick", "addEventListener"),
+                                ("main", "style", "element.style.setProperty")])
+        self.assertEqual(out["allowed"], ["", "", "", ""])
+        # No page's own markup asks for either.
+        self.assertEqual(out["pages"], [[name, ""] for name in sorted(page.name for page in REMOTE.glob("*.html"))])
+        self.assertGreater(len(out["pages"]), 1)
+
+    def test_a_link_chooses_a_source_only_on_the_sample(self):
+        out = self.out["link"]
+        self.assertEqual(out["sample"], [[[WATCH, "example_player"]], "example_player"])
+        # The same link to a house's own remote opens the room and sends nothing.
+        self.assertEqual(out["real"], [[], "off", "Example West"])
+
+    def test_a_session_stopped_lets_its_backend_go(self):
+        out = self.out["stopped"]
+        # The slider had sent 21 and held 23 for its next turn; All off waited for its second press.
+        self.assertEqual(out["before"], [[21], True])
+        # Stopped: one listener fewer on the backend, the held volume sent, All off no longer armed.
+        self.assertEqual(out["stopped"], [1, [21, 23], False])
+        # The house moves on; the session neither hears it nor draws anything later.
+        self.assertEqual(out["after"], ["example_computer", "example_player", [], 2])
+        self.assertEqual(out["again"], -1)
+
 
 def css_rules(text):
     """(media, selector, declarations) for each rule of a stylesheet, one level of @media deep."""

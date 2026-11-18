@@ -27,29 +27,6 @@
   margin-bottom: var(--space-5);
 }
 
-.pair__torch {
-  float: right;
-  margin-top: 7px;
-}
-
-.pair__back {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: var(--tap);
-  margin-left: calc(-1 * var(--space-2));
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-row);
-  color: var(--accent);
-  font-weight: 600;
-  text-decoration: none;
-}
-
-.pair__back .icon {
-  width: 20px;
-  height: 20px;
-}
-
 .pair__title {
   margin: var(--space-2) 0 var(--space-2);
   font-size: 26px;

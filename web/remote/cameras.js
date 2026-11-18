@@ -342,9 +342,6 @@
     if (!root) return null;
     const params = new URLSearchParams(global.location.search);
     const mock = params.get("backend") === "mock" || global.location.protocol === "file:";
-    if (mock) ["./", "topology.html"].forEach((page) => {
-      document.querySelectorAll('a[href="' + page + '"]').forEach((link) => link.setAttribute("href", page + "?backend=mock"));
-    });
     const model = create({ ...options, mock, manifestURL: global.ThermiteNavigation?.asset("cameras.json") || "cameras.json" });
     const find = (selector) => root.querySelector(selector);
     const access = global.ThermiteAccess?.client;
@@ -465,12 +462,6 @@
     global.addEventListener("pagehide", () => { model.close(); viewer.stop(); });
     global.addEventListener("pageshow", visibility);
     global.addEventListener("hashchange", () => choose(global.location.hash.slice(1)));
-    const theme = document.querySelector("[data-camera-theme]");
-    if (theme) theme.addEventListener("click", () => {
-      const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
-      document.documentElement.dataset.theme = next;
-      try { global.localStorage.setItem("remote.theme", next); } catch (failure) { /* optional preference */ }
-    });
     model.subscribe(render);
     render(); visibility();
     return { model, viewer, select: choose, stop() { stopped = true; model.close(); viewer.stop(); } };

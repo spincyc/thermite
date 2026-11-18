@@ -33,15 +33,12 @@ body.thermite-app::before { content: ""; position: fixed; inset: 0 0 auto; z-ind
 .thermite-breadcrumbs span { padding: 0; }
 .thermite-breadcrumbs [aria-current] { color: var(--th-text); background: transparent; padding: 0; overflow: hidden; text-overflow: ellipsis; }
 .thermite-content > :is(.topology,.cameras,.pair,.thermite-home,.thermite-security) { width: 100%; max-width: 1800px; margin: 0 auto; padding: 16px 24px 32px; }
-.thermite-app :is(.site-header,.camera-header,.pair__back,.pair__torch,.remote__torch,.remote__mark) { display: none; }
 .thermite-app .pair__head { margin-bottom: 12px; }
 .thermite-app :is(.intro,.camera-intro) { padding-top: 0; }
 .thermite-app :is(.intro,.camera-intro) { padding-bottom: 12px; }
 .thermite-app :is(.intro,.camera-intro,.pair__head,.access-page,.thermite-home,.thermite-security) h1 { font-size: 24px; }
 .thermite-app .app { width: 100%; margin: 0 auto; padding: 12px 16px; min-height: calc(100dvh - var(--thermite-header-height)); }
 .thermite-app .app > .panel { min-width: 0; }
-.thermite-app .link--pair { display: none; }
-.thermite-app #theme-toggle { display: none; }
 /* Without the right panels the rooms list keeps a panel's width beside the remote. */
 @media(min-width:820px) {
   .thermite-app .app { grid-template-columns: minmax(170px,var(--panel-width,320px)) minmax(300px,384px); justify-content: center; gap: 16px; min-height: 0; max-height: calc(100dvh - var(--thermite-header-height)); }
