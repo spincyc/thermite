@@ -164,21 +164,23 @@ class Validate(Scratch):
         self.assertTrue(json.loads(out)["problems"][0].startswith("theme:"))
 
     def test_a_device_nothing_watches_is_named_in_a_note_that_is_no_problem(self):
-        house = self.house(EXAMPLE)
-        code, out, err = run("validate", "--house", str(house))
+        # Its own generated conf: the checkout's is ignored by Git and absent from a fresh clone.
+        house, conf = self.house(EXAMPLE), self.root / "conf"
+        self.assertEqual(run("generate", "--house", str(house), "--conf", str(conf), "--root", str(self.root))[0], 0)
+        code, out, err = run("validate", "--house", str(house), "--conf", str(conf))
         note = ("example_computer: it has an address and nothing reads whether it answers; list network_ping under "
                 "its controls.observe to have it pinged")
         self.assertEqual(code, 0, err)
         self.assertEqual(err, f"thermite validate: note: {note}\n")
         self.assertTrue(out.endswith(" 0 problems, 1 note\n"), out)
-        code, out, _ = run("validate", "--house", str(house), "--json")
+        code, out, _ = run("validate", "--house", str(house), "--conf", str(conf), "--json")
         self.assertEqual((code, json.loads(out)["status"], json.loads(out)["notes"]), (0, "ok", [note]))
         pinged = copy.deepcopy(EXAMPLE)
         next(device for device in pinged["devices"]
              if device["id"] == "example_computer")["controls"] = {"observe": ["network_ping"]}
-        code, out, _ = run("validate", "--house", str(self.house(pinged, "pinged.yaml")), "--json")
-        # conf/ is the example's, without the ping Thing: a problem of its own, and no note.
-        self.assertEqual(json.loads(out)["notes"], [])
+        code, out, _ = run("validate", "--house", str(self.house(pinged, "pinged.yaml")), "--conf", str(conf), "--json")
+        # That conf is the example's, without the ping Thing: a problem of its own, and no note.
+        self.assertEqual((json.loads(out)["status"], json.loads(out)["notes"]), ("problems", []))
 
 
 class Generate(Scratch):
