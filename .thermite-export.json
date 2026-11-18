@@ -427,6 +427,7 @@
     "tests/test_access_custody.py",
     "tests/test_access_deployment.py",
     "tests/test_access_mode_ui.py",
+    "tests/test_alert_scenarios.py",
     "tests/test_androidtv_integrity.py",
     "tests/test_androidtv_maintenance.py",
     "tests/test_androidtv_owner_files.py",

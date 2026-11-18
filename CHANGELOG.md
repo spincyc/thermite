@@ -7,6 +7,31 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Alerts: a device that fails while its room uses it stays that room's
+  failure. A room's devices were required only while its source readback
+  named a source that uses them, and a device that stops answering takes
+  the readback with it, so its check stopped being required and
+  ThermiteCheckFailing never fired.
+  - A room that no longer reports its source keeps the one it last
+    reported, for three days at most (`thermite:zone_source`). One that
+    reports Off needs none of its devices from that moment, and one not
+    read since Thermite started needs none either.
+  - ThermiteControlUnknown ("A room in use cannot be read") fires per
+    required check with no reading for ten minutes and carries its room,
+    zone, device and check, as ThermiteCheckFailing does. It had fired on
+    control health as a whole, named nothing, and fired whenever an idle
+    room's devices slept. A room's source check is required only while
+    the room is in use, and a room's unread checks are held back while
+    one of its checks is failing.
+  - `thermite:check` gains `scope`: `control`, or `monitoring` for
+    Prometheus's scrapes, node_exporter's reading of systemd and Grafana.
+    Monitoring checks no longer count against control health or fire
+    ThermiteCheckFailing: a failed scrape is ThermiteScrapeFailed's,
+    which now watches Prometheus's own job too, and the others are
+    ThermiteMonitoringBroken's.
+  - ThermiteServiceMetricsStale, a warning: the gateway, the policy
+    worker or the callback relay is running but has not rewritten its
+    metrics textfile for five minutes.
 - Terminal remote: every button of a remote can be pressed from the
   keyboard. In Watch's remote pane `n` and `N` move the focus to the
   next and previous button and Space presses it; the arrows stay the

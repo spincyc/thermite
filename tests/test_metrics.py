@@ -651,7 +651,7 @@ class Checks(unittest.TestCase):
         keys = [tuple(sorted(rule["labels"].items())) for rule in recorded]
         self.assertEqual(len(keys), len(set(keys)), "two rules would write the same series")
         for rule in recorded:
-            self.assertLessEqual(set(rule["labels"]), {"room", "zone", "device", "check", "required"})
+            self.assertLessEqual(set(rule["labels"]), {"room", "zone", "device", "check", "required", "scope"})
             self.assertIn(rule["labels"]["check"], alerts.CHECK_WORDS)
         self.assertEqual(RULES["groups"][0]["rules"][-1]["record"], alerts.HEALTH)
 
@@ -763,7 +763,7 @@ class Checks(unittest.TestCase):
     def test_control_health_keeps_todays_three_values(self):
         _, required = alerts.checks(MAP)
         expr = alerts.control_health(required)
-        self.assertTrue(expr.startswith('clamp_max(count(thermite:check{required="true"} == 1), 1)'))
+        self.assertTrue(expr.startswith('clamp_max(count(thermite:check{required="true",scope="control"} == 1), 1)'))
         self.assertIn(f">= {required})", expr)
         self.assertTrue(expr.endswith("or vector(-1)"))
 
@@ -783,7 +783,7 @@ class Alerting(unittest.TestCase):
             self.assertLessEqual(len(detail), 500)
             self.assertFalse(any(ord(c) < 32 for c in title + detail))
         check = next(rule for rule in RULES["groups"][1]["rules"] if rule.get("alert") == "ThermiteCheckFailing")
-        self.assertEqual((check["expr"], check["for"]), ('thermite:check{required="true"} == 1', "5m"))
+        self.assertEqual((check["expr"], check["for"]), ('thermite:check{required="true",scope="control"} == 1', "5m"))
 
     def test_routing_groups_by_room_and_inhibits_repeats(self):
         config = yaml.safe_load(FILES["alertmanager/alertmanager.yml"])
@@ -795,10 +795,10 @@ class Alerting(unittest.TestCase):
                          (['severity="warning"'], "incidents", "12h"))
         self.assertEqual([r["webhook_configs"][0]["url"].rsplit("/", 1)[1] for r in config["receivers"]],
                          ["alerts", "heartbeat"])
-        for source, targets in alerts.INHIBITS:
+        for source, targets in (*alerts.INHIBITS, *alerts.ROOM_INHIBITS):
             self.assertIn(source, alerts.CATALOG)
             self.assertLessEqual(set(targets), set(alerts.CATALOG))
-        self.assertEqual(len(config["inhibit_rules"]), len(alerts.INHIBITS))
+        self.assertEqual(len(config["inhibit_rules"]), len(alerts.INHIBITS) + len(alerts.ROOM_INHIBITS))
 
     def test_a_gateway_cut_off_from_the_runtimes_events_alerts_and_shows_on_the_remotes_tile(self):
         rule = next(rule for rule in RULES["groups"][1]["rules"] if rule.get("alert") == "ThermiteGatewayFeedDown")

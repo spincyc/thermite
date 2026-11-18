@@ -1,7 +1,7 @@
 """Actionable alerts and a local-only notification route; no sleeping-device alarms.
 
 Control health is recorded per check: thermite:check{room, zone, device,
-check, required} is 1 failing, 0 OK or -1 unknown, for
+check, required, scope} is 1 failing, 0 OK or -1 unknown, for
 
     runtime   the exporter reads openHAB (room house)
     scrape    a core Prometheus job answers (room house; device is the job)
@@ -23,9 +23,28 @@ Device checks come from the exporter map's health_checks: routing
 infrastructure always, every other device only on a zone's active path
 (required="true" while the zone's source uses it, "false" otherwise, and
 always "false" for a device marked `monitor: optional`). Missing telemetry
-reads -1, never 0. thermite:control_health folds them into today's one
-number: 1 when a required check fails, else -1 when one is unknown (or the
-check series are incomplete), else 0.
+reads -1, never 0.
+
+A zone's source is thermite:zone_source: its readback while that is known,
+else what the readback last said, for HELD at most. A device that stops
+answering takes its zone's readback with it, so demand read from the
+readback alone would end with the very failure it is for. A zone that
+reports Off releases its devices at once, and one whose readback has not
+been known within HELD (a fresh start) requires none. The zone's own
+source check is required the same way: while its source, as held, is a
+source and not Off.
+
+`scope` is control for what controlling a room depends on and monitoring
+for what only watches it: every scrape, node_exporter's reading of systemd
+and Grafana. A monitoring check never counts as control health or alerts as
+a room: a failed scrape is ThermiteScrapeFailed's and the others are
+ThermiteMonitoringBroken's.
+
+ThermiteCheckFailing and ThermiteControlUnknown fire per required control
+check, so each carries its room, zone, device and check. No alert reads
+thermite:control_health, which folds the required control checks into the
+House board's one number: 1 when one fails, else -1 when one is unknown (or
+the series that always exist are incomplete), else 0.
 
 Severity says how an alert should reach a person once phone delivery is
 commissioned: critical ones push, warning ones wait for a digest (and repeat
@@ -40,9 +59,15 @@ import oh_units
 
 from .exporter import HOUSE_ROOM
 
-#: The Prometheus jobs and local HTTP services control depends on.
+#: The Prometheus jobs and local HTTP services with a house-wide check.
 CORE_JOBS = ("openhab", "thermite", "node", "prometheus", "blackbox")
 SERVICES = ("openhab", "apple_tv_helper", "grafana")
+#: The services that only watch the house: control works without them.
+MONITORING_SERVICES = ("grafana",)
+#: The jobs of the notification path: ThermiteScrapeFailed watches them too.
+ALERTING_JOBS = ("alertmanager", "notifications", "ntfy")
+#: A check's scope (the module docstring).
+CONTROL, MONITORING = "control", "monitoring"
 GATEWAY_JOB = "gateway_https"
 #: Whether this host has the gateway (its unit, as node_exporter sees it).
 #: prometheus.yml probes it in every house: whether it is installed is the
@@ -62,6 +87,21 @@ CHECK_WORDS = {
 }
 CHECK = "thermite:check"
 HEALTH = "thermite:control_health"
+#: Each routing zone's source, held while its readback is unknown; its
+#: value is when the readback last said so.
+ZONE_SOURCE = "thermite:zone_source"
+#: How long a zone keeps the source its readback last gave. Longer than a
+#: failure usually stays unrepaired (a day and a half is not rare), or the
+#: alert for a device still broken would resolve by itself; bounded, so a
+#: room nobody came back to stops counting as in use.
+HELD = "3d"
+#: The source value of a zone that is Off (oh_features.routing.OFF).
+OFF = "off"
+#: Seconds after which a metrics textfile counts as no longer rewritten.
+#: Its service rewrites it every 10 (oh_access.metrics.WRITE_SECONDS) and
+#: node_exporter is scraped every 30, so a healthy one reads 40 old at most
+#: and one whose service is restarting a little over two minutes.
+TEXTFILE_STALE = 120
 #: A browser opens at most six HTTP/1.1 connections to one origin.
 HTTP1_CONNECTIONS = 6
 #: The client events (oh_access.metrics.CLIENT_KINDS) that are a remote
@@ -78,8 +118,8 @@ BTRFS_UNALLOCATED = 5 * 2**30
 
 # Notification text is finite, so runtime error bodies/labels can never reach ntfy.
 CATALOG = {
-    "ThermiteCheckFailing": ("A room's control path needs attention", "A device a room is using now, a speaker in use (it played in the last half hour, or was playing when it stopped answering), or routing infrastructure, has failed a control check for five minutes. House health lists the room, device and check under Needs attention now."),
-    "ThermiteControlUnknown": ("Control telemetry is incomplete", "Expected control readbacks have been missing for ten minutes. Check the runtime and exporter."),
+    "ThermiteCheckFailing": ("A room's control path needs attention", "A device a room is using (or was using when the room last reported its source), a speaker in use (it played in the last half hour, or was playing when it stopped answering), or routing infrastructure, has failed a control check for five minutes. House health lists the room, device and check under Needs attention now."),
+    "ThermiteControlUnknown": ("A room in use cannot be read", "For ten minutes a control check that a room in use, a speaker in use or routing infrastructure needs has had no reading: most often the room's source, when one of its devices stopped reporting. A room counts as in use for three days after it last reported a source; one that reports Off does not. House health lists the room, device and check under Needs attention now."),
     "ThermiteScrapeFailed": ("Monitoring target is unreachable", "Open Prometheus Targets and check the failed local monitoring service."),
     "ThermiteRuntimeUnavailable": ("Runtime API is unavailable", "The metrics exporter cannot read the runtime. Check the runtime service and its API credential."),
     "ThermiteHostDiskLow": ("Host storage is nearly full", "A writable host filesystem has less than ten percent free. Inspect disk use before removing any data."),
@@ -98,7 +138,8 @@ CATALOG = {
     "ThermitePolicyUnenforced": ("A room's lock is not being enforced", "For ten minutes a locked room's lock could not be held: its policy cannot be read, it conflicts with another room over shared hardware, openHAB does not answer the worker's reads, or a change on the room's devices has not been put back. A reading that is merely old, from a device that reports only when it changes, does not count. Switching & remotes shows locked rooms by state; check the room's devices and thermite-access-worker.service's journal."),
     "ThermiteHandlerPoolSaturated": ("Device dispatch is saturated", "Device dispatch has no idle workers and a ready probe is overdue. Inspect blocked binding connections."),
     "ThermiteHandlerTelemetryUnavailable": ("Device dispatch telemetry is unavailable", "The native scheduler observation is missing, incomplete or stale. Check the runtime telemetry rule."),
-    "ThermiteMonitoringBroken": ("Monitoring is not working fully", "Prometheus failed to evaluate a rule or to hand alerts over, Alertmanager failed a delivery, or node_exporter could not read a metrics textfile. Check their journals."),
+    "ThermiteMonitoringBroken": ("Monitoring is not working fully", "Prometheus failed to evaluate a rule or to hand alerts over, Alertmanager failed a delivery, node_exporter could not read a metrics textfile or systemd's unit states, or Grafana does not answer. Rooms can still be controlled. Check their journals."),
+    "ThermiteServiceMetricsStale": ("A service's metrics have stopped", "The gateway, the policy worker or the callback relay is running but has not rewritten its metrics file for five minutes, so the dashboards and the alerts that read it show its last values. Its journal says why; restarting the service starts a new writer. Host shows each file's age under Metrics textfiles age."),
     "ThermiteNotificationUnavailable": ("Notification service is unavailable", "Check Alertmanager, the local notification adapter and ntfy. Remote phone delivery is a separate commissioning step."),
     "ThermiteHeartbeatMissing": ("Local notification heartbeat is late", "The local Prometheus to ntfy heartbeat has not completed for fifteen minutes. Inspect the notification services."),
     "ThermiteWatchdog": ("Local monitoring heartbeat", "The local alert evaluation and delivery path completed. This does not prove phone delivery."),
@@ -117,6 +158,11 @@ INHIBITS = (
     ("ThermiteGatewayDown", ("ThermiteGatewayFeedDown", "ThermiteRemoteStarved", "ThermiteRemoteTimeouts")),
     # A stalled worker's last textfile keeps its last states.
     ("ThermitePolicyWorkerStalled", ("ThermitePolicyUnenforced",)),
+)
+#: The same between alerts of one room: a device that failed reports
+#: nothing either, so its room's failure already says what is unknown.
+ROOM_INHIBITS = (
+    ("ThermiteCheckFailing", ("ThermiteControlUnknown",)),
 )
 
 
@@ -155,11 +201,30 @@ def _playing(item: str) -> str:
             f" or (max(last_over_time({series}[{LAST_HEARD}])) >= 1))")
 
 
+def zone_source() -> str:
+    """thermite:zone_source: what each zone's source readback says, and
+    while it says nothing, what it said last within HELD. Its value is the
+    time of that reading. `other`, a state the zone does not offer, is no
+    reading, as for the zone's source check.
+
+    The readback's own history is the memory, so a zone unknown when these
+    rules are first loaded is held too. The subquery steps at the
+    evaluation interval, which is the scrape interval: it sees every scrape."""
+    read = 'max by (item, zone, value) (timestamp(thermite_item_info{point="source",value!="other"}))'
+    return f"{read} or on (item) topk by (item) (1, max_over_time(({read})[{HELD}:]))"
+
+
 def _demand(demands: list[dict]) -> str:
-    """Whether a zone's source uses the device now (one item per call)."""
+    """Whether a zone's source, as held, uses the device (one item per call)."""
     sources = sorted({demand["source"] for demand in demands})
     item = demands[0]["item"]
-    return (f'(count(thermite_item_info{{item={_q(item)},value=~{_q("|".join(re.escape(s) for s in sources))}}}) > 0)')
+    return f'(count({ZONE_SOURCE}{{item={_q(item)},value=~{_q("|".join(re.escape(s) for s in sources))}}}) > 0)'
+
+
+def _in_use(item: str) -> str:
+    """Whether a zone's source, as held, is a source: not Off, and not
+    unknown since before HELD."""
+    return f'(count({ZONE_SOURCE}{{item={_q(item)},value!={_q(OFF)}}}) > 0)'
 
 
 def _zone_room(mapping: dict, item: str) -> str:
@@ -172,28 +237,33 @@ def _zone(mapping: dict, item: str) -> str:
 
 
 def checks(mapping: dict) -> tuple[list[dict], int]:
-    """(thermite:check recording rules, how many required series always exist)."""
+    """(thermite:check recording rules, how many required control series always exist)."""
     rules: list[dict] = []
     always_required = 0
 
-    def record(expr: str, room: str, device: str, check: str, required: bool, zone: str = "") -> None:
+    def record(expr: str, room: str, device: str, check: str, required: bool, zone: str = "",
+               scope: str = CONTROL) -> None:
         labels = {"room": room, "zone": zone, "device": device, "check": check,
-                  "required": "true" if required else "false"}
+                  "required": "true" if required else "false", "scope": scope}
         rules.append({"record": CHECK, "expr": expr, "labels": {k: v for k, v in labels.items() if v}})
+
+    def by_demand(value: str, used: str, room: str, device: str, check: str, zone: str) -> None:
+        """A check required only while `used` holds: one series either way."""
+        record(f"({value}) and on() {used}", room, device, check, True, zone)
+        record(f"({value}) unless on() {used}", room, device, check, False, zone)
 
     record("max(thermite_openhab_up == bool 0) or vector(-1)", HOUSE_ROOM, "openhab", "runtime", True)
     for job in CORE_JOBS:
-        record(f"max(up{{job={_q(job)}}} == bool 0) or vector(-1)", HOUSE_ROOM, job, "scrape", True)
+        record(f"max(up{{job={_q(job)}}} == bool 0) or vector(-1)", HOUSE_ROOM, job, "scrape", True, scope=MONITORING)
     for service in SERVICES:
         record(f'max(probe_success{{job="service_http",service={_q(service)}}} == bool 0) or vector(-1)',
-               HOUSE_ROOM, service, "service", True)
+               HOUSE_ROOM, service, "service", True, scope=MONITORING if service in MONITORING_SERVICES else CONTROL)
     record('max(node_scrape_collector_success{job="node",collector="systemd"} == bool 0) or vector(-1)',
-           HOUSE_ROOM, "node", "systemd", True)
-    always_required += 2 + len(CORE_JOBS) + len(SERVICES)
+           HOUSE_ROOM, "node", "systemd", True, scope=MONITORING)
+    always_required += 1 + len(SERVICES) - len(MONITORING_SERVICES)
     for item in sorted((mapping.get("paths") or {})):
-        record(f'(count(thermite_item_info{{item={_q(item)},value!="other"}}) * 0) or vector(-1)',
-               _zone_room(mapping, item), "", "source", True, _zone(mapping, item))
-        always_required += 1
+        by_demand(f'(count(thermite_item_info{{item={_q(item)},value!="other"}}) * 0) or vector(-1)', _in_use(item),
+                  _zone_room(mapping, item), "", "source", _zone(mapping, item))
     # A zone's check reads only the series its own demands added: two rooms
     # on different zones of one receiver each check their own zone's power.
     groups: dict[tuple[str, str], dict] = {}
@@ -227,17 +297,29 @@ def checks(mapping: dict) -> tuple[list[dict], int]:
             if group["optional"]:
                 record(value, room, device, name, False, zone)
                 continue
-            record(f"({value}) and on() {used}", room, device, name, True, zone)
-            record(f"({value}) unless on() {used}", room, device, name, False, zone)
+            by_demand(value, used, room, device, name, zone)
     return rules, always_required
 
 
 def control_health(required_series: int) -> str:
-    """thermite:control_health from thermite:check: today's one number."""
-    required = f'{CHECK}{{required="true"}}'
+    """thermite:control_health from the required control checks: the House
+    board's one number."""
+    required = f'{CHECK}{{required="true",scope="{CONTROL}"}}'
     return (f"clamp_max(count({required} == 1), 1)"
             f" or ((vector(0) unless on() ({required} == -1)) and on() (count({required}) >= {required_series}))"
             " or vector(-1)")
+
+
+def stale_textfiles() -> str:
+    """The access services that run while their metrics textfile is no
+    longer rewritten, each with its unit as `name`. A service that is not
+    running is ThermiteServiceDown's or ThermiteServiceFailed's, and one
+    this host does not have has no unit: the file each leaves behind says
+    nothing new. A textfile is named after the unit that writes it."""
+    files = _q(".*/(" + _units(unit.removesuffix(".service") for unit in oh_units.ACCESS_UNITS) + ")\\.prom")
+    stale = (f'label_replace(time() - node_textfile_mtime_seconds{{job="node"}} > {TEXTFILE_STALE}, '
+             f'"name", "$1.service", "file", {files})')
+    return f'{stale} and on (name) (node_systemd_unit_state{{job="node",state="active"}} == 1)'
 
 
 def rules(mapping):
@@ -248,15 +330,21 @@ def rules(mapping):
                            "critical" if name in CRITICAL else "warning", **(labels or {})},
                 "annotations": {"summary": title, "description": detail}}
     recorded, required_series = checks(mapping)
+    held = [{"record": ZONE_SOURCE, "expr": zone_source()}] if mapping.get("paths") else []
+    required = f'{CHECK}{{required="true",scope="{CONTROL}"}}'
     daemons = _units(oh_units.DAEMONS)
     timeouts = "|".join(TIMEOUT_KINDS)
     return {"groups": [
-        # Sequential within the group: control_health reads this evaluation's checks.
-        {"name": "thermite_checks", "rules": [*recorded, {"record": HEALTH, "expr": control_health(required_series)}]},
+        # Sequential within the group: the checks read this evaluation's zone
+        # sources, and control_health this evaluation's checks.
+        {"name": "thermite_checks", "rules": [*held, *recorded,
+                                               {"record": HEALTH, "expr": control_health(required_series)}]},
         {"name": "thermite", "rules": [
-            alert("ThermiteCheckFailing", f'{CHECK}{{required="true"}} == 1', "5m"),
-            alert("ThermiteControlUnknown", f"{HEALTH} == -1", "10m"),
-            alert("ThermiteScrapeFailed", 'up{job=~"openhab|thermite|node|blackbox|alertmanager|notifications|ntfy"} == 0', "3m"),
+            # Per check: each alert carries the check's room, zone, device and check.
+            alert("ThermiteCheckFailing", f"{required} == 1", "5m"),
+            alert("ThermiteControlUnknown", f"{required} == -1", "10m"),
+            # Every job with a scrape check, so each failed one has this alert.
+            alert("ThermiteScrapeFailed", f'up{{job=~"{"|".join((*CORE_JOBS, *ALERTING_JOBS))}"}} == 0', "3m"),
             alert("ThermiteRuntimeUnavailable", "thermite_openhab_up == 0", "3m"),
             alert("ThermiteHostDiskLow", '(node_filesystem_avail_bytes{job="node",fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes < 0.10) and (node_filesystem_readonly == 0)', "10m"),
             alert("ThermiteBtrfsTrouble", f'(sum by (uuid) (increase(node_btrfs_device_errors_total{{job="node"}}[1h])) > 0) or (sum by (uuid) (node_btrfs_device_unused_bytes{{job="node"}}) < {BTRFS_UNALLOCATED})', "5m"),
@@ -281,7 +369,10 @@ def rules(mapping):
             *([alert("ThermiteHandlerPoolSaturated", '(thermite_handler_pool_active_threads >= thermite_handler_pool_core_threads) and (thermite_handler_pool_probe_overdue_seconds > 30)', "2m"),
                alert("ThermiteHandlerTelemetryUnavailable", 'thermite_handler_pool_up == 0', "5m")]
               if mapping.get("handler_pool") else []),
-            alert("ThermiteMonitoringBroken", '(increase(prometheus_rule_evaluation_failures_total[10m]) > 0) or (increase(prometheus_notifications_dropped_total[10m]) > 0) or (increase(alertmanager_notifications_failed_total[10m]) > 0) or (node_textfile_scrape_error == 1)', "5m"),
+            # A failed scrape is ThermiteScrapeFailed's.
+            alert("ThermiteMonitoringBroken", '(increase(prometheus_rule_evaluation_failures_total[10m]) > 0) or (increase(prometheus_notifications_dropped_total[10m]) > 0) or (increase(alertmanager_notifications_failed_total[10m]) > 0) or (node_textfile_scrape_error == 1)'
+                  f' or ({CHECK}{{scope="{MONITORING}",check!="scrape"}} == 1)', "5m"),
+            alert("ThermiteServiceMetricsStale", stale_textfiles(), "5m"),
             alert("ThermiteNotificationUnavailable", 'probe_success{job="alerting_http"} == 0', "3m"),
             alert("ThermiteHeartbeatMissing", "thermite_notification_heartbeat_age_seconds > 900", "5m"),
             alert("ThermiteWatchdog", "vector(1)", "0s"),
@@ -291,7 +382,8 @@ def rules(mapping):
 
 def alertmanager(port):
     inhibit = [{"source_matchers": [f'alertname="{source}"'],
-                "target_matchers": [f'alertname=~"{"|".join(targets)}"']} for source, targets in INHIBITS]
+                "target_matchers": [f'alertname=~"{"|".join(targets)}"'], **equal}
+               for pairs, equal in ((INHIBITS, {}), (ROOM_INHIBITS, {"equal": ["room"]})) for source, targets in pairs]
     return {"global": {"resolve_timeout": "5m"},
             "route": {"receiver": "incidents", "group_by": ["alertname", "room"], "group_wait": "30s", "group_interval": "5m", "repeat_interval": "4h",
                       "routes": [{"matchers": ['alertname="ThermiteWatchdog"'], "receiver": "heartbeat", "group_wait": "0s", "group_interval": "1m", "repeat_interval": "5m"},

@@ -32,7 +32,7 @@ Open `http://<thermite's address>:13611/`. Anyone on your network can look witho
 
 Colour means one thing on every dashboard: green is OK, amber a warning, red a failure, grey unknown, slate Off, and tan only "in use". Dashed lines mark service starts and deploys; switch them off at the top of a dashboard.
 
-A device a room needs only now and then, such as a sleeping TV, counts against control health only while a room's selected source uses it. To keep a device you know is broken on the dashboards but out of control health and alerts, mark it `monitor: optional` in the house file:
+A device a room needs only now and then, such as a sleeping TV, counts against control health only while a room's selected source uses it. A device that stops answering often takes the room's source reading with it, so a room that no longer reports its source keeps the one it last reported, for three days at most: the failure stays that room's until the device answers again. A room that reports Off needs none of its devices from that moment, and one whose source hasn't been read since thermite started needs none either. To keep a device you know is broken on the dashboards but out of control health and alerts, mark it `monitor: optional` in the house file:
 
 ```yaml
 rooms:
@@ -105,9 +105,11 @@ thermite status              # Grafana's address and whether Prometheus reaches 
 
 Prometheus evaluates a fixed set of alerts. Each names a room or service in plain words, and waits a few minutes so a blip doesn't alert:
 
-- **Critical**: a required control check failing for five minutes (one alert per room), the runtime unavailable, the remote gateway down, remotes starved of connections, routing commands quarantined, the policy worker stalled, a service down, or the thingHandler pool saturated.
-- **Warnings**: remotes timing out, a service restarting repeatedly, monitoring itself broken, low disk space, and the rest. A warning repeats every 12 hours at most.
+- **Critical**: a required control check failing for five minutes (one alert per check, with its room and device; a room's alerts arrive together), the runtime unavailable, the remote gateway down, remotes starved of connections, routing commands quarantined, the policy worker stalled, a service down, or the thingHandler pool saturated.
+- **Warnings**: a required control check with no reading for ten minutes (most often a room in use whose source can't be read), remotes timing out, a service restarting repeatedly, a running service whose metrics file has stopped updating, monitoring itself broken, low disk space, and the rest. A warning repeats every 12 hours at most.
 
-When the runtime is down, alerts that follow from it are held back, and so are remote time-outs while the gateway is down. Alertmanager routes alerts through a local notification adapter to ntfy. These services listen only on this machine; phone push requires separate setup. A local heartbeat checks that alert evaluation and delivery are working.
+The checks of monitoring itself (Prometheus reaching each of its targets, node_exporter reading the services' states, Grafana answering) are not part of control health, and a failing one is a warning: rooms can still be controlled.
+
+When the runtime is down, alerts that follow from it are held back, and so are remote time-outs while the gateway is down, and a room's unread checks while one of its checks is failing. Alertmanager routes alerts through a local notification adapter to ntfy. These services listen only on this machine; phone push requires separate setup. A local heartbeat checks that alert evaluation and delivery are working.
 
 The [ports guide](ports.html) lists every listener and its network exposure.
