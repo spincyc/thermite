@@ -935,6 +935,40 @@ async function stopped(out) {
   out.again = backend.listeners.length - listeners;
 }
 
+// A room that is off: where its remote will be the page says so and what to
+// tap; a device's bubble brings that device's remote, and Listen shows neither.
+async function off(out) {
+  const p = page(MIXED);
+  const {time, $, all, shown, words} = p;
+  await time.tick(1500);
+  const told = () => [shown($('[data-off-note]')), shown($('#controls')), all('[data-off-note] p').map((line) => words(line))];
+  out.off = told();
+  all('[data-targets] .target').find((bubble) => bubble.dataset.role === 'display').click();
+  await time.tick(400);
+  out.device = told();
+  $('[data-modes] [data-mode="listen"]').click();
+  await time.tick(50);
+  out.listening = told().slice(0, 2);
+  $('[data-modes] [data-mode="watch"]').click();
+  await time.tick(50);
+  $('#room-sheet [data-room="' + WATCH + '"]').click();
+  await time.tick(400);
+  out.other = told();
+}
+
+// On a phone the bar names the page: a heading that says it again is left to
+// screen readers (shell.css hides what carries data-thermite-titled), and no
+// second heading repeats it under the bar.
+async function titles(out) {
+  for (const html of ['home.html', 'users.html', 'access.html', 'settings.html', 'security.html', 'system.html', 'topology.html']) {
+    const p = page(null, {html, narrow: true});
+    await p.time.tick(1500);
+    const bar = p.words(p.$('.thermite-breadcrumbs [aria-current]'));
+    out[html] = [bar, p.all('main h1, main h2').filter((heading) => !heading.hasAttribute('data-thermite-titled'))
+      .map((heading) => p.words(heading)).filter((text) => text.toLowerCase().includes(bar.toLowerCase()))];
+  }
+}
+
 // 1200 px wide but 500 tall (a phone on its side): no right column, so the library opens its sheet.
 async function sideways(out) {
   const p = page(MIXED, {wide: true, short: true, stored: {'remote.mode': 'listen'}});
@@ -947,7 +981,7 @@ async function sideways(out) {
 (async () => {
   const report = {};
   for (const [name, run] of Object.entries({rooms, modes, bar, face, alone, watch, locks, library, browse, pages, group, covers, music, inputs, signal,
-    sideways, home, alerts, keys, policy, link, failure, problems, stopped})) {
+    sideways, off, titles, home, alerts, keys, policy, link, failure, problems, stopped})) {
     report[name] = {};
     // A scenario that throws says where, and the rest still run.
     await run(report[name]).catch((error) => { report[name].error = error.stack.split('\n').slice(0, 3).join(' '); });

@@ -176,7 +176,7 @@
     });
     // Watch's bubbles come back with it; its keys as updateControls has them.
     $(".targets-wrap").hidden = listening;
-    if (listening) $("#controls").hidden = true;
+    if (listening) $("#controls").hidden = $("[data-off-note]").hidden = true;
     $("#info-open").setAttribute("aria-label", listening ? "Speaker settings" : "Room devices, signal and audio");
     if (shortcutsFor !== mode) buildShortcuts(mode);
     // Once the mode is on the body: the Signal panel shows (remote.css) only in Watch.
@@ -270,8 +270,16 @@
     const list = session.controls();
     const target = session.activeTarget(list);
     updateTargets(list);
-    // A room that is off shows no remote until a device bubble is tapped.
-    $("#controls").hidden = session.remoteHidden(list);
+    // A room that is off shows no remote until a device bubble is tapped:
+    // in the remote's place the page says so, and what to tap.
+    const off = session.remoteHidden(list);
+    $("#controls").hidden = off;
+    const told = $("[data-off-note]");
+    told.hidden = !off || !session.bubbles(list).length;
+    if (!told.hidden && told.room !== session.current().id) {
+      told.room = session.current().id;
+      told.replaceChildren(note("i-off", session.current().label + " is off", "Choose a source above, or a device for its buttons."));
+    }
     const key = session.current().id + "/" + (target ? target.id : "");
     if (key !== drawn) {
       drawn = key;

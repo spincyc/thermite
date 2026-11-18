@@ -14,9 +14,9 @@ b797e804425f02808d1199b031eb43832e89420affe92393a99a93e042075e31  */conf/automat
 
 ed90ef80da36c1b21b20b5fdb3aef723f5b86f050be478337dbb840d0e7e157e  */conf/html/remote/access-config.js
 
-1809fcc7010a1154755ae8bc6eb92c7ccf77705ad68e34588dea45443371a4a6  */conf/html/remote/access-ui.js
+0f83f81451ad1e1451382eb657cb63790fbedbf9e52b23f09001f2fae45c9836  */conf/html/remote/access-ui.js
 
-b39e862aacb952ebfb935ba55072bbed7c0eff6255bf5f91614e05704d47ad58  */conf/html/remote/access.css
+b2deee92a325e3051c51610074723759d7dba12056ff53ee893449398ffb4097  */conf/html/remote/access.css
 
 d7dbfbe7f2035ddd42c6b4dc25ec2a18859f4a6bcd4586fedd2ef4a53b44127b  */conf/html/remote/access.js
 
@@ -38,7 +38,7 @@ e9141bf543dbe1bdd7069ce0b009d1d6e084c26c2c1d0a750913e62b75b0c06c  */conf/html/re
 
 fff07823f60f9f1cac7053b6b4a0e6629caf74460601a9b319cb10bf9a73487a  */conf/html/remote/diagnostics.js
 
-9b08e41c539318a84dc4e5be42d1c5653ba769f4fc7686845fddd63a996cc4ff  */conf/html/remote/home.css
+aa386d255fca1f853027f01292f43643899a93916dc015d2e4b030e235e74702  */conf/html/remote/home.css
 
 6b133219542608fce3b92fbdfa896e1a134d0444d6dfac498616e5d906fdfe26  */conf/html/remote/home.js
 
@@ -68,15 +68,15 @@ d9b8fd2382172c795e07d06447a1def811d44f6c06b16f9dfc4ce82a997244f1  */conf/html/re
 
 bb502e19f114e6d8778d3c70e5c1953cf8da28f310c122640a835c42f6880fb1  */conf/html/remote/pair.js
 
-ac954f14fddac65e346504ae7fa2a9c52e568caabe0128baee30d28d3b878699  */conf/html/remote/remote.css
+e7f3a7d7cb772eb6a41953830dcd36186164bef706a73c44a4898f6ae5824ef0  */conf/html/remote/remote.css
 
-9d24c3d94cf35a4b4be02c8080274f17b2946e8fe010c85b698dd01b56c6956c  */conf/html/remote/remote.js
+81ad8738286d1d7695affb87a8162a302f88d598e3a0ef80644df2ed87e9a4c8  */conf/html/remote/remote.js
 
 f4ec52aaccac05b8cd6d2aaae06dd39469debe401c978ed2be3cb7f63b74bfaf  */conf/html/remote/remotes.js
 
 16f601bf197363a72520871460e27ee31e8ab9b291c67b1cb47a82b8fe8210d1  */conf/html/remote/session.js
 
-7d2e0a18f2937551b8544aa418a5ba5a7727bff1b079e151b4a956e430b457af  */conf/html/remote/shell.css
+879c30f54a4268c595494246a407b6f4c34d3c4200491b4e2d0e979ce30f9d47  */conf/html/remote/shell.css
 
 2a33fcdbe631965e5774afe66d3a382a7f5071b0fa24d3eda23634305535f789  */conf/html/remote/shell.js
 
@@ -86,9 +86,9 @@ a9a01a4f2e717bc9bf38ce3cbd687a00a307914e2661aa2a949df3bfd06be383  */conf/html/re
 
 fbf9f17b2f7be6719f261bb62a1cc9af20e7b6fd73582330775772551845e5a8  */conf/html/remote/theme.css
 
-ae5c2920240f782fd5c199860c9f15a7b9d50fee79dfdc885f71f39f126e9822  */conf/html/remote/topology.css
+4ac3aeacd44d0ef63794d325825fd6f31ecdf3dcd149b881ff199346ae6dcf9c  */conf/html/remote/topology.css
 
-f8469bf3f39bf596587788729420f9ae52699f3bb078f4dac341da9c35374660  */conf/html/remote/topology.js
+b5def5296660f2556ec30ca2661bc9191256603a37ee19e2c759c755508fd969  */conf/html/remote/topology.js
 
 88f4cc5f633e1066be9db9bcf5dd87a5ec45a3f2c5af4aaf63e7c3fbc49a77a7  */conf/services/runtime.cfg
 
@@ -140,35 +140,35 @@ c5f6aa964a3df61845eb175287e39cbf9a31b1971d021d34fa667a8849a674a7  androidtv_goog
 
 73a4bb6aba4c94f0ac29ca9023255950518258af953a4dbe88f45ef22a8ad509  androidtv_googletv.control/conf/automation/js/thermite_handler_pool.js
 
-638381a6b221e0965ddfe38bc2ce265eeadd8aa377a6a5dfe173bcbd13113a07  androidtv_googletv.control/conf/html/remote/access.html
+0ce01e032b45f8549dff2e54955023e37c2ce669303cdad22c2971c82ec57fd7  androidtv_googletv.control/conf/html/remote/access.html
 
 7388c4e09580e00e0027d34c5a63e745ff4fb224fb89291f7d64ebe78b0c699b  androidtv_googletv.control/conf/html/remote/activity.json
 
-fbabb76f39ed33ac53d648d54f9d10ebdcca3bc35e140bbe86f1d3b2eebb24dd  androidtv_googletv.control/conf/html/remote/cameras.html
+503173a2f44bfe98c622fa10577a105ef1f4b345078c0b1f3d0201a5460374d2  androidtv_googletv.control/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  androidtv_googletv.control/conf/html/remote/cameras.json
 
 68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  androidtv_googletv.control/conf/html/remote/diagnostics.json
 
-444183c07c0d940ab50cc49d7187db96ac4ce1ac889de4c85c3ece75ec42203a  androidtv_googletv.control/conf/html/remote/home.html
+887a01848352d9824ec79c394c3a318ff0f76edab7277e6f284997f6ad6d8496  androidtv_googletv.control/conf/html/remote/home.html
 
 22eb077184706c3999ae3b4d9c09e99e1a6e8eff23cfc79a7c2ed85719d9604f  androidtv_googletv.control/conf/html/remote/house.js
 
-925785d6b3585219a4d7b6dcddf3523423ec2c8097f27fe9a7b63a5fb8ee54e3  androidtv_googletv.control/conf/html/remote/index.html
+3a7b8313997d28f628c46e360cf6292ec074350edb7f624beac8c064fef533e5  androidtv_googletv.control/conf/html/remote/index.html
 
-9364cc49b3ca2baa5fcc0f9ee7a80c1a4e0a5b5af98a0f259cf2e4ee27d8fd14  androidtv_googletv.control/conf/html/remote/pair.html
+b665703a8cc0165c3c8c3643ee67431bf4b81840fbb4f3e5503793c97b5cee8e  androidtv_googletv.control/conf/html/remote/pair.html
 
-92e0c9fb1ad937da814afe0a48611c9a086aec64a5a60062e39622908a80c923  androidtv_googletv.control/conf/html/remote/security.html
+6c5757dc08f00a8308d133950322bcc9ee71b0e324008211c8e0b9796a2dfab1  androidtv_googletv.control/conf/html/remote/security.html
 
-fe626471ed5fa076e9aacf872f43746035922809e77655ae8b225be716a9818b  androidtv_googletv.control/conf/html/remote/settings.html
+12d9f4a136abcbccf2fc0363e6144eeb0e6f907d615a93f038c292dae85160e2  androidtv_googletv.control/conf/html/remote/settings.html
 
-f538e4ba4379901e5444c29265dc7d085b77c32e369b8c3df8b80c9684a35d80  androidtv_googletv.control/conf/html/remote/system.html
+5ab558178c2e15f5296ee0295719ea7973fdb55f58418d540ac52578019e9bba  androidtv_googletv.control/conf/html/remote/system.html
 
-c8598e4b2c5440f7077bf183a9602efa469fc5f1d9218e1143e3d9c7f9ca4d14  androidtv_googletv.control/conf/html/remote/topology.html
+fbde9ca6be2af5c5069baf08b67e32ce135cffcd188335b62cc50cd01017fac1  androidtv_googletv.control/conf/html/remote/topology.html
 
 88460c5892080637a2c0f936b18d3dd26c629e1a322e8936c94f754eb5cb5a83  androidtv_googletv.control/conf/html/remote/topology.json
 
-e58cec0f13144b74d2445e55fdb6a46841ec05313e017bc913703d2fd8629369  androidtv_googletv.control/conf/html/remote/users.html
+04dddeba84e34273d43fcd2979df715ae273da995caed4f9ba5c5274a1b7a0ff  androidtv_googletv.control/conf/html/remote/users.html
 
 9fa9cde094cd738253fa158cc3ffdeac4d0d6b9f31504d2d1a3a181ecd87eb24  androidtv_googletv.control/conf/services/addons.cfg
 
@@ -206,35 +206,35 @@ b8a43f75c4844e06f2767c0ead635ab34720dc4c7c184b203dad169379946659  androidtv_goog
 
 05f1f4af32576487fcf24da78f74a13d99abca059738b81011d486fef3a0d683  avpro_telnet.control/conf/automation/js/avpro_telnet_den_device.js
 
-b10d27019a13ed9986756e9662cde40efb4b1b0b47ea324ae570ad078bc21fc5  avpro_telnet.control/conf/html/remote/access.html
+a2b5d4e9a865a76c25c00a51794b0659c6209495d74e29d88e8c2cbabfdcae89  avpro_telnet.control/conf/html/remote/access.html
 
 4ab9ea92ab42cf1493cf4cb8f133ea318b9ce2f7ec6ed9de8b633efe655617bd  avpro_telnet.control/conf/html/remote/activity.json
 
-065ed943e9e8014141f639e7b90a10cb6f018aefb71b9bef4fc65b5cdd6be683  avpro_telnet.control/conf/html/remote/cameras.html
+c49bd59f5e3a6866f182a7b5b054653833390ba38e830865f9606a47f61b149b  avpro_telnet.control/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  avpro_telnet.control/conf/html/remote/cameras.json
 
 68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  avpro_telnet.control/conf/html/remote/diagnostics.json
 
-e3398ecfdc4da7dcd6eb979ae417aeeb3f0eb7dc510df1c52cb4673a0aed98c0  avpro_telnet.control/conf/html/remote/home.html
+9ae1764d344a8d01e71c9e57e254e482061255c4ee9096ce29aac0447629b3f5  avpro_telnet.control/conf/html/remote/home.html
 
 22ff053c65a3752bb78b03c71c0ae61398fe92b6bd61a4816bcc281f939b1de2  avpro_telnet.control/conf/html/remote/house.js
 
-0ede79b45d9eacfe9028cc7a2c63659ee6a0fcc21d35af9c8043dfbac9b90c45  avpro_telnet.control/conf/html/remote/index.html
+f740215ccc9e19131549eec8cee731e7e0dd2a4723601d0868bb8ee8e2114c03  avpro_telnet.control/conf/html/remote/index.html
 
-2d507219750753275cd4a31d858e80f53f45d6d9598951aebfa7a26501cccd6c  avpro_telnet.control/conf/html/remote/pair.html
+28e7e32ee7980c405503a6f1087d2fac1e64e003fa74848ca3c3b3b60b4e0355  avpro_telnet.control/conf/html/remote/pair.html
 
-e092c2f30834d599f5722e7b484e0d0f43f97d913a800de4c2a7c4219b23ab74  avpro_telnet.control/conf/html/remote/security.html
+b46e2f1e8917b2081484bd449a4d4ccff403ca1a77612682e11982234907db32  avpro_telnet.control/conf/html/remote/security.html
 
-1004cee30c77cf3674daa6653d1af32a4a6ebbbc1d2398f9b66396ed323baec1  avpro_telnet.control/conf/html/remote/settings.html
+e96c8a9c0155a4bef061928874d4cdc7b0d7d9efec2573d638c0efcd5aec3634  avpro_telnet.control/conf/html/remote/settings.html
 
-bc338b632554136519c67d4b9dbc1976f0c1bd93c1bc0a2109e4dcd57319c00e  avpro_telnet.control/conf/html/remote/system.html
+d88713d8a307a1c5a7832ab92e420e98ee3473fe3a09c2412edfd7e3c624a1ec  avpro_telnet.control/conf/html/remote/system.html
 
-70041347b2512d9705ac92dcda108ed1d61960bf9fa078b58c8c40948e5be53a  avpro_telnet.control/conf/html/remote/topology.html
+e57d0b2146bf4eef420da9b69c84288dfa37a42e09a44d99a9826e4106bc8255  avpro_telnet.control/conf/html/remote/topology.html
 
 9af41de665fd4c7e9c5717a7d0c0b241ee2387ca59d75d74ceaf4be842201667  avpro_telnet.control/conf/html/remote/topology.json
 
-dcf227f73376f726e4246ad6626fd1f14fb119795e7e858ffb362ae310e21f04  avpro_telnet.control/conf/html/remote/users.html
+10a4e0753d6480fe5a370d39ae16eaec4538a049c83b55cc5fef7f5a2659e4c9  avpro_telnet.control/conf/html/remote/users.html
 
 79e62079c7c4b31c62d25956da6f70337282cf753cfcc6eaa57db417b671d7d6  avpro_telnet.control/conf/services/addons.cfg
 
@@ -268,35 +268,35 @@ de7cd8904353720fbe5d6d68bd16a944afd09844186fe9b9b0a58df779cee23a  bk808_cec.cont
 
 31371b2c37b3e3183460e2ce41566bd7057ee58d28432d99b20f50fb717c8f89  bk808_cec.control/conf/automation/js/routing.js
 
-f981c703d03e6622871cc23a4f15ac14acafcd3603ecd4b694e46b6a3b9dae12  bk808_cec.control/conf/html/remote/access.html
+72823787d834308e10bfe33b27e4113120b85c7f558807f59dd1d837abb26e36  bk808_cec.control/conf/html/remote/access.html
 
 a8af959b2e30fd647d4f3782a650bf77744b01fa14f6e6627b2a2aa3ff13908b  bk808_cec.control/conf/html/remote/activity.json
 
-140a00c2b203b48b37c331e576e56b5816d545ba1ab7a3895edcd72396c5c25d  bk808_cec.control/conf/html/remote/cameras.html
+e4d110bc124af22838c2c95c7c8d473cae86fea084d8b2449cb8153c01c95788  bk808_cec.control/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  bk808_cec.control/conf/html/remote/cameras.json
 
 d4495e1a34c880225a007c0832c2f6e64a96a787136bf41055fb41c1ded33a41  bk808_cec.control/conf/html/remote/diagnostics.json
 
-3c2bdb82651cf8de429c2468c8688da1b6238b1f1b8c380de6e9a446bc8a7132  bk808_cec.control/conf/html/remote/home.html
+2436f8e3457dbfcb826d183b53b080fd0a9ce281c2fa2de3466dcde91be0dbed  bk808_cec.control/conf/html/remote/home.html
 
 f57289bd5ce9867b81fa1d41ea82eb25ab2c26b502a598d554616c160e6cefc9  bk808_cec.control/conf/html/remote/house.js
 
-67afe60573f76589f2e923012eb92c2f96992c574ae777080ee388875e7deeed  bk808_cec.control/conf/html/remote/index.html
+50aee4a48815eb9e21aa1a6ce3b73e351ff64bfe4e9f1cbe5cd4ec82d58abdd6  bk808_cec.control/conf/html/remote/index.html
 
-07a1317f4a185d44d9f74c721e3c8dc8c5861322ce3a8c4e68924f0e21f7e6f7  bk808_cec.control/conf/html/remote/pair.html
+7dc0f5315fc08e97689fae47cc25259adc780f13f0024ae2b66f9665447ccf2f  bk808_cec.control/conf/html/remote/pair.html
 
-162ea7bb77c996d6195b6d40dff4de71e8a0cc3afe35e629a89dcf8ff870d757  bk808_cec.control/conf/html/remote/security.html
+36f999e2c4a5e4d4a301aabdcd46184b49856c0e30ac32b0bf9de73c305e09ec  bk808_cec.control/conf/html/remote/security.html
 
-59094cba1394cc60042386481f6d5f7f992799171f90e4bcf9d6b18a5b8f3bad  bk808_cec.control/conf/html/remote/settings.html
+46f692cbb1454cba03e04a549f8eecd2a464ffb6a27188b7c15a9c651243fa72  bk808_cec.control/conf/html/remote/settings.html
 
-dbd11af2ff93e65bf65636ce00ae1eec373d762bd6d0689ec6374fa89be3f3f5  bk808_cec.control/conf/html/remote/system.html
+5a9c11cbade3fbaf89241ce47fd759dddc62e0ea9ad901ca9eaecc3285d8028a  bk808_cec.control/conf/html/remote/system.html
 
-04f3bf285ea752bb4819f907d4cba9deee96fccfda1308f25071054b97828349  bk808_cec.control/conf/html/remote/topology.html
+d8e638d38ad3a5b626b9711c905a623332e5bde2f322041905b8ba2799687f54  bk808_cec.control/conf/html/remote/topology.html
 
 1d27ff2bfc4cdd78f75ef06effcb384bfedc8854bd3101bf844af81d1e5af247  bk808_cec.control/conf/html/remote/topology.json
 
-a12efc8b6d0959c97f6b079d8e65f1d7c5ff0f72a43650a0808818bf330f7f26  bk808_cec.control/conf/html/remote/users.html
+f37bb921adb32ebf78e385eb8692dfb6dc947a84ede4b945f3d4d80f9af72850  bk808_cec.control/conf/html/remote/users.html
 
 12fb277becccfb3be3762de81d2eb985e3e1d6f98dcde66fa1bed4f7ffbdfda5  bk808_cec.control/conf/services/addons.cfg
 
@@ -334,35 +334,35 @@ c23894c44f5b3a8837eaa43f5d92031ecdcfd569625cf2b36d5eeaa475a96eb7  bk808_cec.cont
 
 84e6e9ada7d1badb0fb5a7fe2e0bde25c2e091045dbcf8106f2aab9be26454ef  bk808_cec.control/metrics/prometheus/prometheus.yml
 
-9a4862a3ac2a13a4f0482b743c0c7b779240953d372e5ebb1dcce927f09db710  bk808_http.control/conf/html/remote/access.html
+921d39d1c57fa68b2ee04a835e718d0ae2abeb1d548b3ffd8515cf4a3f3c763c  bk808_http.control/conf/html/remote/access.html
 
 8ea5a504a853efa8c0134e4bc0825de043e7479e11c2b6c53eeec5a5956d9bd5  bk808_http.control/conf/html/remote/activity.json
 
-8b685ec560ea3d34e0d2fed5670be69cc300479ecc301caa5f4f43580190228f  bk808_http.control/conf/html/remote/cameras.html
+092b57cfd2586e02ae3b57d3271dd10847adca93b94648279876bcc17199d63c  bk808_http.control/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  bk808_http.control/conf/html/remote/cameras.json
 
 95fd5179e1e538fc598b8c9df3e914ff6ab2b3769aa086131c08dd294b189651  bk808_http.control/conf/html/remote/diagnostics.json
 
-f208ae24e83baed5891a91ef1427bcc91923b8236b1528945719d1bcc9a9833a  bk808_http.control/conf/html/remote/home.html
+642d22e6cf4056d390d2732b3c5dd1baf90e972312aadb114e0fa3da2e296880  bk808_http.control/conf/html/remote/home.html
 
 6cf8020a653cf1d300c48df139716655d6697ee01e2d45bbc5ea10a9050a26b0  bk808_http.control/conf/html/remote/house.js
 
-df48db490076dd61bca6b1eab9896bbd97109211ea18bcbad63aa9ab99a0ae81  bk808_http.control/conf/html/remote/index.html
+3944b4178d12d9a48ed97a2266f411e5d0acbf489c28f676a5d2c90bc65d8101  bk808_http.control/conf/html/remote/index.html
 
-fc40419b131d985ac7062c5094eb0acbcade22b4055bf5d73913591d85a4666f  bk808_http.control/conf/html/remote/pair.html
+95e90376de015486c9d837ea97b7eb05647881f0311c393b438b9cea8db146ae  bk808_http.control/conf/html/remote/pair.html
 
-b98741ad6612091411caf0b1b668b2283c1ccb959dffa51558a5e6a3b415df96  bk808_http.control/conf/html/remote/security.html
+9065c881b6358d0ad497ac991dee193b1b6026316266cfe1eef7883df0e990a8  bk808_http.control/conf/html/remote/security.html
 
-188acba509e2e4b8dd02534935578eb2a3597fa4824916e15eb084f71c4ce33e  bk808_http.control/conf/html/remote/settings.html
+7136f7385ad35465b3854f3ce608a1645cd3fe4004424ca3afe42496e1e2ae1d  bk808_http.control/conf/html/remote/settings.html
 
-4b07dbb7548d0084b9277b57f21673002dd2cccb9d7452f8e8e8211ac75f336d  bk808_http.control/conf/html/remote/system.html
+e506c0b40da8e423e0d7b1cc7d7b49ae175af0f96bffd999ce988d252cc92d5c  bk808_http.control/conf/html/remote/system.html
 
-3474e1dfbcd224cb727d41e233c2bac051ba54ddbb6e034c3f790bbdd973a59c  bk808_http.control/conf/html/remote/topology.html
+b13ae75652c632e5991e564eab8b2debc074927cbb86a60dab92de51dc353184  bk808_http.control/conf/html/remote/topology.html
 
 bbf4adc9c1ddbd59e1ded2a9d7c9d2b439a2933e95c8c531e3803e53cbec5e9c  bk808_http.control/conf/html/remote/topology.json
 
-8f5c038870d57efdf94361c157c41ca03ba521d99027528e90a8065182d2f8ab  bk808_http.control/conf/html/remote/users.html
+8ba4df1e1b787991461536cc4e042d338e91d1160df488a37e74141ac13fc851  bk808_http.control/conf/html/remote/users.html
 
 f79427b62cccc045b64d510fdf1af192b10636464a499d6bf15f7dbd87062a85  bk808_http.control/conf/services/addons.cfg
 
@@ -396,35 +396,35 @@ c516f7bfe7a484590e584b551740756407f75019605881c54a7b5fd453349150  bk808_http.con
 
 93d82a972bb065bf5eaef2a5071e05bbf943f971e66fe481efebb75e79ea49ce  cast.observe/conf/automation/js/playing.js
 
-9abe67905c49a8af89e3477d3a5c669a5571d24f937cb55f526e1c192576d2e4  cast.observe/conf/html/remote/access.html
+3010d25c0dcab95174a12924fd75d8864bd80635f411bc0f4ffbe2390ad0015b  cast.observe/conf/html/remote/access.html
 
 c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  cast.observe/conf/html/remote/activity.json
 
-6220be8d24b048f31401169429326dd7b3d0b7eaa676b924b966a98fb050c135  cast.observe/conf/html/remote/cameras.html
+eacfd2ed1e3fc2b73d19aeba821185fefd8b04ae2423ce2382a181a15d6d0673  cast.observe/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  cast.observe/conf/html/remote/cameras.json
 
 68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  cast.observe/conf/html/remote/diagnostics.json
 
-b30a5d6faef724007f5bf746b4c0f5bc21dbb35c20f2e056fa03f612b886d198  cast.observe/conf/html/remote/home.html
+6fba328da7f71af7913fb04193d4329d30122a44b00e2e45517ac379e04df512  cast.observe/conf/html/remote/home.html
 
 997a8b2b608ca095f6d643c2658fc104f78f4d3685c0cf65ed52debc956eb0a8  cast.observe/conf/html/remote/house.js
 
-524b51cfeacf49f29aac6b28dd301851a6f26a8b022d58ac21f8a089bff8ba9d  cast.observe/conf/html/remote/index.html
+fdec750d9ed0121b4a69aaf807b40c9da6f0d7e356c88a3a6c3b5b0f59c27af4  cast.observe/conf/html/remote/index.html
 
-d034f06147c0a23bddb1b152f13903630e13d0fd1075ee36fdd0066f6816d3d6  cast.observe/conf/html/remote/pair.html
+9879554fc88f09c9aa00b1c002e56a584d4797c7106933ed931a193f7d737601  cast.observe/conf/html/remote/pair.html
 
-9f3ccb784f92b5deaf41d48f01090efb9a8bf575e9fb814b32d1cf48f4494f55  cast.observe/conf/html/remote/security.html
+d1b00527caecc62210fff5c4eda08751be4a7b9dde506edaf0bce9b8ccf0cd5e  cast.observe/conf/html/remote/security.html
 
-e8a22f3098a50ddf75f24685e4c49a7fb56a377b9b0820650f4a4896de4e1db7  cast.observe/conf/html/remote/settings.html
+eacf604cb16752c721aadfc6b718418034ea768656671c3bfead80d0226b46af  cast.observe/conf/html/remote/settings.html
 
-5632ac1c8556771ef19d3201ef8d47fa02e4122934784177539bfcf2ab8b828b  cast.observe/conf/html/remote/system.html
+7f94f97d82eb032e659d2a890d4ce81f7e7e1fcf80e8c5897971cbe338e545d5  cast.observe/conf/html/remote/system.html
 
-485364e41e303f4ca9cb7d88374003a7434ac039c8643124ae20f6cbfeb5293a  cast.observe/conf/html/remote/topology.html
+07829fc3043e22f5b106b350767757bf2a7748d8b9bba1da20f281ae36cd97de  cast.observe/conf/html/remote/topology.html
 
 adcab692ed96ee51fee95ecd85daec8942d54f398fdb10534bde8ed3530eff45  cast.observe/conf/html/remote/topology.json
 
-58e16a935078f87b34c4fe85baf8f3c6c7934c8d0d9b1a7eb2866fa7b3378be6  cast.observe/conf/html/remote/users.html
+8ee2e5f712c6e129c0707c461b1a763870daf3f77400199db25f812c7548fefb  cast.observe/conf/html/remote/users.html
 
 816bf72dd5d0f8b473746dfb30df89f74c17adb23d244da247e8d38d56b8b562  cast.observe/conf/services/addons.cfg
 
@@ -458,35 +458,35 @@ f949616e606e3cfeade1028c6a33b8cc94bbd14dda78cd9d6756340320fd077b  cast.observe/m
 
 b22f53f01bed8c3f0628f7bbb15a97fe13ffe9534fc06127611028558957e407  denonmarantz_http.control/conf/automation/js/denonmarantz_http_den_device.js
 
-f3966d5c3b17830e2ef7dbb6cb29ff3fff372cd49038a42a98ca67f53954d274  denonmarantz_http.control/conf/html/remote/access.html
+ca5742e7c16977e2741198fca22f3ed8068be3d511d01c268c3ec6025ef50064  denonmarantz_http.control/conf/html/remote/access.html
 
 d34badf5622b5cca16a86724d0979a35da7db1313dbd846058de1232ae511a4b  denonmarantz_http.control/conf/html/remote/activity.json
 
-9329ce766cc3ebc47646f82d7a25df84b74177abc1f9b6c320c7853f362ed51e  denonmarantz_http.control/conf/html/remote/cameras.html
+3a54542f8f5e78808aec5bb2fae1c929e13d721e748b4c28707a5efc01458c04  denonmarantz_http.control/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  denonmarantz_http.control/conf/html/remote/cameras.json
 
 68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  denonmarantz_http.control/conf/html/remote/diagnostics.json
 
-d89253379c823806e0001495ceca8ec434cc620640cf82c6d95b25c2a5b8c1aa  denonmarantz_http.control/conf/html/remote/home.html
+cc5f3fc83591243b5f456449e4108f2890c98de40e74832408110e7f4b770463  denonmarantz_http.control/conf/html/remote/home.html
 
 1e8b941b9d8c0184aee262e533ba246f0880d91923ea80bc2e0cc7e51aafa3d8  denonmarantz_http.control/conf/html/remote/house.js
 
-8d3c2c1a71c516380457f8575924b06bccc60e256b8b6a25b47c4c7de134f5e7  denonmarantz_http.control/conf/html/remote/index.html
+aadc9fc569c8636874a985ee49cec82cb88b5125b75d651dbec3234ea2ee2a11  denonmarantz_http.control/conf/html/remote/index.html
 
-409a2dab17dc8c3255a33c7587ceba99297b206725b0fc637ce309a3fd67ab3e  denonmarantz_http.control/conf/html/remote/pair.html
+23ef0fb2d8c9841e004044bacf74403e6a88747127d1986719bd5cc694c51f22  denonmarantz_http.control/conf/html/remote/pair.html
 
-711e425ef18dd3bc43334c80d70b5d07e74d0e8c30009e3b40543d00bb3c0d9e  denonmarantz_http.control/conf/html/remote/security.html
+f4098d449ea4e2bc62fb52e9855eb8b0cd98a1607515e19c7964ccdb6a454ceb  denonmarantz_http.control/conf/html/remote/security.html
 
-e0a17361ad4f7e9e7c48e310b305f392db6046ae37409d6f2905611b044d272d  denonmarantz_http.control/conf/html/remote/settings.html
+2a3a5503ed6b803ad4191b7e6a5406909a170368b086911c7a5724179ce0457a  denonmarantz_http.control/conf/html/remote/settings.html
 
-923a35e9df0ca2c55578bc10a9868956e57172c3e29338f7cfd344f9ff8202d1  denonmarantz_http.control/conf/html/remote/system.html
+43967200e23bafff0a3ce88feef265596874c1dc63646af5b8a5ad23ad79f7ed  denonmarantz_http.control/conf/html/remote/system.html
 
-afaec519402bee95e741eed0e01e8614ef07228e0c6999466de0e71e605e1aac  denonmarantz_http.control/conf/html/remote/topology.html
+c2cf08dd1b32ae968ac2d8679e01f695f36590b772ede0485b09cd38f1dac204  denonmarantz_http.control/conf/html/remote/topology.html
 
 b55f7b6f47a6561450c56fecd57befdb6825b1cac29fd822e20c6d2899d21bd2  denonmarantz_http.control/conf/html/remote/topology.json
 
-2d3231da2d02d0cd40c3d0e53eaee3ebb55b342e48a5ce7912f716282ce1be7f  denonmarantz_http.control/conf/html/remote/users.html
+fc2ab6d510687bad79e37c56e71504238468224c4e0c7d57c7fcc4cd3dd3e3e8  denonmarantz_http.control/conf/html/remote/users.html
 
 74797b0ab6ed34c0e131836c50b3bfac5a06f702fdb3026968134059729980d7  denonmarantz_http.control/conf/services/addons.cfg
 
@@ -516,35 +516,35 @@ b15cedb5dd05cbcdc581fd3c898b53e3c58dac2f5ee079a851de468d1ac1650d  denonmarantz_h
 
 9207ff7570bd59d78be1410580984f1799965bacfa7237d11de6c3f65989690d  denonmarantz_http.control/metrics/prometheus/prometheus.yml
 
-f9d087429f12f938ebc9e3a407746550957b631ef22d3d4d559cfcdf8e5a6d51  denonmarantz_http.observe/conf/html/remote/access.html
+0c3af7b397e5c509a8ab7960a861fc840615a47c9efe752d31b9fc94b401fa9a  denonmarantz_http.observe/conf/html/remote/access.html
 
 c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  denonmarantz_http.observe/conf/html/remote/activity.json
 
-0d08c35d8de6cd1cc2cab00a65d4a05ce8a6520df85fa9482c48f1b668893352  denonmarantz_http.observe/conf/html/remote/cameras.html
+94283354429416c779d439aa793a5bc1c089b516bd08117e0705e5e27df70efb  denonmarantz_http.observe/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  denonmarantz_http.observe/conf/html/remote/cameras.json
 
 68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  denonmarantz_http.observe/conf/html/remote/diagnostics.json
 
-9de03b63e8d7d1630723e06d1887c8301f58e9f32846403466cea4f09af75d53  denonmarantz_http.observe/conf/html/remote/home.html
+923ad7fb840fc44340bb01d65bfab429099adcf275971557ee7eae57cb4d22b8  denonmarantz_http.observe/conf/html/remote/home.html
 
 2355f4de5ccafa356c0bd57b3aada75061e3b58521f6772aa12a1caeedf3c4e1  denonmarantz_http.observe/conf/html/remote/house.js
 
-b38250e32e1ea430c532baefa969edc2a0b426607d21697aff9602f46a14a0a5  denonmarantz_http.observe/conf/html/remote/index.html
+e8762f5cce0a7bbe2a189d45ed8d5a4431733ccb050559deff40854fc6714c50  denonmarantz_http.observe/conf/html/remote/index.html
 
-7103ab2296cd45572e67803b831ea85bd94be558312040092f88e14a21124ad3  denonmarantz_http.observe/conf/html/remote/pair.html
+11245c3c705aabbc51704b57dcafe3dd1878d973f401a0334c5952bede5523e3  denonmarantz_http.observe/conf/html/remote/pair.html
 
-ff0ed4605c1ed55031cb3e0a42fa66f6aff9489210a45e3b5c5b10216dc97aa6  denonmarantz_http.observe/conf/html/remote/security.html
+7397dd93cc96b9fbffea1edbc50905e4aff188aa370e94f6ca7e1f03568b8a6c  denonmarantz_http.observe/conf/html/remote/security.html
 
-a7ed2946a369b66166a192de2d27e5fcc70c364e1c50afdb89fb29c40156350e  denonmarantz_http.observe/conf/html/remote/settings.html
+6c1fc7c0ba3ed4f170ac54243cf5289dad3859d27721766fe4e5ad78426612a5  denonmarantz_http.observe/conf/html/remote/settings.html
 
-bee5463d398a23301344bcc4c87d8bb5b02c53d007f54b55de827a0ea9d68e75  denonmarantz_http.observe/conf/html/remote/system.html
+8680d0cd4a3f050025655f88437dd5cd7185757ea61a2c78160f60516a6484fd  denonmarantz_http.observe/conf/html/remote/system.html
 
-46ba7e822e96b8fd2b1556714e128c4ca743d33b8f1b7c0e590dbe70c2dbd2db  denonmarantz_http.observe/conf/html/remote/topology.html
+db1d437f8d0a89455818ccf214680e9594aaf8f3ec844ac5690aff53a0893b69  denonmarantz_http.observe/conf/html/remote/topology.html
 
 b55f7b6f47a6561450c56fecd57befdb6825b1cac29fd822e20c6d2899d21bd2  denonmarantz_http.observe/conf/html/remote/topology.json
 
-912807243764da25e9933e6b8393ad27e82d3cb41361af3824e4a74f902f48f7  denonmarantz_http.observe/conf/html/remote/users.html
+b91a7d4c2943e95b5605126218afaa4003f3de77d3dbc6ee11e035b1253c14ac  denonmarantz_http.observe/conf/html/remote/users.html
 
 720a1023c81dae9f1686d8cc3e817b20c4cc3842dc6ba5a529a17401edca5f6a  denonmarantz_http.observe/conf/services/addons.cfg
 
@@ -572,35 +572,35 @@ b15cedb5dd05cbcdc581fd3c898b53e3c58dac2f5ee079a851de468d1ac1650d  denonmarantz_h
 
 9207ff7570bd59d78be1410580984f1799965bacfa7237d11de6c3f65989690d  denonmarantz_http.observe/metrics/prometheus/prometheus.yml
 
-e9087a37d75025103c00799a48c68d0e0f495a719536eff662c8af1ef5e83356  drhdmi_http.observe/conf/html/remote/access.html
+1d784ec804f485b8412e72e737e6514d4c0ea66364c118b9c7578fa7d0703fba  drhdmi_http.observe/conf/html/remote/access.html
 
 c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  drhdmi_http.observe/conf/html/remote/activity.json
 
-2bfd26fa6f18c6de913f61c551d3cfca198308718941fc3b6514abd448501389  drhdmi_http.observe/conf/html/remote/cameras.html
+a791d1bf12d28c5ed15d8bb57ddef7bfee00002144a24eceb0438e9ed45340b6  drhdmi_http.observe/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  drhdmi_http.observe/conf/html/remote/cameras.json
 
 e92429c04c6bc37d9b50e0bf74fd546d95052f53289d34d01ff287f2edc665e7  drhdmi_http.observe/conf/html/remote/diagnostics.json
 
-29e3d753cbcc546341200da65d2797fef1b9885bea5685d13a8e0663639a3e18  drhdmi_http.observe/conf/html/remote/home.html
+ba926771a554085463e4e272898c12f65b5e03aed95f3a5a509ae58a301ffef7  drhdmi_http.observe/conf/html/remote/home.html
 
 325f83f5fe6031ea0cc9575f01e3df45d5515cb5d852ac4cfd083176cfb4ca77  drhdmi_http.observe/conf/html/remote/house.js
 
-e7c4839c356e2631eb8639f951c3a830195462963d9fa50897c0cc7ba72352c9  drhdmi_http.observe/conf/html/remote/index.html
+23ad6c7ff90b05d5fa0c008411b4b0aaf4538c61e0c88e114c52b40b544a1714  drhdmi_http.observe/conf/html/remote/index.html
 
-ce3fc56c288416ce33971c7fc6c95dd67264ec280dd670edd4e48fb01ae1cfa6  drhdmi_http.observe/conf/html/remote/pair.html
+f24af2b89ecf61eb5d992cfad2abae8cf35d05b709b66095f0fb81b6ef23125f  drhdmi_http.observe/conf/html/remote/pair.html
 
-52038e51217100fe4beb334d18dc8a1c814e7a905069d4d562db73377f39c5a1  drhdmi_http.observe/conf/html/remote/security.html
+cee2e84283a60f70d36b49c3a703368632d0b5aaea0591ed518cb07ac72b014e  drhdmi_http.observe/conf/html/remote/security.html
 
-cd7bc82d877c3c3bf8e715e372adb08ba630069d9fb2814d871ec1579c4b6184  drhdmi_http.observe/conf/html/remote/settings.html
+0971dfdc9c8002347465841981d25c52223c8948ad68238e1ad31ffaf06780bd  drhdmi_http.observe/conf/html/remote/settings.html
 
-ca2a3412172406fcd69cd06775dee351d8e20e18b81392e5deaa70a40b94cd74  drhdmi_http.observe/conf/html/remote/system.html
+abc09b4bcc1999767a0b182ef0a7125f8c2bd3f443483fae1bb46f99181421ca  drhdmi_http.observe/conf/html/remote/system.html
 
-3b9c18ebb1823dda42912fd8c6d74ff28ef6d00b7df999ed2a8d850a07853d0e  drhdmi_http.observe/conf/html/remote/topology.html
+1d5641627e54cd17300ad342fda24aac5c6cbd46d67e4a0da7758b4f38311c00  drhdmi_http.observe/conf/html/remote/topology.html
 
 bc88d02f314117c8ca6f30bafeb92c199acc2d3266cb424ffeb8c8bb68af5b53  drhdmi_http.observe/conf/html/remote/topology.json
 
-cf87629c66d7487d4260a13655ca0159f8bfa514d2551f0ae6e6a14a452e32bc  drhdmi_http.observe/conf/html/remote/users.html
+099c82f2fcc6290494ee9326b8a78a429177b22a2ba915300d8e21933c89360f  drhdmi_http.observe/conf/html/remote/users.html
 
 7a6b412a3b206c15f194e0d5cf1abd045605a4451be25e0093ec2a7385ddb2c9  drhdmi_http.observe/conf/services/addons.cfg
 
@@ -640,35 +640,35 @@ d2f9233ce671c26d5a8b70597635133e9821ec769ed3b5553e66879e9e99c7ec  drhdmi_http.ob
 
 4ac143f761eab8d55f73b6026fbd8759002c47613c7ce4a4277cb6ff9f197a7e  example/conf/automation/js/sony_ip_control_example_tv.js
 
-9860cd8e45ff58bb964a6b383a24164fec27c1b0b79c5065cfdd5088d9afb5cf  example/conf/html/remote/access.html
+54e92251ea1fc93367a1577887d44240c5a8d0a8c0ecd73b1e545fdbfdf94eea  example/conf/html/remote/access.html
 
 a4b0068a313b7620c3dad644b4bdc5db39dddd5c0eb05a91a358953395cd94ce  example/conf/html/remote/activity.json
 
-ed14942ce40e4c8e4e62c51dcf6bc41dd9713742c1b525c0d95df67c1318dcad  example/conf/html/remote/cameras.html
+b1564d0eb1af7b8625701c9e6e0fabee9aefbed7ae98ff5f3c6136cb1b629038  example/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  example/conf/html/remote/cameras.json
 
 14f129bcb30e3da971aa2ffd36333575dd6d7c998b11b6fda852e4f5b9adf2e7  example/conf/html/remote/diagnostics.json
 
-493ae06b5ccdf43af46ac1144f99b109b7dc57e47b19e10060c667fb7f1d7f28  example/conf/html/remote/home.html
+ef7ce482a455a43e5db9b52f7d1df5445337b9fd100acf451a8bb6236eca8bb0  example/conf/html/remote/home.html
 
 26363896cfbf99cd9ead70b9fceb4a3e388cf61dd011dde4a1b685c0e2b15b63  example/conf/html/remote/house.js
 
-60585275fbffaeab6b8f4d2ec521a2a744e7cf013892969b5b0228357bfbc08d  example/conf/html/remote/index.html
+2c2cfa61bdf07dbe9b815742474893f9b8fae0b6a51a5ef15bae1c3975a3e3e2  example/conf/html/remote/index.html
 
-9590bd8b7be15610e6ca94f8f40419c6b13d47e57315977315c35712ef696ac5  example/conf/html/remote/pair.html
+5d194149c358977c12667fce6afe8e50eb06f5d3319411e1a389534b915cd808  example/conf/html/remote/pair.html
 
-71a3829eda3ad23b09e879b1dc4218ca81a57dd1d9f09949479f891804a01140  example/conf/html/remote/security.html
+57c3dbe4ca79f9ef1430a5e5e44aff69b22cfb3f6b46cee4b323c73fdcb48e64  example/conf/html/remote/security.html
 
-b84d74342648edd93bffde9456c4d48f28405a6fe0955a45d9c66d6a80930acb  example/conf/html/remote/settings.html
+640c867e388f682bf49f85895e80e7646d8b30fc6c3cc3bc20ac60e7d38d0da1  example/conf/html/remote/settings.html
 
-d21bce8118f10724f45c2010134dd773eefb84f90852c2605fefdd13d47c7345  example/conf/html/remote/system.html
+e3bac52565c4c1ab0c6df2b3e723af7c32178f8ad9f0c35fbf51c1370bd36424  example/conf/html/remote/system.html
 
-434b3d1f6ca2d02326ef4fe966798b9c405388279030631582f4b3506ed37493  example/conf/html/remote/topology.html
+10b94bbfa4286e80d429a7afa53350c8129bb4d8227a2a168c2271432ba948e6  example/conf/html/remote/topology.html
 
 70a30832f27c6f063f7c0ca5735bedecaf26a09d2e46e3c05f60e5265e511ba1  example/conf/html/remote/topology.json
 
-219cb2447051954bb9b3ec85920d1e49df7f019b623544ae46bf13e07f625216  example/conf/html/remote/users.html
+502dace9502eae18210d209c3d05c02706f05d5f5fc209e47a337e55858265db  example/conf/html/remote/users.html
 
 4ffd891e8f018dc2f32b4af26f4f556170779f5cd597cfdba59b99d554a972a5  example/conf/services/addons.cfg
 
@@ -718,35 +718,35 @@ b22f53f01bed8c3f0628f7bbb15a97fe13ffe9534fc06127611028558957e407  heos.control/c
 
 442273c483dc9d4845852f2150e8aadbde3a5b433f2d93789971d7ed8f653a7f  heos.control/conf/automation/js/reboots.js
 
-de8f68b6b1c3bd1b00c2bfe276ee9de642c334608dfb51509c2aa6ba67e5092f  heos.control/conf/html/remote/access.html
+9672bf64eaaadaacc624c23b0086396307d8263e16a0710e001804599dc34e02  heos.control/conf/html/remote/access.html
 
 3855095fa93798116cb643243f7eda88e478c80233e3c29243e7721f00f0db2a  heos.control/conf/html/remote/activity.json
 
-23e6943b072fb9f18df264515f4be9f0629dfe39d0b32db28a7fae3e32a007d7  heos.control/conf/html/remote/cameras.html
+ede108b83178a7b21a0e45e7d0392de95220f059e837b2c15bae3e336ea314ac  heos.control/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  heos.control/conf/html/remote/cameras.json
 
 68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  heos.control/conf/html/remote/diagnostics.json
 
-664ff22113abaccc471fcf37026701e4f49357ae30977f13154e82c50bdc1b37  heos.control/conf/html/remote/home.html
+a52d2e5953fd64186dd5f1b57201b42e283a5e7854c1fc6d5106aa55d87328e6  heos.control/conf/html/remote/home.html
 
 8c325c830563841d785d4cf8442db4ac01d90b49c1adc535a623d9f1a799edb4  heos.control/conf/html/remote/house.js
 
-95f8c88a3706d053cc8451b640d9bb5bf99f25fe6028d6c82b44232a6e5330fa  heos.control/conf/html/remote/index.html
+b57d670bd2041a782805d55849048a2c5738e2d190e4f41c824aa1b9f17bd4ff  heos.control/conf/html/remote/index.html
 
-b730ee8516473b1b7bfd6399012135faa1ebe34880239f8513f3a22299298a57  heos.control/conf/html/remote/pair.html
+c1a79654d4351d4934fa9046e08fdb26dfed0d6ac90bb8f3400b33ace3b0c3ec  heos.control/conf/html/remote/pair.html
 
-fd21b936bd4b1a536fbdfdc65ff9ac7673fd24b7b71cc6c05281542561dcdea7  heos.control/conf/html/remote/security.html
+a342c944a0bd8416b0acc513d8a7cabef17cbdf6dcd42c63c64e586113d3ac34  heos.control/conf/html/remote/security.html
 
-4185f6b0b3f026c55a8e6e71861c5494ce525df3d7fcd9d26b2515a04a7fcd5d  heos.control/conf/html/remote/settings.html
+f69cf77c6ea5c7e1f401dffe9f13e41901c586c8555299be82e2730f59006737  heos.control/conf/html/remote/settings.html
 
-18c3d95634f534212c98733888068b313fd122d7afcb272111f8fd2eb30d5da6  heos.control/conf/html/remote/system.html
+a685102194f958069a6372aba119052aba9a420c03acb4f982007fbe5d1a99b0  heos.control/conf/html/remote/system.html
 
-9dca074a7dc38ed0d87ace32ff2db6f761a9c147a8b75f86733a3cfaba784634  heos.control/conf/html/remote/topology.html
+e9dfa072a96a921b3ec58a3fe99324746fa7c84f949e9be103d57e67a801396a  heos.control/conf/html/remote/topology.html
 
 b55f7b6f47a6561450c56fecd57befdb6825b1cac29fd822e20c6d2899d21bd2  heos.control/conf/html/remote/topology.json
 
-6aabc1c355839226f4a2c3ed24d6eb1bfe6019f9eb61524a476380d042757b67  heos.control/conf/html/remote/users.html
+18f920cc4a7cc24ec1ebdd091777ff046552c8e70a7107663e1a6c1098cbe99c  heos.control/conf/html/remote/users.html
 
 a065f358f3898476e514f9f40b4558c304e85067d9a51db179036a7c5b4b8a32  heos.control/conf/services/addons.cfg
 
@@ -780,35 +780,35 @@ b15cedb5dd05cbcdc581fd3c898b53e3c58dac2f5ee079a851de468d1ac1650d  heos.control/m
 
 9207ff7570bd59d78be1410580984f1799965bacfa7237d11de6c3f65989690d  heos.control/metrics/prometheus/prometheus.yml
 
-5635601594ed9075147a3a4b10b5beabcd00801d000fe69a82e227b8a2e848ca  ir.control/conf/html/remote/access.html
+df8a21fdca1165a143cbabde3abe4e6e0e569e64eb88a66a26b97864846a6920  ir.control/conf/html/remote/access.html
 
 c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  ir.control/conf/html/remote/activity.json
 
-8cee8e88820bc45fdb6ef049136dac12bfdf70596b13ed92c835ecde3946160a  ir.control/conf/html/remote/cameras.html
+f6d5a0f058cf734855f680c4a1c958bb2e6b29fb258590f83d03938f7b2ac543  ir.control/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  ir.control/conf/html/remote/cameras.json
 
 68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  ir.control/conf/html/remote/diagnostics.json
 
-924ad81c83ff6b19fac9289ebac46df3c18c660a00d2d465779ec0d686453c15  ir.control/conf/html/remote/home.html
+33c5693cc9d6361765c4d4540b538f9829363e7a05f16f2af20469924973c461  ir.control/conf/html/remote/home.html
 
 b06ca6d49a50cd6d36e1267dcdf7983b0c62fa5d930d9912ac47a9416761f123  ir.control/conf/html/remote/house.js
 
-bf69f36c2a24f5cf84d8783d867b1e06914477be1d8393a5c75bbb353f75a6b1  ir.control/conf/html/remote/index.html
+2efafb57011a408b50929ddde5a94c4d1883adf40eaf0f52deba563e2efb8ec6  ir.control/conf/html/remote/index.html
 
-d5fdb1d4fd8db052a05f1ce4455718139b589fe1205cc3ebeccba5df3203a476  ir.control/conf/html/remote/pair.html
+83717ec741c5cbe2d715280ec273d7c47a216b9e28d3b5619585756822b14d20  ir.control/conf/html/remote/pair.html
 
-222295900baf5f0952dda825ce97cc500c924c6e8bc804775a1da351c46e90d6  ir.control/conf/html/remote/security.html
+35338d60e3ec4a6dcd928cc4667871b9a2b85de2516870335b879feff5e691e7  ir.control/conf/html/remote/security.html
 
-d610f3569c4be575d2ab3ca42fe86bdde6a9f6fb484c145da4f9ea58838cd858  ir.control/conf/html/remote/settings.html
+77480cede8998fcd13577a4dd0b75d988e09fc4ce64f956123fece4fec78fdf8  ir.control/conf/html/remote/settings.html
 
-da796dacc5ad86076cdacb4278e1bfcee8fa716c4e8b14eb6edf2e2566cb6968  ir.control/conf/html/remote/system.html
+4ab8311459195019060ec1c28dbb3eedcc4edc4965b26bd30ba92556d16fd039  ir.control/conf/html/remote/system.html
 
-e344df190008bec3b7ff59403a0fc4e28fa47882c833496be269d2a1f6a9fe90  ir.control/conf/html/remote/topology.html
+7d6c88682dada433f2b437e0e8645bf5ab8052673eb2ed50cbc411bf6fa8b2ba  ir.control/conf/html/remote/topology.html
 
 7b75761c92334314c621770df0b7db26f18985934658c9fa0d2e737bb0bcfa79  ir.control/conf/html/remote/topology.json
 
-45365189909b76ecc2dae2a50e86943b795dff596228840e1c9ddca71ddb4801  ir.control/conf/html/remote/users.html
+b0e63bc49a5dd7dff9c1a817d09a9d41348d13cfc170509916b4e7af94d662e1  ir.control/conf/html/remote/users.html
 
 7c29eff9c2a1d2ef52fe86a678279bcc2a1648a5caa981d97bd9cbaf746e3f48  ir.control/conf/services/addons.cfg
 
@@ -836,35 +836,35 @@ a86c7b77c19d772ef0b8ddde264bfd930dd3117d71ae3770c0a099a3d4f03e46  ir.control/met
 
 be2459cd6478dc6fb7c5c7fe0a072e98f48031cf7eb17f9140c63c8ca61468d7  ir.control/metrics/prometheus/prometheus.yml
 
-ec8b9731f95a1f0c3628639cdf676374fcfecb8e5e9608dc8b7ccea981335509  network_ping.observe/conf/html/remote/access.html
+b263811f67723d94de90702b0b66f05057faeee4bde1f9468d4cef30badfebb3  network_ping.observe/conf/html/remote/access.html
 
 c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  network_ping.observe/conf/html/remote/activity.json
 
-e16dadbc115d943ff1e15597693745c78c1d5036095b11fad34c0c91d5eeafc3  network_ping.observe/conf/html/remote/cameras.html
+2e053cddfcd32095dcde5458040f287aee4f1486838275c6a43a0944f56bdf87  network_ping.observe/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  network_ping.observe/conf/html/remote/cameras.json
 
 68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  network_ping.observe/conf/html/remote/diagnostics.json
 
-94f6652d12630ad689068bacaa0a7e4e2184674d99e540a5c18dd0eb7c70388f  network_ping.observe/conf/html/remote/home.html
+94df1721b561624fc29439d25b17d587f15ff5364e2e348f6099d970c6bfc2ab  network_ping.observe/conf/html/remote/home.html
 
 34438c37b1805c8389ac9f8294d7bdcc7fcdc7c10829ac736c6aa61497a8ddbd  network_ping.observe/conf/html/remote/house.js
 
-54cd1e35f6719e002a16057a34abeaed5f2c48c13213bcce753345033e614787  network_ping.observe/conf/html/remote/index.html
+442f96177dde1dd1c89ef2778f4bd15a72af9c12db737d3437c1873eb520ae25  network_ping.observe/conf/html/remote/index.html
 
-9082e74ffe01f6903d64e20c3b5d8210b02f0b7c37b66b4e665793c4ab455614  network_ping.observe/conf/html/remote/pair.html
+c10147f54b793570bd0da1cb25dc753820413e40e9a4a2431bcf6c1d35a701f8  network_ping.observe/conf/html/remote/pair.html
 
-11f0185348a2d9825c50254cc968a14699667cd74eeb74312979e31f68e2621e  network_ping.observe/conf/html/remote/security.html
+e3c6d54925ab3e83bc5c2d5c73a6cd39f89be7a1e7d37d22a02320242b76b1de  network_ping.observe/conf/html/remote/security.html
 
-f8b52c544e02e3f192cb4e9a45862c4fcacb62ae74c822c94a288275e419f3c4  network_ping.observe/conf/html/remote/settings.html
+6583c4682ab7a33ce2dcf672d7242b782be937189dd9ce62269233e921a0b609  network_ping.observe/conf/html/remote/settings.html
 
-bb9b50987fa5c3c04d128c9d022f274a794fc2bea40a6a2e29b2fd161b58c4e0  network_ping.observe/conf/html/remote/system.html
+6d1e321b7098be25116fb16c58630dd3f46086bbde4f2fa0b82307075b5bcc79  network_ping.observe/conf/html/remote/system.html
 
-6efed3920c44d13eda75990a8cee65854d0168414d47be32a578d7ffe0b91e31  network_ping.observe/conf/html/remote/topology.html
+410031313e9c868a1af5a5a88f329e8c1e9f03bba126a6908f8a5b86fd5dc584  network_ping.observe/conf/html/remote/topology.html
 
 ddbebd68686f23370e61b6c778cc3d1fbf582385cf0a045b666b3b0f3cbe5f5e  network_ping.observe/conf/html/remote/topology.json
 
-c62e20da75533f7edca00dbfff15910d988e48a4f94915e268d238254cec45bf  network_ping.observe/conf/html/remote/users.html
+f048e8b75e8ca7092868500a139b39e57a618a8a59916c43b2d805068bd8a429  network_ping.observe/conf/html/remote/users.html
 
 1d41380d2b6812d438a7c257f21a818598435dec000e9f74a13e4343539f7f4d  network_ping.observe/conf/services/addons.cfg
 
@@ -896,35 +896,35 @@ c11710c6f3018166e5a6c203f2b2f275d4126704b3fdf26890ad3f5478daab6f  network_ping.o
 
 77151ddb7e67be35fedcdfc98e809da27925039161963cc221e2e98c4460ae50  pyatv_http.control/conf/automation/js/pyatv_http_den_device.js
 
-c0ec3b9c63fb5b58d1feec478969824059ca65d2cc837e4ce04f68cfc93adf2e  pyatv_http.control/conf/html/remote/access.html
+be663188f108d3f664e83005901b6f364814326cdd3512c2100832639a022b94  pyatv_http.control/conf/html/remote/access.html
 
 1767b0aaac2fa49ac9773a0fd423d739401c6a6c46f45d5797bafe4768787d4a  pyatv_http.control/conf/html/remote/activity.json
 
-0bc1e8014f13183fe97963558b5b55fc934612d26cdfb2d35c24c65dcff67c81  pyatv_http.control/conf/html/remote/cameras.html
+318cf253ef03e8742b994f865352b65d065b8c8c9f094e57338b66b74dab8fe3  pyatv_http.control/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  pyatv_http.control/conf/html/remote/cameras.json
 
 68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  pyatv_http.control/conf/html/remote/diagnostics.json
 
-d5d510c8066904d96bc89960cc9aead12ba4021ce661e7a5c094335f063123a1  pyatv_http.control/conf/html/remote/home.html
+7c89a785190f88d88e63275dadff8dba115b643a437d53afc2b55310de05f304  pyatv_http.control/conf/html/remote/home.html
 
 36d0179044a617b965b638033a87cf50fca2043643853afa3ac257b1ff0a1580  pyatv_http.control/conf/html/remote/house.js
 
-1932223dbe1dcfba270237b639ede399f7d77941a21deafa82fdcc211cc5ac13  pyatv_http.control/conf/html/remote/index.html
+4df57b42b0c626a407e31838adfe0344164e266213dc9dbc564bf557227c29ab  pyatv_http.control/conf/html/remote/index.html
 
-fe4e68862e3b440b207fcc608f6d35fd4112b4d1ea80d4ce90d6513dfc8c23d9  pyatv_http.control/conf/html/remote/pair.html
+e7bc7eed97813aa934246dc05101a19ecb887b3a4b8d3e1b1b86f8fd9ab4082d  pyatv_http.control/conf/html/remote/pair.html
 
-1c63559d45a219c6f325e8dd0b7791f055932aef31a9ee0aca42546ec8f0b477  pyatv_http.control/conf/html/remote/security.html
+d4ba3ea9f5377a43da44fb2a804f9d591697dad95a02ee579e9705852d50b9ac  pyatv_http.control/conf/html/remote/security.html
 
-5650839984356e20fc04b6976ea0b7c00201586cd401018dd8e50a546bbf74c1  pyatv_http.control/conf/html/remote/settings.html
+95954ffcbd71cd715a4585246903611cb059f71b4d0a8902b345b57def4b14af  pyatv_http.control/conf/html/remote/settings.html
 
-222f9ba1cd19c590f128cedf335fb9550a977eccd7c4f2452d4df1b569eeefc6  pyatv_http.control/conf/html/remote/system.html
+bbaba3a1357792a84191162d7163ff6d54c9ca5f2f30ba13f7618d399d6d0e76  pyatv_http.control/conf/html/remote/system.html
 
-e0752cee69c689865713da264dbb0fe8167cfe90c30b0b04d741875bd2f3de7f  pyatv_http.control/conf/html/remote/topology.html
+a6738f0768e51e7a638555257475a5cc28ab4cd3b7077faabb184ab215e884e7  pyatv_http.control/conf/html/remote/topology.html
 
 360dd28a98f42e5ecceda5bc2ceb450101a43812e401c690e008a888e1c1a499  pyatv_http.control/conf/html/remote/topology.json
 
-7b0b0b4708d79a4892cd87ffd662da40a03ee599e300c3368484fb7d50c8b51a  pyatv_http.control/conf/html/remote/users.html
+20739502bbbe1a43fff111c7e0c31a694d2547d1898ba162b41f6edd01bd0394  pyatv_http.control/conf/html/remote/users.html
 
 1793e8fb07a95221e1457fd256a55b791e55e5dfe5df8c02e37b1eff03af273d  pyatv_http.control/conf/services/addons.cfg
 
@@ -982,35 +982,35 @@ bb770cd514428d986af8ebf2cc90c31063c445dad73a682d2c6ff7cdb4ea0860  routed/conf/au
 
 abec0403f0db6e2253ed3714022a3d0453e247b008c17e1067137667a4226dc9  routed/conf/automation/js/vrroom_telnet_example_switch.js
 
-6a2aac20e16d2a408a6599f8f1becdf1dc4d20fbfc67c6dcf8d1e090b58cbc65  routed/conf/html/remote/access.html
+65ef342236b9198e54f3af46ebd46efe746ccc8b9a9991eb7eadb5e1bd93e59f  routed/conf/html/remote/access.html
 
 aa5d1d5c20237dbca40c9b7990bef1b32f859ba26275c080499dddb320a96d7c  routed/conf/html/remote/activity.json
 
-7f041b0e84b695fed8512b13147f26f6edc845df950fc23eb8ae3edb39792bee  routed/conf/html/remote/cameras.html
+1515ca72e0c5991d0456626073227d8496540e1ba6176700c5e5b1d8ceb7b46e  routed/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  routed/conf/html/remote/cameras.json
 
 520850eeca9f2f01a17adcc7566bb0d68f4f1342e031caa3cffae528f23ad505  routed/conf/html/remote/diagnostics.json
 
-00de9f23f74209a0cfe847967a43c7dcb76fec1c3d517d54c48d2d1753f01795  routed/conf/html/remote/home.html
+bdb0119443110b586482c12e1883f515215d149e6633695abb539879e0b3c48f  routed/conf/html/remote/home.html
 
 9443e3cc3544ccac473bd05dc9b62109c860304703b03bafa89f6f1918ae9dbc  routed/conf/html/remote/house.js
 
-97ad4c1219b19e7e0facf7f5eaf8cabfc24acdbe7f2cc72838365dcec5882b88  routed/conf/html/remote/index.html
+5e2274a59c60f534e8ea5574e142dda671c843062005a041bbb9d0a4fef0bfe6  routed/conf/html/remote/index.html
 
-30c73ce8d85b655d51fc6ec1f8dcf99e988b83b3439e2859ce2213607e3c8db7  routed/conf/html/remote/pair.html
+034309bbbea50f433a0a34b92b9634b370b7a5c189cb1c6c82a87b9f13fe96b2  routed/conf/html/remote/pair.html
 
-b17a5473da7eccb8c11646f943c2efa9f742006433ff063fcc0493c66a38e84b  routed/conf/html/remote/security.html
+761da58f01b272661ee66baa5d0f50d1ce450ad659cce9b7c13130f2f2f521ae  routed/conf/html/remote/security.html
 
-6799a7b9e4672133e63b8511c6b7331133ad6e855802f72041fd4ce0c96ff260  routed/conf/html/remote/settings.html
+170557ef381d8c3e159bafb5125e71f2cc0cf6c2fdefc3d6d4ca3e59079d23d2  routed/conf/html/remote/settings.html
 
-ca9fb006045ef8c07af0d336993dcf298d5eefae332b185817d403dea67c5f3a  routed/conf/html/remote/system.html
+bf924da5c8285bbec8b012f7370bf7d86cc6666e99cff1aa484408b55cee6bd4  routed/conf/html/remote/system.html
 
-21c87c25c6adca2ea6d6b6f2ab83b7c766ccdd078c34c0517c418275ab1563e5  routed/conf/html/remote/topology.html
+c4ce67d0235159c6874a84095416601e704b2ad7baff30d5f2266f79e9d43a4f  routed/conf/html/remote/topology.html
 
 27d335c3ce64b76b61133e271310463b31485b067d3fd8b740bbae24b01bfb39  routed/conf/html/remote/topology.json
 
-f5532dddc36e385854ace9ac0b92666db89b7697a632a9242153ad20bbde231a  routed/conf/html/remote/users.html
+7078cd805983e162a4120bca91ecc2c7d24d5261ad73aa256e2aeda1bf8df294  routed/conf/html/remote/users.html
 
 450d14cffcdb82f32cc4ee8c4a0cf730762ed39bcd0ae744582873f03bcc96a0  routed/conf/services/addons.cfg
 
@@ -1082,35 +1082,35 @@ c117cf2ad02b7699ab385db1f7a4c3b3d8313d9cbd3b112e25f57ffd4ea30053  sonos.control/
 
 8e1fe05ff28053cab5eac33fe5b5c816d211af926d852b587c77ed130680ea11  sonos.control/conf/automation/js/sonos_control.js
 
-9e199cd8983daeae881e02f0e3e92817d622f07a88963f9459b2fff1b8b0136f  sonos.control/conf/html/remote/access.html
+d8dc97edf50ff9b49fa99e834f0f32ca936d83a946e1d21698d85869a321a216  sonos.control/conf/html/remote/access.html
 
 75723fc65c1d2acd886e809fed5ece91f9e6a8dbd0b7a16569ea93a7902ce410  sonos.control/conf/html/remote/activity.json
 
-d3f6dcea7ac87a6dcd807c3e3042aca989639c61783b7187c1cafa6059b44e08  sonos.control/conf/html/remote/cameras.html
+8a11d694402dfcdbc63c9f446e2f2cf9cd1051d200d08144f2c64b57c8584a4b  sonos.control/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  sonos.control/conf/html/remote/cameras.json
 
 68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  sonos.control/conf/html/remote/diagnostics.json
 
-39a25c8936d0d03f03d1be743c0f55839bb821131bb971f9bf1b2ac110cdd4c6  sonos.control/conf/html/remote/home.html
+4e5020b8d62559213623f2a0c4e2156d4a712a2e4034818efa5592cbd9bc796d  sonos.control/conf/html/remote/home.html
 
 f7afc1a3778e6bb13b21fde05e45643f1d6ca0cb741d1d50c0850798c1dab6ce  sonos.control/conf/html/remote/house.js
 
-8b150ca086928cba8169c9c0b1911e869013c0672a927323c88c53c20f85ad7f  sonos.control/conf/html/remote/index.html
+4f9e4a535871c73a6a1c0f971b87b4aeb6b2ec55e21c219a41644e4b3a69cc55  sonos.control/conf/html/remote/index.html
 
-fa9950cf073118d590a994c99c9319f594390596e0d1ce7723fc4a4de77c3e4d  sonos.control/conf/html/remote/pair.html
+8b6c1336dd32cb5bdf870964d71e572cb78cd1de6044b910d1f304f572322618  sonos.control/conf/html/remote/pair.html
 
-0c73d39ecf5fcde603ae499d2668fab5a688c04cd8e6312694bbf3a4026cfa4c  sonos.control/conf/html/remote/security.html
+bdb4b81ec6a480f4b90a7ab5bd3a4af2ade6995b4428451083c97d5e6d5f4cc6  sonos.control/conf/html/remote/security.html
 
-c3f6fe124c2648c358dcc6868b3b1b1c2f56e55afbb985c0c3b5c90f65c2a323  sonos.control/conf/html/remote/settings.html
+6a5f3c068dd1ce69a649f83b124655f322367cc51bf0c9ff12b4b6005930849f  sonos.control/conf/html/remote/settings.html
 
-35895c710d9f0ef18a11071197826b791039aad56946bdff77a21275c51a6065  sonos.control/conf/html/remote/system.html
+eebf77debab8e376b44586476e53952bbd2b729b6e68486935a688a5854ed00d  sonos.control/conf/html/remote/system.html
 
-8602baa4393632970c15d042ac6aca5fe5a50cba309d67de6d634e6d6c6146ba  sonos.control/conf/html/remote/topology.html
+e81892385e72033730042fa9ae5258bd65e7b1705df06a0df9db92343f52a7d6  sonos.control/conf/html/remote/topology.html
 
 0ab6b8e3fe4a073472a48cdb643b613153e67921015eeed008e57d5f321f7a5c  sonos.control/conf/html/remote/topology.json
 
-faf8534fd0475158306e6f58989cbe1a2211f505762c2b1165f0a3b04c89230a  sonos.control/conf/html/remote/users.html
+605b411c84029a91d186df20dfb2c3ea2571898211f0d81be9da61a627232727  sonos.control/conf/html/remote/users.html
 
 86d3b7e590759280d369df35fdef1b41c0c6a1770068ad8e1dcaefb8e7802d3a  sonos.control/conf/services/addons.cfg
 
@@ -1144,35 +1144,35 @@ b338388a8794dd102bdc134ee3da96cdee5035877925652d2172292b53a24161  sonos.control/
 
 c117cf2ad02b7699ab385db1f7a4c3b3d8313d9cbd3b112e25f57ffd4ea30053  sonos.observe/conf/automation/js/playing.js
 
-51983893be021728491037e0f8e1b14b5a67a979cb1c0f434ed0111f91a46770  sonos.observe/conf/html/remote/access.html
+5e51da96ac60be95378399755a8972151d85bfc6e7c78d0bd3646c8e09acd9ed  sonos.observe/conf/html/remote/access.html
 
 c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  sonos.observe/conf/html/remote/activity.json
 
-69a462fe30c73aab5d559d350d7346debade98316980cc6065c7ca441dd1821f  sonos.observe/conf/html/remote/cameras.html
+149b2a759854766248d647741b289fbc6c55ba235cf1628ed77e529da3db54f4  sonos.observe/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  sonos.observe/conf/html/remote/cameras.json
 
 68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  sonos.observe/conf/html/remote/diagnostics.json
 
-14ed5abe50d5e7e0a28124b57b0e1734ca51d483c5c3678b3f79049b4c711be2  sonos.observe/conf/html/remote/home.html
+c8c2cf1bd657e16bcab0821b5e9f7b94f842de7734c2345b30fef45639f1b74d  sonos.observe/conf/html/remote/home.html
 
 7e373c77f93252e80eee9d2e3610d33dd269132a3cbd91d2d4ca81997d85429b  sonos.observe/conf/html/remote/house.js
 
-67f399550706087a7caedbd454031609ccc09520e5ebb14191f066d9a46a6890  sonos.observe/conf/html/remote/index.html
+d61733b6d83996b927301e96eb6caf8342c1d18bddec27f77e97c39faea277eb  sonos.observe/conf/html/remote/index.html
 
-b43f67571689d463cc54a4db8c310ab6cb25ce183ff3c1eca6305d0dab9a4717  sonos.observe/conf/html/remote/pair.html
+0b271b87d1852a6dc1dbbf1d473dcd80ff17a5312e15431671746051a8a9ddd6  sonos.observe/conf/html/remote/pair.html
 
-b352874c8f2a60e2c5e12c81dec13e2e71cf25db9dfdfd243ae7079ac69a3fbf  sonos.observe/conf/html/remote/security.html
+56ce8347c8c3545fc25f24a29f8ab3b97397cfd305f7966c1dbbbb14b4212333  sonos.observe/conf/html/remote/security.html
 
-68f720a8576a6cde01383ada49fa585b962a1f74330098b28581449cd1a7f31c  sonos.observe/conf/html/remote/settings.html
+0d5928abbf558a446861541039a6ecaa893b7df662a705aac969aa4d109ae6d9  sonos.observe/conf/html/remote/settings.html
 
-efb72dd23a3b27fee1361d11d0b585cf1c640512e3fbfb262f56b49de7869f48  sonos.observe/conf/html/remote/system.html
+de0cd5280f5b494c9e396ecc60e499ed3008b22776a5c08f0641ec95b695b3f9  sonos.observe/conf/html/remote/system.html
 
-85b6a57627aa2a22823562596a5c416d5409b18c64c2be754ed69766b3f617c0  sonos.observe/conf/html/remote/topology.html
+6820e24e36055251911a7c21db855172404800aac290dec21f70ad2655c5d3a3  sonos.observe/conf/html/remote/topology.html
 
 0ab6b8e3fe4a073472a48cdb643b613153e67921015eeed008e57d5f321f7a5c  sonos.observe/conf/html/remote/topology.json
 
-3add618818d7d2f03635e840e3f92da50f03ed43cb2aae571ee15b54428b68fa  sonos.observe/conf/html/remote/users.html
+4ede6aeea908fe777a2a2403c7d67e729a147428cde78fb9e10b2abb1cbdc854  sonos.observe/conf/html/remote/users.html
 
 628fd8e71ab8d72232d98cbd612c0f86026a7de49aad14e03ccdf2ef7bbd0764  sonos.observe/conf/services/addons.cfg
 
@@ -1208,35 +1208,35 @@ ffd5905554cb81f7f487d10892991251658774afc0929adc8e62f830ce404391  sonos.observe/
 
 5268d3b1c11d326a7a521c9cac4f63f6e1d967c4c1af5287316d9f95ef5279ab  sony_adcp.control/conf/automation/js/sony_adcp_den_device.js
 
-08ae77c4b48c17d0b24cfd0a25385597011e80f89e8ab385097abdf0878c7234  sony_adcp.control/conf/html/remote/access.html
+4224f09e224db1434577b06bda4ad2a93ff4b20c269a47be8a7dd89bdd4fdea8  sony_adcp.control/conf/html/remote/access.html
 
 780e49d931feeb2ac75c54eb43d83022c6867fd212ff44bcb3bc8f1854057f71  sony_adcp.control/conf/html/remote/activity.json
 
-9fc5e70463ca5680a24c1c1b79348fdec0cec10f6a5b82359bf29f13bf419917  sony_adcp.control/conf/html/remote/cameras.html
+af5bc4a2c8b0c0a03a9147ffcd47feb1b3d513264bed611f05189cff5b2592f2  sony_adcp.control/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  sony_adcp.control/conf/html/remote/cameras.json
 
 68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  sony_adcp.control/conf/html/remote/diagnostics.json
 
-fd25c13bcff49cf57a4d96de8d5927930934647c964b91569b20fc7bafe661b2  sony_adcp.control/conf/html/remote/home.html
+c69a277e905cbe067aa836d2706254bea88af611a709f6f0c1047749a1f0acc8  sony_adcp.control/conf/html/remote/home.html
 
 be2d0bec834dc200ffba1fb6371ce2a0cf111a0b0056745dfcdcb29ec05365c7  sony_adcp.control/conf/html/remote/house.js
 
-1688c705398fdbef84fb966564ea65889599bb326aca9380690b76d97f329767  sony_adcp.control/conf/html/remote/index.html
+df9d71570ff0bfeea3d504306b790bd4d84048cac15c39923c5e9e0906312d62  sony_adcp.control/conf/html/remote/index.html
 
-7570cfc09b61a5bde2aacee5eb03b72b95899360a0d23df429201f53a8dccacc  sony_adcp.control/conf/html/remote/pair.html
+7e39682023bd36274d909d70cb5e3df26705ca5ff306bdfe2d61058fbfe1c20a  sony_adcp.control/conf/html/remote/pair.html
 
-bfa045dab693cb4d80d7e1b2d0d1490c96cc940f9a438bf7d6fa2dc2e21e57e7  sony_adcp.control/conf/html/remote/security.html
+146238f6145dac214ae5389eec68f3e7378c74b92e0815e91b8da159c797b3bb  sony_adcp.control/conf/html/remote/security.html
 
-e6dcfc28b3827994e29739a1a801588eaed0bdf3f567e42268ce690c44fe26b8  sony_adcp.control/conf/html/remote/settings.html
+8556dd1d349494714b2c9718c4a03cef2ca097f430f27d8347c38b4354649862  sony_adcp.control/conf/html/remote/settings.html
 
-d5297854bb35767712a770dccce8d79cbb253ca31152b0cbb6a3617144a4c332  sony_adcp.control/conf/html/remote/system.html
+581b8c81f296d4a4c0a682e57cbe49bd2d2aa484777c718a4dc3e8e270779347  sony_adcp.control/conf/html/remote/system.html
 
-ddcba548ea3975c5e61cab36c33a4e369778cb79f48ff4ac8a2aeabacdb4e55d  sony_adcp.control/conf/html/remote/topology.html
+26754629ef3a9dc613638780a03034529345ae5606f0e301bd78db490f0d7f08  sony_adcp.control/conf/html/remote/topology.html
 
 614b1d923af0ae8da9d37a76ed4b8fb77a1dfa751dcf7cd8a18bf6ddd210e6c8  sony_adcp.control/conf/html/remote/topology.json
 
-daff85367db11c2875c41bd5f3f625f3a8d12e53826efd9c584b1b48618c27ec  sony_adcp.control/conf/html/remote/users.html
+e425d9c7e590ffce71884ca6e50256c6d95ecb698300d221087256236482779c  sony_adcp.control/conf/html/remote/users.html
 
 8f1d09812567ba7378270a80508ba3f42a4a3ba6823f269fb924df2438a95ee3  sony_adcp.control/conf/services/addons.cfg
 
@@ -1268,35 +1268,35 @@ c6e252d6fafb673cebc6ef88162ea9078cdbce853feaf6ea01ad6f5d4d96e7bc  sony_adcp.cont
 
 61731b027101dcd2007d6dfa5e03514afc0abc349cdea8341fd26b594c66ab99  sony_adcp.observe/conf/automation/js/sony_adcp_den_device.js
 
-9323eeb85af6c6db638c7627932a149b1bd04b855bfaaf09d97d6953cbd0dea8  sony_adcp.observe/conf/html/remote/access.html
+3d75a955c5b5895ab4014f6a79eb7d8188aed844ba09f036b322e1c27c3cfe31  sony_adcp.observe/conf/html/remote/access.html
 
 c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  sony_adcp.observe/conf/html/remote/activity.json
 
-cc54a23a61608e9fc46245eb2b1bde856ce4b599d34d12de71b0f9ecb7b5a986  sony_adcp.observe/conf/html/remote/cameras.html
+077863155e315312b947893b80cabb3da8ee3beebc6981d89309235953c6ddb1  sony_adcp.observe/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  sony_adcp.observe/conf/html/remote/cameras.json
 
 68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  sony_adcp.observe/conf/html/remote/diagnostics.json
 
-61e3b018de8b25838a67d2af5a6ad22221a68e33de20363daa64a5ab4d89e6e3  sony_adcp.observe/conf/html/remote/home.html
+1514cbe7ed8bcd61711a547c6ad6204c1c470c7293af5dcff369bf9b37a1b04c  sony_adcp.observe/conf/html/remote/home.html
 
 7ff58852ac76e6269fe075575943ea08a10d8eefae04c2b2824ffe707e8b35ef  sony_adcp.observe/conf/html/remote/house.js
 
-b512308c48b107930ffada8782ee7d1d966b4704589bf6bafcbd10a3ed2dd15d  sony_adcp.observe/conf/html/remote/index.html
+f1c482a537c414bf1d4d3780130c18dcbc6ee3f58ded5e7d6a7ccd29f9901b64  sony_adcp.observe/conf/html/remote/index.html
 
-9bc60bb92d13329f8af2cefa7d81dcdfc7562e5a2b8451a8a1f9b6a7bf492cd8  sony_adcp.observe/conf/html/remote/pair.html
+e65879b8ef78a26f91eae51730a2ab452a8057b8d240dde9811e57e8ef19bcb9  sony_adcp.observe/conf/html/remote/pair.html
 
-86cc565cbb029eb45da22dc0335ba88ed99b5a7d8a42a904afa57a628908471f  sony_adcp.observe/conf/html/remote/security.html
+6f3243340fb904a5df7eb64b86edb8c5d2d2bac73344b4b7b39145844ab53fef  sony_adcp.observe/conf/html/remote/security.html
 
-31f41b0d3282fd94ada42ed6cba9bb609af09c76cbbe34aa46ef93574bea5fe1  sony_adcp.observe/conf/html/remote/settings.html
+92398066ae9f7839910c8202c505a3752c9528ebfc974aa75a4a8de53d68fc80  sony_adcp.observe/conf/html/remote/settings.html
 
-6d8902650d3ea4584f52e086f1dff277c0ed7c222e83c1f75bdd18a24840fbe1  sony_adcp.observe/conf/html/remote/system.html
+b64dbae2fbdf3cf0c7c9bcb5cb9224a6812437e7e7172a62bf6337a08f2d6ce4  sony_adcp.observe/conf/html/remote/system.html
 
-1e72467aa3dc572ca132de82f5014196291deba988440fcdd6afdd20efa68f9b  sony_adcp.observe/conf/html/remote/topology.html
+5dd5a9078b60648a03aaaad33ec66f4303d29a78bc0e1eb6d0ebd0cd6c1faafc  sony_adcp.observe/conf/html/remote/topology.html
 
 614b1d923af0ae8da9d37a76ed4b8fb77a1dfa751dcf7cd8a18bf6ddd210e6c8  sony_adcp.observe/conf/html/remote/topology.json
 
-b79f48afaed4f242d86cd85e09f1eb7fbab685b978cfddf7c9d4442db82572c7  sony_adcp.observe/conf/html/remote/users.html
+d6a89d384fbb2bd65e6dacfb1c342f85ee576cfce633af8b491453781ddcc95c  sony_adcp.observe/conf/html/remote/users.html
 
 441b5244a082eb407cc42a5990f412cab5a2835987ee51d4de444ab6a1c076e7  sony_adcp.observe/conf/services/addons.cfg
 
@@ -1328,35 +1328,35 @@ fceff5704918a59cb10e4f2e80071b16e9eba788cfdee484ea4f8818fb360455  sony_adcp.obse
 
 47d36531d695164d81aacce9bcc51512f237e62102f6d63c73947f0517a7c53a  sony_ip_control.control/conf/automation/js/sony_ip_control_den_device.js
 
-9b4dfadcc9dab267216507edc92604e9ca83828d449649c721c63066a4f23cea  sony_ip_control.control/conf/html/remote/access.html
+943633c40ba4c244121d4080bac4d4f54b6cf24d9508ea51270f5dad2812c4da  sony_ip_control.control/conf/html/remote/access.html
 
 ad9f4660b66c021c56b53e5d0a2ffdb4eb7966bc9091b0d4a61efe078651a493  sony_ip_control.control/conf/html/remote/activity.json
 
-812513315217bbe1c48667ec462784af0c364e0a31d7dbf7a599ff3af758c6c7  sony_ip_control.control/conf/html/remote/cameras.html
+8719c061a007845382bbfdb799caec30b79d357168991745c4a0f438fca718ec  sony_ip_control.control/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  sony_ip_control.control/conf/html/remote/cameras.json
 
 68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  sony_ip_control.control/conf/html/remote/diagnostics.json
 
-5baa8351bb3e620f3db7e0bdbb0e296bbcd09266b2dd8c60ceff0c62b7af346d  sony_ip_control.control/conf/html/remote/home.html
+1dce77331b970165480646257c7174cf8ffe41c7fb7716c7495108bda973ae35  sony_ip_control.control/conf/html/remote/home.html
 
 2e37fae021c7d5c0cd1542b744f6ecc1eb4ef421b87b341feaf1756047107307  sony_ip_control.control/conf/html/remote/house.js
 
-338c9394b4d7c594e21f4861d22244e3c7ece236d3298a9a920c3518d658c99e  sony_ip_control.control/conf/html/remote/index.html
+55bcc54fec3a16c8af3f504b7247de0a0ed2c8ab58c2ec923794058f62cd874a  sony_ip_control.control/conf/html/remote/index.html
 
-c50e64351b0c5500d4270d30a32f3a0c315ed8fba6351e5f76e6aaf2d99dfde4  sony_ip_control.control/conf/html/remote/pair.html
+3faad4dac0df03d8a711f658674ccbd8cb05d41cf2ec7a8670975b992b761889  sony_ip_control.control/conf/html/remote/pair.html
 
-913c7d700508aaa44c13dc5d391eb1bc5a25c94d27339b06bd6d7969cd38b39d  sony_ip_control.control/conf/html/remote/security.html
+8b017845340daf08b93f82c158981f97102ded08c7f55590b4dc5c09a82977bb  sony_ip_control.control/conf/html/remote/security.html
 
-fb7a3f993e7f6a5b4a265c857b4f0a5d1aaf10f563eace4705920d391f9017ed  sony_ip_control.control/conf/html/remote/settings.html
+42116d81062dc079e92e9866b1fda992fac780cc7f338c6fdba12e49744ffbc4  sony_ip_control.control/conf/html/remote/settings.html
 
-8e0c22940a47e46d9d0e51d576c1d00417fbc81c68ff72e3e809bf68a37d8974  sony_ip_control.control/conf/html/remote/system.html
+256fcfa54656c8c9ed1b6c1ff1f6b2456e144949bde8d682925ed9413b1ccf2b  sony_ip_control.control/conf/html/remote/system.html
 
-1c394ec1f08830a39f53b4bc748220a5bd621013e8d5b195c48afcbf383ec563  sony_ip_control.control/conf/html/remote/topology.html
+9ad43e05ca136ce43dd07a0ef614b9901a267135265edc8d55f10ca73e74013a  sony_ip_control.control/conf/html/remote/topology.html
 
 88460c5892080637a2c0f936b18d3dd26c629e1a322e8936c94f754eb5cb5a83  sony_ip_control.control/conf/html/remote/topology.json
 
-c9c157c4826f14d18c231366778fcd2977f5e875d4b7fef2999dc850c5e49532  sony_ip_control.control/conf/html/remote/users.html
+480fe546a6786f88705cad8f555ffed068ddeb9b2da33934c011899f2c87fb78  sony_ip_control.control/conf/html/remote/users.html
 
 c7cdb171471fd5663898ab2a0ae9bfb1272c5fd4c7e06f17bee925b0aa9c3a0d  sony_ip_control.control/conf/services/addons.cfg
 
@@ -1388,35 +1388,35 @@ b3efccad2fd3e335c79f7af7619478f22b46542c91f28b54b271412558100af3  sony_ip_contro
 
 094491437dcb7518bb6e406e17a042c56da7be66db6dad237f288682a1c276d7  sony_ip_control.control/metrics/prometheus/prometheus.yml
 
-0614a2662270a75745715e78979ecdaf270eb98999b8e2234670cc11f767696a  sony_rest.observe/conf/html/remote/access.html
+30d545b4b9f82fc6672932846f20d58fd14202cd200c9d96144bf622f208383d  sony_rest.observe/conf/html/remote/access.html
 
 c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  sony_rest.observe/conf/html/remote/activity.json
 
-2fffa28cc8d49164d210287d57471fbec218b44539954564fa57fddadc8ab121  sony_rest.observe/conf/html/remote/cameras.html
+72cb05892dd02a18167c7b12c356c80c384e1aca056ef055973c793a3a4f6061  sony_rest.observe/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  sony_rest.observe/conf/html/remote/cameras.json
 
 68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  sony_rest.observe/conf/html/remote/diagnostics.json
 
-dfeaad9278d08c2852003d727c0015e93053cbd293b6d84bed691236af333f5c  sony_rest.observe/conf/html/remote/home.html
+19c79c12c34c1a947ce043152512d39cc69df18a17d92fe2690c80a7185cf97d  sony_rest.observe/conf/html/remote/home.html
 
 b90016a89af3bf81d2b29bd96c2087709ccd064a1afed67a6c896e94cc7efe72  sony_rest.observe/conf/html/remote/house.js
 
-ec099a9ea5f70e49ee57b01476677ca163e2da1dfb6c8548b568d03794a0ca7f  sony_rest.observe/conf/html/remote/index.html
+0f77ab01a4735f57d6f37a041bdb84fd72515df8bcee7e654ba4f66d8eb5e62d  sony_rest.observe/conf/html/remote/index.html
 
-8a6fb2acc2371460a6879803e90ce2c803969c73ad7b1d22a22bd9d1acf493b1  sony_rest.observe/conf/html/remote/pair.html
+bb93f938bceee2a3916feae05628c70f13ef15c02360c236efb43dbd1aced59b  sony_rest.observe/conf/html/remote/pair.html
 
-896ec313031bf3ca0b6588b5a7c8bc6dd419c4bec5b4019a4d8ff1c52302fe03  sony_rest.observe/conf/html/remote/security.html
+ea8a144283ace4833f6c9e13568f0b713ba5dd694d6cf59ae95d6fcce6794c6c  sony_rest.observe/conf/html/remote/security.html
 
-3b37238e677254934d6d0ab79123bd6028929e2055623eb6f3f95ff94d97fb6b  sony_rest.observe/conf/html/remote/settings.html
+e7dd2e134f9bc5e0a8885bf3c01fdbfdab7b685a3eb96d666c7e86efc4c0224e  sony_rest.observe/conf/html/remote/settings.html
 
-79c0cdf33fcf64f5cf3cf543b790891c3a5882b277bdfc1c6f908e0c543a9ef9  sony_rest.observe/conf/html/remote/system.html
+30fd37dde87f44c6bcc7ce9f78376c378c7e9fcebfbad77dc78291bbe19125c1  sony_rest.observe/conf/html/remote/system.html
 
-c3e7c633d2ed73bde489cfad70e7e36b5575ef7254d1928f9396188d0b2cc159  sony_rest.observe/conf/html/remote/topology.html
+ef1b5b9bb3e8ea6f91be93b2e10c4d5d4a0a0006fed5b7cb368ea55f46e64977  sony_rest.observe/conf/html/remote/topology.html
 
 88460c5892080637a2c0f936b18d3dd26c629e1a322e8936c94f754eb5cb5a83  sony_rest.observe/conf/html/remote/topology.json
 
-52f9c8d49a0f2b01ad681dfeb5ba19fdb0d5376851147a8d859977a2d4e71602  sony_rest.observe/conf/html/remote/users.html
+7d52abe8177385fa126e517d519f25ea2da7c3e156bed0e40b3cbb43454e0767  sony_rest.observe/conf/html/remote/users.html
 
 6034702b34d2249efbd05d57eae35bef1359a4df315206466b1ffbebaf2330af  sony_rest.observe/conf/services/addons.cfg
 
@@ -1446,35 +1446,35 @@ b8759a9da687f81432712aaccb84a063e488fda0b92a48ea4d012ec57f65d613  sony_rest.obse
 
 e4aa04cb68fae831817043458f64dd6531bd6e70e36aaf1867001bcc563d7afa  ukm404_http.control/conf/automation/js/reboots.js
 
-5c33a677cccb199e88c905d9d3f5245c92e8bcd23832da6802ba5389eb731f05  ukm404_http.control/conf/html/remote/access.html
+8de70a27afbe4bc5de56d959e5503ac868fb9793ddc2bc5bea8ef14a0b7dcdf5  ukm404_http.control/conf/html/remote/access.html
 
 14134cc3432a3a248b973d8f16920c0d387f8b43f7eb94701bbdfe9f312baf70  ukm404_http.control/conf/html/remote/activity.json
 
-8cfecfb7ce857e8afcbf41f708124452264077273eba227a4a3cb3912650bc78  ukm404_http.control/conf/html/remote/cameras.html
+94e86caa6bf929bbdb48ab2ef612f54b1f91ceb07c4e9624f248622ff53844df  ukm404_http.control/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  ukm404_http.control/conf/html/remote/cameras.json
 
 68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  ukm404_http.control/conf/html/remote/diagnostics.json
 
-b85dc941de78d0f32047a8463277efacfa677a6c83ba3eb3f254c6d8f8e64303  ukm404_http.control/conf/html/remote/home.html
+623065cde7e8f20170b4ff57926530dfcf877b692fbba0bde7a0ebdc8373612b  ukm404_http.control/conf/html/remote/home.html
 
 5d286a69c9bd68aa8808e319b0e7ab16eaaec9861200a73c4112cee926ec7f37  ukm404_http.control/conf/html/remote/house.js
 
-5c4de7cc3f27ebb0123b934e34496fc625023f35bc784ed81243cdf444e2f63c  ukm404_http.control/conf/html/remote/index.html
+99a4c8674b73d58786b5d1f4c2795a8bdafb9dbed60394da77743a96248596e5  ukm404_http.control/conf/html/remote/index.html
 
-79c5f3e4053be34b335b8d5440e101ea103b3f89de0064b340fac4cc7ba917d6  ukm404_http.control/conf/html/remote/pair.html
+ae0e00edbd4c2eefe322e890ac1cec41d2b67f0f975aca79d0d8486537168e45  ukm404_http.control/conf/html/remote/pair.html
 
-fa460052b6a0306704c546e85909419c894178c7cbb369718f05dd5ae60e639a  ukm404_http.control/conf/html/remote/security.html
+d2d4995c60ffa043080daf3f2a1da3516e852fefd91280f4cf8e55c3e0648d35  ukm404_http.control/conf/html/remote/security.html
 
-3035819d22766dee8dd1fe04ffb51f1be7cc42e865b14d885a3cf438bccb007a  ukm404_http.control/conf/html/remote/settings.html
+718ce504831f040ca81215ab03cece4934b70e3a5611a0d45d05c4e691ad79d0  ukm404_http.control/conf/html/remote/settings.html
 
-16cd1fce1c9f200a2619cdff59dfbecabf393b6023afd6083a70ad67a4935a79  ukm404_http.control/conf/html/remote/system.html
+d20bad657ceb597c2eebbc49a75f76cb4d6fc5afacb7852cacae570c7ff8842c  ukm404_http.control/conf/html/remote/system.html
 
-2aa226e8d5b5d833e26fee1b8bb6cdfbbec18e333d6c73e809cc73057eb205f3  ukm404_http.control/conf/html/remote/topology.html
+a221ad2340330ce15dbcec46eba3ab1c663a50be9524d16fa679848b5bac6b4d  ukm404_http.control/conf/html/remote/topology.html
 
 5c74eb89f77ae6750ebc93b2ae7ba01361b2f380fdc379f5eaaa2744bbd85e46  ukm404_http.control/conf/html/remote/topology.json
 
-668c33294191ae076eea101335ce6140a3bf4d718d60886f8edb43a7b44297d5  ukm404_http.control/conf/html/remote/users.html
+63bd7799ad3cac946d78802c1afd4368090849049e5139e5690cc6bd034a8de7  ukm404_http.control/conf/html/remote/users.html
 
 e1398c020759b9e951d0d6f31d2530f500ae288a2e2ad4d6a1ceeccaf5283732  ukm404_http.control/conf/services/addons.cfg
 
@@ -1506,35 +1506,35 @@ b9f00907fdf08ecda04322e9af1e341b8e99eed4611e5b52453721987410536d  ukm404_http.co
 
 c1ea311c23e2621426805b1ad0799bb35239ce87c3a299f5cbcbec7d580bb5cd  unifi_protect.control/conf/automation/js/unifi_protect.js
 
-cd4b8546509a812349f259e88285af14ee33c84ed4f58a61c0758c3ca2aa050b  unifi_protect.control/conf/html/remote/access.html
+eefc6ae0539bf3d15365c06936cd2ae92a33c62d845ca521f08441a6972976d2  unifi_protect.control/conf/html/remote/access.html
 
 c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  unifi_protect.control/conf/html/remote/activity.json
 
-9ff054f76a45d0db098818c375843abfb37929c568f0ed8e16c1c97c2966dab4  unifi_protect.control/conf/html/remote/cameras.html
+d893376eafe24a7234f81435024e0af1b5ee7b5e29456ac7819e6162a378aa31  unifi_protect.control/conf/html/remote/cameras.html
 
 168315dfb05d01819be3d8439bddbf21e17e997f636c9bfda36b495eb2314481  unifi_protect.control/conf/html/remote/cameras.json
 
 68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  unifi_protect.control/conf/html/remote/diagnostics.json
 
-34c5e5a593ed378118c44563d05289f1e060d19d1254353e1f6fcd162e5a56dc  unifi_protect.control/conf/html/remote/home.html
+336590012bc58e38405b527caa0b0c2746892952ed6e9f01174879ca51b21d44  unifi_protect.control/conf/html/remote/home.html
 
 d95a9c16256813ed251ad6cee6bdb52067ace09f7bc456e5523da90739a2aa70  unifi_protect.control/conf/html/remote/house.js
 
-454fd4c996feeeda97044de3f718d2353a38530d6d45aa46a9c84619b6e060d5  unifi_protect.control/conf/html/remote/index.html
+da3c32d5b64c5c7e6823b13ffa51a43799ee03c3bd636a7f17061484a6e6b472  unifi_protect.control/conf/html/remote/index.html
 
-5fe17c038d984257cf5f6642ea6d9c71bda85df7adb23b15ae3867bf34528fc4  unifi_protect.control/conf/html/remote/pair.html
+f34a44926b9fa369b951f9e6da5e817a1afdc8fd9ef849f926e7c46c508b40c6  unifi_protect.control/conf/html/remote/pair.html
 
-eeb2f349005d2a8cc68184330c7e6545fc2cbe86322724f3d5ca93e436312eca  unifi_protect.control/conf/html/remote/security.html
+23f5ed7274f0958e8b9488b55f0101a6d09ada4c554c5cf1f0f5543265ea14c0  unifi_protect.control/conf/html/remote/security.html
 
-d91efca6c230bca85f9367a4cd2603b22909154634b7b51c7242aae9b5dc68d2  unifi_protect.control/conf/html/remote/settings.html
+a659d8a9b9242a2dfa1b71b1d41beb20a8ff6591fe8d14f5a9c0df41320875a2  unifi_protect.control/conf/html/remote/settings.html
 
-0e9e5e6c1650a6af433f3190ee05f4da41dc1fc45d3d6832803d1f85290c63a6  unifi_protect.control/conf/html/remote/system.html
+420ae53879643650fce3edd245af96675125a12471d4d58dc995edc6b13054de  unifi_protect.control/conf/html/remote/system.html
 
-c57d564be23b15d742c9bdcede78197bf0f89953ed08d2c733740a0892ef2003  unifi_protect.control/conf/html/remote/topology.html
+7a57f1c598795d738208e60be61f61675b9f23f8d86747199c5fab6f9786f9af  unifi_protect.control/conf/html/remote/topology.html
 
 9b4155fc438c190803c419be18cd657c5188dbcda7051044767870d499e23fc8  unifi_protect.control/conf/html/remote/topology.json
 
-d60f058d97d6d1fd91023abd067c09839678ec8b34f995776a896c6c91bb85fc  unifi_protect.control/conf/html/remote/users.html
+4235934770b0156a1683c680000b3ebe7d1b0c43ea531dd436e7a8bdb28fc1b4  unifi_protect.control/conf/html/remote/users.html
 
 5625f495092ce76a89b37b16b0aafb4dd4e2587fff1d41193873074176463d99  unifi_protect.control/conf/services/addons.cfg
 
@@ -1564,35 +1564,35 @@ a8e68f149eb878f2d5988bbdfdf1cf410269de0221435b953a51ad537aae2bc1  unifi_protect.
 
 55f23036bc521c97d852ee8e1ca58f103359e818aeceb6bc48dccfa5278f7139  unifi_protect.control/metrics/prometheus/prometheus.yml
 
-1372d6fc3dd6c8a32b1dae283bea44d726bd82d811457717990e5f9f2ed2b734  vrroom_http.observe/conf/html/remote/access.html
+0b36834472f213e0319c2e96828a88b400328db29796fd2687d8726eb5f2c690  vrroom_http.observe/conf/html/remote/access.html
 
 c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  vrroom_http.observe/conf/html/remote/activity.json
 
-92c1b0dae3f693469073fe3f279a7ba95ddba7b0970da64ad2e7d3b5bee46dc5  vrroom_http.observe/conf/html/remote/cameras.html
+d51ba7775b097aa56f1f2346227025d8b83e04f5dbc0b9876253ee4ecd989ba8  vrroom_http.observe/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  vrroom_http.observe/conf/html/remote/cameras.json
 
 26f9aac36a97a41f728912cb787eab038f1e2e6707629acd2e3ab7c48e6d67c9  vrroom_http.observe/conf/html/remote/diagnostics.json
 
-b2f7fd28b0ae8785040275ec05e375d00986d848dd05a6b98f348e528b12adce  vrroom_http.observe/conf/html/remote/home.html
+1207564209a6e8077812154e96f9daf949fd0a48027c6fba9e656cbd6c2b808a  vrroom_http.observe/conf/html/remote/home.html
 
 3e88153450c35db7c101540c74ea1236cb8e5f7fb69939fbae47b59799d3dc7e  vrroom_http.observe/conf/html/remote/house.js
 
-4d1a3c889b836931dae48d617d4196c33c868b23743624467b8918644d00019e  vrroom_http.observe/conf/html/remote/index.html
+9829fe6b468eafcd99e2b09bcfbd149060488f422cb17078aafb64e13976b611  vrroom_http.observe/conf/html/remote/index.html
 
-41a422aab1ce582916cb9db226a92d7318dd57556c91701a522a420e8e9e9d80  vrroom_http.observe/conf/html/remote/pair.html
+fbd7740a54262df7f8c6390941fe803793743088b97afd5bf65aae10fe9b2f25  vrroom_http.observe/conf/html/remote/pair.html
 
-7afb3cd81bd372febda93665a115dce28a11314b11bbb64fc2980f98e8f3538c  vrroom_http.observe/conf/html/remote/security.html
+7b880dd4d9aa2657d8a1fc86537d6a41bf6e1568d1c0f5c2400be4635c72cba9  vrroom_http.observe/conf/html/remote/security.html
 
-c1a60563e1aeabbd363e8fef03955d2a6848cc18537d7dfe12cb6010f1ba5541  vrroom_http.observe/conf/html/remote/settings.html
+b62296696791d4ef90ea0720e745bab4b27f28058480a6e458d702e463a7daee  vrroom_http.observe/conf/html/remote/settings.html
 
-3515e15eae9e3173575cab28935c7e669671bfbade736054ce1e2b74c4bb6855  vrroom_http.observe/conf/html/remote/system.html
+40f95c949a5158138be3c2ab8eacc1396c8b006e6ab4d83bf3b431467a7b8226  vrroom_http.observe/conf/html/remote/system.html
 
-c8cf4633072287854b7f141aedf9fd5fe92153c9bda5455013d29d09759bd373  vrroom_http.observe/conf/html/remote/topology.html
+3b175f963cfb37b3e1716a79e9e6f569d2b44a735b89bc562f2d3b2595680077  vrroom_http.observe/conf/html/remote/topology.html
 
 ececceab9c89220df352790c0fe6be7a5ec5fda06877f91e42909c89f29847e1  vrroom_http.observe/conf/html/remote/topology.json
 
-da641fd9e908bb7aa752ae66106fb50e4cb930d2cc22ca444f462461dab02de9  vrroom_http.observe/conf/html/remote/users.html
+882dfeb789fe4d67e8bccbc3cf9da750a78a459dc1feb1d459b3487c8b3b6b7d  vrroom_http.observe/conf/html/remote/users.html
 
 7ce43add69caa40c96d618ca98ac7e826c9368cf519f44aa59117567f6b0fb04  vrroom_http.observe/conf/services/addons.cfg
 
@@ -1626,35 +1626,35 @@ bbcd1b5c46467ee1f2286dfe05679c9322bdcf672fa71a94a05424dc7792b535  vrroom_http.ob
 
 78ec892d2ab7bcde3345373396f2b324372626d4718eda33f790ec2d0283003d  vrroom_telnet.control/conf/automation/js/vrroom_telnet_den_device.js
 
-0aa07588ab75d48752351b110c00667d039812d105d85fc1646d1db49c33d8c1  vrroom_telnet.control/conf/html/remote/access.html
+a4b43b702ebd115453f20c5bedefb4a5b5e5d4ee7e65ad72a960d6950e5d3b95  vrroom_telnet.control/conf/html/remote/access.html
 
 1d21921ce594a62ec00c09b776b1f686af44fca3cbae4ced0af7be5e6c21c552  vrroom_telnet.control/conf/html/remote/activity.json
 
-bcfb69944e4c6b0185e917d4726740689558063b85486cb05877e990c3a56c44  vrroom_telnet.control/conf/html/remote/cameras.html
+beb7c0c77103a0e7307505c3c49bfb066b4e454318821ffe296c05c784ef3b2c  vrroom_telnet.control/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  vrroom_telnet.control/conf/html/remote/cameras.json
 
 68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  vrroom_telnet.control/conf/html/remote/diagnostics.json
 
-188359f3e1f250782068fedfc101e90abfa883a3ff7e928d2e6190c1266be538  vrroom_telnet.control/conf/html/remote/home.html
+bde4485b7017f8491d7c6d23f2aca171abc96abb18c456dbc7ee17494395ed22  vrroom_telnet.control/conf/html/remote/home.html
 
 3e88153450c35db7c101540c74ea1236cb8e5f7fb69939fbae47b59799d3dc7e  vrroom_telnet.control/conf/html/remote/house.js
 
-dbdc63c536af96cbb755bd75a524cd5f30da25afb2f2a719c31dcd17e00276e1  vrroom_telnet.control/conf/html/remote/index.html
+dde82e37c40ecedf675e260758e3736d098f4b09793fb1f6a1cf9845c4506586  vrroom_telnet.control/conf/html/remote/index.html
 
-05029089a5055c5f7274758646b01f3286c6aaadec1df8ff6274b1c090531a0c  vrroom_telnet.control/conf/html/remote/pair.html
+8210bc01391d379ba7dc69d673fd204c49f38fa7df95520602eac1584e2827c8  vrroom_telnet.control/conf/html/remote/pair.html
 
-55247d354dd65ab6fd99a53e8403093c53ea4cc0ecb20ae1bfd2a9af19bdd41d  vrroom_telnet.control/conf/html/remote/security.html
+10971a93eebf42a05a70322d6f7fb02f66cd26e56cd0aa4cf64af7023c283db6  vrroom_telnet.control/conf/html/remote/security.html
 
-d82ce43f6088941b168ef6e634618918a3669ebf5560ee11f309dcfd17a4448b  vrroom_telnet.control/conf/html/remote/settings.html
+68b8a44eec60e2013220a8fda16dde03b79891f5cda52cd818894275a84b78fc  vrroom_telnet.control/conf/html/remote/settings.html
 
-44126efef747e786ad039262a95071add73856f92d7ec31b5b76f46d7e8b506f  vrroom_telnet.control/conf/html/remote/system.html
+475b24fee98a864c1a13d1246ea1df2ffc76776490c618f3072321f17b9de392  vrroom_telnet.control/conf/html/remote/system.html
 
-fd966799e31ebab2136efffe067acc1037d1eb4b84784d9c27c3b58170229637  vrroom_telnet.control/conf/html/remote/topology.html
+dbbaa7a4ba644b6ebb75e61bd77cd6d63533e6cb74125fdec0f5ff581304ea75  vrroom_telnet.control/conf/html/remote/topology.html
 
 ececceab9c89220df352790c0fe6be7a5ec5fda06877f91e42909c89f29847e1  vrroom_telnet.control/conf/html/remote/topology.json
 
-221f552f05e3982c4492b8ff8cefa145a663d0288fe363d869fdac5e3fec7ce3  vrroom_telnet.control/conf/html/remote/users.html
+2714ebf70fd3b7633e0a6501ae199ffe186d6ba4149993666e75075588b98959  vrroom_telnet.control/conf/html/remote/users.html
 
 1e720336783879c5539727b3f78739baa3fdf42e4e67f2a5b7fb477d295a5c65  vrroom_telnet.control/conf/services/addons.cfg
 
@@ -1686,35 +1686,35 @@ bbcd1b5c46467ee1f2286dfe05679c9322bdcf672fa71a94a05424dc7792b535  vrroom_telnet.
 
 ed79536cf8e82a99da1a6bae02b188b9d0bbc812caf991f717f7514583331aef  wiim_http.control/conf/automation/js/playing.js
 
-87860c969cb1b081bd9bad3ae3bdcfb8da90ca46eef29e320129210226e25f0d  wiim_http.control/conf/html/remote/access.html
+fbcd8acc0c43586d477194441431cee9d8a8f5307e06f9757cb6583949fc60e4  wiim_http.control/conf/html/remote/access.html
 
 9ccd5d2d31f2b3dfa9effb61d4323402828d90464ed6055b2376840814f6b6c1  wiim_http.control/conf/html/remote/activity.json
 
-0d85100547ad345d77761575199fb5b576048275b6c63ab56a3fdfc041113e8e  wiim_http.control/conf/html/remote/cameras.html
+6e2343aedf4b6d0e665b3b886ff6d86b83802f6b7be32bfa5b02ed9e6869aa92  wiim_http.control/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  wiim_http.control/conf/html/remote/cameras.json
 
 68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  wiim_http.control/conf/html/remote/diagnostics.json
 
-bfef297944650ff5d7a9fa2ae66c5ff9e4fba20d12eb84c3cd2d2dd7fb16d54c  wiim_http.control/conf/html/remote/home.html
+28971e44793200538a60fd12e716578997cfac7e45dbb34074f1f83e5c48c5ac  wiim_http.control/conf/html/remote/home.html
 
 fe54402b74aa7f532e40dd859deeb3055a53781dab11f052e4901b4bfc280506  wiim_http.control/conf/html/remote/house.js
 
-f84b5d5c59b1943d0f4f198653e792fd7e995e4376a1cea66fb392dbaab5e095  wiim_http.control/conf/html/remote/index.html
+5afe30d13934aa74e0948ac37a7bc459f1a692631b861ca3e6a7ab2374f51fb7  wiim_http.control/conf/html/remote/index.html
 
-1df2d74b693d11a71e714992e4ec9569f1e299d7bd20b331e2e5116af91b29a5  wiim_http.control/conf/html/remote/pair.html
+48dc8fbe9bba3cd2a3d702b2e9a448adeaeb3a5d1aa230d9ee529604acac464a  wiim_http.control/conf/html/remote/pair.html
 
-91a0742f3a19b3a70ea292c35c52322ac75ed5d6ac48da50a1dac3eb6e88b098  wiim_http.control/conf/html/remote/security.html
+86b815e2874978850de1615547ef3b406d65ef13ea0030a2bd428f1e127d6771  wiim_http.control/conf/html/remote/security.html
 
-ecdde9d335bf807afdce0ff5f6b2377a5965bce2d4c11a0e83c1d280473d57e5  wiim_http.control/conf/html/remote/settings.html
+a6b820f23c9caefbc43c362c28eb2a546d57d591b0e87974e09c9a77896cec07  wiim_http.control/conf/html/remote/settings.html
 
-43a3301f41f5e3b0ef31069379922641f20e0ed369e472035ebf86a4aae8c5a6  wiim_http.control/conf/html/remote/system.html
+cee5e22a05a3f60cb8c3b92e6f976ec399550c43b8ae3fd5ae581a7ca956a28e  wiim_http.control/conf/html/remote/system.html
 
-198b56c8a6bc924bd1023d823cfd63041c3f6f068e9fa6cab6adfb42e5df17d9  wiim_http.control/conf/html/remote/topology.html
+cfe054a8ba25874a35e85271a0318cfa8d1490c30e4ef7d5c094ec9e35e3ffef  wiim_http.control/conf/html/remote/topology.html
 
 25e4daf0f0b72961dbab845c0314397e775bffdf6132b7f5e554e05a0f7623c3  wiim_http.control/conf/html/remote/topology.json
 
-f3385f30a4d63cd1c56b247764d7673947105ea5e9fa21b2cfdd356911a999c2  wiim_http.control/conf/html/remote/users.html
+ed2d3208951d5930dfaf9300d780fa4ef6356a56ae6cafb89080be6c6601b539  wiim_http.control/conf/html/remote/users.html
 
 4a592b36ae1aa9078199541b621c897321c0d5b2b3da4995d995add54e161ac3  wiim_http.control/conf/services/addons.cfg
 
@@ -1748,35 +1748,35 @@ a9bd872371cb5c936916e924868152018fa1ecd0c5a49cbd095ea652f68ef80e  wiim_http.cont
 
 ed79536cf8e82a99da1a6bae02b188b9d0bbc812caf991f717f7514583331aef  wiim_http.observe/conf/automation/js/playing.js
 
-88ac00d793d6bea824c5e9bf559cdaf7253a9fb589df155f50ee9ec8bbb7fadc  wiim_http.observe/conf/html/remote/access.html
+6871e620afceea045e1eb2611f63bd96764070ad8bbd8136e1711f1c980d9e07  wiim_http.observe/conf/html/remote/access.html
 
 c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  wiim_http.observe/conf/html/remote/activity.json
 
-2a81696ad01d607e751ca49806338c4399900ea854050e2b5c315779ffbd46f6  wiim_http.observe/conf/html/remote/cameras.html
+a049eae6818254a68f7c7ee08891334020c4f9462425240f152c0fcbba1a3fdb  wiim_http.observe/conf/html/remote/cameras.html
 
 f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  wiim_http.observe/conf/html/remote/cameras.json
 
 68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  wiim_http.observe/conf/html/remote/diagnostics.json
 
-b2a57059b66c202dae5e3f518b2f3b3852343d1bcca95c460a515aced73873c9  wiim_http.observe/conf/html/remote/home.html
+563239a38a60d07885fce842ab30001acce93a9332763faaf8ddcb17fea5c31c  wiim_http.observe/conf/html/remote/home.html
 
 f5d554564a2846219ab173a0864b933df67070bdd6dbea3a9c2a38ee5ddf92f9  wiim_http.observe/conf/html/remote/house.js
 
-f590069532e1a85bc808569a2a0303729fc2d598c030bab0d8aad2c3ac99c076  wiim_http.observe/conf/html/remote/index.html
+cc76d288a872e05f2dc791e620ee60dfd25d729b1579231bb96e0f3ebe318490  wiim_http.observe/conf/html/remote/index.html
 
-33e3f3ba9c62261a2f4eb8068bf04c1131f8861afc876b77ed773cfe4575ddce  wiim_http.observe/conf/html/remote/pair.html
+32222236175a7da85505fb83b27c83cb0ee6a7ff5fe377de4b2f6caabde26fdd  wiim_http.observe/conf/html/remote/pair.html
 
-b407913b9c3c4450b27f44f2f4695ce116b5a74a73a3a432f1e560adb4ff991e  wiim_http.observe/conf/html/remote/security.html
+93bc0dfe6ec3f4872aa53a243141adbcb98d747923bc9ea00a806ebca30640d9  wiim_http.observe/conf/html/remote/security.html
 
-243510a2fb4f38ca638e177621b907685d4917052b67dc018b3d374bd36db46f  wiim_http.observe/conf/html/remote/settings.html
+76245641dddd5647f01989dec923b8faac51d3a349d27db9ff93eade098852c7  wiim_http.observe/conf/html/remote/settings.html
 
-a105d1a69440b5bf93eccf1b94ceac661dae002f8941cf295c25ad33d1848f26  wiim_http.observe/conf/html/remote/system.html
+6492023ccfe20b8bd32ef16d347254752028f2387acb8033cb5714869a722dd4  wiim_http.observe/conf/html/remote/system.html
 
-ff184219eee57b0babece8eb15185f0384f24a199a1f7f045ffba1f5cf429849  wiim_http.observe/conf/html/remote/topology.html
+faa414d750b1bf87185e00bca4f17e7b03de784b84a5f8e16ae0e8d3e8eb0579  wiim_http.observe/conf/html/remote/topology.html
 
 25e4daf0f0b72961dbab845c0314397e775bffdf6132b7f5e554e05a0f7623c3  wiim_http.observe/conf/html/remote/topology.json
 
-eae04fc156a1002d0467f19b94ee3ab9c0e23f07da9993f3db6d026d75286d82  wiim_http.observe/conf/html/remote/users.html
+39a9a8b19ead28ff1b037cfb891072b5bb7e66190757086c38bfa8ba99e46d2a  wiim_http.observe/conf/html/remote/users.html
 
 4a592b36ae1aa9078199541b621c897321c0d5b2b3da4995d995add54e161ac3  wiim_http.observe/conf/services/addons.cfg
 

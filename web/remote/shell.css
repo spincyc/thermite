@@ -84,9 +84,9 @@ body.thermite-app::before { content: ""; position: fixed; inset: 0 0 auto; z-ind
   /* Remotes lends the bar its room switch, the Watch | Listen switch beside it, Info and Log; the room row they leave is gone. */
   .thermite-title .room-switch { flex: 0 1 auto; min-width: 0; min-height: 44px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; }
   .thermite-title .room-switch__name { font-size: 18px; }
-  /* The switch keeps listen.css's look, not the shell's button frame: 40 px keys in a well as tall as the bar. The room's name gives way to it. */
-  .thermite-title .modes { padding: 2px; }
-  .thermite-title .modes__option { width: 40px; min-height: 40px; padding: 0; border: 0; border-radius: 50%; outline-offset: -2px; }
+  /* The switch keeps listen.css's look, not the shell's button frame: keys a thumb can hit, 44 px, in a well as tall as the bar. The room's name gives way to it. */
+  .thermite-title .modes { padding: 0; }
+  .thermite-title .modes__option { width: 44px; min-height: 44px; padding: 0; border: 0; border-radius: 50%; outline-offset: -2px; }
   .thermite-title .modes__option[aria-checked="false"] { color: var(--th-muted); }
   /* While the switch shows, the mark gives its place to the room's name; ☰ still leads Home. */
   .thermite-shell:has(.thermite-title .modes:not([hidden])) .thermite-brand { display: none; }
@@ -147,6 +147,7 @@ body.thermite-app::before { content: ""; position: fixed; inset: 0 0 auto; z-ind
 .thermite-system h3 { margin: 0 0 6px; font-size: 15px; font-weight: 550; }
 .thermite-system [data-system-tools] p { margin-bottom: 10px; }
 .thermite-system a { display: inline-block; color: var(--th-accent); text-underline-offset: 3px; padding-block: 5px; }
+@media(pointer:coarse) { .thermite-system button { min-height: 44px; } .thermite-system a { padding-block: 12px; } }
 .thermite-system code { font-size: 12px; }
 @media(max-width:600px) { .thermite-system [data-system-tools] { grid-template-columns: minmax(0,1fr); } }
 /* A page says here, above itself, that it could not load a new version (access.js). */

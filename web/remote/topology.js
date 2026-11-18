@@ -256,6 +256,12 @@
     draw();
   }
 
+  // A table wider than its frame says on which sides columns are out of
+  // sight; topology.css draws the chevron from it.
+  function tellMore(box) {
+    const left = box.scrollLeft > 2, right = box.scrollLeft + box.clientWidth < box.scrollWidth - 2;
+    if (left || right) box.dataset.more = left && right ? "both" : left ? "left" : "right"; else delete box.dataset.more;
+  }
   function resetScroll() {
     for (const selector of ["[data-video]", "[data-data]"]) $(selector).scrollTop = 0;
   }
@@ -351,6 +357,7 @@
     $("[data-data-count]").textContent = rows.data.length + " assignments · " + hosts + " host cables";
     document.documentElement.style.setProperty("--table-zoom", zoom);
     video.scrollLeft = scroll[0]; data.scrollLeft = scroll[1];
+    tellMore(video); tellMore(data);
     if (focused) document.querySelector('[data-focus-key="' + focused + '"]')?.focus({ preventScroll: true });
     $("[data-status]").textContent = status();
     $("[data-path-title]").textContent = room ? roomLabel(room) + " paths" : "Room paths";
@@ -408,6 +415,7 @@
       global.addEventListener("pageshow", active);
       active();
       global.addEventListener("resize", draw);
+      document.querySelectorAll(".table-region").forEach(box => box.addEventListener("scroll", () => tellMore(box), { passive: true }));
       $("[data-catalogue]").open = false;
       draw();
     } catch (error) {

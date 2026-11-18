@@ -4,7 +4,8 @@ Run `thermite generate` from your private site after editing its house file.
 Home is served at `/`; Remotes at `/remotes/`.
 
 Guests can view remotes and control unlocked rooms without signing in. A room that is Off selects its Off
-bubble and shows no remote until a device bubble is tapped for its buttons.
+bubble and shows no remote until a device bubble is tapped for its buttons;
+where the remote will be, the page says that the room is off and what to tap.
 Volume and Mute drive the room's `audio` device when the house file names
 one (`routing.rooms.<id>.audio`, such as the streaming amplifier beside a
 passive desk monitor); otherwise its receiver, unless that is on a zone of its
@@ -174,6 +175,15 @@ lists the views with the theme switch at its foot; until Remotes shows its
 right-hand panels at 1200 pixels it is a rail whose ☰ opens the same list. A
 phone on its side, 500 pixels tall or less, shows the remote across the whole
 width with its keys beside the volume.
+
+On a touch screen every control is at least 44 pixels wide and tall. What
+scrolls sideways says so: the row of bubbles, where a finger has no arrows to
+press, and the Site page's tables end in a chevron on the side where more is
+out of sight (the page keeps `data-more` on the scrolling box, `left`, `right`
+or `both`, and the styles draw from it). On a phone the bar names the page, so
+a heading that would only say it again is left to screen readers: `shell.js`
+marks an `h1` equal to the bar's title with `data-thermite-titled`, and a page
+whose heading says it in other words ("Site topology") marks its own.
 
 Added to an iPhone home screen, every page draws under the translucent status
 bar: the bar (or sidebar) pads itself by the safe-area inset and the remote

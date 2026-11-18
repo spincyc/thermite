@@ -7,6 +7,15 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The web remote on a phone: a room that is off says so and what to
+  tap, where it showed an empty space; every control is at least
+  44 px for a thumb (the bar's Watch/Listen switch and menu, source
+  bubbles, Site's table heads and zoom, and the buttons, fields and
+  weekdays of Room settings, Users and Account); the source strip
+  and Site's tables show a chevron where more is out of sight; Site,
+  Users and Account no longer repeat the bar's title in a heading;
+  the Users table fits the screen; and "Not connected" on Home stays
+  on one line.
 - Install and upgrade validate the house file before commissioning
   the gateway's callbacks, as every other reader of it does; a house
   file with problems no longer reaches the runtime's settings first.

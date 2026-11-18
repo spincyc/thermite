@@ -23,7 +23,7 @@
 .home .home__modes [aria-checked="true"] { background: var(--th-raised); color: var(--th-text); box-shadow: inset 0 0 0 1px var(--th-line); }
 .home .home__modes button:focus-visible { outline: 2px solid var(--th-focus); outline-offset: -2px; }
 /* Without words a key is only its icon: a thumb needs more. */
-@media (pointer: coarse) { .home .home__modes button { min-width: 44px; min-height: 40px; justify-content: center; } }
+@media (pointer: coarse) { .home .home__modes button { min-width: 44px; min-height: 44px; justify-content: center; } }
 /* The house's alerts, above the rooms. With nothing firing the panel is one
    quiet line; an alert is its severity in a word, what it is and where, and
    opens to the catalogue's text. */
@@ -107,6 +107,11 @@
   .home .home__panel { padding: 16px 12px; }
   .home .thermite-rooms th, .home .thermite-rooms td { padding-left: 6px; padding-right: 6px; }
   .home .thermite-rooms th:nth-child(2) { width: 22px; }
+  /* A phone's status column holds its longest words, "Source unknown" and "Not connected", on one line. */
+  .home .thermite-rooms th:first-child { width: 33%; }
+  .home .thermite-rooms th:nth-child(3) { width: auto; }
+  .home .thermite-rooms th:last-child { width: 108px; }
+  .home .thermite-room-state { white-space: nowrap; }
   .home .home__source { padding-inline: 8px; }
   .home .home__views .thermite-modules { grid-template-columns: minmax(0, 1fr); }
 }

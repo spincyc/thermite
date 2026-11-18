@@ -521,6 +521,37 @@ body[data-stale] :is([data-led], .target) .led {
   }
 }
 
+/* A finger swipes the row and has no arrows to press: where bubbles are out
+   of sight a chevron stands on the fade, so a name cut there reads as more
+   to come. It is drawn, not a control. */
+@media not all and (hover: hover) and (pointer: fine) {
+  .targets-wrap {
+    position: relative;
+  }
+
+  .targets-wrap:has(> .targets:is([data-more="left"], [data-more="both"]))::before,
+  .targets-wrap:has(> .targets:is([data-more="right"], [data-more="both"]))::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    width: 8px;
+    height: 8px;
+    border: solid var(--key-ink);
+    border-width: 2px 2px 0 0;
+    pointer-events: none;
+  }
+
+  .targets-wrap::before {
+    left: 9px;
+    transform: translateY(-50%) rotate(-135deg);
+  }
+
+  .targets-wrap::after {
+    right: 9px;
+    transform: translateY(-50%) rotate(45deg);
+  }
+}
+
 .target {
   flex: 1 0 auto;
   display: inline-flex;
@@ -542,6 +573,13 @@ body[data-stale] :is([data-led], .target) .led {
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
+}
+
+/* A thumb's bubble is as tall as any other key it hits. */
+@media (pointer: coarse) {
+  .target {
+    min-height: var(--tap);
+  }
 }
 
 .target:active,
@@ -738,9 +776,15 @@ body[data-stale] :is([data-led], .target) .led {
   padding: var(--space-4) var(--space-4) var(--space-3);
 }
 
-/* A room that is off shows no remote until a device bubble is tapped. */
+/* A room that is off shows no remote until a device bubble is tapped; a
+   note (remote.js) stands where the remote will be. */
 .controls[hidden] {
   display: none;
+}
+
+.controls--off {
+  justify-content: center;
+  padding-block: var(--space-6);
 }
 
 /* The device's own keys; the volume row under it stays put. A remote with

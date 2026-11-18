@@ -46,7 +46,8 @@
     try {
       const user = await client.ready();
       if (user && !user.is_guest) {
-        $(".access-login h1").textContent = "Your account"; form.replaceChildren();
+        // The bar says Account: on a phone this heading would only say it again (shell.css).
+        $(".access-login h1").textContent = "Your account"; $(".access-login h1").dataset.thermiteTitled = ""; form.replaceChildren();
         form.append(node("p", "Signed in as " + user.username), node("p", "To elevate access, switch to an administrator account. An administrator can make your account an administrator in Users; then sign in again."),
           button("Switch account", signOut), button("Sign out", signOut));
         status(user.can_edit ? "Administrator" : "Account · unlocked rooms and camera media"); return;
@@ -83,6 +84,7 @@
     form.addEventListener("submit", (event) => event.preventDefault());
     const choice = (label, name, save, note) => {
       const box = input(label, name, "checkbox", mode[name]), field = box.firstElementChild;
+      box.className = "access-check";
       field.addEventListener("change", async () => {
         field.disabled = true; status("Saving what guests see…");
         try { field.checked = (await save(field.checked))[name]; status(""); }
@@ -253,8 +255,9 @@
     async function reload() { userList = (await client.json("/api/v1/users")).users; draw(); status(""); }
     function draw() {
       const section = $("[data-users]"); section.replaceChildren();
-      const bar = node("div", null, { class: "access-toolbar" }); bar.append(node("h2", "Users"), button("Add user", () => editUser())); section.appendChild(bar);
+      // The page's heading names it: a second "Users" here would only repeat it.
       section.appendChild(node("p", "Anyone can use unlocked rooms without an account. Accounts can also view camera media; administrators manage locks, schedules, users, pairing and the system.", { class: "access-note" }));
+      const bar = node("div", null, { class: "access-toolbar" }); bar.appendChild(button("Add user", () => editUser())); section.appendChild(bar);
       const table = node("table", null, { class: "access-table" }), head = node("thead"), titles = node("tr"), body = node("tbody");
       ["Username", "Access", "Status", "Actions"].forEach((title) => titles.appendChild(node("th", title, { scope: "col" }))); head.appendChild(titles); table.append(head, body);
       userList.forEach((user) => { const row = node("tr");

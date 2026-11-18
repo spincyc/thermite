@@ -281,6 +281,25 @@ class ListenPage(unittest.TestCase):
         self.assertEqual(out["y"], [True, "watch", "button:Watch"])
         self.assertEqual(out["menu"], [False, "watch"])
 
+    def test_a_room_that_is_off_says_so_and_what_to_tap_where_its_remote_will_be(self):
+        out = self.out["off"]
+        words = ["Example East is off", "Choose a source above, or a device for its buttons."]
+        # The note, not the remote; a phone showed the bubbles and then nothing.
+        self.assertEqual(out["off"], [True, False, words])
+        # A device's bubble brings its remote and the note goes.
+        self.assertEqual(out["device"][:2], [False, True])
+        # Listen has its own face: neither Watch's remote nor its note.
+        self.assertEqual(out["listening"], [False, False])
+        self.assertEqual(out["other"], [True, False, ["Example West is off", words[1]]])
+
+    def test_no_heading_repeats_on_a_phone_what_the_bar_already_says(self):
+        # Under the bar's "Users" stood a heading "Users", under "Site" one "Site topology", under
+        # "Account" one "Your account": each page's bar label, then the headings left in sight that hold it.
+        self.assertEqual(self.out["titles"], {
+            "home.html": ["Home", []], "users.html": ["Users", []], "access.html": ["Account", []],
+            "settings.html": ["Room settings", []], "security.html": ["Security", []], "system.html": ["System", []],
+            "topology.html": ["Site", []]})
+
     def test_listen_draws_the_speakers_what_plays_its_keys_chips_and_volume(self):
         out = self.out["face"]
         self.assertEqual(out["speakers"], [[MINI, "Mini", "true", "current", "1"], [OWNED, "Amp Pro", None, "idle", "2"]])

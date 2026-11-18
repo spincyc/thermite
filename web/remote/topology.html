@@ -26,7 +26,7 @@
 <body data-thermite-page="site">
   <main class="topology">
     <section class="intro">
-      <div><h1>Site topology</h1><p class="muted">Configured video and USB connections.</p></div>
+      <div><h1 data-thermite-titled>Site topology</h1><p class="muted">Configured video and USB connections.</p></div>
       <p class="inventory-count" data-count>Reading the map…</p>
     </section>
     <section class="toolbar" aria-label="Map filters">
@@ -45,12 +45,12 @@
       <section class="chain-panel video-panel" aria-labelledby="video-title">
         <header class="chain-panel__header"><h2 id="video-title">Video chains</h2><span class="panel-count" data-video-count></span></header>
         <p class="panel-note">Reported sources · power and HDMI lock are not observed. Select a heading to sort.</p>
-        <div class="table-region" data-video data-map tabindex="0" role="region" aria-label="Video chains; scroll horizontally to compare stages"><table class="topology-table video-table"><caption class="sr-only">Configured video paths and reported room source status</caption><thead data-video-head></thead><tbody data-video-body></tbody></table></div>
+        <div class="table-region" data-video data-map tabindex="0" role="region" aria-label="Video chains; scroll horizontally to compare stages"><span class="table-more" aria-hidden="true"></span><table class="topology-table video-table"><caption class="sr-only">Configured video paths and reported room source status</caption><thead data-video-head></thead><tbody data-video-body></tbody></table></div>
       </section>
       <section class="chain-panel data-panel" aria-labelledby="data-title">
         <header class="chain-panel__header"><h2 id="data-title">USB chains</h2><span class="panel-count" data-data-count></span></header>
         <p class="panel-note">Configured host cables and device ports · peripherals and network wiring are not recorded.</p>
-        <div class="table-region" data-data tabindex="0" role="region" aria-label="Configured USB assignments; scroll horizontally to compare columns"><table class="topology-table data-table"><caption class="sr-only">Configured USB host cables and room device-port assignments; USB state is not observed</caption><thead data-data-head></thead><tbody data-data-body></tbody></table></div>
+        <div class="table-region" data-data tabindex="0" role="region" aria-label="Configured USB assignments; scroll horizontally to compare columns"><span class="table-more" aria-hidden="true"></span><table class="topology-table data-table"><caption class="sr-only">Configured USB host cables and room device-port assignments; USB state is not observed</caption><thead data-data-head></thead><tbody data-data-body></tbody></table></div>
       </section>
     </div>
     <p class="map-note">Shared devices appear in each route they serve.</p>
