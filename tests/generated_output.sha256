@@ -1,0 +1,1533 @@
+# SHA-256 of every file `thermite generate` writes for the fictional houses of
+# tests/test_generated_output.py, which compares them. An entry is
+# <house>/<path>, or */<path> for a file that every house generates with the
+# same bytes. One entry for each generated file, sorted, with an empty line
+# between entries: Git merges two branches' changes to neighbouring lines only
+# when a line between them is unchanged. Never edit this file or resolve a
+# conflict in it by hand; rewrite it:
+#
+#     python -m tests.test_generated_output --write
+
+b797e804425f02808d1199b031eb43832e89420affe92393a99a93e042075e31  */conf/automation/js/node_modules/thermite-entry/filter.jar
+
+87c4d56e661dcc2afe7987c297292deaecf56d4cfce852364f7bedbba301bc00  */conf/automation/js/thermite_entry.js
+
+ed90ef80da36c1b21b20b5fdb3aef723f5b86f050be478337dbb840d0e7e157e  */conf/html/remote/access-config.js
+
+a182d7914b49d363b0364afd429175ddd7e4b70eae2a93a0a7f211f47cdd5ffd  */conf/html/remote/access-ui.js
+
+b39e862aacb952ebfb935ba55072bbed7c0eff6255bf5f91614e05704d47ad58  */conf/html/remote/access.css
+
+f523a2e18e276629223aa3aff0948f9122f6e3c9583a503ed4ca966e94c89584  */conf/html/remote/access.html
+
+22bf3b0a8e41d9fe8a6afbe01046b0cb643c8fca304753484fc7e72f5d66f452  */conf/html/remote/access.js
+
+f92982d3dc8937c492d5bef5d00e427e80b4077dff55500aa3ee36c971dcf71d  */conf/html/remote/activity.js
+
+349fa02ed874eda0f0a20627767cdb85c79a396ba9d37cd2522710bf5f68852a  */conf/html/remote/appearance.js
+
+e9141bf543dbe1bdd7069ce0b009d1d6e084c26c2c1d0a750913e62b75b0c06c  */conf/html/remote/apple-touch-icon.png
+
+966a77b9ac7605d4e9594373fedb6d8f2a061f2150e8f20b44eb99641b9002d5  */conf/html/remote/audio-session.js
+
+12fdea396c752e10a80223681cd7463504b38e1361a3b4e8967dde49d19027f0  */conf/html/remote/backend.js
+
+dd1845979e49ec24bcd85a67062b3d4e759ed7473ebefd2e59749aa161c2aca2  */conf/html/remote/cameras.css
+
+2679f500e0d897897ea61f9c65aae8fa21a2e780c979941fd6cc9713cd3686ed  */conf/html/remote/cameras.html
+
+a3d0b8cf72ea7387c5fe84ee4dd46a20e9702b77dee4bebafca8a927029859c1  */conf/html/remote/cameras.js
+
+fff07823f60f9f1cac7053b6b4a0e6629caf74460601a9b319cb10bf9a73487a  */conf/html/remote/diagnostics.js
+
+b5010af70fa8973995b90bf0381de9fa2f54aed645b82d79ac696889b15bf232  */conf/html/remote/home.css
+
+450aac90399d0c4a208db6a2f4d499c85222e389780d8919d4416c2c4a667a92  */conf/html/remote/home.js
+
+fb2264fa60f74fb7d6eeb20be57c923bb3ae9b11e505c9a52b3cdb1bf391b0ba  */conf/html/remote/icon.svg
+
+e764f819bd54dc7746ad1d871939a7f44edf985a81d823e7a158cd2ccbf73b5b  */conf/html/remote/listen-session.js
+
+d76ddb26acedc2f5442e10ca0bfddc198b62015125e9cbb92520a4d1ce66d980  */conf/html/remote/listen.css
+
+f578eb7f6b9810e65bc9a644b4f53c6d536fae73b8f85e041dfcc4903b65f815  */conf/html/remote/listen.js
+
+9c9acd1abbc859eb09448ebf0185661215b2d0d63aa59d812153bba22f2a0511  */conf/html/remote/log.js
+
+85487ab918ac81103be94678d0bb3a19b69be12452c8e9a31cf80046f4e8a38e  */conf/html/remote/manifest.webmanifest
+
+1343c51c2a962608e335b9e1f1d0ce0b3123e18289e7e672bfbdf0c82272c52c  */conf/html/remote/mark-light.svg
+
+8eb710bff88f7cce40913dc1bcf81eec2713481d1f7c196584b7b207df97b0b2  */conf/html/remote/mark.svg
+
+23d8d1cd0b0730d167ab0cc613d0fd605dfc8b186497255dc057e356b93fab7c  */conf/html/remote/music-backend.js
+
+0774d3e278fd5e96b5fc1ce7abb445cf5d6026e323854c327ab96eae32b2889a  */conf/html/remote/music-session.js
+
+2224c246ba96eb017329818c44be7ab9e92789fa9ad346931b833c7e8cf90a4f  */conf/html/remote/navigation.js
+
+4d9f4b2ae5ddc0dcf922a5c124d20c7ef39f2cd887c1cc80cad856d77833b474  */conf/html/remote/pair.css
+
+9a96d371d4561075b12b115237a6d61da5c11a3b9e60cfe3d3f13acc8b382e34  */conf/html/remote/pair.html
+
+2bf9163f74cfb62c69238c80769599f46d60b2ddd4fa12ab0eab3552a92b956c  */conf/html/remote/pair.js
+
+a9998d949dbf7e3890f09dcc3b743d197ace0777f9a90e15239b2ba05bfeecbc  */conf/html/remote/remote.css
+
+e4d97818882d45c828eb19a9d435ef14dabd004b8413f577955333a834fa95f9  */conf/html/remote/remote.js
+
+f4ec52aaccac05b8cd6d2aaae06dd39469debe401c978ed2be3cb7f63b74bfaf  */conf/html/remote/remotes.js
+
+a51902b2ed7843954e4c14d6e6cacf9744865be6f94139896ed9d77640ceef3b  */conf/html/remote/security.html
+
+a0f416c7360c2051cad57ed5f5f45cdd9c718ad455441d18f0d95c568a1ab57b  */conf/html/remote/session.js
+
+2dcd004bc8c37dd75f10136c885f4f717ac2e9e4b5457615c7390bad7099a368  */conf/html/remote/shell.css
+
+2a33fcdbe631965e5774afe66d3a382a7f5071b0fa24d3eda23634305535f789  */conf/html/remote/shell.js
+
+38eeb142ef7ea7c5736a31f7cb379e057df32f29ccee9794facd910b5f66786f  */conf/html/remote/system.html
+
+30c0ee81d23e19836ac1548ac6ef37d2b412348fd1e0ffc36b583372940fc161  */conf/html/remote/system.js
+
+df9f49be0bd652058b8ebf6a354746654c2cd154c6da223fd5c5070849a6e6ee  */conf/html/remote/system.json
+
+fbf9f17b2f7be6719f261bb62a1cc9af20e7b6fd73582330775772551845e5a8  */conf/html/remote/theme.css
+
+fea69990f1eaa73764d4a403070e82246597ddb183c7af6edf46b65c923e783b  */conf/html/remote/topology.css
+
+5163de5ebade8cc1e812e18091a5edc65e4d6c48f8770ad50f0beeaa176afacf  */conf/html/remote/topology.js
+
+ee9d4f16ae3f6b38cc1128f511d8c6cdfae17d544b0c2c71f1b4bff6c45b8c55  */conf/html/remote/users.html
+
+88f4cc5f633e1066be9db9bcf5dd87a5ec45a3f2c5af4aaf63e7c3fbc49a77a7  */conf/services/runtime.cfg
+
+2f456363003857ca7c28e3d73d1d9c2055a96d0acc5aa1d9ca15e9e6c037b40f  */deploy/thermite-alertmanager.container
+
+b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/thermite-alertmanager.service.d/50-container-lifecycle.conf
+
+c4a2bdada18b844fd685b20064fff968fc62aedeaff43bde58fd1f68537241ea  */deploy/thermite-atv-restart.path
+
+e9a7180ad0dc2c93adaff0ccb6bb361f2511b845653575ab382beb73c625d6c7  */deploy/thermite-atv-restart.service
+
+1b8ef2786ef0f16056d8243a7a24af12c3f58b1b2883b7762dd68ceae7347528  */deploy/thermite-atv.container
+
+b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/thermite-atv.service.d/50-container-lifecycle.conf
+
+9f4644c8b7098d4a538705f34e8873ceb71556b5a6d7963c5c7f439d03a08502  */deploy/thermite-blackbox.container
+
+b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/thermite-blackbox.service.d/50-container-lifecycle.conf
+
+a6ec2798e8a8af28915a2ee22c05cabf5bdc123558bb53a503ebee1b1000be2a  */deploy/thermite-grafana.container
+
+b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/thermite-grafana.service.d/50-container-lifecycle.conf
+
+e4074939dfdfb9964a1b3f1099763922437b7b20be7447dfac60da146d2947d9  */deploy/thermite-metrics-exporter.container
+
+b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/thermite-metrics-exporter.service.d/50-container-lifecycle.conf
+
+ff31a2e3799f69b329c9a8922095aec5f8ef24a5234526c4828297f0bb5d3821  */deploy/thermite-metrics-restart.path
+
+4acf151d78f1257afd781e576316c4bea53b5d5aebcb1943d08dc548f2a46035  */deploy/thermite-metrics-restart.service
+
+40741fc11914795ddb8cc4c9fd4374cb58c4a231071db139c3db5f654424edb9  */deploy/thermite-node-exporter.container
+
+b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/thermite-node-exporter.service.d/50-container-lifecycle.conf
+
+8a1129c513a4c6882f6068931c6ad8b4f4daf097868d71d2ca014b3bfa639ee3  */deploy/thermite-notifications.container
+
+b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/thermite-notifications.service.d/50-container-lifecycle.conf
+
+8c550d52e111c71f5934ddc4c864de05c7672218d25f8425d57c855b6f45a91f  */deploy/thermite-ntfy.container
+
+b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/thermite-ntfy.service.d/50-container-lifecycle.conf
+
+122535ce64df263d27a918da2cb41d33ce03de9a7f82555a72c398a540ed8a42  */deploy/thermite-openhab.container
+
+b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/thermite-openhab.service.d/50-container-lifecycle.conf
+
+5d1aabb426f48ba86bf56c463d8e528455cbb8a00b65de86df7263f134035584  */deploy/thermite-prometheus.container
+
+b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/thermite-prometheus.service.d/50-container-lifecycle.conf
+
+914087ab247125035b182fd0a33977091124a0242f67162c2d8677f33aa20aee  */deploy/thermite.slice
+
+dfb380c8ec4fcb2e7aab525e35633e9efbf8915075d1a6887198cd809a91f2c1  */deploy/thermite.target
+
+13a86054c35122b7355bf994740597a46616ae834045108a9314cd7a28fac591  */metrics/alertmanager/alertmanager.yml
+
+874f4bbe19c06f6ae46386b2869eb60d2ad5e529e218ca95de7584533fcf47b6  */metrics/blackbox/blackbox.yml
+
+ecb85552f40db3b75f0a434d7b33375dda6d7a2501f0dffffa611a5a7a5475fe  */metrics/grafana/grafana.ini
+
+3381735f1250c15f411d81122aa4d3452859bc2f3829fd4040a27c4b24841175  */metrics/grafana/provisioning/dashboards/thermite.yaml
+
+9e8a47563ae3870657862debe3759acd4c8eec50a7e1c3ff1a8b8e130d2a07b6  */metrics/grafana/provisioning/datasources/prometheus.yaml
+
+990fea73389f73c50954092f5efd4d5d71ba5f512ee42dffe934744bc7e9e704  */metrics/notifications/catalog.json
+
+57f5d8c3f3582a58a85f350ae5fb52cb5bc9c37c081b7365ad61a166e45acd9f  */metrics/ntfy/server.yml
+
+632ce30df905d519beeac409fd57a172ce1f8e3c944d7d52329190a7aa556eb1  androidtv_googletv.control/conf/automation/js/all_off.js
+
+6af5bd009c2bacb1437e6d4cca36d723cb58ff81b1c1df0b36a924a964cb1449  androidtv_googletv.control/conf/automation/js/androidtv_googletv.js
+
+c5f6aa964a3df61845eb175287e39cbf9a31b1971d021d34fa667a8849a674a7  androidtv_googletv.control/conf/automation/js/playing.js
+
+73a4bb6aba4c94f0ac29ca9023255950518258af953a4dbe88f45ef22a8ad509  androidtv_googletv.control/conf/automation/js/thermite_handler_pool.js
+
+469023dc27209f98dc7c702be6514b06bd75e219b78eb2d013a0889115fc0d72  androidtv_googletv.control/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  androidtv_googletv.control/conf/html/remote/cameras.json
+
+68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  androidtv_googletv.control/conf/html/remote/diagnostics.json
+
+91fec402dd53ad9849ec960d41bc4f99dca9311c61980068b2ae101ab1156b31  androidtv_googletv.control/conf/html/remote/home.html
+
+5ca63ec228d061c7ef76e1d829c515ea77356ec842d66631b1c58dc3cf355444  androidtv_googletv.control/conf/html/remote/house.js
+
+6effa3964d2bc7d1847f33a5cb2625b48c8ce2b70190890d75ff9b85f2980ff6  androidtv_googletv.control/conf/html/remote/index.html
+
+1ada9d63a50dc69c49d43892a92a34f5bccfd5eef67e952f0ad7f966b2571a3b  androidtv_googletv.control/conf/html/remote/settings.html
+
+89366d4938d638ac8a04b5772b8e8505cd3d85422be8fb15c6527ac9c82a3041  androidtv_googletv.control/conf/html/remote/topology.html
+
+88460c5892080637a2c0f936b18d3dd26c629e1a322e8936c94f754eb5cb5a83  androidtv_googletv.control/conf/html/remote/topology.json
+
+f8b99d941b6a6dbd763600f9239c6f13309d49106d3ebeeae50a269806f80c48  androidtv_googletv.control/conf/services/addons.cfg
+
+33d846f316d908d9cab7cce9b1b5a64b6b555ba2f91a8f9903316d5374703e08  androidtv_googletv.control/conf/services/threadpools.cfg
+
+58ab1eea9d8fe0c4ed74253ac837c2126842642ecdc311b34761f36fe8e36e8f  androidtv_googletv.control/conf/yaml/all_off.yaml
+
+6e057058b9aed3d645383c8e160bf80e1e44e552a8bd1f0dd32c94d3df8625ad  androidtv_googletv.control/conf/yaml/googletv.yaml
+
+f7341662d23b0084521ffbb30b3865acc5d04eea4271cffbd07c809015b9f267  androidtv_googletv.control/conf/yaml/model.yaml
+
+a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  androidtv_googletv.control/conf/yaml/pages.yaml
+
+ffd5905554cb81f7f487d10892991251658774afc0929adc8e62f830ce404391  androidtv_googletv.control/conf/yaml/playing.yaml
+
+9463b9a18852cfa9b565b3f6db0a6d270976123a59d95e80c9ddc31d255e7569  androidtv_googletv.control/conf/yaml/threadpools.yaml
+
+fe593f4110e8274dd4c7267794a5022676a3bffbe24f79eaef264b26b57cbb49  androidtv_googletv.control/metrics/exporter/map.json
+
+f130da8603d1b26e9a298e79a9118f77fdd0ac66b152d2c76d5f565f3724d698  androidtv_googletv.control/metrics/grafana/dashboards/devices.json
+
+a55ad3b7e747e14b99062da2ed0d2b1a0b5a97d3e9eadbbe5f343194c001b3ef  androidtv_googletv.control/metrics/grafana/dashboards/host.json
+
+3dc10302ea6785bc620b1b8c118b6516e7c9731270742511b9a0cd051d2bc95e  androidtv_googletv.control/metrics/grafana/dashboards/house.json
+
+2879a6123590972f7b181d22c794b569fd180ee5b69b2ad0f5803a40cdeb5f82  androidtv_googletv.control/metrics/grafana/dashboards/openhab.json
+
+fd1a7a9827b5f5a7a4f9cfc2870db410ab3e96c5632a0250af6d306f80be72c9  androidtv_googletv.control/metrics/grafana/dashboards/switching.json
+
+fba19507ce4c1035a4b559aeda650b0c2bc22e7255ecd1528445c4bcd9653c54  androidtv_googletv.control/metrics/grafana/dashboards/usage.json
+
+ee71ed2efb95090e6213e93fe4e151c360f2b2ec46800d4e83afe2b8b6156a5d  androidtv_googletv.control/metrics/prometheus/alerts.yml
+
+9d92a5fd4f140af0a1989c01a8414aadd05023fda50db41c5b7f4fc74aecf923  androidtv_googletv.control/metrics/prometheus/prometheus.yml
+
+1979c9fb3a6edaa1486e9b7fb3a8d0b762e5b8c9a53a4e1a8dba08b51617a7f0  avpro_telnet.control/conf/automation/js/avpro_telnet_den_device.js
+
+e44e390adf127134e136d9b3bc4cc07224c6858ceca260d985cbc317597eed64  avpro_telnet.control/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  avpro_telnet.control/conf/html/remote/cameras.json
+
+68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  avpro_telnet.control/conf/html/remote/diagnostics.json
+
+a7f8c5edf04d7f2c1f00e109e733c43c1dd2e6c72bf8beb1b1cb9973128f8f8d  avpro_telnet.control/conf/html/remote/home.html
+
+22ff053c65a3752bb78b03c71c0ae61398fe92b6bd61a4816bcc281f939b1de2  avpro_telnet.control/conf/html/remote/house.js
+
+5737c58817888a4476812b7aa12ed9c21a139c7e61617c8e2100810ed6c7e176  avpro_telnet.control/conf/html/remote/index.html
+
+87b6b4f0728a2aa280be234ad8df0b3f4c5c6a7ef75e4ac8c356d0642565fe9c  avpro_telnet.control/conf/html/remote/settings.html
+
+728355075285bc46aa11a6d61e38a88c9bbcacd279c439c06c1db6a16e391827  avpro_telnet.control/conf/html/remote/topology.html
+
+9af41de665fd4c7e9c5717a7d0c0b241ee2387ca59d75d74ceaf4be842201667  avpro_telnet.control/conf/html/remote/topology.json
+
+69ba7777e29b55d61e0ef9e5b971c6b0c353ccb2e5af755972306a4bf87c4b27  avpro_telnet.control/conf/services/addons.cfg
+
+3868765eaa1c20f57548e0e121dd8d9d554a9cb5f24065dddf11778c027502d7  avpro_telnet.control/conf/yaml/avpro.yaml
+
+19053dbbdd6ad863cc03cd65d25fe46fc4f3772e6f6d262ec2125a22ce18399c  avpro_telnet.control/conf/yaml/model.yaml
+
+a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  avpro_telnet.control/conf/yaml/pages.yaml
+
+b3d0754e49ac6f6696d00f4d91cf2a35627c381cc635d4292411a0c6afb360fc  avpro_telnet.control/metrics/exporter/map.json
+
+98ffc71f6b6ddc4f05d2c03cb4ba9a88ca392da80671f19bcc0cd22d9c29dd5a  avpro_telnet.control/metrics/grafana/dashboards/devices.json
+
+0af69bea8cecf652abda0d27bfa84cf8ce1b87addc0dfcb602afaf4c06b53f9a  avpro_telnet.control/metrics/grafana/dashboards/host.json
+
+f70a37e79310fb321984495b9dfed82b609da8f7303afe0005585d5621994fd2  avpro_telnet.control/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  avpro_telnet.control/metrics/grafana/dashboards/openhab.json
+
+05290e880a9bdd3e62a02237bd2711ded787386821906e8df031a4282cf9423a  avpro_telnet.control/metrics/grafana/dashboards/switching.json
+
+fba19507ce4c1035a4b559aeda650b0c2bc22e7255ecd1528445c4bcd9653c54  avpro_telnet.control/metrics/grafana/dashboards/usage.json
+
+3ce31fa4515cb756e9c92b81d02b4658fbdb3116439d5ae3049f2fcbc840d151  avpro_telnet.control/metrics/prometheus/alerts.yml
+
+e0d47df7bd62d25f31702056b81790c987f68f55ec4b7cd4bee910db3282ded5  avpro_telnet.control/metrics/prometheus/prometheus.yml
+
+de7cd8904353720fbe5d6d68bd16a944afd09844186fe9b9b0a58df779cee23a  bk808_cec.control/conf/automation/js/all_off.js
+
+767fb322e3ea33aeaf431ae248f258b1de6793fe0663a845744f74ecf8e80185  bk808_cec.control/conf/automation/js/bk808_cec.js
+
+31371b2c37b3e3183460e2ce41566bd7057ee58d28432d99b20f50fb717c8f89  bk808_cec.control/conf/automation/js/routing.js
+
+7537e78be2d0adbeeace1a9a8f5677c684cfcaa7dd0ab4c8faa8d779dbf9b995  bk808_cec.control/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  bk808_cec.control/conf/html/remote/cameras.json
+
+d4495e1a34c880225a007c0832c2f6e64a96a787136bf41055fb41c1ded33a41  bk808_cec.control/conf/html/remote/diagnostics.json
+
+dcb320cad12cf7cdd74416534ed6b0169784cb334d7569c264d035d3c58e402b  bk808_cec.control/conf/html/remote/home.html
+
+d5af400a156947cb1e3834662dec366ef314074690d24fbda24efa23e834bdbc  bk808_cec.control/conf/html/remote/house.js
+
+d4e22f2f1b6e3604ed94ecbe76aa6e006f7d8b9565242a6437ac3c8c0e83db8f  bk808_cec.control/conf/html/remote/index.html
+
+28882fdcd4b239066def6ea709d9e09beb69d3d217ec77bd2d36337eea10d696  bk808_cec.control/conf/html/remote/settings.html
+
+d018e31160a7e042eb7d56a3494c85f241579c9335e1b8e97bfb001b23f5afad  bk808_cec.control/conf/html/remote/topology.html
+
+1d27ff2bfc4cdd78f75ef06effcb384bfedc8854bd3101bf844af81d1e5af247  bk808_cec.control/conf/html/remote/topology.json
+
+d73a20af2880ca589fc2f2918d97de6980ef47506b329b2543244591242d2d3c  bk808_cec.control/conf/services/addons.cfg
+
+cfdfc6568b93a219bd9ad6b6d820ba60ee35ca07b34bcbf90aed694b22dc5765  bk808_cec.control/conf/transform/bk808-input-signal.js
+
+d88cb676de9f2281730eabb1d62707969f616377bdb5b4023f50dd47b811466f  bk808_cec.control/conf/transform/bk808-output-signal.js
+
+58ab1eea9d8fe0c4ed74253ac837c2126842642ecdc311b34761f36fe8e36e8f  bk808_cec.control/conf/yaml/all_off.yaml
+
+26b22439201dce9abf1e00ae273f44c3022100fe6f7ef6911a56f968d5b0de64  bk808_cec.control/conf/yaml/bk808-cec.yaml
+
+93ef59937130813647a389f213036f6ef2e3d739650b7db399316e77f208ed72  bk808_cec.control/conf/yaml/bk808.yaml
+
+49ef168824dc490c89387850b120a4f043d8a57d07e5f5a4525a815373bc8eca  bk808_cec.control/conf/yaml/model.yaml
+
+d8e18bd7740fc23a9c1aeb0223492c7698365dd24c23c451853ee1ec6adc1c25  bk808_cec.control/conf/yaml/pages.yaml
+
+c23894c44f5b3a8837eaa43f5d92031ecdcfd569625cf2b36d5eeaa475a96eb7  bk808_cec.control/conf/yaml/routing.yaml
+
+2aebc1a67953cecec4d0a8b783398fb819c0738f797ce374f920fda906579c0f  bk808_cec.control/metrics/exporter/map.json
+
+2cd6f9f8f1c9fa2b2f3bf74854b52b64742e12f63c38a5f8ce709e6956d4a0ae  bk808_cec.control/metrics/grafana/dashboards/devices.json
+
+75d2d1dea862d52f0ccecf468778f82773de8f27daa1e6d45abf10676162d3a6  bk808_cec.control/metrics/grafana/dashboards/host.json
+
+726ca40f9ce0d7bc826c193714519a9aa221cf6b7adcb238734bd998c275aa29  bk808_cec.control/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  bk808_cec.control/metrics/grafana/dashboards/openhab.json
+
+4a429796d3790212285e81c369ac03c720467cab699fe3e632d8036dc9c4a74c  bk808_cec.control/metrics/grafana/dashboards/switching.json
+
+12d7af5263360d4f45156e25305a74df1ce3b1be63905b944afddad7bdbab701  bk808_cec.control/metrics/grafana/dashboards/usage.json
+
+110c5358afe49b7d1f2d2c23cae4f642a6703f564a3b0df44bc171d80f11d1a5  bk808_cec.control/metrics/prometheus/alerts.yml
+
+27d623f76f828bd6d67ae6ffd2f5244a0b15a5e4b3014de7c2547f79fa7c5673  bk808_cec.control/metrics/prometheus/prometheus.yml
+
+8ea5a504a853efa8c0134e4bc0825de043e7479e11c2b6c53eeec5a5956d9bd5  bk808_http.control/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  bk808_http.control/conf/html/remote/cameras.json
+
+95fd5179e1e538fc598b8c9df3e914ff6ab2b3769aa086131c08dd294b189651  bk808_http.control/conf/html/remote/diagnostics.json
+
+5e271b8c9cd387dfbe866de0b21db021ab2bf2f09725a42db46b024ba7d50616  bk808_http.control/conf/html/remote/home.html
+
+6cf8020a653cf1d300c48df139716655d6697ee01e2d45bbc5ea10a9050a26b0  bk808_http.control/conf/html/remote/house.js
+
+3b6e499d405be3a7820b64abe2435ea89fe7488e8ab45714c2bb85e8d7ba633d  bk808_http.control/conf/html/remote/index.html
+
+9d43fb96ff0c92246ffeadea3d6ef95e1646b4c20f58f4a3d6c799d2875db2b8  bk808_http.control/conf/html/remote/settings.html
+
+1adfd96c707788b12e27cd50413b14b194b56478c254e84462a68aff2af44192  bk808_http.control/conf/html/remote/topology.html
+
+bbf4adc9c1ddbd59e1ded2a9d7c9d2b439a2933e95c8c531e3803e53cbec5e9c  bk808_http.control/conf/html/remote/topology.json
+
+7284a43ba34893ed0a027093d994ca9dc3bab852d02e994bd2ff507da18782cf  bk808_http.control/conf/services/addons.cfg
+
+cfdfc6568b93a219bd9ad6b6d820ba60ee35ca07b34bcbf90aed694b22dc5765  bk808_http.control/conf/transform/bk808-input-signal.js
+
+d88cb676de9f2281730eabb1d62707969f616377bdb5b4023f50dd47b811466f  bk808_http.control/conf/transform/bk808-output-signal.js
+
+09e51186c2b08f9a2ac28d1e9f4eaf29fa3bdeb2e9a90e61d0c18fbe19fbdab4  bk808_http.control/conf/yaml/bk808.yaml
+
+a7cd86146083301f16e2d1a48667c6c9cd1fefbfd6f56621eceaf52f6d63ce06  bk808_http.control/conf/yaml/model.yaml
+
+a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  bk808_http.control/conf/yaml/pages.yaml
+
+d2b36fafd1032e8d8cdeae6df88eea2fe7ccbf16432d7232e0da32e7170a26ca  bk808_http.control/metrics/exporter/map.json
+
+7278f69e067ce7bbbd149995403ed5ae1b0e2f78f4512558322db541c25a5cb6  bk808_http.control/metrics/grafana/dashboards/devices.json
+
+1841cdf2dc71285078b47361b8e00384ac9ab6c27c0e118e4809534b5094d3ff  bk808_http.control/metrics/grafana/dashboards/host.json
+
+1016b5c0bcbf2e9da7da2ebded7c16f220ab23d603822e1fc3950b9102008949  bk808_http.control/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  bk808_http.control/metrics/grafana/dashboards/openhab.json
+
+a0c8ae45f27c0db0ae791531d4b9efb9bd427e77965cf597ae6d87bc7b25f4fc  bk808_http.control/metrics/grafana/dashboards/switching.json
+
+fba19507ce4c1035a4b559aeda650b0c2bc22e7255ecd1528445c4bcd9653c54  bk808_http.control/metrics/grafana/dashboards/usage.json
+
+64429047ff845b4538be3493d2c2390178e99716df413ca48b9cbfe3022cbc6a  bk808_http.control/metrics/prometheus/alerts.yml
+
+313b81992f1738b4849c60389c5b34b0f4c75316721701ebcae172953a9f49de  bk808_http.control/metrics/prometheus/prometheus.yml
+
+93d82a972bb065bf5eaef2a5071e05bbf943f971e66fe481efebb75e79ea49ce  cast.observe/conf/automation/js/playing.js
+
+c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  cast.observe/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  cast.observe/conf/html/remote/cameras.json
+
+68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  cast.observe/conf/html/remote/diagnostics.json
+
+6590ea00c175c343d31c122a8135e071f4b32c336948a34f3e38e093b8bbd043  cast.observe/conf/html/remote/home.html
+
+997a8b2b608ca095f6d643c2658fc104f78f4d3685c0cf65ed52debc956eb0a8  cast.observe/conf/html/remote/house.js
+
+a63c04c19673f55f766e5984c330da9dc75a4e2b8fd1e8574cc357047766662e  cast.observe/conf/html/remote/index.html
+
+f26450c782ed259827e0bb8b43a39f4a64668b716cff1d46ffd82ba2c67dcb16  cast.observe/conf/html/remote/settings.html
+
+f2b8752e1499e7232151ff70b2136a33edf3051571cae1e3e6320cd26487efa8  cast.observe/conf/html/remote/topology.html
+
+adcab692ed96ee51fee95ecd85daec8942d54f398fdb10534bde8ed3530eff45  cast.observe/conf/html/remote/topology.json
+
+e8bc280a3372095ddaa300be42fa4071e3e7383272512692faa685395489c6b3  cast.observe/conf/services/addons.cfg
+
+077cf6cebf983727242f1284e5108b085ffd63a45f4154b88bc94b497e28acdb  cast.observe/conf/yaml/cast.yaml
+
+bb550c54ae7a0c1d277d3dd426565efa8c0c9afc135b66ebeacde6481a5d6cab  cast.observe/conf/yaml/model.yaml
+
+a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  cast.observe/conf/yaml/pages.yaml
+
+ffd5905554cb81f7f487d10892991251658774afc0929adc8e62f830ce404391  cast.observe/conf/yaml/playing.yaml
+
+9479ea8961d25cb56eaabd01f2dbe1fe76a662a077c9aa5dfb20115736d55286  cast.observe/metrics/exporter/map.json
+
+0d4562c6606a623853fdf92ea2cefd8f09f3155dd22ea0ad3a293c6f2a550ca0  cast.observe/metrics/grafana/dashboards/devices.json
+
+d41278fa022bd9e6f7e4181c767cb170fbea554b216ec9973d4a3bde8bb41b32  cast.observe/metrics/grafana/dashboards/host.json
+
+db5184f907abf713e804c80dbdb64044f1bc922c2f21a46749f8ff7e232ab96b  cast.observe/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  cast.observe/metrics/grafana/dashboards/openhab.json
+
+3153198cac393a6dc7f7f73f6b41e13dd0350b29fd2ccddc9f64b7041da917bc  cast.observe/metrics/grafana/dashboards/switching.json
+
+fba19507ce4c1035a4b559aeda650b0c2bc22e7255ecd1528445c4bcd9653c54  cast.observe/metrics/grafana/dashboards/usage.json
+
+3ce31fa4515cb756e9c92b81d02b4658fbdb3116439d5ae3049f2fcbc840d151  cast.observe/metrics/prometheus/alerts.yml
+
+ce2bd61333392bfeb18e85f4e50debae54eb1701c8ba356009e8ee70b9102913  cast.observe/metrics/prometheus/prometheus.yml
+
+77f4462607c2da410ff5ab830cb649c50da7ac99093328c5cc3acd772dece317  denonmarantz_http.control/conf/automation/js/all_off.js
+
+3bc3cbabf3adf4b468d5ae8a49a3c9267fe49b2155062d6f47b943fbe81909bc  denonmarantz_http.control/conf/automation/js/denonmarantz_http_den_device.js
+
+d34badf5622b5cca16a86724d0979a35da7db1313dbd846058de1232ae511a4b  denonmarantz_http.control/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  denonmarantz_http.control/conf/html/remote/cameras.json
+
+68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  denonmarantz_http.control/conf/html/remote/diagnostics.json
+
+37254379f215575a5ed3786d5ab3f4a440230ff4c106e7648a6badc8de972a34  denonmarantz_http.control/conf/html/remote/home.html
+
+1e8b941b9d8c0184aee262e533ba246f0880d91923ea80bc2e0cc7e51aafa3d8  denonmarantz_http.control/conf/html/remote/house.js
+
+10adfd9d8bd6ebab8c9fec604b8ae42d3fb4aa2036fe0c26cea138a7eb975f3d  denonmarantz_http.control/conf/html/remote/index.html
+
+227722720c5af0b7e00c670a1d9be9071a558809a6edf37bae29aa6e0dfb6781  denonmarantz_http.control/conf/html/remote/settings.html
+
+cf99dce40fa5d487fad2f58f6121606ae725d161a814b2d574dce459f1958885  denonmarantz_http.control/conf/html/remote/topology.html
+
+b55f7b6f47a6561450c56fecd57befdb6825b1cac29fd822e20c6d2899d21bd2  denonmarantz_http.control/conf/html/remote/topology.json
+
+13a26423a5e7e6e9fa5ff996fa45c32d5a16ab567b8f42dd0623c346bd44eb96  denonmarantz_http.control/conf/services/addons.cfg
+
+58ab1eea9d8fe0c4ed74253ac837c2126842642ecdc311b34761f36fe8e36e8f  denonmarantz_http.control/conf/yaml/all_off.yaml
+
+2c4ece326d582936d5752bcc865f14324c3e7f52c12eb990b8c36189563f90c7  denonmarantz_http.control/conf/yaml/marantz.yaml
+
+4abea9cd9283fa414a217f83d760609b8d623d0072df9c3a622fe324165a2c17  denonmarantz_http.control/conf/yaml/model.yaml
+
+a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  denonmarantz_http.control/conf/yaml/pages.yaml
+
+ee48768cbf32d68fc769e7f37ee26285d51b0e6c99b9b6478287cce8f7488246  denonmarantz_http.control/metrics/exporter/map.json
+
+561a3892e740a5b47b56fdc38846da3043ff2cccc9ac83019c75f00d1f067f37  denonmarantz_http.control/metrics/grafana/dashboards/devices.json
+
+fe9c45c6d4c127b3d733d91bafc1a807659b7b2edb741baccb9ffd5eeffd81ac  denonmarantz_http.control/metrics/grafana/dashboards/host.json
+
+5e94ba6227ee5c49c2baae8a1b0e131ac077646f7a9d5dba4904d697a523b73f  denonmarantz_http.control/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  denonmarantz_http.control/metrics/grafana/dashboards/openhab.json
+
+4cda5e9a4876b87d5a3f4ad1da63ca1f490e9ea52d30803aed9973cf9ca547b0  denonmarantz_http.control/metrics/grafana/dashboards/switching.json
+
+fba19507ce4c1035a4b559aeda650b0c2bc22e7255ecd1528445c4bcd9653c54  denonmarantz_http.control/metrics/grafana/dashboards/usage.json
+
+3ce31fa4515cb756e9c92b81d02b4658fbdb3116439d5ae3049f2fcbc840d151  denonmarantz_http.control/metrics/prometheus/alerts.yml
+
+20969a5b960c1b39e606dfd661e3e7cc9c8822731e0f8b574cef685476de5e2f  denonmarantz_http.control/metrics/prometheus/prometheus.yml
+
+c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  denonmarantz_http.observe/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  denonmarantz_http.observe/conf/html/remote/cameras.json
+
+68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  denonmarantz_http.observe/conf/html/remote/diagnostics.json
+
+2481a83933bf3d5cda5e6cf40ac8d5614b6a040922b40cb1841051945bdfd1e3  denonmarantz_http.observe/conf/html/remote/home.html
+
+2355f4de5ccafa356c0bd57b3aada75061e3b58521f6772aa12a1caeedf3c4e1  denonmarantz_http.observe/conf/html/remote/house.js
+
+541f22f3a0cbba456b8ff114b8b1eef03b5a5d4ca00139127d4bc843eef8f1d3  denonmarantz_http.observe/conf/html/remote/index.html
+
+0ab0a124992c23d1eb255f985aed36b1941bf2cf962238e6d479d2e95722c327  denonmarantz_http.observe/conf/html/remote/settings.html
+
+e1d5e0b31bd98064c83fa6c41da6396f25b7a1ca5dc5eb0402329be1aa1940a1  denonmarantz_http.observe/conf/html/remote/topology.html
+
+b55f7b6f47a6561450c56fecd57befdb6825b1cac29fd822e20c6d2899d21bd2  denonmarantz_http.observe/conf/html/remote/topology.json
+
+ff57f96873489af44b56f174d10fd206746947a144673d4d842ea98effb70b85  denonmarantz_http.observe/conf/services/addons.cfg
+
+057389a57211d2e270ea8d79a38069acc6fbe2de20ace15df843d8f9485c2014  denonmarantz_http.observe/conf/yaml/marantz.yaml
+
+4abea9cd9283fa414a217f83d760609b8d623d0072df9c3a622fe324165a2c17  denonmarantz_http.observe/conf/yaml/model.yaml
+
+a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  denonmarantz_http.observe/conf/yaml/pages.yaml
+
+de2ab1da36af31a4a2002ed69789434db963d5694d6fb09fc23fc88a226f75e7  denonmarantz_http.observe/metrics/exporter/map.json
+
+561a3892e740a5b47b56fdc38846da3043ff2cccc9ac83019c75f00d1f067f37  denonmarantz_http.observe/metrics/grafana/dashboards/devices.json
+
+fe9c45c6d4c127b3d733d91bafc1a807659b7b2edb741baccb9ffd5eeffd81ac  denonmarantz_http.observe/metrics/grafana/dashboards/host.json
+
+5e94ba6227ee5c49c2baae8a1b0e131ac077646f7a9d5dba4904d697a523b73f  denonmarantz_http.observe/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  denonmarantz_http.observe/metrics/grafana/dashboards/openhab.json
+
+4cda5e9a4876b87d5a3f4ad1da63ca1f490e9ea52d30803aed9973cf9ca547b0  denonmarantz_http.observe/metrics/grafana/dashboards/switching.json
+
+fba19507ce4c1035a4b559aeda650b0c2bc22e7255ecd1528445c4bcd9653c54  denonmarantz_http.observe/metrics/grafana/dashboards/usage.json
+
+3ce31fa4515cb756e9c92b81d02b4658fbdb3116439d5ae3049f2fcbc840d151  denonmarantz_http.observe/metrics/prometheus/alerts.yml
+
+20969a5b960c1b39e606dfd661e3e7cc9c8822731e0f8b574cef685476de5e2f  denonmarantz_http.observe/metrics/prometheus/prometheus.yml
+
+c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  drhdmi_http.observe/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  drhdmi_http.observe/conf/html/remote/cameras.json
+
+e92429c04c6bc37d9b50e0bf74fd546d95052f53289d34d01ff287f2edc665e7  drhdmi_http.observe/conf/html/remote/diagnostics.json
+
+3986848568f02767b7e294db6e04251825d4e545dfc87f5556af235415067a38  drhdmi_http.observe/conf/html/remote/home.html
+
+325f83f5fe6031ea0cc9575f01e3df45d5515cb5d852ac4cfd083176cfb4ca77  drhdmi_http.observe/conf/html/remote/house.js
+
+f5f17ac9137ca4fbe57287a9a32f45a87c9b6c9e9d090030a3029695b9680782  drhdmi_http.observe/conf/html/remote/index.html
+
+7adaab230c3549dac387b0d93238ec917c0d468ba3c117341d294bed5d8cfc33  drhdmi_http.observe/conf/html/remote/settings.html
+
+1eb65507dbfe285c41c8062bcc4261410cdf0541160aefc0b2b375d8da7f71d8  drhdmi_http.observe/conf/html/remote/topology.html
+
+bc88d02f314117c8ca6f30bafeb92c199acc2d3266cb424ffeb8c8bb68af5b53  drhdmi_http.observe/conf/html/remote/topology.json
+
+68a64bfac0a5a91edb6fb2379a385308562f88f1ba945511e6033f1dc475515c  drhdmi_http.observe/conf/services/addons.cfg
+
+f969502927169345e2f26c4cc97ec6972c9021bf06420aa3e815aa1c47a7bf57  drhdmi_http.observe/conf/transform/drhdmi-signal.js
+
+a39ccedc8b90e16cf4085175ef2df56b6f821f417050d52d348bb691357af24f  drhdmi_http.observe/conf/yaml/drhdmi.yaml
+
+067d0d718ff8a8e07e545b0ed04d0e64747e4abc58263fcf2d1d3bfe4c5cec2e  drhdmi_http.observe/conf/yaml/model.yaml
+
+a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  drhdmi_http.observe/conf/yaml/pages.yaml
+
+d2c7a8f114b620af6997f9a60261acc5bd2807619d4840f872079511db032a8e  drhdmi_http.observe/metrics/exporter/map.json
+
+807e3f206bc7580b4acf87226df972b6841804607d86331a821cb5cef9540924  drhdmi_http.observe/metrics/grafana/dashboards/devices.json
+
+b1ef507ceda7e4d92debddd648e9c532fadb29ff3288ad5fd3a32f6c20db51bc  drhdmi_http.observe/metrics/grafana/dashboards/host.json
+
+86386432020e18988c04f8ea5575e583a422444c6e6c8527cd7dfd2a36f8a5fa  drhdmi_http.observe/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  drhdmi_http.observe/metrics/grafana/dashboards/openhab.json
+
+ae8c1e6ffb47915775fad7e65b4d738dac1b65d41dc04dd2bcfa996d5a82ddec  drhdmi_http.observe/metrics/grafana/dashboards/switching.json
+
+fba19507ce4c1035a4b559aeda650b0c2bc22e7255ecd1528445c4bcd9653c54  drhdmi_http.observe/metrics/grafana/dashboards/usage.json
+
+3ce31fa4515cb756e9c92b81d02b4658fbdb3116439d5ae3049f2fcbc840d151  drhdmi_http.observe/metrics/prometheus/alerts.yml
+
+870013b7d58124c1b719093fb61e55d3895d80647493300a1e3dd41e3c157036  drhdmi_http.observe/metrics/prometheus/prometheus.yml
+
+9e5e27adc22fb2ce8890640f2d2dfbc8a586c78999555d506a8c0f9b3c8d205c  example/conf/automation/js/all_off.js
+
+418d147dcf7a1b4a44e0ecbabf7f479543a54eb893dafa84ee891aa70b6d9793  example/conf/automation/js/pyatv_http_example_player.js
+
+1d081f8e7943c1a41a254edfc007a4cbad7d9bddf6cfb3979f9f7c7d2ebdd4a9  example/conf/automation/js/routing.js
+
+d5a93c38b09404e85b684c5fa5fdf6256afaa9aa226266793433e9964c2c6583  example/conf/automation/js/sony_ip_control_example_display.js
+
+60aa2c1c89fbb66c01e79413ad34675965cfa68cd45d35817bc9f5ce2f638fa0  example/conf/automation/js/sony_ip_control_example_tv.js
+
+8a56d3613edff9da3456c1bb3e5af838ddbc4b8ec7b8706e66dc3177338aaad3  example/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  example/conf/html/remote/cameras.json
+
+14f129bcb30e3da971aa2ffd36333575dd6d7c998b11b6fda852e4f5b9adf2e7  example/conf/html/remote/diagnostics.json
+
+a66d9858b5e11db0eb7d3a0fab1925fddfb3e755e901c8f3d656ee4f7b3667a3  example/conf/html/remote/home.html
+
+24b4c822c1dba32b24471bcf7126d20417b1f64352f18a82395ec1e35f425aa5  example/conf/html/remote/house.js
+
+b1eb263f30b31bb09f9da7e77c6eb9a3767e71e3006df074e3c86bb4305e3070  example/conf/html/remote/index.html
+
+1b8400dc82d7fca21623c1705961a64c81c1ff2129c00dfadc809130738f057b  example/conf/html/remote/settings.html
+
+86caf154da31fd73452a4f66d2bd95e1081b926897a26df1e7aeb8c1c01a755c  example/conf/html/remote/topology.html
+
+70a30832f27c6f063f7c0ca5735bedecaf26a09d2e46e3c05f60e5265e511ba1  example/conf/html/remote/topology.json
+
+c2f496bd8b50cfdc9f2d4c9867c68966b6205ea1b6eda86cf6396a8cee1bffec  example/conf/services/addons.cfg
+
+cfdfc6568b93a219bd9ad6b6d820ba60ee35ca07b34bcbf90aed694b22dc5765  example/conf/transform/bk808-input-signal.js
+
+d88cb676de9f2281730eabb1d62707969f616377bdb5b4023f50dd47b811466f  example/conf/transform/bk808-output-signal.js
+
+58ab1eea9d8fe0c4ed74253ac837c2126842642ecdc311b34761f36fe8e36e8f  example/conf/yaml/all_off.yaml
+
+99104479d7d87244e8821b2e358940736b0facb70446c7d63347987beda46c43  example/conf/yaml/appletv.yaml
+
+3ce207773dc1c494ffd3a125774e0464b8eb07e2ecfdef5f5aaf5ee8294568cd  example/conf/yaml/bk808.yaml
+
+07ee4c345ba7aa84a0453c0c4c5ca69043bf60bd2dd01a082698387af663302b  example/conf/yaml/model.yaml
+
+b51cb026522010fc2e49cb976e8325d8da0d9711b42cbe921b0d9d534b55a222  example/conf/yaml/pages.yaml
+
+2a121a4dcfc7c5ad6e855e0bba7c2326dd4cf5cc301f6e69ec6cbc0c6c2f8097  example/conf/yaml/routing.yaml
+
+36bbb12fb32483dd2aa677b6cfdcfbeb1ffd993b0fc23f20ddcd9192a6a14110  example/conf/yaml/sony.yaml
+
+8f496aa181db7766f00bffdca4390b7bd710c1672fa27c14b5c9e853617407c9  example/conf/yaml/sony_ip_control.yaml
+
+97415996be29c7e00b13f1051117750789247bf9dc8392d6a546b164e0b1cd17  example/metrics/exporter/map.json
+
+4d42501cc08cad73ea52540ec3fe36c93856115031fcff9a101e7ffd770a3318  example/metrics/grafana/dashboards/devices.json
+
+c57c5bc4b03ad2470763702fe50850a76810a0a9377ba8be40fbfb53eddf47a1  example/metrics/grafana/dashboards/host.json
+
+3b8356e62bb45785a0262160ccf5ca859eb80d2fb561b13cf003469f4c2a3ca5  example/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  example/metrics/grafana/dashboards/openhab.json
+
+62e568370015dafec65d5d234f2fa3491ad2000331ca479e1f80492fe86d1d0c  example/metrics/grafana/dashboards/switching.json
+
+61d032605d7cedf017999641d85b7024d100c373d80f7746a111335624422875  example/metrics/grafana/dashboards/usage.json
+
+ece507b6cea7b4e9d55ca8fbe976eaf185442d3e98ae4982eb8d6d38416971aa  example/metrics/prometheus/alerts.yml
+
+c4e9a8351135f8f9ef928f8fbcea317a27cad6b82392234ee7216a5cde2aa3a5  example/metrics/prometheus/prometheus.yml
+
+77f4462607c2da410ff5ab830cb649c50da7ac99093328c5cc3acd772dece317  heos.control/conf/automation/js/all_off.js
+
+3bc3cbabf3adf4b468d5ae8a49a3c9267fe49b2155062d6f47b943fbe81909bc  heos.control/conf/automation/js/denonmarantz_http_den_device.js
+
+812d698c74dfc9b912cfb6a9fb9d12de0ae1b98ca528f96685ea65950607cbd9  heos.control/conf/automation/js/heos.js
+
+442273c483dc9d4845852f2150e8aadbde3a5b433f2d93789971d7ed8f653a7f  heos.control/conf/automation/js/reboots.js
+
+1b5efeeb04b802d934598aba3efccae87800a14f72fd978edee66774b33f2947  heos.control/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  heos.control/conf/html/remote/cameras.json
+
+68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  heos.control/conf/html/remote/diagnostics.json
+
+02935a218bcc8c429610663a00a8cf86e516b384545710de865ed2b55f9229fb  heos.control/conf/html/remote/home.html
+
+fd980b0f758e14031edc5def40cade44c776ce97f85560bd5cef2e39c0e7ad5e  heos.control/conf/html/remote/house.js
+
+fbc793c46a52c0c777c39c014ab52ea7a77a3bb9655bdd682c0b540901639b6e  heos.control/conf/html/remote/index.html
+
+a2b37ab35adcb2e50333bdbd76e16095657e7ced419e18adad4f3a7690e876c7  heos.control/conf/html/remote/settings.html
+
+13991230f9ad042a5c837c26106368039636f5b4f56ae009019d98083a27f5ef  heos.control/conf/html/remote/topology.html
+
+b55f7b6f47a6561450c56fecd57befdb6825b1cac29fd822e20c6d2899d21bd2  heos.control/conf/html/remote/topology.json
+
+d468d0e255d94f9ea1d0db850029e3b8620985a603b65b234268ca638d8fec50  heos.control/conf/services/addons.cfg
+
+58ab1eea9d8fe0c4ed74253ac837c2126842642ecdc311b34761f36fe8e36e8f  heos.control/conf/yaml/all_off.yaml
+
+57863d24f8e2f81aa4d0b41c2a910df909ad9b5c86b9e418ff11c76d8be02c39  heos.control/conf/yaml/heos.yaml
+
+2c4ece326d582936d5752bcc865f14324c3e7f52c12eb990b8c36189563f90c7  heos.control/conf/yaml/marantz.yaml
+
+4abea9cd9283fa414a217f83d760609b8d623d0072df9c3a622fe324165a2c17  heos.control/conf/yaml/model.yaml
+
+a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  heos.control/conf/yaml/pages.yaml
+
+3351f3b125d75eebebe0d973475d8525575da2770d421d24512ef2696a614353  heos.control/conf/yaml/reboots.yaml
+
+e5dcfce4348ea1044cc6348295d2f2a469eb708667bacf37834a07c5c858c98d  heos.control/metrics/exporter/map.json
+
+561a3892e740a5b47b56fdc38846da3043ff2cccc9ac83019c75f00d1f067f37  heos.control/metrics/grafana/dashboards/devices.json
+
+fe9c45c6d4c127b3d733d91bafc1a807659b7b2edb741baccb9ffd5eeffd81ac  heos.control/metrics/grafana/dashboards/host.json
+
+5e94ba6227ee5c49c2baae8a1b0e131ac077646f7a9d5dba4904d697a523b73f  heos.control/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  heos.control/metrics/grafana/dashboards/openhab.json
+
+4cda5e9a4876b87d5a3f4ad1da63ca1f490e9ea52d30803aed9973cf9ca547b0  heos.control/metrics/grafana/dashboards/switching.json
+
+fba19507ce4c1035a4b559aeda650b0c2bc22e7255ecd1528445c4bcd9653c54  heos.control/metrics/grafana/dashboards/usage.json
+
+3ce31fa4515cb756e9c92b81d02b4658fbdb3116439d5ae3049f2fcbc840d151  heos.control/metrics/prometheus/alerts.yml
+
+20969a5b960c1b39e606dfd661e3e7cc9c8822731e0f8b574cef685476de5e2f  heos.control/metrics/prometheus/prometheus.yml
+
+c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  ir.control/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  ir.control/conf/html/remote/cameras.json
+
+68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  ir.control/conf/html/remote/diagnostics.json
+
+3d8f0c6623b859a51147bf0518d5dc1025b3385037aeced67c916aa5eab05e4d  ir.control/conf/html/remote/home.html
+
+b06ca6d49a50cd6d36e1267dcdf7983b0c62fa5d930d9912ac47a9416761f123  ir.control/conf/html/remote/house.js
+
+79dfa2eb0988a4cf4c25f183aa26a88af6979f664c69277495be69a49002308a  ir.control/conf/html/remote/index.html
+
+11ca0f341607820506b3357b52c2ed077d7d9ce3209c1b20d224055e817ab1cb  ir.control/conf/html/remote/settings.html
+
+104044eafcd711dc4a6d0738c53c177cd7722f4974c7f0320e2065b5ee24eb08  ir.control/conf/html/remote/topology.html
+
+7b75761c92334314c621770df0b7db26f18985934658c9fa0d2e737bb0bcfa79  ir.control/conf/html/remote/topology.json
+
+555874c8e1b86e2b42affdf567857343ee84487301e0095f609d0b55cfe7026e  ir.control/conf/services/addons.cfg
+
+43f44302700230b3e36d10675b828391e8aa5ab5ee1e87a6a55b8ad2807c82b5  ir.control/conf/yaml/ir.yaml
+
+3ceacf54b9e92aee598247080ae346e45c8646969db024115d9d28430f584f0c  ir.control/conf/yaml/model.yaml
+
+a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  ir.control/conf/yaml/pages.yaml
+
+a73d17dafbb887c0afcc44d37a3118bfa249965e325b08a732b244cabae27629  ir.control/metrics/exporter/map.json
+
+0cec5d15529bef3730dca87adbfdbd2f55ce8535242f3b593096fc2e32b5a6c3  ir.control/metrics/grafana/dashboards/devices.json
+
+14ef7a9d52920c7dd53191e434f6234e6241b8ae50e0b81d0768850d808904fc  ir.control/metrics/grafana/dashboards/host.json
+
+ee08626b77f2dc790b82acb4bd9d006c48736dc28d5bb8996fb592463a755a5e  ir.control/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  ir.control/metrics/grafana/dashboards/openhab.json
+
+355721ed20eedea9d4c1251365ade4b0be7a1455fa4de8556b3d27a4b8e7a1df  ir.control/metrics/grafana/dashboards/switching.json
+
+fba19507ce4c1035a4b559aeda650b0c2bc22e7255ecd1528445c4bcd9653c54  ir.control/metrics/grafana/dashboards/usage.json
+
+3ce31fa4515cb756e9c92b81d02b4658fbdb3116439d5ae3049f2fcbc840d151  ir.control/metrics/prometheus/alerts.yml
+
+f7a8d9c109bcf1988aaf8b73ca6b1216a150d2795c3372516aafb0bb29dc4f65  ir.control/metrics/prometheus/prometheus.yml
+
+c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  network_ping.observe/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  network_ping.observe/conf/html/remote/cameras.json
+
+68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  network_ping.observe/conf/html/remote/diagnostics.json
+
+d8791e919fdd0646be828d5df424063cc55b630035013d7d9195179759595837  network_ping.observe/conf/html/remote/home.html
+
+34438c37b1805c8389ac9f8294d7bdcc7fcdc7c10829ac736c6aa61497a8ddbd  network_ping.observe/conf/html/remote/house.js
+
+b2cc272cafa4917051b374b348fbb9b755261e52e4a59ae1c93d9b9af46e4293  network_ping.observe/conf/html/remote/index.html
+
+da36ea1bec2db5c8fb0bec5108426c9f85a08d253b21ec86b6b7153cc8cccdcb  network_ping.observe/conf/html/remote/settings.html
+
+1027e5afd9f8dd150aa62582b73d8f19d4302f76fea6da8eb10f9639c4226e89  network_ping.observe/conf/html/remote/topology.html
+
+ddbebd68686f23370e61b6c778cc3d1fbf582385cf0a045b666b3b0f3cbe5f5e  network_ping.observe/conf/html/remote/topology.json
+
+267d9849be8f02cd233b3747b9e4b41414f14e5da9f25f2f6bf14524d7e6a223  network_ping.observe/conf/services/addons.cfg
+
+3364a85f484bba3d97af6f467c42f21751ff68d575490d5e13ea1a7ef077fd58  network_ping.observe/conf/yaml/model.yaml
+
+714b169243ceef2fb5eb4f945ce2080042c400f5b86d6a594feb4b1cf907dab7  network_ping.observe/conf/yaml/network.yaml
+
+ea857ba0590ce8602bf6967724d0b651fefa1b37e56ebf6e8cfa66ca35ad251c  network_ping.observe/conf/yaml/pages.yaml
+
+35caa11786b09917120f6120157cddfcc605e9407d62a51f8f4b5f038f11cba4  network_ping.observe/metrics/exporter/map.json
+
+69a03af0dccb775795830cf3e41d9f612052b39095c3e2eb8b5bd6313b584c81  network_ping.observe/metrics/grafana/dashboards/devices.json
+
+58d31d3c459d2e504383185229a33ec39b4824275fa17e91036198f22c29daba  network_ping.observe/metrics/grafana/dashboards/host.json
+
+f68f7f56d2db0cb9b90efcda355781a683c7e14e3135ccb94d50ec1653f7c324  network_ping.observe/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  network_ping.observe/metrics/grafana/dashboards/openhab.json
+
+a08381521b464fd5ddfa3736d9488fef54690c353358f8140c9a1c0a9b0b9da4  network_ping.observe/metrics/grafana/dashboards/switching.json
+
+fba19507ce4c1035a4b559aeda650b0c2bc22e7255ecd1528445c4bcd9653c54  network_ping.observe/metrics/grafana/dashboards/usage.json
+
+3ce31fa4515cb756e9c92b81d02b4658fbdb3116439d5ae3049f2fcbc840d151  network_ping.observe/metrics/prometheus/alerts.yml
+
+7ffdb25ff9106bd3eeba93afcef3e25077d2ff7cc51cda3dcbd5091ffd9684c1  network_ping.observe/metrics/prometheus/prometheus.yml
+
+513fcf6cabbe6afe94c1a827c4fa53ca4af3c8db6ba0fa21557df76264400f58  pyatv_http.control/conf/automation/js/all_off.js
+
+5c6e04e2d5975ba4045ce46951883bd3f15eeadd57cdc309eacde0e7343d1e52  pyatv_http.control/conf/automation/js/pyatv_http_den_device.js
+
+469b8a30c3b9aaa5d9465b84d8fba52383cedbfd3b2c0b1437f47b0ef6e57493  pyatv_http.control/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  pyatv_http.control/conf/html/remote/cameras.json
+
+68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  pyatv_http.control/conf/html/remote/diagnostics.json
+
+4b97d70e4c8873645149970f11b8eb0bcc1a48a25f88c4e05efb54de3c2b0c78  pyatv_http.control/conf/html/remote/home.html
+
+14d9d301974d982531c1c52c8ef8e598a800f09742c4972b798c791abdeda8b8  pyatv_http.control/conf/html/remote/house.js
+
+a97a6ae6064a61691f98e77c6f010410f2931d8cc8b4cf9bd75819ea35842df9  pyatv_http.control/conf/html/remote/index.html
+
+a1b4380e333a73f856a4a19abb1dc1bc933b0aa45eeafef6702d0ec6a4e48a0c  pyatv_http.control/conf/html/remote/settings.html
+
+7c6f2c6624ac587f82a60ce2add4c8f8ba40fb269ac233e17b0b193f706bc954  pyatv_http.control/conf/html/remote/topology.html
+
+360dd28a98f42e5ecceda5bc2ceb450101a43812e401c690e008a888e1c1a499  pyatv_http.control/conf/html/remote/topology.json
+
+1e991c14055ed83606cb5147e251491100df542fd82b50afae6bb70f3838cf3a  pyatv_http.control/conf/services/addons.cfg
+
+58ab1eea9d8fe0c4ed74253ac837c2126842642ecdc311b34761f36fe8e36e8f  pyatv_http.control/conf/yaml/all_off.yaml
+
+f69e43afffc2bfe2fb41f2ccb9e840defd940dabf85b6d5c30bb2262b8d9de7f  pyatv_http.control/conf/yaml/appletv.yaml
+
+3a145f2359ae93fcb0b701c94dead7e6c39082ec97649e097561eeb801e60df1  pyatv_http.control/conf/yaml/model.yaml
+
+a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  pyatv_http.control/conf/yaml/pages.yaml
+
+200312cff4fb3cf231f2f13f632e6b18cdd88d4c7c9485c1ad93b70ac3fd2cb3  pyatv_http.control/metrics/exporter/map.json
+
+c89ee14115fa0ef2cbe62a3f78cb4e022d559484223b2836f0a3c757f369cdeb  pyatv_http.control/metrics/grafana/dashboards/devices.json
+
+d9a436bbf60898021b14a33f515b92ebc2b9ad6f0acb25094e4ec2d2e700cf3c  pyatv_http.control/metrics/grafana/dashboards/host.json
+
+31e1e4d622f5a50fd8059e5b6a1755a3341d73365ba2f927c9516abbfc04e740  pyatv_http.control/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  pyatv_http.control/metrics/grafana/dashboards/openhab.json
+
+874ea334619801eba8edcba0425f29f1d5006b3a8b7a6313342f06d05ba029a5  pyatv_http.control/metrics/grafana/dashboards/switching.json
+
+fba19507ce4c1035a4b559aeda650b0c2bc22e7255ecd1528445c4bcd9653c54  pyatv_http.control/metrics/grafana/dashboards/usage.json
+
+3ce31fa4515cb756e9c92b81d02b4658fbdb3116439d5ae3049f2fcbc840d151  pyatv_http.control/metrics/prometheus/alerts.yml
+
+7e101b5e92b8de016d74966d2e09451c43f942949dbd2871b9b5ac740fb25f95  pyatv_http.control/metrics/prometheus/prometheus.yml
+
+684c99239c28c803ffca3e95afa03ab780bb9b9f6d903a85d80baf6f8b55df54  routed/conf/automation/js/all_off.js
+
+987d3d0086d7ebb81f197a2a600e1c683dd075574b25e15e3ddc9c5c42ab72c7  routed/conf/automation/js/denonmarantz_http_example_avr.js
+
+93004b074df9f5ff01ffed61407e4c3f9e1b384fee83c8096f87bd8db50f8776  routed/conf/automation/js/node_modules/thermite-routing-io/index.js
+
+ac5819ab6ee8c64c461c70b1809c4c0e6a2e0503c04eee5dd4878cc36b6cfcc0  routed/conf/automation/js/node_modules/thermite-routing-lifecycle/index.js
+
+9033ad9f1285cc526051b229242230f93c8e4d664a8dcc1a214d703d65b92e3e  routed/conf/automation/js/playing.js
+
+e06a45e9bf6cc5291cc75b807414fbf1f662f40a7b499a334ce3a18fdba5c596  routed/conf/automation/js/pyatv_http_example_player.js
+
+446aa80e31ada56999e65e98213309080eb2ef22b9bf45d952fbcaebfbe1a880  routed/conf/automation/js/reboots.js
+
+1d4b86082aa92316d381bc2e75d4c8d812aba7f5d389c1f53a8cca5f3235af73  routed/conf/automation/js/routing.js
+
+dc4ce13a3585a5ff1ed7f60b7c752a35930c7f249cb77c2089b14fd0185dae16  routed/conf/automation/js/sony_ip_control_example_den_tv.js
+
+0a8d5f19079ca60c89b157141487e55364112d35ebc87ce11a5ba47148782583  routed/conf/automation/js/sony_ip_control_example_screen.js
+
+b9ffd40cf911ced288f4eca72e66d93ebdd0a41fb519c53fc3ffcf2300583aa2  routed/conf/automation/js/sony_ip_control_example_tv.js
+
+bb8dc3a1d6fb8030971b0a5755875c241c1e0c24cdf85454b1a26a83bbae7b73  routed/conf/automation/js/thermite_routing_io_example_matrix.js
+
+589156c8c742459a3cf1199475e3ddfcdbc37011243312b33e5035bf5ad30da3  routed/conf/automation/js/thermite_routing_io_example_usb.js
+
+6816cb538c0dc572ea94adff645c17b78527a87db73c466c7233f78622a42802  routed/conf/automation/js/vrroom_telnet_example_switch.js
+
+5e45509f442f75011653d0e97d8740cb57523d291c5f0abf28db59880b620162  routed/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  routed/conf/html/remote/cameras.json
+
+520850eeca9f2f01a17adcc7566bb0d68f4f1342e031caa3cffae528f23ad505  routed/conf/html/remote/diagnostics.json
+
+290ebd5e1289e79190dfc358e2fba4e02d6259e5fbf0ee568f6a815a7f1fd915  routed/conf/html/remote/home.html
+
+c90b5ab8d27d2d11052a3e0a4f00d25a35dec8a916a6810470a78c073ede592d  routed/conf/html/remote/house.js
+
+dce3c5a079d76ceedb9a196ee05ed1271d7d885f537e17e9611f234f7f0d44b6  routed/conf/html/remote/index.html
+
+ab44395bd70bd5185af45684a3645962a64e7975da20c963e77c68e059c8144b  routed/conf/html/remote/settings.html
+
+c22a7bc21667b55974fe98c8e944d4c8dd2f0170bcd12d3e9fafcaa13a639660  routed/conf/html/remote/topology.html
+
+27d335c3ce64b76b61133e271310463b31485b067d3fd8b740bbae24b01bfb39  routed/conf/html/remote/topology.json
+
+3af3bec588af812f6b58e61d3a685c03d658f81b92cd02d360b94f75c5512d01  routed/conf/services/addons.cfg
+
+cfdfc6568b93a219bd9ad6b6d820ba60ee35ca07b34bcbf90aed694b22dc5765  routed/conf/transform/bk808-input-signal.js
+
+d88cb676de9f2281730eabb1d62707969f616377bdb5b4023f50dd47b811466f  routed/conf/transform/bk808-output-signal.js
+
+83929b0646639a849a4bb2e54427df715913d5f774eee7d1c1ecd1e717a6522d  routed/conf/transform/hex-to-utf8.js
+
+22387f6bb9dbb9a9dcba7f37d98e6b26453de5b0282a85a0c7c202c72ce25018  routed/conf/transform/marantz-audio-signal.js
+
+e74c15a6a31db9b0e310700d4731d86c86e59b6b3f180b8a5b8c823b32feeb21  routed/conf/transform/marantz-video-signal.js
+
+fc3fcc3965995d162b1f562853f736b4187ee950b56ec59f58ced4b2521f47b0  routed/conf/transform/marantz-volume-display.js
+
+856727d01506e5482d91b7af2262ef084aaac4a1b46b631008e78e85f11c6dd8  routed/conf/transform/vrroom-signal.js
+
+58ab1eea9d8fe0c4ed74253ac837c2126842642ecdc311b34761f36fe8e36e8f  routed/conf/yaml/all_off.yaml
+
+c6ba7e30964e513f4c896cd8514edca20bb75e18fb18f5e00e0d8e07155527d8  routed/conf/yaml/appletv.yaml
+
+73e2558eb5154c2b6613faa8c93c2cf2d3263dc95de197324ea86268130d12ac  routed/conf/yaml/bk808.yaml
+
+0fc3d4772057e32879d3409974d4d1a468b4e5d390b142dcfcd8f7ef57fa21e6  routed/conf/yaml/marantz.yaml
+
+8a83582ace316ab84126da097e9c6d11fc104f57a27bb44067550b0f95f99218  routed/conf/yaml/model.yaml
+
+eb9b236b839602333b503dae9a99bab1e9d6f2f5fdf117b4f5fcbee0e2f3b7da  routed/conf/yaml/pages.yaml
+
+4cfe6fab623eb1b436298038d3e58c762ec684ce70fecff94dce496be0ab9ed1  routed/conf/yaml/playing.yaml
+
+3351f3b125d75eebebe0d973475d8525575da2770d421d24512ef2696a614353  routed/conf/yaml/reboots.yaml
+
+e117149a318307f9aaf7cca7eb271f5533b6d08a3d86c606acb4b7c445b80e44  routed/conf/yaml/routing.yaml
+
+63570faf97343ab3eea8c591f17c0072494021e3658d768641fd6ae2db9da5ef  routed/conf/yaml/routing_io.yaml
+
+a3f738e018d866dd8a4ea775050d7bac296b8579aedacc38eb4110391ed29a26  routed/conf/yaml/sony.yaml
+
+f9cda0d4ab8d73c8535db2f4aa4b699c874baee36bdbe1f8559c2fe43425f15b  routed/conf/yaml/sony_ip_control.yaml
+
+c3477a56f1f3f46def53a0232bf3439402915c4e470ed302bf26b0733c10e3d4  routed/conf/yaml/ukm404.yaml
+
+d287996f91b026c89229d2c67a89ed3154ba1e1be97a95e38c741ce0da6b9199  routed/conf/yaml/vrroom.yaml
+
+f59360a5480a9307e1e95798f11fbc2d378980c26e7b63cfecd47219832f91c0  routed/conf/yaml/vrroom_telnet.yaml
+
+6a2c76b0f50883d13307084b930ab611ef3c8187dba7e464cef0c08122b467dd  routed/conf/yaml/wiim.yaml
+
+67fb62de0fcbd3b3ac7cc898ab3d403ae96ebe7b9ad433d8b01f25767a0b2e90  routed/metrics/exporter/map.json
+
+a00d6a8997b08bf30f44d935e0bb851f6a3ad9da3d11e99b9e5ca33390792f99  routed/metrics/grafana/dashboards/devices.json
+
+86670b0254653623390b3990bb9c7a6b2487935ab8c5c1b945d1211dd3d76e7c  routed/metrics/grafana/dashboards/host.json
+
+ce192b56f331e2cbfde38c225b35b06d6b64820d95d7ae31c361854d1faf3285  routed/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  routed/metrics/grafana/dashboards/openhab.json
+
+490bfa0f0fb5f60c4030bb1e89cf2422a615a1de40adc3c5524c858a297e1ef8  routed/metrics/grafana/dashboards/switching.json
+
+c7e6db36c30d50bec9476b2635b7528fff3a915a58c83eb274b9341047cafe43  routed/metrics/grafana/dashboards/usage.json
+
+b665b2f645f1d62b77a8cc182454ec99f65d568f473460851fa77655bd74ce4a  routed/metrics/prometheus/alerts.yml
+
+41a9983ac6cabc045c30e0e0da4a4ba4eb05bb80dc81073afb2e171fa6dec67f  routed/metrics/prometheus/prometheus.yml
+
+c117cf2ad02b7699ab385db1f7a4c3b3d8313d9cbd3b112e25f57ffd4ea30053  sonos.control/conf/automation/js/playing.js
+
+21c7453dfdc1b605732f37ad39abb1c17024cb88a315245923450a543f7bc8ea  sonos.control/conf/automation/js/sonos_control.js
+
+8f0f06a464aa975d4375ae949c43153f5264d63b9496061e4a9b836216c77ffe  sonos.control/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  sonos.control/conf/html/remote/cameras.json
+
+68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  sonos.control/conf/html/remote/diagnostics.json
+
+e8d4f57bfee9d7fa6dd8267d22959f34505754588ba06e6976fe71a4396c4394  sonos.control/conf/html/remote/home.html
+
+046fed34688bff9bc91ec0b7c3bbd6c828296ba512a9d0c5056fba553a0475eb  sonos.control/conf/html/remote/house.js
+
+23e0270017078b7f10f1ed5a6ac316699db24aa1a38513d5546095e9db6934bc  sonos.control/conf/html/remote/index.html
+
+4f09dbe19349d53055dfb621048cf48b62b6a8ee1b9df6dba9f219b787d403d4  sonos.control/conf/html/remote/settings.html
+
+246dd744fe48972189e6a7b0697488df5392e5f92a8ff17fcd5d46235d1352ad  sonos.control/conf/html/remote/topology.html
+
+0ab6b8e3fe4a073472a48cdb643b613153e67921015eeed008e57d5f321f7a5c  sonos.control/conf/html/remote/topology.json
+
+36b3ce98c664e8420f55ecb85e9b328d44aefe89adb325478266a4c5bc4ee58b  sonos.control/conf/services/addons.cfg
+
+7370b1f27590e12313385b87b0e61861fc59d540644be87dee760c917e73614f  sonos.control/conf/services/upnp.cfg
+
+657d9a828f20b1ccb9dfbc9f16637ae6db5c5c56e47af6084db93905e42fab5d  sonos.control/conf/yaml/model.yaml
+
+a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  sonos.control/conf/yaml/pages.yaml
+
+ffd5905554cb81f7f487d10892991251658774afc0929adc8e62f830ce404391  sonos.control/conf/yaml/playing.yaml
+
+fe09eccd6a4000c69a0dad484ba258d42c0f7585f331452d07344176c144ed84  sonos.control/conf/yaml/sonos.yaml
+
+759755b0534fb80a8d4948a225b96eeb435d544ae673135fb909f9b556bef8d9  sonos.control/metrics/exporter/map.json
+
+7cb252580a792a581fddb3dbe13255586b4139ac92e6e0a12e820fd007c139c9  sonos.control/metrics/grafana/dashboards/devices.json
+
+e457487952ab554fa835a57b5137027e1f9da58177c5bb66dbad17186e2c75ec  sonos.control/metrics/grafana/dashboards/host.json
+
+9315dff57f1652665499853e380ba781a74f58311ca15f0b19c062cda696ee00  sonos.control/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  sonos.control/metrics/grafana/dashboards/openhab.json
+
+56ec8d903d9baa9f717e065916f421d4816e95ff2a955f2cfe4d980783d5c14d  sonos.control/metrics/grafana/dashboards/switching.json
+
+2e00cd366d740d7e9f9f39312c95e3aff258b441663e11444303baf7b2bb11d3  sonos.control/metrics/grafana/dashboards/usage.json
+
+a25d8e3065ba25c8dbb667c49f68f2c75d2ef21c1827dde220384f0d4e2361a7  sonos.control/metrics/prometheus/alerts.yml
+
+2384f2ee8c231cdb510f2b462554f4c1336d0a95efd93b251ff980d7c455598d  sonos.control/metrics/prometheus/prometheus.yml
+
+c117cf2ad02b7699ab385db1f7a4c3b3d8313d9cbd3b112e25f57ffd4ea30053  sonos.observe/conf/automation/js/playing.js
+
+c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  sonos.observe/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  sonos.observe/conf/html/remote/cameras.json
+
+68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  sonos.observe/conf/html/remote/diagnostics.json
+
+c396aba897b006858a141afdcc78c69d958c5bda22050331dd6c5032583f75bf  sonos.observe/conf/html/remote/home.html
+
+7e373c77f93252e80eee9d2e3610d33dd269132a3cbd91d2d4ca81997d85429b  sonos.observe/conf/html/remote/house.js
+
+5c252b3851181bd95c271963c69dba832acfdfc844888e2d8801fcff954bebb1  sonos.observe/conf/html/remote/index.html
+
+93a438319470127036385fa5973f0eb82acad83aa4b1f7a6446d458b1ccf4786  sonos.observe/conf/html/remote/settings.html
+
+286cf07d7c21015f75ba5b504def6fd81c6163f7fa3f6041a721d31f6f2d5a61  sonos.observe/conf/html/remote/topology.html
+
+0ab6b8e3fe4a073472a48cdb643b613153e67921015eeed008e57d5f321f7a5c  sonos.observe/conf/html/remote/topology.json
+
+a4f1ba77db8948068fa68586ca1f19e8f6e80d55d3c099176c859619467a6f83  sonos.observe/conf/services/addons.cfg
+
+7370b1f27590e12313385b87b0e61861fc59d540644be87dee760c917e73614f  sonos.observe/conf/services/upnp.cfg
+
+657d9a828f20b1ccb9dfbc9f16637ae6db5c5c56e47af6084db93905e42fab5d  sonos.observe/conf/yaml/model.yaml
+
+a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  sonos.observe/conf/yaml/pages.yaml
+
+ffd5905554cb81f7f487d10892991251658774afc0929adc8e62f830ce404391  sonos.observe/conf/yaml/playing.yaml
+
+01f3c01dcd36c08e3e195eed9ea317a3f7a7e9080d6b244fad381b4bc6a0ee91  sonos.observe/conf/yaml/sonos.yaml
+
+0002d2534061bb07125b048d9a371cbde060f547e8ec048f4e5c6ec20def9d48  sonos.observe/metrics/exporter/map.json
+
+ebac2454a1fb8c9d417511c3877fb17a0e0fd0a629bccc714a2a3f1e2cfec8ae  sonos.observe/metrics/grafana/dashboards/devices.json
+
+e457487952ab554fa835a57b5137027e1f9da58177c5bb66dbad17186e2c75ec  sonos.observe/metrics/grafana/dashboards/host.json
+
+4081c94d9a68d79d710f82a64cd8b9e103170c352edebceb8b000b174f790ecf  sonos.observe/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  sonos.observe/metrics/grafana/dashboards/openhab.json
+
+56ec8d903d9baa9f717e065916f421d4816e95ff2a955f2cfe4d980783d5c14d  sonos.observe/metrics/grafana/dashboards/switching.json
+
+fba19507ce4c1035a4b559aeda650b0c2bc22e7255ecd1528445c4bcd9653c54  sonos.observe/metrics/grafana/dashboards/usage.json
+
+3ce31fa4515cb756e9c92b81d02b4658fbdb3116439d5ae3049f2fcbc840d151  sonos.observe/metrics/prometheus/alerts.yml
+
+2384f2ee8c231cdb510f2b462554f4c1336d0a95efd93b251ff980d7c455598d  sonos.observe/metrics/prometheus/prometheus.yml
+
+513fcf6cabbe6afe94c1a827c4fa53ca4af3c8db6ba0fa21557df76264400f58  sony_adcp.control/conf/automation/js/all_off.js
+
+b56b38ffa0727e4ffd88d7987905bdf0c6e1ef2ad5e242a8e2ee670c2058b34c  sony_adcp.control/conf/automation/js/sony_adcp_den_device.js
+
+6a76d96d7b62dd9c8a044ca6e74dd54d8d04909c88d50bc8c9b735320dd07723  sony_adcp.control/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  sony_adcp.control/conf/html/remote/cameras.json
+
+68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  sony_adcp.control/conf/html/remote/diagnostics.json
+
+965e9191c135d4791fe749ef30fe8a6d48a97b077020225caadc89db35abcfe7  sony_adcp.control/conf/html/remote/home.html
+
+2cc63440233615eb07202fe8ccc8f2b55ffdcfffdaf561bdeb8082a904dfc210  sony_adcp.control/conf/html/remote/house.js
+
+8ce4002ade81510c217e294e754da0bcf986c21c031b7e651dfba135a9840f77  sony_adcp.control/conf/html/remote/index.html
+
+279d1ec82f829532bf542524ee40314184ee41ca46036cbc53a13fab321df6a1  sony_adcp.control/conf/html/remote/settings.html
+
+3521078814124aa9f07d7ae4967b4c602779c371836c593d61b497759c1062d6  sony_adcp.control/conf/html/remote/topology.html
+
+614b1d923af0ae8da9d37a76ed4b8fb77a1dfa751dcf7cd8a18bf6ddd210e6c8  sony_adcp.control/conf/html/remote/topology.json
+
+9ba2f1ab6e82e559ee18d31b25ba91b4778c1bc1dc5599e050210ca8f74e9653  sony_adcp.control/conf/services/addons.cfg
+
+58ab1eea9d8fe0c4ed74253ac837c2126842642ecdc311b34761f36fe8e36e8f  sony_adcp.control/conf/yaml/all_off.yaml
+
+4af7b7190e22ad431be943394550ac398984f052d8df6fec983e4c9a6f10b669  sony_adcp.control/conf/yaml/model.yaml
+
+a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  sony_adcp.control/conf/yaml/pages.yaml
+
+cb9279dced9ab1000921c59822b7d400d9089bb669178f31ee943deb26f5abc9  sony_adcp.control/conf/yaml/projector.yaml
+
+262f2b5bfec5f12d1d3f634ec7c18020027d5be05e9d5accc129e439064a7862  sony_adcp.control/metrics/exporter/map.json
+
+fd65414ecf265904d5dce78262551a1e2d2ae5cf6f53f3ffdc09fd3792428c17  sony_adcp.control/metrics/grafana/dashboards/devices.json
+
+f9ccf138bfdbd90c09ea238ae33fd56cb01b6edc43497120f53a5640ac4b6f12  sony_adcp.control/metrics/grafana/dashboards/host.json
+
+21fb00f7550c2549a4c7aff9eeec4949eb79428ba21e4df11d0f169bc7168f61  sony_adcp.control/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  sony_adcp.control/metrics/grafana/dashboards/openhab.json
+
+9e19f9af1ada118cf67f45e4e6e1ceaabd685b83222bd9b491077e75953a2aa4  sony_adcp.control/metrics/grafana/dashboards/switching.json
+
+fba19507ce4c1035a4b559aeda650b0c2bc22e7255ecd1528445c4bcd9653c54  sony_adcp.control/metrics/grafana/dashboards/usage.json
+
+3ce31fa4515cb756e9c92b81d02b4658fbdb3116439d5ae3049f2fcbc840d151  sony_adcp.control/metrics/prometheus/alerts.yml
+
+46774083c00e450065e8406b14b5bd9da647681741298585f23d9fb720f5a817  sony_adcp.control/metrics/prometheus/prometheus.yml
+
+a0605de6300cf954db99b96b766828fe918f6d181ad57688eccba6078ef90178  sony_adcp.observe/conf/automation/js/sony_adcp_den_device.js
+
+c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  sony_adcp.observe/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  sony_adcp.observe/conf/html/remote/cameras.json
+
+68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  sony_adcp.observe/conf/html/remote/diagnostics.json
+
+165c140b3e31f761a9c2bc74bcab92f6ece98a79293be9f04ecfe0a6352cdf5a  sony_adcp.observe/conf/html/remote/home.html
+
+7ff58852ac76e6269fe075575943ea08a10d8eefae04c2b2824ffe707e8b35ef  sony_adcp.observe/conf/html/remote/house.js
+
+3661971323abb4965eab2afc65b22d3b7c1815d134eb49f46069d50a4eea0174  sony_adcp.observe/conf/html/remote/index.html
+
+4f73992f0f9507e90315802caa38e7f1b8b9a39df74018813a878252049837cc  sony_adcp.observe/conf/html/remote/settings.html
+
+98dee5ff9f991d7caadfc811c8e2df131cd8169c75f6d083cf0b4784f152672d  sony_adcp.observe/conf/html/remote/topology.html
+
+614b1d923af0ae8da9d37a76ed4b8fb77a1dfa751dcf7cd8a18bf6ddd210e6c8  sony_adcp.observe/conf/html/remote/topology.json
+
+f2085dd58ee48829ce60371498e94a81b224f2c0c7d7e7457b992c8fa534ff37  sony_adcp.observe/conf/services/addons.cfg
+
+4af7b7190e22ad431be943394550ac398984f052d8df6fec983e4c9a6f10b669  sony_adcp.observe/conf/yaml/model.yaml
+
+a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  sony_adcp.observe/conf/yaml/pages.yaml
+
+494dc7086300a67eda8c40fda2502e981b6a2ea79403eb61cc2c78a6c52c08ee  sony_adcp.observe/conf/yaml/projector.yaml
+
+262f2b5bfec5f12d1d3f634ec7c18020027d5be05e9d5accc129e439064a7862  sony_adcp.observe/metrics/exporter/map.json
+
+fd65414ecf265904d5dce78262551a1e2d2ae5cf6f53f3ffdc09fd3792428c17  sony_adcp.observe/metrics/grafana/dashboards/devices.json
+
+f9ccf138bfdbd90c09ea238ae33fd56cb01b6edc43497120f53a5640ac4b6f12  sony_adcp.observe/metrics/grafana/dashboards/host.json
+
+21fb00f7550c2549a4c7aff9eeec4949eb79428ba21e4df11d0f169bc7168f61  sony_adcp.observe/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  sony_adcp.observe/metrics/grafana/dashboards/openhab.json
+
+9e19f9af1ada118cf67f45e4e6e1ceaabd685b83222bd9b491077e75953a2aa4  sony_adcp.observe/metrics/grafana/dashboards/switching.json
+
+fba19507ce4c1035a4b559aeda650b0c2bc22e7255ecd1528445c4bcd9653c54  sony_adcp.observe/metrics/grafana/dashboards/usage.json
+
+3ce31fa4515cb756e9c92b81d02b4658fbdb3116439d5ae3049f2fcbc840d151  sony_adcp.observe/metrics/prometheus/alerts.yml
+
+46774083c00e450065e8406b14b5bd9da647681741298585f23d9fb720f5a817  sony_adcp.observe/metrics/prometheus/prometheus.yml
+
+513fcf6cabbe6afe94c1a827c4fa53ca4af3c8db6ba0fa21557df76264400f58  sony_ip_control.control/conf/automation/js/all_off.js
+
+945e9d5f692ca80ae5a668b679415067bbe883ae3e28001dc5d6d6cdb2f45c79  sony_ip_control.control/conf/automation/js/sony_ip_control_den_device.js
+
+4897ebd5d1df0f2281079745cdef61ba381fd1df4d30ea0a2ce1c4889b88b97a  sony_ip_control.control/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  sony_ip_control.control/conf/html/remote/cameras.json
+
+68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  sony_ip_control.control/conf/html/remote/diagnostics.json
+
+07c512d6228a4571e6c98f9a211598281569e172c2e69dd950901af450c0be27  sony_ip_control.control/conf/html/remote/home.html
+
+2e37fae021c7d5c0cd1542b744f6ecc1eb4ef421b87b341feaf1756047107307  sony_ip_control.control/conf/html/remote/house.js
+
+5c95032c9b3f66d113aa1aeb87038cde3f209d046f5fc92fe2b36a278c933efb  sony_ip_control.control/conf/html/remote/index.html
+
+1cc865c1c6780abb8c7f011425dbcea84e11d8f8754059d5b2120c517278bcb3  sony_ip_control.control/conf/html/remote/settings.html
+
+00f5a6a80ba398dc503f016d9eb06642d0d6c14be12e9cfac39c5c6fb9f490ee  sony_ip_control.control/conf/html/remote/topology.html
+
+88460c5892080637a2c0f936b18d3dd26c629e1a322e8936c94f754eb5cb5a83  sony_ip_control.control/conf/html/remote/topology.json
+
+6e66b05149e100f1b77d9c8943b68810367a1e651c349cbe663fd43a8b2a73ee  sony_ip_control.control/conf/services/addons.cfg
+
+58ab1eea9d8fe0c4ed74253ac837c2126842642ecdc311b34761f36fe8e36e8f  sony_ip_control.control/conf/yaml/all_off.yaml
+
+f7341662d23b0084521ffbb30b3865acc5d04eea4271cffbd07c809015b9f267  sony_ip_control.control/conf/yaml/model.yaml
+
+a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  sony_ip_control.control/conf/yaml/pages.yaml
+
+7a6b86e8bdf4e7034319cb6972cb5e5b44a2136b9aa86da2790e1ecff8be227d  sony_ip_control.control/conf/yaml/sony.yaml
+
+b309fc62dd3553ab9d51edc6820d142ad828c6af939fc44ccc2a34a6c92ed2c5  sony_ip_control.control/conf/yaml/sony_ip_control.yaml
+
+ea8fe4ff1b8cea7bb15cdc3536527cebc5d831be612bd4a6797f49c3e69196a5  sony_ip_control.control/metrics/exporter/map.json
+
+c0759fe4af8542d1b53cb7f622dbd4e0aea5fc4e7b693b3bf1ebb0c008829a62  sony_ip_control.control/metrics/grafana/dashboards/devices.json
+
+a48bb0b20d7ecb82a301313dea1521d0dcfdd90099fbd75c1405437f36e76a59  sony_ip_control.control/metrics/grafana/dashboards/host.json
+
+3dc10302ea6785bc620b1b8c118b6516e7c9731270742511b9a0cd051d2bc95e  sony_ip_control.control/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  sony_ip_control.control/metrics/grafana/dashboards/openhab.json
+
+fd1a7a9827b5f5a7a4f9cfc2870db410ab3e96c5632a0250af6d306f80be72c9  sony_ip_control.control/metrics/grafana/dashboards/switching.json
+
+fba19507ce4c1035a4b559aeda650b0c2bc22e7255ecd1528445c4bcd9653c54  sony_ip_control.control/metrics/grafana/dashboards/usage.json
+
+3ce31fa4515cb756e9c92b81d02b4658fbdb3116439d5ae3049f2fcbc840d151  sony_ip_control.control/metrics/prometheus/alerts.yml
+
+630d66f56c07773faf7d4a463f0a4d548b208d02894a1ea6dc26152b72257167  sony_ip_control.control/metrics/prometheus/prometheus.yml
+
+c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  sony_rest.observe/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  sony_rest.observe/conf/html/remote/cameras.json
+
+68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  sony_rest.observe/conf/html/remote/diagnostics.json
+
+6d1f83fd1588f43ef730e47f3600ba26256f48d2ac1ed5558edaa214bc74a81e  sony_rest.observe/conf/html/remote/home.html
+
+b90016a89af3bf81d2b29bd96c2087709ccd064a1afed67a6c896e94cc7efe72  sony_rest.observe/conf/html/remote/house.js
+
+2fcac183baaaf055f0c3b3c7720d9e3979271395d60608c50de8d1b95b024fd0  sony_rest.observe/conf/html/remote/index.html
+
+7b68cbbc97f2b59ca730d42732705c5dc048cfad6ea07cf94febe6ce5d57d854  sony_rest.observe/conf/html/remote/settings.html
+
+4b3a699dc2e73d54ad9125fcca58c88641651fc92a84551d7238d7dffa04035c  sony_rest.observe/conf/html/remote/topology.html
+
+88460c5892080637a2c0f936b18d3dd26c629e1a322e8936c94f754eb5cb5a83  sony_rest.observe/conf/html/remote/topology.json
+
+0807087682adc556b813b2a2a1c13022ad03c084ac234b06e31a204bac443fa5  sony_rest.observe/conf/services/addons.cfg
+
+f7341662d23b0084521ffbb30b3865acc5d04eea4271cffbd07c809015b9f267  sony_rest.observe/conf/yaml/model.yaml
+
+a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  sony_rest.observe/conf/yaml/pages.yaml
+
+bc9df2df992f4457a30cebc83eb130fab6ea47f030324451f712bcf6d1bd9c91  sony_rest.observe/conf/yaml/sony.yaml
+
+6c49bb2815ca1e5990e3a0bcb735093c718040f06af1e60f432d2ddd59393d09  sony_rest.observe/metrics/exporter/map.json
+
+c0759fe4af8542d1b53cb7f622dbd4e0aea5fc4e7b693b3bf1ebb0c008829a62  sony_rest.observe/metrics/grafana/dashboards/devices.json
+
+a48bb0b20d7ecb82a301313dea1521d0dcfdd90099fbd75c1405437f36e76a59  sony_rest.observe/metrics/grafana/dashboards/host.json
+
+3dc10302ea6785bc620b1b8c118b6516e7c9731270742511b9a0cd051d2bc95e  sony_rest.observe/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  sony_rest.observe/metrics/grafana/dashboards/openhab.json
+
+fd1a7a9827b5f5a7a4f9cfc2870db410ab3e96c5632a0250af6d306f80be72c9  sony_rest.observe/metrics/grafana/dashboards/switching.json
+
+fba19507ce4c1035a4b559aeda650b0c2bc22e7255ecd1528445c4bcd9653c54  sony_rest.observe/metrics/grafana/dashboards/usage.json
+
+3ce31fa4515cb756e9c92b81d02b4658fbdb3116439d5ae3049f2fcbc840d151  sony_rest.observe/metrics/prometheus/alerts.yml
+
+538bbca63cbb1cf767f27d3c7f798a7e737b2063f9783d884954c5cdae1a41aa  sony_rest.observe/metrics/prometheus/prometheus.yml
+
+e4aa04cb68fae831817043458f64dd6531bd6e70e36aaf1867001bcc563d7afa  ukm404_http.control/conf/automation/js/reboots.js
+
+14134cc3432a3a248b973d8f16920c0d387f8b43f7eb94701bbdfe9f312baf70  ukm404_http.control/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  ukm404_http.control/conf/html/remote/cameras.json
+
+68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  ukm404_http.control/conf/html/remote/diagnostics.json
+
+3cd6e1f4e675d4a2f0429d7fdbf546bbf3a6e9156eaba61feb7bea8ff3552672  ukm404_http.control/conf/html/remote/home.html
+
+5d286a69c9bd68aa8808e319b0e7ab16eaaec9861200a73c4112cee926ec7f37  ukm404_http.control/conf/html/remote/house.js
+
+4fd787df762d96136068f8538ea52f3e2bf7ad5f7850f0cf5f2beedec47b77e5  ukm404_http.control/conf/html/remote/index.html
+
+630b4cdcb6cef50957da6ea0bba3064bb29582c7e3c96a093e35a231c6681584  ukm404_http.control/conf/html/remote/settings.html
+
+04f85aae3371f0cea9a1ffb153c26fbee3e5bdfd465dbf2dbc956fec3407c98f  ukm404_http.control/conf/html/remote/topology.html
+
+5c74eb89f77ae6750ebc93b2ae7ba01361b2f380fdc379f5eaaa2744bbd85e46  ukm404_http.control/conf/html/remote/topology.json
+
+085cf7621e8427f2ee27536dfc2a1ccb6306f68f4b99e63c80030e5a1bfcc9df  ukm404_http.control/conf/services/addons.cfg
+
+82472737da4d6fea47ca56648a847f5a2e3a79845a2d967aa39193ca255e8d96  ukm404_http.control/conf/yaml/model.yaml
+
+a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  ukm404_http.control/conf/yaml/pages.yaml
+
+3351f3b125d75eebebe0d973475d8525575da2770d421d24512ef2696a614353  ukm404_http.control/conf/yaml/reboots.yaml
+
+e38e872bf28b1907660677c6689f18171afdbd9f4cb4f1e6976cbe2e28094f4d  ukm404_http.control/conf/yaml/ukm404.yaml
+
+b2a501a26ab8b19f1bdb1ab79911387b2d3402c343e0479d745ee7400f1ae2da  ukm404_http.control/metrics/exporter/map.json
+
+c816e2b1f6703d512c293c79d9e3c224c919278ad5d7f80a140181c74c12a5cf  ukm404_http.control/metrics/grafana/dashboards/devices.json
+
+71d4434aaf27dff6869c3529aada4f3d1e90f7fc0387d5cd8295d0cc9ca3d59f  ukm404_http.control/metrics/grafana/dashboards/host.json
+
+50761ddeb72a77353e209e25e3f15f814a9e7e32f95658dcc674bbf78af884d4  ukm404_http.control/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  ukm404_http.control/metrics/grafana/dashboards/openhab.json
+
+74e6618f1c4447f658a2b01f6ea2975b94fd31e2a8746e2f5ad821979c725042  ukm404_http.control/metrics/grafana/dashboards/switching.json
+
+fba19507ce4c1035a4b559aeda650b0c2bc22e7255ecd1528445c4bcd9653c54  ukm404_http.control/metrics/grafana/dashboards/usage.json
+
+64429047ff845b4538be3493d2c2390178e99716df413ca48b9cbfe3022cbc6a  ukm404_http.control/metrics/prometheus/alerts.yml
+
+226e7c9216d66436812d143b3af0ad300b8f82b29f8ded9e74b1aa989fdb8b74  ukm404_http.control/metrics/prometheus/prometheus.yml
+
+c1ea311c23e2621426805b1ad0799bb35239ce87c3a299f5cbcbec7d580bb5cd  unifi_protect.control/conf/automation/js/unifi_protect.js
+
+c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  unifi_protect.control/conf/html/remote/activity.json
+
+168315dfb05d01819be3d8439bddbf21e17e997f636c9bfda36b495eb2314481  unifi_protect.control/conf/html/remote/cameras.json
+
+68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  unifi_protect.control/conf/html/remote/diagnostics.json
+
+98adec675f27e1efee45025d7912ba4754baf3247cf7f38c64b3a5af485d8be6  unifi_protect.control/conf/html/remote/home.html
+
+d95a9c16256813ed251ad6cee6bdb52067ace09f7bc456e5523da90739a2aa70  unifi_protect.control/conf/html/remote/house.js
+
+0c7f95afdc83440b1d84c324d951c1dc626a91bbbb6e5c37af7f8e99ce495c57  unifi_protect.control/conf/html/remote/index.html
+
+11a51cd83cc1d32bdd2d51a01d61fc5856ea57e161da67b420f553cd05e4e338  unifi_protect.control/conf/html/remote/settings.html
+
+9e1c8e9daa46e54d116023a21c5ad15677b5f0a75ad108832cb0c097deff23bb  unifi_protect.control/conf/html/remote/topology.html
+
+9b4155fc438c190803c419be18cd657c5188dbcda7051044767870d499e23fc8  unifi_protect.control/conf/html/remote/topology.json
+
+1546a9d47e180a1fb78657686f8466d227bad48b175dc1ed124c13b07ce1b261  unifi_protect.control/conf/services/addons.cfg
+
+5adfef9d45ea245d9d983b3109c75f0981deba306aa350d8fcc1a6729da3b056  unifi_protect.control/conf/services/unifiprotect.cfg
+
+07a987693962144a6b87523db6a597f489b9d4715e931382d9d0fef9ca435bab  unifi_protect.control/conf/yaml/cameras.yaml
+
+89610213f27104f7d4685611737a0750a3321b9740c3d4da970f2274ef2d845b  unifi_protect.control/conf/yaml/model.yaml
+
+3f4d23ea53fa0b83cf0a60f3de08c23b4e5fb9af1039ea297f3519230b3be39f  unifi_protect.control/conf/yaml/pages.yaml
+
+b9e68a50e10bd7b203ea8f2738268b56c4a250650e0b7be15e9c4b07b02c7dd0  unifi_protect.control/metrics/exporter/map.json
+
+d807a00d3de737fb2ffa734547ae0e188e2dc8e1e9153f05c625dfd83fc2d631  unifi_protect.control/metrics/grafana/dashboards/devices.json
+
+020f5e76269c24ba9c0e959e1129356fcb915b8a39a7aa4ea5ab2dd47ed5cbfb  unifi_protect.control/metrics/grafana/dashboards/host.json
+
+a7d24a5559b5168f823023ca396ae8e0166503da91e09fb04ecf88def773e0d8  unifi_protect.control/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  unifi_protect.control/metrics/grafana/dashboards/openhab.json
+
+4165fb4fca064fbcccca5a3c336118d66b460b7bbf11f3c6dc58f1bd1169fe7a  unifi_protect.control/metrics/grafana/dashboards/switching.json
+
+fba19507ce4c1035a4b559aeda650b0c2bc22e7255ecd1528445c4bcd9653c54  unifi_protect.control/metrics/grafana/dashboards/usage.json
+
+3ce31fa4515cb756e9c92b81d02b4658fbdb3116439d5ae3049f2fcbc840d151  unifi_protect.control/metrics/prometheus/alerts.yml
+
+0d96eeb837d3fc897b375cad86f66a43a781ece8ecd80acecf2b6ad0a9240bd7  unifi_protect.control/metrics/prometheus/prometheus.yml
+
+c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  vrroom_http.observe/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  vrroom_http.observe/conf/html/remote/cameras.json
+
+26f9aac36a97a41f728912cb787eab038f1e2e6707629acd2e3ab7c48e6d67c9  vrroom_http.observe/conf/html/remote/diagnostics.json
+
+6c2eeb481bc02f8db201f2ee85154279539eedc5d8d9e74b7380d6303b721bdb  vrroom_http.observe/conf/html/remote/home.html
+
+3e88153450c35db7c101540c74ea1236cb8e5f7fb69939fbae47b59799d3dc7e  vrroom_http.observe/conf/html/remote/house.js
+
+0f4a427393469ef31309096a82505661083c818abfc6fd9564e4784af1a093ef  vrroom_http.observe/conf/html/remote/index.html
+
+67546983543131126f227ac09e24c3ab961f2e7e75aee5e80fb96e5135f05e69  vrroom_http.observe/conf/html/remote/settings.html
+
+88dbc802aeca12a2f274961400ffba9d9e6d4342eaa4d158e896046eaa6be25e  vrroom_http.observe/conf/html/remote/topology.html
+
+ececceab9c89220df352790c0fe6be7a5ec5fda06877f91e42909c89f29847e1  vrroom_http.observe/conf/html/remote/topology.json
+
+9e2e5fc3b827862d538db455df02467f725ae375ad002f93b56d4384e1349a1a  vrroom_http.observe/conf/services/addons.cfg
+
+856727d01506e5482d91b7af2262ef084aaac4a1b46b631008e78e85f11c6dd8  vrroom_http.observe/conf/transform/vrroom-signal.js
+
+6ff1784333611cb0abbdaa617185a56dcca1a2e6126aa077abb85ffa5c52e1cd  vrroom_http.observe/conf/yaml/model.yaml
+
+a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  vrroom_http.observe/conf/yaml/pages.yaml
+
+449afe81edcef7d939508bdcbb1dce85ec52b5e28e0bbd18561b4564833a6838  vrroom_http.observe/conf/yaml/vrroom.yaml
+
+f9c85a103d7896e17c3cc3789b44d3df0d687bfcd1b50e8af8bee980a8a2ebf5  vrroom_http.observe/metrics/exporter/map.json
+
+5d7c8ac1a0342e5e53a31d6720dc9aa1debb3a89ca1b95152486e6946afab892  vrroom_http.observe/metrics/grafana/dashboards/devices.json
+
+4c0b1b6456980f5da4297ee959cb484362cafacfc8f83faedb310ee219473b72  vrroom_http.observe/metrics/grafana/dashboards/host.json
+
+317ecbc1073b38e4d0aaabf934af6288a9e951f53ce626a9dc2999cc9f50ee75  vrroom_http.observe/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  vrroom_http.observe/metrics/grafana/dashboards/openhab.json
+
+b93bcb0ec62601f20e2c9aa588711af7846133992851b3aa0e461e6614cc2e88  vrroom_http.observe/metrics/grafana/dashboards/switching.json
+
+fba19507ce4c1035a4b559aeda650b0c2bc22e7255ecd1528445c4bcd9653c54  vrroom_http.observe/metrics/grafana/dashboards/usage.json
+
+3ce31fa4515cb756e9c92b81d02b4658fbdb3116439d5ae3049f2fcbc840d151  vrroom_http.observe/metrics/prometheus/alerts.yml
+
+0d2630c35b67085ded16fea4c3358e301c690b3a01b5236f93f0b256679a25b0  vrroom_http.observe/metrics/prometheus/prometheus.yml
+
+7efed524d9c4c4b882bea1b1410fc66830a61485120e57c0631fa6ff6e724c42  vrroom_telnet.control/conf/automation/js/reboots.js
+
+ab8bd8fb20ab7f815361ba57d58cae10f0f876f5620fe6408a7efb81acaccb64  vrroom_telnet.control/conf/automation/js/vrroom_telnet_den_device.js
+
+ba25485cd117485894af1c1f704825451519ebaf44f55eb80a53534a1084d8dd  vrroom_telnet.control/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  vrroom_telnet.control/conf/html/remote/cameras.json
+
+68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  vrroom_telnet.control/conf/html/remote/diagnostics.json
+
+6c2eeb481bc02f8db201f2ee85154279539eedc5d8d9e74b7380d6303b721bdb  vrroom_telnet.control/conf/html/remote/home.html
+
+3e88153450c35db7c101540c74ea1236cb8e5f7fb69939fbae47b59799d3dc7e  vrroom_telnet.control/conf/html/remote/house.js
+
+0f4a427393469ef31309096a82505661083c818abfc6fd9564e4784af1a093ef  vrroom_telnet.control/conf/html/remote/index.html
+
+67546983543131126f227ac09e24c3ab961f2e7e75aee5e80fb96e5135f05e69  vrroom_telnet.control/conf/html/remote/settings.html
+
+88dbc802aeca12a2f274961400ffba9d9e6d4342eaa4d158e896046eaa6be25e  vrroom_telnet.control/conf/html/remote/topology.html
+
+ececceab9c89220df352790c0fe6be7a5ec5fda06877f91e42909c89f29847e1  vrroom_telnet.control/conf/html/remote/topology.json
+
+04da729eb01b0e62bd8095c2392ca3437e4615ddbbb9ad701ed04f35f649149b  vrroom_telnet.control/conf/services/addons.cfg
+
+6ff1784333611cb0abbdaa617185a56dcca1a2e6126aa077abb85ffa5c52e1cd  vrroom_telnet.control/conf/yaml/model.yaml
+
+a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  vrroom_telnet.control/conf/yaml/pages.yaml
+
+3351f3b125d75eebebe0d973475d8525575da2770d421d24512ef2696a614353  vrroom_telnet.control/conf/yaml/reboots.yaml
+
+32e92f8f35dbe6fae8f936b2b0fe5fa4dcee303f8458afa3b7ffd95d6c87ce9c  vrroom_telnet.control/conf/yaml/vrroom_telnet.yaml
+
+d09879ef006bb3549c866784103e5b40c8f7a543ab6ac4a80bcc270cc97ebc9f  vrroom_telnet.control/metrics/exporter/map.json
+
+5d7c8ac1a0342e5e53a31d6720dc9aa1debb3a89ca1b95152486e6946afab892  vrroom_telnet.control/metrics/grafana/dashboards/devices.json
+
+7035e8c8ae4d9f1a510f7c8993cea409f8d540271f5fcec61f1b8da465da3181  vrroom_telnet.control/metrics/grafana/dashboards/host.json
+
+317ecbc1073b38e4d0aaabf934af6288a9e951f53ce626a9dc2999cc9f50ee75  vrroom_telnet.control/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  vrroom_telnet.control/metrics/grafana/dashboards/openhab.json
+
+b93bcb0ec62601f20e2c9aa588711af7846133992851b3aa0e461e6614cc2e88  vrroom_telnet.control/metrics/grafana/dashboards/switching.json
+
+fba19507ce4c1035a4b559aeda650b0c2bc22e7255ecd1528445c4bcd9653c54  vrroom_telnet.control/metrics/grafana/dashboards/usage.json
+
+3ce31fa4515cb756e9c92b81d02b4658fbdb3116439d5ae3049f2fcbc840d151  vrroom_telnet.control/metrics/prometheus/alerts.yml
+
+34b0f8170903f80f94de299369e1484079d5a1e9a8ff9dc3c65d62f62a11b33f  vrroom_telnet.control/metrics/prometheus/prometheus.yml
+
+ed79536cf8e82a99da1a6bae02b188b9d0bbc812caf991f717f7514583331aef  wiim_http.control/conf/automation/js/playing.js
+
+9ccd5d2d31f2b3dfa9effb61d4323402828d90464ed6055b2376840814f6b6c1  wiim_http.control/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  wiim_http.control/conf/html/remote/cameras.json
+
+68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  wiim_http.control/conf/html/remote/diagnostics.json
+
+95ce736f58149e325392b042fbcc03e53e1d08019aed546d5a4ce31ff3b01ebc  wiim_http.control/conf/html/remote/home.html
+
+fe54402b74aa7f532e40dd859deeb3055a53781dab11f052e4901b4bfc280506  wiim_http.control/conf/html/remote/house.js
+
+2c64f6404ac8e33b65db3cef9e69478fb9339afbeb083888f3b4ff14c6190ae9  wiim_http.control/conf/html/remote/index.html
+
+710757b6c90ea2321289a317fac3432815553d23b4637bcb7be86d20e258a353  wiim_http.control/conf/html/remote/settings.html
+
+8fd9cf2ba9df28c161be663978c4fcda57663f936a09de49c4d237205e89b3fc  wiim_http.control/conf/html/remote/topology.html
+
+25e4daf0f0b72961dbab845c0314397e775bffdf6132b7f5e554e05a0f7623c3  wiim_http.control/conf/html/remote/topology.json
+
+1f0cda31507def9d460f4634f9347107699fc1142666760dc20209ad3fbed760  wiim_http.control/conf/services/addons.cfg
+
+83929b0646639a849a4bb2e54427df715913d5f774eee7d1c1ecd1e717a6522d  wiim_http.control/conf/transform/hex-to-utf8.js
+
+b29d299bd84b8bde01d251c2cc5213d7a39607879432424ed4adbae27837562d  wiim_http.control/conf/yaml/model.yaml
+
+a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  wiim_http.control/conf/yaml/pages.yaml
+
+ffd5905554cb81f7f487d10892991251658774afc0929adc8e62f830ce404391  wiim_http.control/conf/yaml/playing.yaml
+
+31009c2cf989561046fc2e90042acd0b30af11ba0a268ffb79079a45d8f3871c  wiim_http.control/conf/yaml/wiim.yaml
+
+0d40b7a4e26b1e982dee484da16d34de0b8390abc54ffa19e9728e90269a9fee  wiim_http.control/metrics/exporter/map.json
+
+8ded6dd168da9aafef69a9f5763cd564c0f4804e13a5ffe5b6b985aa024fe684  wiim_http.control/metrics/grafana/dashboards/devices.json
+
+437ef170dcf56aa4f0bf22b45516da68930e1453b99a09570041a43399dc92d4  wiim_http.control/metrics/grafana/dashboards/host.json
+
+76b02bd1841e2657724d6207c9ed953d4c30bf31ba49ecdbdf1ff26b1df9bbf4  wiim_http.control/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  wiim_http.control/metrics/grafana/dashboards/openhab.json
+
+5459d386b4569d36bfeb6e22721fe5099f79973b237f87a6b9d478de2e243707  wiim_http.control/metrics/grafana/dashboards/switching.json
+
+17da79c920bcc3c5b8b8c14da6993c1e02b337d991ad262dbee4a1a2bdab7715  wiim_http.control/metrics/grafana/dashboards/usage.json
+
+550f745ecd546d08554a42c2ce73a09d33dd04d51b17d1fc7a4f1ac31ca5929c  wiim_http.control/metrics/prometheus/alerts.yml
+
+8667dbfd74c678736891093fe2c3f457c4b98761c87d21eb3b70f4812b51913c  wiim_http.control/metrics/prometheus/prometheus.yml
+
+ed79536cf8e82a99da1a6bae02b188b9d0bbc812caf991f717f7514583331aef  wiim_http.observe/conf/automation/js/playing.js
+
+c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  wiim_http.observe/conf/html/remote/activity.json
+
+f68d161739af5e5c638cb11e7519a527064c3abca4b6a165f059e117dc1ec96f  wiim_http.observe/conf/html/remote/cameras.json
+
+68b065ec1d8cdabe5b7ba3254e81b5270f6ddf26214353f3235771b17ebb737c  wiim_http.observe/conf/html/remote/diagnostics.json
+
+833d402031f720a412fbd66aa2f49c5378ee8da92911dafdc01d8bb1a7b5ea5d  wiim_http.observe/conf/html/remote/home.html
+
+f5d554564a2846219ab173a0864b933df67070bdd6dbea3a9c2a38ee5ddf92f9  wiim_http.observe/conf/html/remote/house.js
+
+e5231fe3a79668f21cc0a4e2dd38c862ab0eeab5b3fa2e19d6fff413b5421766  wiim_http.observe/conf/html/remote/index.html
+
+3a9cc87c4b58461d94d079c2839d64c7e0354724dac17e85166f0f2f60bd1415  wiim_http.observe/conf/html/remote/settings.html
+
+100cebf8689ee49f772abdc81cd8c5c91ab337e7b5a4730bd4a0685986168dad  wiim_http.observe/conf/html/remote/topology.html
+
+25e4daf0f0b72961dbab845c0314397e775bffdf6132b7f5e554e05a0f7623c3  wiim_http.observe/conf/html/remote/topology.json
+
+1f0cda31507def9d460f4634f9347107699fc1142666760dc20209ad3fbed760  wiim_http.observe/conf/services/addons.cfg
+
+83929b0646639a849a4bb2e54427df715913d5f774eee7d1c1ecd1e717a6522d  wiim_http.observe/conf/transform/hex-to-utf8.js
+
+b29d299bd84b8bde01d251c2cc5213d7a39607879432424ed4adbae27837562d  wiim_http.observe/conf/yaml/model.yaml
+
+a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  wiim_http.observe/conf/yaml/pages.yaml
+
+ffd5905554cb81f7f487d10892991251658774afc0929adc8e62f830ce404391  wiim_http.observe/conf/yaml/playing.yaml
+
+8a482730c1e6b0a3921509687b849696c141c2ab3f5f47435d7cc34d4acd8b24  wiim_http.observe/conf/yaml/wiim.yaml
+
+c96748e8823194a97e345fc3aa31e227c488def16732e758ab1293b22903d5ef  wiim_http.observe/metrics/exporter/map.json
+
+e898cf6d47563a2224d8cf5c8792b79d6653402950a48d6552713e54a435fe4f  wiim_http.observe/metrics/grafana/dashboards/devices.json
+
+437ef170dcf56aa4f0bf22b45516da68930e1453b99a09570041a43399dc92d4  wiim_http.observe/metrics/grafana/dashboards/host.json
+
+8d2cdc8ada11f0c471d3c3f2d60542ecc1257ef28621589f84841c1d1cf7d7be  wiim_http.observe/metrics/grafana/dashboards/house.json
+
+79f835d4db6f07abfa19f7e91fb7c7631263388f357807ddfbb19cc6a58fc0c5  wiim_http.observe/metrics/grafana/dashboards/openhab.json
+
+5459d386b4569d36bfeb6e22721fe5099f79973b237f87a6b9d478de2e243707  wiim_http.observe/metrics/grafana/dashboards/switching.json
+
+fba19507ce4c1035a4b559aeda650b0c2bc22e7255ecd1528445c4bcd9653c54  wiim_http.observe/metrics/grafana/dashboards/usage.json
+
+3ce31fa4515cb756e9c92b81d02b4658fbdb3116439d5ae3049f2fcbc840d151  wiim_http.observe/metrics/prometheus/alerts.yml
+
+8667dbfd74c678736891093fe2c3f457c4b98761c87d21eb3b70f4812b51913c  wiim_http.observe/metrics/prometheus/prometheus.yml

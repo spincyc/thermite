@@ -7,6 +7,12 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Tests: `tests/generated_output.sha256` records the SHA-256 of every file
+  `thermite generate` writes for the example house, a house for each
+  integration and a routed house. `make check` fails, naming the files,
+  when a change alters them; `python -m tests.test_generated_output
+  --write` rewrites the record, and `--out DIR` writes the files to compare
+  two commits.
 - Network shares: `shares:` in `instance/host.yaml` names SMB/CIFS and NFS
   shares that Thermite mounts, such as the NAS that holds the Music
   libraries. Install, upgrade, rollback, revert and uninstall handle them
