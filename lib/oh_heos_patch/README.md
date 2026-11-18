@@ -53,24 +53,25 @@ and all other behaviour are unchanged.
 
 ## Version guard and retirement
 
-`inputs.json` pins the upstream release, every input by SHA-256 and the
-upstream fixes that retire this patch (`retire_when`; record the quiet-stream
-pull request there once it is filed). The build, `prepare`
-and `make check` (`tests/test_heos_patch.py`) refuse when `versions.json`
-pins any other openHAB release. The message says what to do:
+`inputs.json` pins the upstream release, every input by SHA-256, the compiled
+classes and the content of the rebuilt bundle, and the upstream fixes that
+retire this patch (`retire_when`; record the quiet-stream pull request there
+once it is filed). The build, an install of a house with the binding and
+`make check` (`tests/test_heos_patch.py`) refuse when `versions.json` pins
+any other openHAB release. The message says what to do:
 
-- **Retire** when the new release's HEOS binding contains both fixes: roll
-  back the override (below) on every runtime that applied it, then delete
-  `lib/oh_heos_patch`, `tests/heos_patch`, `tests/test_heos_patch.py` and
-  their `.thermite-export.json` entries.
+- **Retire** when the new release's HEOS binding contains both fixes: delete
+  `lib/oh_heos_patch`, `tests/heos_patch`, `tests/test_heos_patch.py`, their
+  `.thermite-export.json` entries and the package's name in
+  `lib/oh_addons.py` `REPAIRS`. The next install takes the bundle and the
+  override line out of each runtime.
 - **Rebase** otherwise: update `inputs.json` (bundle, three sources, runtime
   dependency hash), regenerate the three patches so they apply with zero fuzz,
-  and rebuild with `--test-sources`. The Java gate must pass on the new
-  classes and still fail on the unmodified ones.
+  and rebuild with `--test-sources --write-classes`. The Java gate must pass
+  on the new classes and still fail on the unmodified ones. Commit `classes/`
+  and `inputs.json` with the patches.
 
-At runtime the override is limited to `[5.2.3,5.2.4)`. An upgraded openHAB
-therefore keeps its own HEOS binding even if the override line is left
-behind; remove the line during retirement anyway.
+At runtime the override is limited to `[5.2.3,5.2.4)`.
 
 ## Reproduce the artifact
 
@@ -96,8 +97,16 @@ classes and refuses any other class set. It keeps every other bundle entry
 byte-for-byte except the main manifest's version and `Thermite-Patch` marker.
 ZIP order, timestamps and compression are deterministic. `build.json`
 records the input, patch, dependency, class and artifact hashes. The builder
-writes only to `--output`: the JAR, `build.json`,
-`overrides.properties.fragment` and `maven-layout.json`.
+writes only to `--output`: the JAR and `build.json`.
+
+The build must produce the classes in `classes/` and the bundle content
+`inputs.json` pins, or it fails: what an install puts into a runtime is what
+this source compiles to. After a reviewed change to a patch or an input,
+`--write-classes` (with `--test-sources`, so only a gated build is recorded)
+replaces `classes/` and those pins. The classes are committed so that an
+install needs no compiler, no source download and no `patch`: it needs only
+the pinned upstream bundle. The JAR itself is not pinned by its own SHA-256,
+because its compressed bytes depend on the host's zlib; its content is.
 
 ## Tests
 
@@ -122,15 +131,19 @@ is reset hundreds of times and accumulates hundreds of open sockets and reader
 threads.
 
 `tests/test_heos_patch.py` runs in `make check`: the version guard, exact
-pins, patch scope, deterministic packaging, the override and Maven
-configuration merges, and the build and `prepare` refusals.
+pins, patch scope, deterministic packaging, the committed classes and the
+build refusals. `tests/test_binding_repairs.py` covers the installation: the
+repository, the override, the OSGi cache and the check after the start.
 
 ### Native proof
 
 Before release, the coordinator ran a pinned 5.2.3 runtime in rootless
 containers with no network, connected to the loopback fake HEOS CLI. These
 are synthetic local proofs; the post-deploy checks below remain the
-production acceptance.
+production acceptance. They were made when the repair was installed by hand,
+with a feature refresh in place of the cleared cache the installation now
+uses. What they establish about Karaf is why the installation clears the
+cache: a restart alone neither installs nor removes the repaired bundle.
 
 - **Activation on an existing install:** a restart with the override, the
   repository entry and the JAR in place kept 5.2.3 and logged no
@@ -155,137 +168,64 @@ refresh during startup or a Thing edit, not only on quiet-stream resets.
 pending feature change. On a fresh test install it added one unrelated
 Jetty bundle.
 
-## Activation
+## Installation
 
-Ordinary deploy does not activate this derivative. Activation follows the
-Android TV precedent: a Karaf override, a private Maven repository, a
-stop-first restart, one feature refresh, then a second restart.
+`thermite install`, `upgrade` and `rollback` install this repair for every
+house whose `conf/services/addons.cfg` lists `binding-heos`; no other house gets
+it, and nobody installs it by hand. It is part of the install transaction
+(`lib/oh_addons.py`, the steps *Add-on files*, *Add-on repository* and
+*Binding repairs*):
 
-- `userdata/etc/overrides.properties` gains:
+1. **Before anything stops**, the transaction refuses a `versions.json` that
+   pins another openHAB release than 5.2.3 (the message says how to
+   retire or rebase the repair), and fetches and verifies the pinned upstream
+   bundle with the house's other add-on files.
+2. **With openHAB stopped, after its own offline update**, root rebuilds the
+   bundle from that verified file and the classes in `classes/`, each checked
+   against `inputs.json`. The result must have the pinned content
+   (`content_sha256`: every entry but the manifest, by name and SHA-256) and
+   the manifest's `Bundle-Version: 5.2.3.thermite1` and
+   `Thermite-Patch: heos-reconnect-v1`. No compiler runs on the host. The bundle goes
+   into the runtime's own repository, `userdata/thermite/maven`, at
 
-  ```text
-  mvn:org.openhab.addons.bundles/org.openhab.binding.heos/5.2.3.thermite1;range="[5.2.3,5.2.4)"
-  ```
-
-- `org.ops4j.pax.url.mvn.defaultRepositories` in
-  `userdata/etc/org.ops4j.pax.url.mvn.cfg` gains a first entry
-  `file:///openhab/userdata/thermite/maven/@id=thermite.heos`. It shares the
-  Android TV patch's directory but has its own id, so each patch rolls back
-  alone.
-- The JAR goes under that repository at `MAVEN_PATH`
-  (`org/openhab/addons/bundles/org.openhab.binding.heos/5.2.3.thermite1/`).
-
-Karaf 4.4.11 does not reprovision installed features at startup, so a
-one-shot script calls `FeaturesService.refreshFeatures` once and logs the
-sole HEOS bundle's version, state and patched-class hashes. The refresh stops
-the old handlers through the defective 5.2.3 disposal path, which leaks their
-sockets. The second restart releases them.
-
-`prepare` produces every file the owner installs. It reads only **copies** of
-the two Karaf files, requires a staged build that passed the Java gate and its
-negative control, and writes into a fresh private directory:
-
-- the JAR;
-- the desired `overrides.properties` and `org.ops4j.pax.url.mvn.cfg`;
-- their `.before` preimages;
-- the apply and rollback probes;
-- `SHA256SUMS`.
-
-It never reads or writes live userdata, and refuses a competing HEOS override
-or repository.
-
-### Owner procedure
-
-The service and file steps need a root shell; the assistant never runs them.
-`STATE` is the runtime state root: the source of the userdata `Volume=` line
-in `systemctl cat thermite-openhab.service`, by default
-`/srv/thermite/runtime`. `OWNER` is your login, and `IN`, `OUT` are fresh
-directories you own.
-
-1. Root: copy the two Karaf files out for review.
-
-   ```sh
-   umask 077
-   install -m 0600 -o "$OWNER" "$STATE/userdata/etc/org.ops4j.pax.url.mvn.cfg" "$IN/"
-   install -m 0600 -o "$OWNER" "$STATE/userdata/etc/overrides.properties" "$IN/"
+   ```text
+   org/openhab/addons/bundles/org.openhab.binding.heos/5.2.3.thermite1/org.openhab.binding.heos-5.2.3.thermite1.jar
    ```
 
-   Skip the second line when `overrides.properties` does not exist.
+   and `userdata/etc/overrides.properties` gains
 
-2. Owner, from the reviewed checkout: build (above), then prepare and review.
-
-   ```sh
-   PYTHONPATH=lib python3 -m oh_heos_patch prepare --staged "$STAGED" \
-     --maven "$IN/org.ops4j.pax.url.mvn.cfg" --overrides "$IN/overrides.properties" \
-     --output "$OUT"
-   diff -u "$OUT/overrides.properties.before" "$OUT/overrides.properties"
-   diff -u "$OUT/org.ops4j.pax.url.mvn.cfg.before" "$OUT/org.ops4j.pax.url.mvn.cfg"
+   ```text
+   # thermite pinned HEOS reconnect repair
+   mvn:org.openhab.addons.bundles/org.openhab.binding.heos/5.2.3.thermite1;range="[5.2.3,5.2.4)"
    ```
 
-   Each diff must add only the HEOS lines. Compare the printed
-   `artifact_sha256` with the reviewed build's value.
+   openHAB's update replaces that file with the distribution's empty one, so
+   every transaction writes it again. Another override of this binding is
+   refused; other lines stay.
+3. Karaf applies an override only when it provisions a feature: a restart
+   with the override in place keeps a bundle it has already installed. So
+   when the runtime's OSGi cache (`userdata/cache`) holds any other build of
+   this binding, the step removes the cache, and the next start installs
+   every bundle anew from local files, as it does after openHAB's own
+   update. Nothing else under userdata is touched: Things, pairings,
+   keystores and the JSON database stay. A cache that already holds this
+   bundle stays as it is.
+4. **After the start**, once the add-ons are installed, the transaction reads
+   the cache again and commits only when the binding it holds is this bundle
+   with this content. Otherwise it says which bundle runs and rolls back.
 
-3. Root: verify, stop, check the preimages and install.
+The installed manifest records the repair among its pins
+(`repair_binding_heos`, with the content digest). Everything it installs lies inside
+userdata, which the transaction sets aside and puts back whole: a rollback or
+`thermite revert` returns the runtime to exactly what ran before, cache
+included, and an uninstall leaves or removes it with userdata. A house that
+drops the binding loses the bundle and the override at its next install.
+`thermite test boot` prepares its test runtime the same way, so a house with
+this binding is boot-checked on the repaired bundle.
 
-   ```sh
-   cd "$OUT" && sha256sum -c SHA256SUMS
-   U=$(stat -c %u "$STATE/userdata"); G=$(stat -c %g "$STATE/userdata")
-   systemctl stop thermite-openhab.service
-   cmp org.ops4j.pax.url.mvn.cfg.before "$STATE/userdata/etc/org.ops4j.pax.url.mvn.cfg"
-   cmp overrides.properties.before "$STATE/userdata/etc/overrides.properties"
-   umask 022
-   install -D -m 0644 org.openhab.binding.heos-5.2.3.thermite1.jar \
-     "$STATE/userdata/thermite/maven/org/openhab/addons/bundles/org.openhab.binding.heos/5.2.3.thermite1/org.openhab.binding.heos-5.2.3.thermite1.jar"
-   cat org.ops4j.pax.url.mvn.cfg > "$STATE/userdata/etc/org.ops4j.pax.url.mvn.cfg"
-   cat overrides.properties > "$STATE/userdata/etc/overrides.properties"
-   ```
-
-   Stop if either `cmp` reports a difference: a file changed since it was
-   copied, so start again from step 1. `cat >` keeps each file's owner and
-   mode. If `overrides.properties` did not exist, skip its `cmp` and create it
-   with `install -m 0600 -o "$U" -g "$G" overrides.properties "$STATE/userdata/etc/"`.
-
-4. Root: start, refresh once and verify.
-
-   ```sh
-   LOG="$STATE/logs/openhab.log"; N=$(wc -l < "$LOG")
-   systemctl start thermite-openhab.service
-   install -m 0644 -o "$U" -g "$G" "apply-thermite_heos_patch_probe.js" \
-     "$STATE/conf/automation/js/thermite_heos_patch_probe.js"
-   timeout 900 sh -c "until tail -n +$((N + 1)) '$LOG' | grep -aq 'thermite-heos-patch '; do sleep 5; done"
-   tail -n +$((N + 1)) "$LOG" | grep -a 'thermite-heos-patch '
-   rm "$STATE/conf/automation/js/thermite_heos_patch_probe.js"
-   systemctl restart thermite-openhab.service
-   ```
-
-   The log line must show `"status":"ok"` and `"verified":true`, with one
-   bundle at version `5.2.3.thermite1`, state 32 (active). Otherwise, roll
-   back. The script runs only after openHAB loads the automation, so the
-   wait covers startup.
-
-### Rollback
-
-Rollback uses the same steps with the files from the same `OUT`:
-
-1. Stop the service.
-2. `cmp` each live file against the prepared desired file, to confirm nothing
-   else changed it.
-3. Restore both `.before` contents with `cat >`. Remove `overrides.properties`
-   instead when no `.before` copy exists.
-4. Remove the JAR and its `5.2.3.thermite1` directory.
-5. Start the service and install `rollback-thermite_heos_patch_probe.js` the
-   same way. It must log `"verified":true` with version `5.2.3`. The probe is
-   required: until its refresh, the runtime keeps loading the patched bundle
-   from its OSGi cache.
-6. Remove the probe and restart.
-
-### Android TV coexistence
-
-The two overrides and repository entries are independent lines, and
-`prepare` preserves the Android TV lines byte-for-byte. The Android TV
-maintenance program refuses to roll back while either Karaf file differs
-from its own post-apply state. **Roll back HEOS first**, then Android TV.
-Applying HEOS after Android TV needs no special order.
+The first install of this repair on a runtime that ran the unrepaired binding
+stops openHAB through the defective 5.2.3 disposal path; the stop ends the
+process, so the leaked sockets go with it.
 
 ## Post-deploy checks
 

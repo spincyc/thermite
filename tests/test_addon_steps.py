@@ -106,7 +106,7 @@ class Fetched(Fixture):
         self.assertFalse(check.done)
         self.assertIn("thermite sandbox fetch --pin-addons binding-sonos", check.problem)
         # Such a version is never installed, so it has no pin to record.
-        self.assertEqual(steps.addon_pin(self.context), "unpinned")
+        self.assertEqual(steps.addon_pins(self.context), {"addons": "unpinned"})
 
     def test_a_site_whose_versions_json_has_no_addons_entry_is_told_to_copy_it(self):
         del self.versions["addons"]

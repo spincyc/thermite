@@ -1312,15 +1312,24 @@ def addon_store(context: Context) -> Path:
     return context.area / "build" / "sandbox" / "downloads" / "addons"
 
 
-def addon_pin(context: Context) -> str:
+def binding_repairs(context: Context) -> list[oh_addons.Repair]:
+    """The binding repairs this version's add-ons run with (lib/oh_addons.py)."""
+    return oh_addons.repairs(context.versions, addon_uids(context))
+
+
+def addon_pins(context: Context) -> dict[str, str]:
     """What the installed manifest records of this version's add-on files:
-    one digest over the pins of every file its add-ons are installed from.
-    A version whose add-ons are not all pinned is never installed
-    (AddonFiles refuses it, with what to do), so it has none to record."""
+    one digest over the pins of every file its add-ons are installed from
+    and the repaired bundles beside them, and each repair by name with the
+    content of its bundle. A version whose add-ons are not all pinned, or
+    whose repair is for another openHAB, is never installed (AddonFiles
+    refuses it, with what to do), so it has none to record."""
     try:
-        return oh_addons.digest(oh_addons.pinned(context.versions, addon_uids(context)))
+        wanted = binding_repairs(context)
+        return {"addons": oh_addons.digest(oh_addons.pinned(context.versions, addon_uids(context)), wanted),
+                **{repair.pin: "sha256:" + repair.content for repair in wanted}}
     except oh_addons.AddonError:
-        return "unpinned"
+        return {"addons": "unpinned"}
 
 
 class AddonFiles(Step):
@@ -1344,12 +1353,14 @@ class AddonFiles(Step):
     def check(self, system: System) -> Check:
         try:
             missing = self.missing(system)
+            wanted = binding_repairs(self.context)
         except oh_addons.AddonError as exc:
             return Check(False, "", str(exc))
         count = len(oh_addons.pinned(self.context.versions, addon_uids(self.context)))
         if missing:
             return Check(False, f"to fetch and verify: {len(missing)} of the {count} pinned add-on files")
-        return Check(True, f"the {count} pinned files of {len(addon_uids(self.context))} add-ons are fetched")
+        repaired = "".join(f"; {repair.bundle} runs with the {repair.title}" for repair in wanted)
+        return Check(True, f"the {count} pinned files of {len(addon_uids(self.context))} add-ons are fetched{repaired}")
 
     def actions(self, system: System) -> list[Action]:
         return [Task("fetch each pinned add-on file that is not here yet, and verify every one", self.fetch)]
@@ -1369,27 +1380,57 @@ class AddonFiles(Step):
 
 
 class AddonRepository(Step):
-    """The pinned add-on files, in userdata's own repository, and Karaf's
-    resolver pointed at it alone (lib/oh_addons.py): after openHAB's
-    offline preparation, which may have replaced the resolver's settings
-    with the distribution's, and before anything starts. It is inside
-    userdata, so it is set aside and put back with it."""
+    """The pinned add-on files and the repaired bundles of the bindings
+    that need one, in userdata's own repository; Karaf's resolver pointed
+    at it alone and its overrides at those bundles; and an OSGi cache that
+    holds another build of a repaired binding cleared (lib/oh_addons.py).
+    After openHAB's offline preparation, whose update replaces the
+    resolver's settings and the overrides with the distribution's, and
+    before anything starts. All of it is inside userdata, so it is set
+    aside and put back with it."""
     title = "Add-on repository"
     always = True
 
     def __init__(self, context: Context):
         self.context = context
 
+    def helper(self, *options: str) -> tuple[str, ...]:
+        host = self.context.host
+        return ("python3", str(self.context.program / "lib/oh_addons.py"), str(self.context.layout.userdata),
+                "--versions", str(self.context.configuration / "versions.json"),
+                "--store", str(addon_store(self.context)),
+                "--uid", str(host["uid"]), "--gid", str(host["gid"]), *options, *addon_uids(self.context))
+
     def check(self, system: System) -> Check:
-        return Check(False, f"the pinned files of {len(addon_uids(self.context))} add-ons, installed from "
+        try:
+            repaired = "".join(f", and the {repair.title}" for repair in binding_repairs(self.context))
+        except oh_addons.AddonError:
+            # AddonFiles has refused this version, with what to do.
+            repaired = ""
+        return Check(False, f"the pinned files of {len(addon_uids(self.context))} add-ons{repaired}, installed from "
                             "the verified cache while openHAB is stopped")
 
     def actions(self, system: System) -> list[Action]:
-        host = self.context.host
-        return [Command(("python3", str(self.context.program / "lib/oh_addons.py"), str(self.context.layout.userdata),
-                         "--versions", str(self.context.configuration / "versions.json"),
-                         "--store", str(addon_store(self.context)),
-                         "--uid", str(host["uid"]), "--gid", str(host["gid"]), *addon_uids(self.context)), root=True)]
+        return [Command(self.helper(), root=True, show_output=True)]
+
+
+class BindingRepairs(Step):
+    """The started runtime installed the repaired bundle of each binding
+    that needs one, and no other build of it: read from its OSGi cache
+    once the add-ons are installed. A runtime that runs an unrepaired
+    binding is not committed; the helper's words say what that means."""
+    title = "Binding repairs"
+    always = True
+
+    def __init__(self, context: Context):
+        self.context = context
+
+    def check(self, system: System) -> Check:
+        return Check(False, "openHAB installed " + " and ".join(
+            f"the {repair.title} ({repair.bundle} {repair.patched})" for repair in binding_repairs(self.context)))
+
+    def actions(self, system: System) -> list[Action]:
+        return [Command(AddonRepository(self.context).helper("--verify"), root=True, show_output=True)]
 
 
 def _secret_wrong(system: System, context: Context, path: Path) -> str | None:

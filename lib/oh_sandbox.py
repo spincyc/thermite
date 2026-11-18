@@ -909,7 +909,9 @@ def install_addons(rt: Runtime, inst: Instance, log=print) -> None:
     uids = addon_uids(read_requested_addons(inst.conf))
     try:
         files = oh_addons.ensure({"addons": rt.addons}, uids, ADDONS, download, log=log) if uids else {}
-        oh_addons.provision(inst.userdata, files, ADDONS)
+        # The repaired bindings too: a test runtime runs what an install runs.
+        wanted = oh_addons.repairs({"openhab": {"version": rt.openhab_version}}, uids)
+        oh_addons.provision(inst.userdata, files, ADDONS, wanted=wanted)
     except oh_addons.AddonError as exc:
         raise SandboxError(str(exc)) from None
 
@@ -1481,9 +1483,9 @@ def template_key(rt: Runtime, addons_cfg: str) -> str:
     """Name a warmed userdata after everything that shapes it: of
     addons.cfg, the add-ons in each category, in any order, and every other
     setting (remote, say), never a comment; and the pins of the files those
-    add-ons are installed from. Each add-on's reason is a comment, so
-    rewording one reuses the template rather than installing the same
-    add-ons again."""
+    add-ons are installed from and the repairs they run with. Each add-on's
+    reason is a comment, so rewording one reuses the template rather than
+    installing the same add-ons again."""
     requested = parse_addons_cfg(addons_cfg)
     pins = (rt.addons or {}).get("requires", {}), (rt.addons or {}).get("files", {})
     settings = {key: value for key, value in addons_settings(addons_cfg).items() if key not in ADDON_CATEGORIES}
@@ -1495,6 +1497,8 @@ def template_key(rt: Runtime, addons_cfg: str) -> str:
         "settings": settings,
         "files": sorted((pins[1].get(path) or {}).get("sha256", "") for uid in addon_uids(requested)
                         for path in pins[0].get(uid, ())),
+        "repairs": sorted(repair.content for repair in oh_addons.known_repairs()
+                          if repair.addon in addon_uids(requested)),
         "features": FEATURES_PROCESSING,
     }, sort_keys=True)
     return hashlib.sha256(material.encode()).hexdigest()[:16]

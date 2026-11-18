@@ -2,6 +2,9 @@
   "version": 1,
   "upstream": "5.2.3",
   "patched": "5.2.3.thermite1",
+  "retire_when": {
+    "connection_lifecycle": "an upstream release whose GoogleTVConnectionManager bounds connecting and the TLS handshake and closes in-flight sockets on disposal; not yet submitted"
+  },
   "assets": {
     "bundle": {
       "url": "https://openhab.jfrog.io/artifactory/libs-release-local/org/openhab/addons/bundles/org.openhab.binding.androidtv/5.2.3/org.openhab.binding.androidtv-5.2.3.jar",
@@ -30,5 +33,13 @@
     }
   },
   "runtime_system_sha256": "3d2d32986499f657f53c69f866df74b23acd5cb6e1be48ac1ff7a04af7207f6a",
-  "runtime_system_jars": 338
+  "runtime_system_jars": 338,
+  "classes": {
+    "org/openhab/binding/androidtv/internal/AndroidTVHandler.class": "a618f1b131f7d93cda99c4388150e941e6dd626b80066daa192ea4339eaaaa80",
+    "org/openhab/binding/androidtv/internal/protocol/googletv/GoogleTVConnectionManager$1.class": "48b095b06556bc597bd643246b9a6df00dd2b30fe6246918ca201d3d89d0b7c9",
+    "org/openhab/binding/androidtv/internal/protocol/googletv/GoogleTVConnectionManager.class": "40e5b677bbab00ebb94ccb3d4298b4a74f53c88992e6dd524c32c923fe2684dd",
+    "org/openhab/binding/androidtv/internal/protocol/googletv/GoogleTVSocketLifecycle$Attempt.class": "8d4ea56453d5c4bf1fcea94c4f1bc1abafc7c51cef0da767b8292027198be452",
+    "org/openhab/binding/androidtv/internal/protocol/googletv/GoogleTVSocketLifecycle.class": "f1c03d86419a13f7ae0bb16b6acf4a9aea1480cc3162df66356f6f0de18f0fbd"
+  },
+  "content_sha256": "c7a7811c8c5038d20c806a46c1cae84e2f9e47bd572f7e17941eb102be64ded3"
 }

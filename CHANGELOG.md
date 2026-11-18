@@ -7,6 +7,14 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The Android TV and HEOS binding repairs are installed by `thermite
+  install`, `upgrade` and `rollback` for every house that uses the
+  binding, checked after the start, and recorded in the installed
+  manifest; an install that would run the unrepaired binding rolls
+  back. Nothing is installed by hand any more, and the maintenance
+  programs under `lib/oh_androidtv_patch` are gone. The first install
+  of a repair on a runtime that ran the unrepaired binding clears
+  openHAB's bundle cache, so that start takes longer.
 - openHAB's add-on files are pinned. `versions.json` lists, under
   `addons`, the files each add-on needs and their SHA-256; an install
   fetches and verifies them before it stops anything and openHAB

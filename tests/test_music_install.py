@@ -139,7 +139,7 @@ class State(unittest.TestCase):
                 found.say.side_effect = said.append
                 found.ask.return_value = str(ctx.layout.root)
                 self.assertEqual(work.confirm.confirm(found), 0)
-                self.assertIn("monitoring data, Music Assistant's settings and library, and manually", said[0])
+                self.assertIn("the deploy's records, Music Assistant's settings and library and monitoring data; it", said[0])
         with patch.object(manifest, "installed", return_value=None):
             said = []
             found = host_system()

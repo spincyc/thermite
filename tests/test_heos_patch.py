@@ -1,4 +1,4 @@
-"""HEOS patch pins, version guard, packaging and owner activation inputs.
+"""HEOS patch pins, version guard, packaging and the committed classes.
 
 The Java reconnect gate and its negative control run in the explicit build
 (python3 -m oh_heos_patch build --test-sources tests/heos_patch), not here.
@@ -16,15 +16,6 @@ import zipfile
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 import oh_heos_patch as patch
-
-MAVEN = ('# keep comments\norg.ops4j.pax.url.mvn.localRepository=${openhab.userdata}/tmp/mvn\n'
-         'org.ops4j.pax.url.mvn.defaultRepositories=\\\n'
-         '    file:///openhab/userdata/thermite/maven/@id=thermite.androidtv, \\\n'
-         '    ${karaf.home.uri}system@id=system.repository\n'
-         '# unrelated\norg.ops4j.pax.url.mvn.repositories=https://example.invalid/maven\n')
-ANDROIDTV = ('# thermite pinned Android TV lifecycle repair\n'
-             'mvn:org.openhab.addons.bundles/org.openhab.binding.androidtv/5.2.3.thermite1;range="[5.2.3,5.2.4)"\n')
-
 
 def scratch() -> tempfile.TemporaryDirectory:
     folder = AREA.parents[1] / ".scratch"
@@ -52,14 +43,13 @@ class VersionGuard(unittest.TestCase):
             with self.assertRaises(patch.PatchError) as caught:
                 patch.require_pinned(moved)
             message = str(caught.exception)
-            for text in ("openHAB 5.2.4", "exactly the 5.2.3", "retire the patch", "roll back", "#21781",
-                         "rebase it onto 5.2.4", "inputs.json", "zero fuzz", "still fails on the unmodified"):
+            for text in ("openHAB 5.2.4", "exactly the 5.2.3", "retire the repair", "REPAIRS", "#21781",
+                         "rebase it onto 5.2.4", "inputs.json", "zero fuzz", "still fails on the unmodified",
+                         "--write-classes", "is not installed without it"):
                 self.assertIn(text, message)
             with self.assertRaises(patch.PatchError):
                 patch.build({}, java=Path("/fake/java"), runtime=Path(folder), work=Path(folder) / "work",
                             output=Path(folder) / "output", versions=moved)
-            with self.assertRaises(patch.PatchError):
-                patch.prepare(Path(folder), maven=Path(folder) / "m", output=Path(folder) / "o", versions=moved)
 
     def test_exact_pins_and_override_scope(self):
         pins = patch.pins()
@@ -76,33 +66,6 @@ class VersionGuard(unittest.TestCase):
         self.assertIn("5.2.3.thermite1", patch.ARTIFACT)
         self.assertEqual(patch.OVERRIDE,
                          'mvn:org.openhab.addons.bundles/org.openhab.binding.heos/5.2.3.thermite1;range="[5.2.3,5.2.4)"')
-
-
-class Merges(unittest.TestCase):
-    def test_override_coexists_with_other_thermite_overrides(self):
-        merged = patch.override_text(ANDROIDTV)
-        self.assertTrue(merged.startswith(ANDROIDTV))
-        self.assertIn(patch.OVERRIDE, merged)
-        self.assertEqual(patch.override_text(merged), merged)
-        self.assertEqual(patch.override_text(""), "# thermite pinned HEOS reconnect repair\n" + patch.OVERRIDE + "\n")
-        with self.assertRaises(patch.PatchError):
-            patch.override_text("mvn:org.openhab.addons.bundles/org.openhab.binding.heos/5.2.3.custom\n")
-
-    def test_private_repository_is_heos_own_and_preserves_everything_else(self):
-        result = patch.maven_config_text(MAVEN)
-        self.assertIn("defaultRepositories=file:///openhab/userdata/thermite/maven/@id=thermite.heos,", result)
-        self.assertIn("file:///openhab/userdata/thermite/maven/@id=thermite.androidtv", result)
-        self.assertIn("${karaf.home.uri}system@id=system.repository", result)
-        self.assertIn("localRepository=${openhab.userdata}/tmp/mvn\n", result)
-        self.assertTrue(result.endswith("# unrelated\norg.ops4j.pax.url.mvn.repositories=https://example.invalid/maven\n"))
-        self.assertEqual(patch.maven_config_text(result), result)
-        for bad in ("# no effective property\n", MAVEN + "\n" + MAVEN,
-                    result.replace("file:///openhab/userdata/thermite/maven/@id=thermite.heos",
-                                   "file:///other/maven/@id=thermite.heos")):
-            with self.subTest(bad=bad), self.assertRaises(patch.PatchError):
-                patch.maven_config_text(bad)
-        with self.assertRaises(patch.PatchError):
-            patch.repository_entry(Path("relative"))
 
 
 class Packaging(unittest.TestCase):
@@ -218,71 +181,54 @@ class Packaging(unittest.TestCase):
                                 output=output, test_sources=fixtures)
 
 
-class Activation(unittest.TestCase):
-    def staged(self, root: Path, *, gated: bool = True) -> Path:
-        staged = root / "staged"
-        staged.mkdir()
-        bundle = root / "upstream.jar"
-        with zipfile.ZipFile(bundle, "w") as out:
-            out.writestr("META-INF/MANIFEST.MF", b"Manifest-Version: 1.0\nBundle-Version: 5.2.3\n\n")
-            for name in patch.EXPECTED_CLASSES:
-                out.writestr(name, b"upstream class")
-        artifact = staged / patch.ARTIFACT
-        built = patch.rebuild(bundle, {name: b"patched class" for name in patch.EXPECTED_CLASSES}, artifact)
-        lock = patch.pins()
-        receipt = {"upstream": "5.2.3", "patched": "5.2.3.thermite1",
-                   "inputs": {"bundle": lock["assets"]["bundle"]["sha256"]}, "artifact": built,
-                   "classes": patch.class_hashes(artifact), "upstream_classes": patch.class_hashes(bundle)}
-        if gated:
-            receipt.update(java_tests="PASS 16 reconnect assertions", negative_control={"exit": 1, "failures": ["FAIL x"]})
-        (staged / "build.json").write_text(json.dumps(receipt))
-        return staged
+class Committed(unittest.TestCase):
+    """classes/ is what an install puts into the bundle: the build holds it
+    to the source, and inputs.json pins it."""
 
-    def test_prepare_writes_reviewable_data_only_from_copies(self):
+    def test_the_committed_classes_are_the_pinned_ones_and_the_reviewed_set(self):
+        pins = patch.pins()
+        self.assertEqual(set(pins["classes"]), patch.EXPECTED_CLASSES)
+        self.assertEqual({name: hashlib.sha256(data).hexdigest() for name, data in patch.committed().items()},
+                         pins["classes"])
+        found = {str(path.relative_to(patch.ROOT / "classes")) for path in (patch.ROOT / "classes").rglob("*")
+                 if path.is_file()}
+        self.assertEqual(found, patch.EXPECTED_CLASSES)
+        self.assertRegex(pins["content_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_a_build_that_is_not_the_pinned_one_is_refused_and_recorded_only_when_asked(self):
         with scratch() as folder:
             root = Path(folder)
-            staged = self.staged(root)
-            (root / "maven.cfg").write_text(MAVEN)
-            (root / "overrides").write_text(ANDROIDTV)
-            result = patch.prepare(staged, maven=root / "maven.cfg", overrides=root / "overrides", output=root / "out")
-            out = root / "out"
-            self.assertTrue(result["overrides_changed"] and result["maven_changed"])
-            self.assertEqual(result["maven_path"], str(patch.MAVEN_PATH))
-            self.assertEqual((out / "overrides.properties.before").read_text(), ANDROIDTV)
-            self.assertEqual((out / "overrides.properties").read_text(), patch.override_text(ANDROIDTV))
-            self.assertEqual((out / "org.ops4j.pax.url.mvn.cfg").read_text(), patch.maven_config_text(MAVEN))
-            self.assertEqual(patch.sha(out / patch.ARTIFACT), patch.sha(staged / patch.ARTIFACT))
-            apply_probe = (out / ("apply-" + patch.PROBE)).read_text()
-            rollback_probe = (out / ("rollback-" + patch.PROBE)).read_text()
-            self.assertNotIn("__THERMITE_CONFIG__", apply_probe)
-            self.assertIn('"version": "5.2.3.thermite1"', apply_probe)
-            self.assertIn('"version": "5.2.3"', rollback_probe)
-            self.assertIn("refreshFeatures", apply_probe)
-            for word in ("ItemRegistry", "sendCommand", "postUpdate", "password", "http"):
-                self.assertNotIn(word, apply_probe)
-            sums = dict(reversed(line.split("  ", 1)) for line in (out / "SHA256SUMS").read_text().splitlines())
-            self.assertEqual(set(sums), {path.name for path in out.iterdir()} - {"SHA256SUMS"})
-            for name, digest in sums.items():
-                self.assertEqual(patch.sha(out / name), digest)
-            with self.assertRaises(patch.PatchError):
-                patch.prepare(staged, maven=root / "maven.cfg", output=out)
+            bundle = root / "upstream.jar"
+            with zipfile.ZipFile(bundle, "w") as out:
+                out.writestr("META-INF/MANIFEST.MF", b"Manifest-Version: 1.0\nBundle-Version: 5.2.3\nX: y\n\n")
+            other = {name: b"another build" for name in patch.EXPECTED_CLASSES}
+            patch.rebuild(bundle, other, root / "other.jar")
+            with self.assertRaisesRegex(patch.PatchError, "--write-classes"):
+                patch.reviewed(other, root / "other.jar")
+            same = patch.committed()
+            patch.rebuild(bundle, same, root / "same.jar")
+            # The same classes in another bundle are another content.
+            with self.assertRaisesRegex(patch.PatchError, "not the one inputs.json pins"):
+                patch.reviewed(same, root / "same.jar")
+            lock, classes = root / "inputs.json", root / "package"
+            lock.write_text(patch.LOCK.read_text())
+            with mocked.object(patch, "LOCK", lock), mocked.object(patch, "ROOT", classes):
+                patch.reviewed(other, root / "other.jar", write=True)
+                patch.reviewed(other, root / "other.jar")
+                self.assertEqual(patch.committed(), other)
+            self.assertNotEqual(json.loads(lock.read_text())["classes"], patch.pins()["classes"])
 
-    def test_prepare_refuses_an_ungated_or_altered_build(self):
+    def test_the_assembled_bundle_is_the_rebuilt_one(self):
         with scratch() as folder:
             root = Path(folder)
-            (root / "maven.cfg").write_text(MAVEN)
-            staged = self.staged(root, gated=False)
-            with self.assertRaisesRegex(patch.PatchError, "gated"):
-                patch.prepare(staged, maven=root / "maven.cfg", output=root / "out")
-            (staged / "build.json").unlink()
-            (staged / patch.ARTIFACT).unlink()
-            staged.rmdir()
-            staged = self.staged(root)
-            with zipfile.ZipFile(staged / patch.ARTIFACT, "a") as out:
-                out.writestr("extra", b"tampered")
-            with self.assertRaises(patch.PatchError):
-                patch.prepare(staged, maven=root / "maven.cfg", output=root / "out")
-            self.assertFalse((root / "out").exists())
+            bundle = root / "upstream.jar"
+            with zipfile.ZipFile(bundle, "w") as out:
+                out.writestr("META-INF/MANIFEST.MF", b"Manifest-Version: 1.0\nBundle-Version: 5.2.3\nX: y\n\n")
+                out.writestr("LICENSE", b"upstream attribution")
+            classes = patch.committed()
+            patch.rebuild(bundle, classes, root / "rebuilt.jar")
+            with open(bundle, "rb") as stream:
+                self.assertEqual(patch.assemble(stream, classes), (root / "rebuilt.jar").read_bytes())
 
 
 if __name__ == "__main__":

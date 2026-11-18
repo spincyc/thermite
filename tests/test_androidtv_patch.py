@@ -22,36 +22,27 @@ class Packaging(unittest.TestCase):
         for entry in pins["assets"].values():
             self.assertTrue(entry["url"].startswith("https://"))
             self.assertRegex(entry["sha256"], r"^[0-9a-f]{64}$")
-        original = '# retained\nfile:/openhab/addons/other.jar;range="[1,2)"\n'
-        merged = patch.override_text(original)
-        self.assertTrue(merged.startswith(original))
-        self.assertIn("mvn:org.openhab.addons.bundles/org.openhab.binding.androidtv/5.2.3.thermite1", merged)
-        self.assertIn('range="[5.2.3,5.2.4)"', merged)
-        self.assertEqual(patch.override_text(merged), merged)
-        with self.assertRaises(patch.PatchError):
-            patch.override_text("file:/openhab/addons/androidtv-custom.jar\n")
-        sandbox = Path("/owned fixture/userdata/thermite/maven")
-        self.assertIn(sandbox.as_uri(), patch.repository_entry(sandbox))
-        with self.assertRaises(patch.PatchError):
-            patch.repository_entry(Path("relative"))
+        self.assertEqual(set(pins["retire_when"]), {"connection_lifecycle"})
+        self.assertEqual(patch.OVERRIDE, 'mvn:org.openhab.addons.bundles/org.openhab.binding.androidtv/'
+                                         '5.2.3.thermite1;range="[5.2.3,5.2.4)"')
 
-    def test_private_maven_default_preserves_existing_caches_repositories_and_other_settings(self):
-        original = ('# keep comments\norg.ops4j.pax.url.mvn.localRepository=${openhab.userdata}/tmp/mvn\n'
-                    'org.ops4j.pax.url.mvn.defaultRepositories=\\\n'
-                    '    ${karaf.home.uri}system@id=system.repository, \\\n'
-                    '    ${karaf.data.uri}tmp/kar@id=kar.repository\n'
-                    '# unrelated\norg.ops4j.pax.url.mvn.repositories=https://example.invalid/maven\n')
-        result = patch.maven_config_text(original, repository=Path('/owned/maven'))
-        self.assertIn('defaultRepositories=file:///owned/maven/@id=thermite.androidtv,', result)
-        self.assertIn('${karaf.home.uri}system@id=system.repository', result)
-        self.assertIn('${karaf.data.uri}tmp/kar@id=kar.repository', result)
-        self.assertIn('localRepository=${openhab.userdata}/tmp/mvn\n', result)
-        self.assertTrue(result.endswith('# unrelated\norg.ops4j.pax.url.mvn.repositories=https://example.invalid/maven\n'))
-        self.assertEqual(patch.maven_config_text(result, repository=Path('/owned/maven')), result)
-        for bad in ('# no effective property\n', original + '\n' + original,
-                    result.replace('file:///owned/maven/', 'file:///other/maven/')):
-            with self.subTest(bad=bad), self.assertRaises(patch.PatchError):
-                patch.maven_config_text(bad, repository=Path('/owned/maven'))
+    def test_patch_targets_exactly_the_pinned_openhab_release(self):
+        """Fails loudly when versions.json moves: retire the repair if upstream is fixed, else rebase it."""
+        try:
+            patch.require_pinned()
+        except patch.PatchError as error:
+            self.fail(str(error))
+        with tempfile.TemporaryDirectory() as folder:
+            moved = Path(folder) / "versions.json"
+            moved.write_text(json.dumps({"openhab": {"version": "5.2.4"}}))
+            with self.assertRaises(patch.PatchError) as caught:
+                patch.require_pinned(moved)
+            for text in ("openHAB 5.2.4", "exactly the 5.2.3", "retire the repair", "REPAIRS", "rebase it onto 5.2.4",
+                         "zero fuzz", "--write-classes", "is not installed without it"):
+                self.assertIn(text, str(caught.exception))
+            with self.assertRaises(patch.PatchError):
+                patch.build({}, java=Path("/fake/java"), runtime=Path(folder), work=Path(folder) / "work",
+                            output=Path(folder) / "output", versions=moved)
 
     def test_rebuild_is_deterministic_and_preserves_unrelated_protocol_resources(self):
         scratch = AREA.parents[1] / ".scratch"
@@ -120,7 +111,7 @@ class Packaging(unittest.TestCase):
             for key in ("manager", "handler", "compiler", "annotations"):
                 paths[key] = root / key
                 paths[key].write_text("fake verified input")
-            lock = {"upstream": "5.2.3", "patched": "5.2.3.thermite1", "assets": {
+            lock = {**patch.pins(), "assets": {
                 key: {"sha256": patch.sha(path), "name": path.name} for key, path in paths.items()}}
             dependencies = {"system/dependency.jar": patch.sha(runtime / "system/dependency.jar")}
             lock["runtime_system_sha256"] = hashlib.sha256(
@@ -149,6 +140,62 @@ class Packaging(unittest.TestCase):
                 with self.assertRaisesRegex(patch.PatchError, "runtime dependency tree differs"):
                     patch.build(paths, java=Path("/fake/java"), runtime=runtime, work=root / "work",
                                 output=output, test_sources=fixtures)
+
+
+def scratch() -> tempfile.TemporaryDirectory:
+    folder = AREA.parents[1] / ".scratch"
+    folder.mkdir(exist_ok=True)
+    return tempfile.TemporaryDirectory(dir=folder)
+
+
+class Committed(unittest.TestCase):
+    """classes/ is what an install puts into the bundle: the build holds it
+    to the source, and inputs.json pins it."""
+
+    def test_the_committed_classes_are_the_pinned_ones_and_the_reviewed_set(self):
+        pins = patch.pins()
+        self.assertEqual(set(pins["classes"]), patch.EXPECTED_CLASSES)
+        self.assertEqual({name: hashlib.sha256(data).hexdigest() for name, data in patch.committed().items()},
+                         pins["classes"])
+        found = {str(path.relative_to(patch.ROOT / "classes")) for path in (patch.ROOT / "classes").rglob("*")
+                 if path.is_file()}
+        self.assertEqual(found, patch.EXPECTED_CLASSES)
+        self.assertRegex(pins["content_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_a_build_that_is_not_the_pinned_one_is_refused_and_recorded_only_when_asked(self):
+        with scratch() as folder:
+            root = Path(folder)
+            bundle = root / "upstream.jar"
+            with zipfile.ZipFile(bundle, "w") as out:
+                out.writestr("META-INF/MANIFEST.MF", b"Manifest-Version: 1.0\nBundle-Version: 5.2.3\nX: y\n\n")
+            other = {name: b"another build" for name in patch.EXPECTED_CLASSES}
+            patch.rebuild(bundle, other, root / "other.jar")
+            with self.assertRaisesRegex(patch.PatchError, "--write-classes"):
+                patch.reviewed(other, root / "other.jar")
+            same = patch.committed()
+            patch.rebuild(bundle, same, root / "same.jar")
+            # The same classes in another bundle are another content.
+            with self.assertRaisesRegex(patch.PatchError, "not the one inputs.json pins"):
+                patch.reviewed(same, root / "same.jar")
+            lock, classes = root / "inputs.json", root / "package"
+            lock.write_text(patch.LOCK.read_text())
+            with mocked.object(patch, "LOCK", lock), mocked.object(patch, "ROOT", classes):
+                patch.reviewed(other, root / "other.jar", write=True)
+                patch.reviewed(other, root / "other.jar")
+                self.assertEqual(patch.committed(), other)
+            self.assertNotEqual(json.loads(lock.read_text())["classes"], patch.pins()["classes"])
+
+    def test_the_assembled_bundle_is_the_rebuilt_one(self):
+        with scratch() as folder:
+            root = Path(folder)
+            bundle = root / "upstream.jar"
+            with zipfile.ZipFile(bundle, "w") as out:
+                out.writestr("META-INF/MANIFEST.MF", b"Manifest-Version: 1.0\nBundle-Version: 5.2.3\nX: y\n\n")
+                out.writestr("LICENSE", b"upstream attribution")
+            classes = patch.committed()
+            patch.rebuild(bundle, classes, root / "rebuilt.jar")
+            with open(bundle, "rb") as stream:
+                self.assertEqual(patch.assemble(stream, classes), (root / "rebuilt.jar").read_bytes())
 
 
 if __name__ == "__main__":

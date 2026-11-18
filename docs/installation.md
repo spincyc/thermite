@@ -263,6 +263,18 @@ Thermite's `versions.json` into the site's and commit it, or the installation
 refuses, before it stops anything, with those words. After a change of the
 openHAB pin, or for an add-on no entry names yet,
 `thermite sandbox fetch --pin-addons` writes the entry.
+
+Two bindings run with a repair of Thermite's own: Android TV and HEOS. A house
+that uses one gets the repaired binding from the same installation, rebuilt
+on the host from the pinned upstream file and classes Thermite carries, and
+the installation commits only after the started runtime has installed it. An
+installation that would run the unrepaired binding rolls back and says so.
+The first installation of a repair on a runtime that ran the unrepaired
+binding clears openHAB's bundle cache, so that start takes longer, as the
+first start after an openHAB update does; Things, pairings and credentials
+stay. Nothing is installed by hand: `lib/oh_androidtv_patch/README.md` and
+`lib/oh_heos_patch/README.md` describe each repair.
+
 Before starting
 or restarting a service, the installer downloads any missing pinned container
 image with visible progress. Downloads finish before the service startup

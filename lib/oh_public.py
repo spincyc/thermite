@@ -181,9 +181,10 @@ def _screenshots(files: dict[str, bytes]) -> dict[str, str]:
 
 def guard(files: dict[str, bytes], area: Path = oh_cli.AREA, *, facts: set[str] | None = None) -> list[str]:
     """Scan every text file, including Python/YAML/bin/workflows/locks."""
+    import oh_addons
     import oh_brand
     import oh_entry
-    binary_artifacts = oh_entry.approved_artifacts()
+    binary_artifacts = {**oh_entry.approved_artifacts(), **oh_addons.approved_artifacts()}
     facts = _private(Path(area)) if facts is None else facts
     pattern = _pattern(facts)
     allowed_macs = {d["mac"] for d in demo()["devices"]}

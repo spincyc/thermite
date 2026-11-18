@@ -1,18 +1,22 @@
 """Rebuild the pinned HEOS binding with a small, auditable reconnect repair.
 
-Build artifacts and owner activation inputs are staged only. This module never
-connects to a device, reads or edits native userdata, updates OSGi, or starts a
-service. It targets exactly the openHAB release in versions.json; when that
-moves, the build and `make check` refuse until the patch is retired or rebased.
+An install puts the repaired bundle into the runtime of every house whose
+conf lists the HEOS binding (lib/oh_addons.py): the pinned upstream bundle
+with the compiled classes this package carries (classes/, assemble). The
+build here is what makes and proves those classes; it never connects to a
+device or touches a runtime. The repair targets exactly the openHAB release
+in versions.json; when that moves, an install and `make check` refuse until
+it is retired or rebased.
 """
 
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
-import re
+import shutil
 import subprocess
 import tempfile
 import zipfile
@@ -22,13 +26,18 @@ AREA = ROOT.parents[1]
 LOCK = ROOT / "inputs.json"
 VERSIONS = AREA / "versions.json"
 PACKAGE = "org/openhab/binding/heos/internal/"
+#: The add-on whose houses run this repair, and its bundle.
+ADDON = "binding-heos"
+BUNDLE = "org.openhab.binding.heos"
+TITLE = "HEOS reconnect repair"
+MARKER = "heos-reconnect-v1"
 ARTIFACT = "org.openhab.binding.heos-5.2.3.thermite1.jar"
+UPSTREAM_COORDINATES = "org.openhab.addons.bundles/org.openhab.binding.heos/5.2.3"
 COORDINATES = "org.openhab.addons.bundles/org.openhab.binding.heos/5.2.3.thermite1"
 MAVEN_PATH = Path("org/openhab/addons/bundles/org.openhab.binding.heos/5.2.3.thermite1") / ARTIFACT
+#: Karaf's override: this bundle in place of any 5.2.3 one of the same name.
 OVERRIDE = f'mvn:{COORDINATES};range="[5.2.3,5.2.4)"'
-REPOSITORY = Path("/openhab/userdata/thermite/maven")
-REPOSITORY_ID = "thermite.heos"
-DEFAULT_REPOSITORIES = "org.ops4j.pax.url.mvn.defaultRepositories"
+COMMENT = "thermite pinned HEOS reconnect repair"
 PATCHES = {"system": "HeosSystem.patch", "events": "HeosEventController.patch", "command": "HeosSendCommand.patch"}
 EXPECTED_CLASSES = frozenset({
     PACKAGE + "api/HeosSystem.class",
@@ -37,11 +46,10 @@ EXPECTED_CLASSES = frozenset({
     PACKAGE + "resources/HeosSendCommand.class",
 })
 TEST_MAIN = "org.openhab.binding.heos.internal.api.ReconnectTest"
-PROBE = "thermite_heos_patch_probe.js"
 
 
 class PatchError(ValueError):
-    """An unverified input, a moved version pin or a failed build; do not stage or activate it."""
+    """An unverified input, a moved version pin or a failed build; nothing of it is installed."""
 
 
 def sha(path: Path) -> str:
@@ -56,20 +64,26 @@ def pinned_openhab(versions: Path = VERSIONS) -> str:
     return json.loads(Path(versions).read_text(encoding="utf-8"))["openhab"]["version"]
 
 
-def require_pinned(versions: Path = VERSIONS) -> str:
-    """Refuse every openHAB release but the one this patch was written and tested against."""
+def refusal(pinned: str) -> str:
+    """What to do when versions.json pins another openHAB release than the repair's."""
     lock = pins()
+    retire = "; ".join(f"{key}: {value}" for key, value in lock["retire_when"].items())
+    return (f"versions.json pins openHAB {pinned}, but lib/oh_heos_patch repairs exactly the "
+            f"{lock['upstream']} HEOS binding, and a house with HEOS players is not installed without it. If "
+            f"openHAB {pinned}'s HEOS binding contains both upstream fixes ({retire}), retire the repair: delete "
+            "lib/oh_heos_patch, tests/heos_patch, tests/test_heos_patch.py, their .thermite-export.json entries and "
+            "its name in lib/oh_addons.py REPAIRS; the next install takes its bundle and override out of each "
+            f"runtime. Otherwise rebase it onto {pinned}: update inputs.json (bundle, sources, runtime hash), "
+            "regenerate the three patches with zero fuzz, and rebuild with --test-sources and --write-classes so "
+            "the Java gate passes on the new classes and still fails on the unmodified ones. See "
+            "lib/oh_heos_patch/README.md.")
+
+
+def require_pinned(versions: Path = VERSIONS) -> str:
+    """Refuse every openHAB release but the one this repair was written and tested against."""
     pinned = pinned_openhab(versions)
-    if pinned != lock["upstream"]:
-        retire = "; ".join(f"{key}: {value}" for key, value in lock["retire_when"].items())
-        raise PatchError(
-            f"{Path(versions).name} pins openHAB {pinned}, but lib/oh_heos_patch patches exactly the "
-            f"{lock['upstream']} HEOS binding. If openHAB {pinned}'s HEOS binding contains both upstream fixes "
-            f"({retire}), retire the patch: roll back its override on every runtime that applied it, then delete "
-            "lib/oh_heos_patch, tests/heos_patch, tests/test_heos_patch.py and their .thermite-export.json entries. "
-            f"Otherwise rebase it onto {pinned}: update inputs.json (bundle, sources, runtime hash), regenerate the "
-            "three patches with zero fuzz, and rebuild with --test-sources so the Java gate passes on the new "
-            "classes and still fails on the unmodified ones. See lib/oh_heos_patch/README.md.")
+    if pinned != pins()["upstream"]:
+        raise PatchError(refusal(pinned))
     return pinned
 
 
@@ -107,11 +121,14 @@ def manifest(data: bytes, *, patched: bool) -> bytes:
                 or lines.count(b"Bundle-Version: 5.2.3") != 1:
             raise PatchError("unexpected upstream bundle version")
         lines[lines.index(b"Bundle-Version: 5.2.3")] = b"Bundle-Version: 5.2.3.thermite1"
-        lines.append(b"Thermite-Patch: heos-reconnect-v1")
+        lines.append(b"Thermite-Patch: " + MARKER.encode())
     return b"\r\n".join(lines) + b"\r\n\r\n"
 
 
-def rebuild(bundle: Path, replacements: dict[str, bytes], output: Path, *, patched: bool = True) -> dict:
+def assemble(bundle, replacements: dict[str, bytes], *, patched: bool = True) -> bytes:
+    """The bundle (a path or an open file) rebuilt with `replacements` in
+    place of its own classes: the same bytes on one host for the same
+    input, and the same content on every host."""
     if patched and set(replacements) != EXPECTED_CLASSES:
         raise PatchError("compiled class set differs from the reviewed patch")
     entries = {}
@@ -127,82 +144,55 @@ def rebuild(bundle: Path, replacements: dict[str, bytes], output: Path, *, patch
             entries[name] = source.read(name)
     entries["META-INF/MANIFEST.MF"] = manifest(entries["META-INF/MANIFEST.MF"], patched=patched)
     entries.update(replacements)
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as dest:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as dest:
         for name, content in sorted(entries.items()):
             info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o644 << 16
             dest.writestr(info, content)
+    return buffer.getvalue()
+
+
+def rebuild(bundle: Path, replacements: dict[str, bytes], output: Path, *, patched: bool = True) -> dict:
+    Path(output).write_bytes(assemble(bundle, replacements, patched=patched))
     return {"sha256": sha(output), "size": output.stat().st_size,
             "replaced": sorted(replacements), "vendor_signature_preserved": False}
+
+
+def committed() -> dict[str, bytes]:
+    """The compiled classes of the repair, as this checkout carries them
+    (classes/): what an install puts into the bundle, with no compiler."""
+    return {name: (ROOT / "classes" / name).read_bytes() for name in sorted(EXPECTED_CLASSES)}
+
+
+def reviewed(replacements: dict[str, bytes], artifact: Path, *, write: bool = False) -> None:
+    """Hold a build against what inputs.json pins and classes/ carries: the
+    classes an install uses are the ones this source compiles to. `write`
+    records a new build instead (after the patch or its inputs changed)."""
+    import oh_addons
+    classes = {name: hashlib.sha256(data).hexdigest() for name, data in sorted(replacements.items())}
+    content = oh_addons.identity(artifact)[3]
+    lock = pins()
+    if write:
+        shutil.rmtree(ROOT / "classes", ignore_errors=True)
+        for name, data in replacements.items():
+            (ROOT / "classes" / name).parent.mkdir(parents=True, exist_ok=True)
+            (ROOT / "classes" / name).write_bytes(data)
+        lock["classes"], lock["content_sha256"] = classes, content
+        LOCK.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+        return
+    if classes != lock.get("classes") or content != lock.get("content_sha256"):
+        raise PatchError("this build is not the one inputs.json pins (classes, content_sha256): after a reviewed "
+                         "change to the patch or its inputs, build with --write-classes and commit classes/ and "
+                         "inputs.json with it")
+    if {name: hashlib.sha256(data).hexdigest() for name, data in committed().items()} != classes:
+        raise PatchError("classes/ does not hold the classes inputs.json pins")
 
 
 def class_hashes(bundle: Path) -> dict[str, str]:
     with zipfile.ZipFile(bundle) as archive:
         return {name: hashlib.sha256(archive.read(name)).hexdigest() for name in sorted(EXPECTED_CLASSES)}
-
-
-def override_text(previous: str) -> str:
-    """Pure merge of userdata/etc/overrides.properties; refuses a competing HEOS override.
-
-    Unrelated lines, including another Thermite binding override, stay byte-for-byte.
-    """
-    for line in previous.splitlines():
-        value = line.strip()
-        if value and not value.startswith("#") and "org.openhab.binding.heos" in value and value != OVERRIDE:
-            raise PatchError("a HEOS override already exists; review it explicitly")
-    if OVERRIDE in [line.strip() for line in previous.splitlines()]:
-        return previous
-    separator = "" if not previous or previous.endswith("\n") else "\n"
-    return previous + separator + "# thermite pinned HEOS reconnect repair\n" + OVERRIDE + "\n"
-
-
-def repository_entry(repository: Path = REPOSITORY) -> str:
-    repository = Path(repository)
-    if (not repository.is_absolute() or ".." in repository.parts
-            or any(ord(char) < 32 for char in str(repository))):
-        raise PatchError("Maven repository requires an absolute local path")
-    return repository.as_uri().rstrip("/") + "/@id=" + REPOSITORY_ID
-
-
-def maven_config_text(previous: str, *, repository: Path = REPOSITORY) -> str:
-    """Prepend ONE private read-only default repository; preserve every other setting.
-
-    Karaf's override processing accepts only mvn: URIs, so the derivative needs a
-    durable repository outside tmp/mvn. The entry is HEOS's own, even when another
-    Thermite derivative already shares the directory, so each rolls back alone.
-    """
-    entry = repository_entry(repository)
-    lines = previous.splitlines(keepends=True)
-    blocks = []
-    index = 0
-    while index < len(lines):
-        start = index
-        logical = ""
-        while True:
-            part = lines[index].rstrip("\r\n")
-            logical += part if index == start else part.lstrip()
-            slashes = len(part) - len(part.rstrip("\\"))
-            index += 1
-            if not slashes % 2:
-                break
-            logical = logical[:-1]
-            if index == len(lines):
-                raise PatchError("unfinished Maven configuration continuation")
-        match = re.match(r"^\s*" + re.escape(DEFAULT_REPOSITORIES) + r"\s*[=:]\s*(.*)$", logical)
-        if match:
-            blocks.append((start, index, match.group(1)))
-    if len(blocks) != 1:
-        raise PatchError("exactly one explicit existing defaultRepositories property is required")
-    start, end, value = blocks[0]
-    entries = [part.strip() for part in value.split(",") if part.strip()]
-    owned = [part for part in entries if part.endswith("@id=" + REPOSITORY_ID)]
-    if owned:
-        if owned != [entry]:
-            raise PatchError("a competing thermite HEOS Maven repository already exists")
-        return previous
-    replacement = DEFAULT_REPOSITORIES + "=" + entry + ("," + value if value else "") + "\n"
-    return "".join([*lines[:start], replacement, *lines[end:]])
 
 
 def _publish(path: Path, data: bytes) -> None:
@@ -221,11 +211,13 @@ def _publish(path: Path, data: bytes) -> None:
 
 
 def build(inputs: dict[str, Path], *, java: Path, runtime: Path, work: Path, output: Path,
-          test_sources: Path | None = None, versions: Path = VERSIONS) -> dict:
+          test_sources: Path | None = None, versions: Path = VERSIONS, write_classes: bool = False) -> dict:
     """Compile exact upstream + reviewed patch; output only into an owned build directory.
 
     With test_sources, the reconnect test must pass on the rebuilt artifact and,
-    as a negative control, fail on the unmodified upstream bundle.
+    as a negative control, fail on the unmodified upstream bundle. The build
+    must be the one inputs.json pins and classes/ carries; write_classes
+    records it as that instead, and needs the gate.
     """
     require_pinned(versions)
     lock = pins()
@@ -269,7 +261,7 @@ def build(inputs: dict[str, Path], *, java: Path, runtime: Path, work: Path, out
                   "artifact": rebuild(paths["bundle"], replacements, artifact),
                   "classes": class_hashes(artifact),
                   "upstream_classes": class_hashes(paths["bundle"]),
-                  "activation": "staged_only; owner stop-first restart, feature refresh and loaded-class verification required"}
+                  "activation": "by thermite install, for a house whose conf lists " + ADDON}
         if test_sources is not None:
             fixtures = sorted(Path(test_sources).glob("*.java"))
             if not fixtures:
@@ -284,56 +276,10 @@ def build(inputs: dict[str, Path], *, java: Path, runtime: Path, work: Path, out
             if control.returncode == 0 or not failed:
                 raise PatchError("negative control passed: the reconnect test no longer detects the upstream defect")
             report["negative_control"] = {"exit": control.returncode, "failures": failed}
+        if write_classes and test_sources is None:
+            raise PatchError("--write-classes needs --test-sources: only a gated build is recorded")
+        reviewed(replacements, artifact, write=write_classes)
         _publish(output / ARTIFACT, artifact.read_bytes())
-        _publish(output / "overrides.properties.fragment", override_text("").encode())
-        _publish(output / "maven-layout.json", (json.dumps({"version": 1, "coordinates": "mvn:" + COORDINATES,
-            "relative_path": str(MAVEN_PATH), "default_repository_entry": repository_entry()}, indent=2) + "\n").encode())
         _publish(output / "build.json", (json.dumps(report, indent=2) + "\n").encode())
         return report
 
-
-def probe(expected_version: str, expected_classes: dict[str, str]) -> str:
-    config = json.dumps({"version": expected_version, "classes": expected_classes}, sort_keys=True)
-    return (ROOT / "activation_probe.js").read_text(encoding="utf-8").replace("__THERMITE_CONFIG__", config)
-
-
-def prepare(staged: Path, *, maven: Path, output: Path, overrides: Path | None = None,
-            versions: Path = VERSIONS) -> dict:
-    """Owner activation data from COPIES of the runtime's two Karaf files.
-
-    Reads no live userdata: the owner copies the files out and installs the
-    results. Requires a staged build that passed the Java gate and its control.
-    """
-    require_pinned(versions)
-    lock = pins()
-    staged, output = Path(staged), Path(output)
-    receipt = json.loads((staged / "build.json").read_text(encoding="utf-8"))
-    artifact = verified(staged / ARTIFACT, str(receipt.get("artifact", {}).get("sha256")))
-    if (receipt.get("upstream") != lock["upstream"] or receipt.get("patched") != lock["patched"]
-            or receipt.get("inputs", {}).get("bundle") != lock["assets"]["bundle"]["sha256"]
-            or receipt.get("classes") != class_hashes(artifact)
-            or "java_tests" not in receipt or not receipt.get("negative_control", {}).get("failures")):
-        raise PatchError("the staged build is not a complete, gated build of this patch")
-    before = {"overrides.properties": Path(overrides).read_bytes() if overrides is not None else None,
-              "org.ops4j.pax.url.mvn.cfg": Path(maven).read_bytes()}
-    try:
-        desired = {"overrides.properties": override_text((before["overrides.properties"] or b"").decode()).encode(),
-                   "org.ops4j.pax.url.mvn.cfg": maven_config_text(before["org.ops4j.pax.url.mvn.cfg"].decode()).encode()}
-    except UnicodeError as exc:
-        raise PatchError("Karaf configuration is not UTF-8 text") from exc
-    if output.exists() or output.is_symlink():
-        raise PatchError("a fresh output directory is required")
-    output.mkdir(mode=0o700, parents=False)
-    files = {ARTIFACT: artifact.read_bytes(),
-             "apply-" + PROBE: probe(lock["patched"], receipt["classes"]).encode(),
-             "rollback-" + PROBE: probe(lock["upstream"], receipt["upstream_classes"]).encode(),
-             **desired}
-    files.update({name + ".before": data for name, data in before.items() if data is not None})
-    for name, data in sorted(files.items()):
-        _publish(output / name, data)
-    sums = "".join(f"{hashlib.sha256(data).hexdigest()}  {name}\n" for name, data in sorted(files.items()))
-    _publish(output / "SHA256SUMS", sums.encode())
-    return {"output": str(output), "artifact_sha256": sha(artifact), "maven_path": str(MAVEN_PATH),
-            "overrides_changed": desired["overrides.properties"] != before["overrides.properties"],
-            "maven_changed": desired["org.ops4j.pax.url.mvn.cfg"] != before["org.ops4j.pax.url.mvn.cfg"],
-            "activation": "not_started"}

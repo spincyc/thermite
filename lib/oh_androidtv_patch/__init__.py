@@ -1,16 +1,22 @@
 """Rebuild the pinned Android TV binding with a small, auditable lifecycle patch.
 
-Build artifacts and activation instructions are staged only. This module never
-connects to a device, edits native userdata, updates OSGi, or starts a service.
+An install puts the repaired bundle into the runtime of every house whose
+conf lists the Android TV binding (lib/oh_addons.py): the pinned upstream
+bundle with the compiled classes this package carries (classes/, assemble).
+The build here is what makes and proves those classes; it never connects to
+a device or touches a runtime. The repair targets exactly the openHAB
+release in versions.json; when that moves, an install and `make check`
+refuse until it is retired or rebased.
 """
 
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
-import re
+import shutil
 import subprocess
 import tempfile
 import zipfile
@@ -18,12 +24,20 @@ import zipfile
 ROOT = Path(__file__).resolve().parent
 LOCK = ROOT / "inputs.json"
 PACKAGE = "org/openhab/binding/androidtv/internal/"
+AREA = ROOT.parents[1]
+VERSIONS = AREA / "versions.json"
+#: The add-on whose houses run this repair, and its bundle.
+ADDON = "binding-androidtv"
+BUNDLE = "org.openhab.binding.androidtv"
+TITLE = "Android TV connection repair"
+MARKER = "googletv-lifecycle-v1"
 ARTIFACT = "org.openhab.binding.androidtv-5.2.3.thermite1.jar"
+UPSTREAM_COORDINATES = "org.openhab.addons.bundles/org.openhab.binding.androidtv/5.2.3"
 COORDINATES = "org.openhab.addons.bundles/org.openhab.binding.androidtv/5.2.3.thermite1"
 MAVEN_PATH = Path("org/openhab/addons/bundles/org.openhab.binding.androidtv/5.2.3.thermite1") / ARTIFACT
+#: Karaf's override: this bundle in place of any 5.2.3 one of the same name.
 OVERRIDE = f'mvn:{COORDINATES};range="[5.2.3,5.2.4)"'
-REPOSITORY = Path("/openhab/userdata/thermite/maven")
-DEFAULT_REPOSITORIES = "org.ops4j.pax.url.mvn.defaultRepositories"
+COMMENT = "thermite pinned Android TV lifecycle repair"
 PATCHES = {"manager": "googletv-lifecycle.patch", "handler": "handler-ownership.patch"}
 EXPECTED_CLASSES = frozenset({
     PACKAGE + "AndroidTVHandler.class",
@@ -35,12 +49,7 @@ EXPECTED_CLASSES = frozenset({
 
 
 class PatchError(ValueError):
-    """An unverified input or a failed build; do not stage or activate it."""
-
-
-def cached_jar_report(staged: Path, cached: Path, expected_sha256: str) -> dict:
-    from .integrity import compare_cached_jar
-    return compare_cached_jar(staged, cached, expected_sha256)
+    """An unverified input, a moved version pin or a failed build; nothing of it is installed."""
 
 
 def sha(path: Path) -> str:
@@ -49,6 +58,29 @@ def sha(path: Path) -> str:
 
 def pins() -> dict:
     return json.loads(LOCK.read_text(encoding="utf-8"))
+
+
+def refusal(pinned: str) -> str:
+    """What to do when versions.json pins another openHAB release than the repair's."""
+    lock = pins()
+    retire = "; ".join(f"{key}: {value}" for key, value in lock["retire_when"].items())
+    return (f"versions.json pins openHAB {pinned}, but lib/oh_androidtv_patch repairs exactly the "
+            f"{lock['upstream']} Android TV binding, and a house with Android TV or Google TV devices is not "
+            f"installed without it. If openHAB {pinned}'s binding contains the upstream fix ({retire}), "
+            "retire the repair: delete lib/oh_androidtv_patch, tests/androidtv_patch, "
+            "tests/test_androidtv_patch.py, their .thermite-export.json entries and its name in lib/oh_addons.py "
+            "REPAIRS; the next install takes its bundle and override out of each runtime. Otherwise rebase it onto "
+            f"{pinned}: update inputs.json (bundle, sources, runtime hash), regenerate the two patches with zero "
+            "fuzz, and rebuild with --test-sources and --write-classes so the Java gate passes on the new classes. "
+            "See lib/oh_androidtv_patch/README.md.")
+
+
+def require_pinned(versions: Path = VERSIONS) -> str:
+    """Refuse every openHAB release but the one this repair was written and tested against."""
+    pinned = json.loads(Path(versions).read_text(encoding="utf-8"))["openhab"]["version"]
+    if pinned != pins()["upstream"]:
+        raise PatchError(refusal(pinned))
+    return pinned
 
 
 def verified(path: Path, expected: str) -> Path:
@@ -81,11 +113,14 @@ def manifest(data: bytes, *, patched: bool) -> bytes:
         if main.count(b"Bundle-Version: 5.2.3\n") != 1:
             raise PatchError("unexpected upstream bundle version")
         main = main.replace(b"Bundle-Version: 5.2.3\n", b"Bundle-Version: 5.2.3.thermite1\n")
-        main += b"\nThermite-Patch: googletv-lifecycle-v1"
+        main += b"\nThermite-Patch: " + MARKER.encode()
     return main.replace(b"\n", b"\r\n") + b"\r\n\r\n"
 
 
-def rebuild(bundle: Path, replacements: dict[str, bytes], output: Path, *, patched: bool = True) -> dict:
+def assemble(bundle, replacements: dict[str, bytes], *, patched: bool = True) -> bytes:
+    """The bundle (a path or an open file) rebuilt with `replacements` in
+    place of its own classes: the same bytes on one host for the same
+    input, and the same content on every host."""
     if patched and set(replacements) != EXPECTED_CLASSES:
         raise PatchError("compiled class set differs from the reviewed patch")
     entries = {}
@@ -101,78 +136,50 @@ def rebuild(bundle: Path, replacements: dict[str, bytes], output: Path, *, patch
             entries[name] = source.read(name)
     entries["META-INF/MANIFEST.MF"] = manifest(entries["META-INF/MANIFEST.MF"], patched=patched)
     entries.update(replacements)
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as dest:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as dest:
         for name, content in sorted(entries.items()):
             info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o644 << 16
             dest.writestr(info, content)
+    return buffer.getvalue()
+
+
+def rebuild(bundle: Path, replacements: dict[str, bytes], output: Path, *, patched: bool = True) -> dict:
+    Path(output).write_bytes(assemble(bundle, replacements, patched=patched))
     return {"sha256": sha(output), "size": output.stat().st_size,
             "replaced": sorted(replacements), "vendor_signature_preserved": False}
 
 
-def override_text(previous: str) -> str:
-    """Pure merge for a future owner deployment adapter; never edits userdata.
-
-    Refuse an already-existing Android TV override rather than silently taking
-    ownership of a different vendor patch. Unrelated lines stay byte-for-byte.
-    """
-    for line in previous.splitlines():
-        value = line.strip()
-        if value and not value.startswith("#") and "androidtv" in value.lower() and value != OVERRIDE:
-            raise PatchError("an Android TV override already exists; review it explicitly")
-    if OVERRIDE in [line.strip() for line in previous.splitlines()]:
-        return previous
-    separator = "" if not previous or previous.endswith("\n") else "\n"
-    return previous + separator + "# thermite pinned Android TV lifecycle repair\n" + OVERRIDE + "\n"
+def committed() -> dict[str, bytes]:
+    """The compiled classes of the repair, as this checkout carries them
+    (classes/): what an install puts into the bundle, with no compiler."""
+    return {name: (ROOT / "classes" / name).read_bytes() for name in sorted(EXPECTED_CLASSES)}
 
 
-def repository_entry(repository: Path = REPOSITORY) -> str:
-    repository = Path(repository)
-    if (not repository.is_absolute() or ".." in repository.parts
-            or any(ord(char) < 32 for char in str(repository))):
-        raise PatchError("Maven repository requires an absolute local path")
-    return repository.as_uri().rstrip("/") + "/@id=thermite.androidtv"
-
-
-def maven_config_text(previous: str, *, repository: Path = REPOSITORY) -> str:
-    """Prepend ONE private read-only default repository; preserve every other setting.
-
-    Legacy Karaf override processing accepts only mvn: URIs. An artifact in
-    tmp/mvn alone is not durable. Keep its authoritative copy outside caches
-    and keep the existing localRepository/default repository entries intact.
-    """
-    entry = repository_entry(repository)
-    lines = previous.splitlines(keepends=True)
-    blocks = []
-    index = 0
-    while index < len(lines):
-        start = index
-        logical = ""
-        while True:
-            part = lines[index].rstrip("\r\n")
-            logical += part if index == start else part.lstrip()
-            slashes = len(part) - len(part.rstrip("\\"))
-            index += 1
-            if not slashes % 2:
-                break
-            logical = logical[:-1]
-            if index == len(lines):
-                raise PatchError("unfinished Maven configuration continuation")
-        match = re.match(r"^\s*" + re.escape(DEFAULT_REPOSITORIES) + r"\s*[=:]\s*(.*)$", logical)
-        if match:
-            blocks.append((start, index, match.group(1)))
-    if len(blocks) != 1:
-        raise PatchError("exactly one explicit existing defaultRepositories property is required")
-    start, end, value = blocks[0]
-    entries = [part.strip() for part in value.split(",") if part.strip()]
-    owned = [part for part in entries if "@id=thermite.androidtv" in part]
-    if owned:
-        if owned != [entry]:
-            raise PatchError("a competing thermite Maven repository already exists")
-        return previous
-    replacement = DEFAULT_REPOSITORIES + "=" + entry + ("," + value if value else "") + "\n"
-    return "".join([*lines[:start], replacement, *lines[end:]])
+def reviewed(replacements: dict[str, bytes], artifact: Path, *, write: bool = False) -> None:
+    """Hold a build against what inputs.json pins and classes/ carries: the
+    classes an install uses are the ones this source compiles to. `write`
+    records a new build instead (after the patch or its inputs changed)."""
+    import oh_addons
+    classes = {name: hashlib.sha256(data).hexdigest() for name, data in sorted(replacements.items())}
+    content = oh_addons.identity(artifact)[3]
+    lock = pins()
+    if write:
+        shutil.rmtree(ROOT / "classes", ignore_errors=True)
+        for name, data in replacements.items():
+            (ROOT / "classes" / name).parent.mkdir(parents=True, exist_ok=True)
+            (ROOT / "classes" / name).write_bytes(data)
+        lock["classes"], lock["content_sha256"] = classes, content
+        LOCK.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+        return
+    if classes != lock.get("classes") or content != lock.get("content_sha256"):
+        raise PatchError("this build is not the one inputs.json pins (classes, content_sha256): after a reviewed "
+                         "change to the patch or its inputs, build with --write-classes and commit classes/ and "
+                         "inputs.json with it")
+    if {name: hashlib.sha256(data).hexdigest() for name, data in committed().items()} != classes:
+        raise PatchError("classes/ does not hold the classes inputs.json pins")
 
 
 def _publish(path: Path, data: bytes) -> None:
@@ -191,8 +198,12 @@ def _publish(path: Path, data: bytes) -> None:
 
 
 def build(inputs: dict[str, Path], *, java: Path, runtime: Path, work: Path, output: Path,
-          test_sources: Path | None = None) -> dict:
-    """Compile exact upstream + reviewed patch; output only into an owned build directory."""
+          test_sources: Path | None = None, versions: Path = VERSIONS, write_classes: bool = False) -> dict:
+    """Compile exact upstream + reviewed patch; output only into an owned build directory.
+
+    The build must be the one inputs.json pins and classes/ carries;
+    write_classes records it as that instead, and needs the Java gate."""
+    require_pinned(versions)
     lock = pins()
     paths = {key: verified(inputs[key], entry["sha256"]) for key, entry in lock["assets"].items()}
     runtime = Path(runtime)
@@ -204,7 +215,7 @@ def build(inputs: dict[str, Path], *, java: Path, runtime: Path, work: Path, out
     dependency_hashes = {str(path.relative_to(runtime)): sha(path) for path in dependencies}
     system_hash = hashlib.sha256(json.dumps(dependency_hashes, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     if system_hash != lock["runtime_system_sha256"] or len(dependencies) != lock["runtime_system_jars"]:
-        raise PatchError("runtime dependency tree differs from the pinned5.2.3 distribution")
+        raise PatchError(f"runtime dependency tree differs from the pinned {lock['upstream']} distribution")
     work, output = Path(work), Path(output)
     work.mkdir(parents=True, exist_ok=True)
     output.mkdir(parents=True, exist_ok=True)
@@ -233,7 +244,7 @@ def build(inputs: dict[str, Path], *, java: Path, runtime: Path, work: Path, out
                   "runtime_system_sha256": system_hash,
                   "compiler_log": compile_log,
                   "artifact": rebuild(paths["bundle"], replacements, folder / ARTIFACT),
-                  "activation": "staged_only; owner native restart and loaded-bundle verification required"}
+                  "activation": "by thermite install, for a house whose conf lists " + ADDON}
         if test_sources is not None:
             test_sources = Path(test_sources)
             fixtures = sorted(test_sources.glob("*.java"))
@@ -251,9 +262,9 @@ def build(inputs: dict[str, Path], *, java: Path, runtime: Path, work: Path, out
                     "-Djdk.net.hosts.file=" + str(hosts), "-Duser.home=" + str(folder / "maven-home"), "-cp",
                     str(tests) + ":" + ":".join(map(str, dependencies)), "ActivationTest",
                     str(folder / "maven-test"), str(folder / ARTIFACT)], timeout=45)
+        if write_classes and test_sources is None:
+            raise PatchError("--write-classes needs --test-sources: only a gated build is recorded")
+        reviewed(replacements, folder / ARTIFACT, write=write_classes)
         _publish(output / ARTIFACT, (folder / ARTIFACT).read_bytes())
-        _publish(output / "overrides.properties.fragment", override_text("").encode())
-        _publish(output / "maven-layout.json", (json.dumps({"version": 1, "coordinates": "mvn:" + COORDINATES,
-            "relative_path": str(MAVEN_PATH), "default_repository_entry": repository_entry()}, indent=2) + "\n").encode())
         _publish(output / "build.json", (json.dumps(report, indent=2) + "\n").encode())
         return report

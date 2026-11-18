@@ -12,20 +12,36 @@ generated addons.cfg says `remote = false`, so openHAB keeps its online
 repository out of the resolver, and provision empties the remote list too:
 a start resolves from local files or fails.
 
+Two bindings run repaired (REPAIRS: lib/oh_androidtv_patch,
+lib/oh_heos_patch). A house whose conf lists one of them gets, in the same
+repository, the binding's bundle rebuilt from the pinned upstream file and
+the repair's committed classes, and the line in Karaf's overrides that makes
+openHAB install it in place of the upstream one. Karaf applies an override
+only when it provisions a feature, so an OSGi cache that holds another build
+of a repaired binding is cleared: the next start provisions afresh, as it
+does after openHAB's own update. verify reads the cache after that start
+and says which binding is not the repaired one.
+
 Root runs this file with the system Python while openHAB is stopped
 (main), inside state the service account writes: it imports the standard
-library and oh_ports only, and never follows a link there.
+library, oh_ports and the repairs' own packages, and never follows a link
+there.
 """
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
+import importlib
+import io
 import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 import stat
 import xml.etree.ElementTree as ElementTree
+import zipfile
 
 import oh_ports
 
@@ -42,6 +58,14 @@ REMOTE_REPOSITORIES = "org.ops4j.pax.url.mvn.repositories"
 ID = "thermite"
 #: No add-on file is larger; one that claims to be is refused unread.
 MAXIMUM_FILE = 256 * 1024 * 1024
+#: The packages beside this file that each repair one binding.
+REPAIRS = ("oh_androidtv_patch", "oh_heos_patch")
+OVERRIDES = "overrides.properties"
+MANIFEST = "META-INF/MANIFEST.MF"
+#: Where Equinox keeps each installed bundle: <id>/<generation>/bundleFile.
+BUNDLES = ("cache", "org.eclipse.osgi")
+#: No bundle has more entries; one that claims to is not read.
+MAXIMUM_ENTRIES = 50_000
 SHA256 = re.compile(r"[0-9a-f]{64}")
 UID = re.compile(r"[a-z]+-[a-z0-9]+")
 _FILE = re.compile(r"(?:[A-Za-z0-9_][A-Za-z0-9_.+-]*/)+[A-Za-z0-9_][A-Za-z0-9_.+-]*\.(?:jar|xml|kar)")
@@ -136,10 +160,241 @@ def pinned(versions: dict, uids) -> dict[str, dict]:
     return {path: addons["files"][path] for uid in sorted(set(uids)) for path in addons["requires"][uid]}
 
 
-def digest(files: dict[str, dict]) -> str:
-    """One name for a set of pinned files, as the installed manifest records it."""
-    material = json.dumps({path: pin["sha256"] for path, pin in files.items()}, sort_keys=True)
-    return "sha256:" + hashlib.sha256(material.encode()).hexdigest()
+def digest(files: dict[str, dict], wanted=()) -> str:
+    """One name for a set of pinned files and the repairs installed beside
+    them, as the installed manifest records it."""
+    material = {path: pin["sha256"] for path, pin in files.items()}
+    material.update({repair.path: repair.content for repair in wanted})
+    return "sha256:" + hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
+
+
+# The binding repairs ----------------------------------------------------------
+
+@dataclasses.dataclass(frozen=True)
+class Repair:
+    """One binding that runs repaired, as its package declares it."""
+
+    package: str
+    #: The add-on whose houses need it (binding-heos) and its bundle's name.
+    addon: str
+    bundle: str
+    title: str
+    #: The openHAB release it repairs, and the version the repaired bundle carries.
+    upstream: str
+    patched: str
+    #: The repaired bundle's Thermite-Patch header.
+    marker: str
+    #: The upstream bundle: a pinned add-on file, and the digest it must have.
+    source: str
+    source_sha256: str
+    #: The repaired bundle's place in the repository, and Karaf's override line.
+    path: str
+    override: str
+    comment: str
+    #: The classes the repair replaces, by entry name and SHA-256, and the
+    #: content of the whole repaired bundle (content_digest).
+    classes: dict
+    content: str
+
+    @property
+    def pin(self) -> str:
+        return "repair_" + self.addon.replace("-", "_")
+
+    def assemble(self, upstream: bytes) -> bytes:
+        """The repaired bundle: the upstream one with the committed classes
+        in place of its own, and refused unless it is the reviewed one."""
+        module = importlib.import_module(self.package)
+        classes = {}
+        for name, sha256 in self.classes.items():
+            data = (Path(module.ROOT) / "classes" / name).read_bytes()
+            if hashlib.sha256(data).hexdigest() != sha256:
+                raise AddonError(f"lib/{self.package}/classes/{name} is not the class its inputs.json pins")
+            classes[name] = data
+        if hashlib.sha256(upstream).hexdigest() != self.source_sha256:
+            raise AddonError(f"{self.source} is not the bundle the {self.title} was built from")
+        data = module.assemble(io.BytesIO(upstream), classes)
+        if identity(io.BytesIO(data)) != (self.bundle, self.patched, self.marker, self.content):
+            raise AddonError(f"the rebuilt {self.bundle} is not the reviewed {self.title}")
+        return data
+
+
+def known_repairs() -> list[Repair]:
+    found = []
+    for package in REPAIRS:
+        module = importlib.import_module(package)
+        lock = module.pins()
+        found.append(Repair(package, module.ADDON, module.BUNDLE, module.TITLE, lock["upstream"], lock["patched"],
+                            module.MARKER, artifact_path("mvn:" + module.UPSTREAM_COORDINATES),
+                            lock["assets"]["bundle"]["sha256"], str(module.MAVEN_PATH), module.OVERRIDE,
+                            module.COMMENT, dict(lock["classes"]), lock["content_sha256"]))
+    return found
+
+
+def approved_artifacts() -> dict[str, str]:
+    """The repairs' committed classes by repository path and SHA-256: the
+    binary files a public package may carry for them (oh_public.guard)."""
+    return {f"lib/{repair.package}/classes/{name}": sha256
+            for repair in known_repairs() for name, sha256 in repair.classes.items()}
+
+
+def repairs(versions: dict, uids) -> list[Repair]:
+    """The repairs the add-ons `uids` run with. One written for another
+    openHAB release than versions.json pins is refused, with what to do: it
+    is retired or rebased, never skipped."""
+    wanted = [repair for repair in known_repairs() if repair.addon in set(uids)]
+    pinned_release = (versions.get("openhab") or {}).get("version")
+    for repair in wanted:
+        if pinned_release != repair.upstream:
+            raise AddonError(importlib.import_module(repair.package).refusal(str(pinned_release)))
+    return wanted
+
+
+def manifest_headers(data: bytes) -> dict[str, str]:
+    """A JAR manifest's main section."""
+    headers: dict[str, str] = {}
+    name = None
+    for line in data.decode("utf-8", "replace").replace("\r\n", "\n").split("\n\n", 1)[0].split("\n"):
+        if line.startswith(" ") and name is not None:
+            headers[name] += line[1:]
+        elif ": " in line:
+            name, value = line.split(": ", 1)
+            headers[name] = value
+    return headers
+
+
+def identity(jar, content: bool = True) -> tuple[str, str, str | None, str | None]:
+    """A bundle's symbolic name, version and Thermite-Patch header, and one
+    name for its content however it is packed: every entry but the manifest,
+    by name and SHA-256. Pax adds a header to the manifest of the copy it
+    hands the framework, and may pack it differently; nothing else of it
+    may differ. `jar` is a path or an open file."""
+    with zipfile.ZipFile(jar) as archive:
+        infos = [info for info in archive.infolist() if not info.is_dir()]
+        names = {info.filename for info in infos}
+        if (len(infos) > MAXIMUM_ENTRIES or len(names) != len(infos) or MANIFEST not in names
+                or sum(info.file_size for info in infos) > 2 * MAXIMUM_FILE):
+            raise AddonError("not a bundle this reads")
+        headers = manifest_headers(archive.read(MANIFEST))
+        digest = None
+        if content:
+            entries = {info.filename: hashlib.sha256(archive.read(info)).hexdigest()
+                       for info in infos if info.filename != MANIFEST}
+            digest = hashlib.sha256(json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return (headers.get("Bundle-SymbolicName", "").split(";")[0].strip(), headers.get("Bundle-Version", ""),
+            headers.get("Thermite-Patch"), digest)
+
+
+def overrides(text: str, wanted: list[Repair], known: list[Repair]) -> str:
+    """userdata/etc/overrides.properties with the wanted repairs' lines and
+    no other of Thermite's (one a retired repair left, say). Every other
+    line stays; settled text comes back unchanged. Another override of a
+    repaired binding is refused: two cannot both apply."""
+    kept = []
+    for line in text.splitlines():
+        value = line.strip()
+        if value.startswith("# thermite pinned ") or re.search(r"/[0-9.]+\.thermite[0-9]+;", value):
+            continue
+        for repair in known:
+            if value and not value.startswith("#") and repair.bundle in value:
+                raise AddonError(f"{OVERRIDES} overrides {repair.bundle} with a bundle that is not Thermite's "
+                                 f"{repair.title}: remove that line from userdata/etc/{OVERRIDES} while Thermite is "
+                                 "stopped, or keep it and take the binding out of the house")
+        kept.append(line)
+    lines = [*kept, *(line for repair in sorted(wanted, key=lambda repair: repair.addon)
+                      for line in ("# " + repair.comment, repair.override))]
+    return text if text.splitlines() == lines else "".join(line + "\n" for line in lines)
+
+
+def _installed(top: int, wanted: set[str]) -> list[tuple[str, str, str | None, str | None]]:
+    """What the OSGi cache below userdata holds of the bundles `wanted` and of
+    every bundle that carries Thermite's header: identity() of the newest
+    generation of each. A file that is no readable bundle is none of them."""
+    found = []
+    try:
+        cache = os.open(BUNDLES[0], _DIRECTORY, dir_fd=top)
+    except FileNotFoundError:
+        return found
+    try:
+        try:
+            bundles = os.open(BUNDLES[1], _DIRECTORY, dir_fd=cache)
+        except FileNotFoundError:
+            return found
+        try:
+            for name in sorted(os.listdir(bundles)):
+                if not name.isdigit():
+                    continue
+                try:
+                    holder = os.open(name, _DIRECTORY, dir_fd=bundles)
+                except OSError:
+                    continue
+                try:
+                    for generation in sorted((entry for entry in os.listdir(holder) if entry.isdigit()),
+                                             key=int, reverse=True):
+                        try:
+                            directory = os.open(generation, _DIRECTORY, dir_fd=holder)
+                        except OSError:
+                            continue
+                        try:
+                            descriptor = os.open("bundleFile", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                                                 dir_fd=directory)
+                        except OSError:
+                            continue
+                        finally:
+                            os.close(directory)
+                        with os.fdopen(descriptor, "rb") as stream:
+                            info = os.fstat(stream.fileno())
+                            if not stat.S_ISREG(info.st_mode) or info.st_size > MAXIMUM_FILE:
+                                break
+                            try:
+                                bundle, version, marker, _ = identity(stream, content=False)
+                                if bundle in wanted or marker is not None:
+                                    stream.seek(0)
+                                    found.append(identity(stream))
+                            except (OSError, ValueError, KeyError, RuntimeError, EOFError, zipfile.BadZipFile):
+                                pass
+                        break
+                finally:
+                    os.close(holder)
+        finally:
+            os.close(bundles)
+    finally:
+        os.close(cache)
+    return found
+
+
+def _stale(found, wanted: list[Repair]) -> str | None:
+    """Why the OSGi cache cannot stay: it holds a build of a binding that is
+    not the one this version installs."""
+    by_bundle = {repair.bundle: repair for repair in wanted}
+    for bundle, version, marker, content in found:
+        repair = by_bundle.get(bundle)
+        if repair is None:
+            return f"it holds a repaired {bundle} {version} that this version does not install"
+        if (version, marker, content) != (repair.patched, repair.marker, repair.content):
+            return f"it holds {bundle} {version}, not the {repair.title} ({repair.patched})"
+    return None
+
+
+def verify(userdata: Path, wanted: list[Repair], *, anchored: bool = False) -> list[str]:
+    """What is wrong with the bundles a started runtime installed: one line
+    for each repaired binding that is missing or is not the repaired build."""
+    problems = []
+    top = oh_ports.open_directory(Path(os.path.abspath(userdata)), anchored=anchored)
+    try:
+        found = _installed(top, {repair.bundle for repair in wanted})
+    finally:
+        os.close(top)
+    for repair in wanted:
+        mine = [entry for entry in found if entry[0] == repair.bundle]
+        if not mine:
+            problems.append(f"openHAB has not installed {repair.bundle}, which {repair.addon} needs")
+        for _, version, marker, content in mine:
+            if (version, marker) != (repair.patched, repair.marker):
+                problems.append(f"openHAB runs {repair.bundle} {version}, not the {repair.title} ({repair.patched})")
+            elif content != repair.content:
+                problems.append(f"openHAB runs a {repair.bundle} {version} whose content is not the reviewed "
+                                f"{repair.title}")
+    return problems
 
 
 # The operator's cache ---------------------------------------------------------
@@ -355,16 +610,36 @@ def _prune(top: int, keep: set[str]) -> None:
                 pass
 
 
-def provision(userdata: Path, files: dict[str, dict], store: Path, *, mounted: PurePosixPath | Path | None = None,
-              owner: tuple[int, int] | None = None, anchored: bool = False) -> list[str]:
+def _cached(store: Path, path: str, pin: dict) -> bytes:
+    """A file of the operator's cache, refused unless it is what its pin says."""
+    source = os.open(Path(store) / path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    with os.fdopen(source, "rb") as stream:
+        if os.fstat(stream.fileno()).st_size != pin["size"]:
+            raise AddonError(f"{Path(store) / path} is not the size versions.json pins")
+        data = stream.read()
+    if hashlib.sha256(data).hexdigest() != pin["sha256"]:
+        raise AddonError(f"{Path(store) / path} is not the file versions.json pins (sha256 differs): "
+                         "remove it and run the command again to fetch it anew")
+    return data
+
+
+def provision(userdata: Path, files: dict[str, dict], store: Path, *, wanted=(),
+              mounted: PurePosixPath | Path | None = None, owner: tuple[int, int] | None = None,
+              anchored: bool = False) -> list[str]:
     """Make userdata's repository hold exactly `files`, each copied from the
-    cache `store` and refused unless it is what its pin says, and point
-    Karaf's resolver at it alone. `mounted` is where the runtime sees
-    userdata when that is not `userdata` itself (a container). With
-    `owner` (root, in production) what is written becomes the service
-    account's. Returns what changed, for the log."""
+    cache `store` and refused unless it is what its pin says, and the
+    rebuilt bundle of each repair in `wanted`; point Karaf's resolver at the
+    repository alone and its overrides at those bundles; and clear an OSGi
+    cache that holds another build of a repaired binding. `mounted` is
+    where the runtime sees userdata when that is not `userdata` itself (a
+    container). With `owner` (root, in production) what is written becomes
+    the service account's. Returns what changed, for the log."""
     userdata = Path(os.path.abspath(userdata))
     changed = []
+    for repair in wanted:
+        if files.get(repair.source, {}).get("sha256") != repair.source_sha256:
+            raise AddonError(f"versions.json does not pin {repair.source} as the bundle the {repair.title} was "
+                             f"built from (sha256 {repair.source_sha256})")
     top = oh_ports.open_directory(userdata, anchored=anchored)
     try:
         repository = top
@@ -374,7 +649,8 @@ def provision(userdata: Path, files: dict[str, dict], store: Path, *, mounted: P
                 os.close(repository)
             repository = child
         try:
-            for path, pin in sorted(files.items()):
+            built = {repair.path: repair for repair in wanted}
+            for path in sorted({*files, *built}):
                 parts = PurePosixPath(path).parts
                 directory = os.dup(repository)
                 try:
@@ -382,24 +658,20 @@ def provision(userdata: Path, files: dict[str, dict], store: Path, *, mounted: P
                         child = _child(directory, part, owner)
                         os.close(directory)
                         directory = child
-                    if _same(directory, parts[-1], pin["sha256"]):
+                    if path in built:
+                        source = built[path].source
+                        data = built[path].assemble(_cached(store, source, files[source]))
+                        if _same(directory, parts[-1], hashlib.sha256(data).hexdigest()):
+                            continue
+                    elif _same(directory, parts[-1], files[path]["sha256"]):
                         continue
-                    source = os.open(Path(store) / path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-                    try:
-                        if os.fstat(source).st_size != pin["size"]:
-                            raise AddonError(f"{Path(store) / path} is not the size versions.json pins")
-                        with os.fdopen(os.dup(source), "rb") as stream:
-                            data = stream.read()
-                    finally:
-                        os.close(source)
-                    if hashlib.sha256(data).hexdigest() != pin["sha256"]:
-                        raise AddonError(f"{Path(store) / path} is not the file versions.json pins (sha256 differs): "
-                                         "remove it and run the command again to fetch it anew")
+                    else:
+                        data = _cached(store, path, files[path])
                     _put(directory, parts[-1], data, owner)
                     changed.append(path)
                 finally:
                     os.close(directory)
-            _prune(repository, set(files))
+            _prune(repository, {*files, *built})
         finally:
             os.close(repository)
         etc = os.open("etc", _DIRECTORY, dir_fd=top)
@@ -410,11 +682,31 @@ def provision(userdata: Path, files: dict[str, dict], store: Path, *, mounted: P
             if new != data:
                 oh_ports.replace_regular(etc, MAVEN_CFG, new, info, **({"uid": owner[0], "gid": owner[1]} if owner else {}))
                 changed.append("etc/" + MAVEN_CFG)
+            try:
+                data, _ = oh_ports.read_regular(etc, OVERRIDES)
+            except FileNotFoundError:
+                data = b""
+            new = overrides(data.decode("utf-8"), list(wanted), known_repairs()).encode("utf-8")
+            if new != data:
+                _put(etc, OVERRIDES, new, owner)
+                changed.append("etc/" + OVERRIDES)
         finally:
             os.close(etc)
+        stale = _stale(_installed(top, {repair.bundle for repair in wanted}), list(wanted))
+        if stale:
+            # Karaf applies an override only when it provisions a feature.
+            shutil.rmtree(BUNDLES[0], dir_fd=top)
+            changed.append(f"cache (cleared, so that the next start installs every bundle anew: {stale})")
     finally:
         os.close(top)
     return changed
+
+
+#: What a failed verification means and what to do, after its findings.
+UNREPAIRED = ("This version does not run without that repair, so it is not committed: what ran before is put "
+              "back, with its state. Nothing in the site is wrong and nothing there fixes it: stay on the version "
+              "that ran before and report these lines, with openHAB's log of this start, as a fault in Thermite's "
+              "repair (lib/oh_androidtv_patch/README.md, lib/oh_heos_patch/README.md).")
 
 
 def main(argv=None) -> int:
@@ -425,15 +717,28 @@ def main(argv=None) -> int:
     parser.add_argument("--store", type=Path, required=True, help="the cache that holds the fetched files")
     parser.add_argument("--uid", type=int, required=True)
     parser.add_argument("--gid", type=int, required=True)
+    parser.add_argument("--verify", action="store_true",
+                        help="change nothing: check that the started runtime installed each repaired binding")
     parser.add_argument("addons", nargs="*", metavar="ADDON", help="the add-ons conf's addons.cfg lists (binding-http)")
     args = parser.parse_args(argv)
     try:
         versions = json.loads(args.versions.read_text(encoding="utf-8"))
-        changed = provision(args.userdata, pinned(versions, args.addons), args.store, mounted=MOUNTED,
+        wanted = repairs(versions, args.addons)
+        if args.verify:
+            problems = verify(args.userdata, wanted, anchored=True)
+            if problems:
+                parser.exit(1, "".join(line + "\n" for line in problems) + UNREPAIRED + "\n")
+            print("binding repairs: " + (", ".join(f"{repair.bundle} {repair.patched}" for repair in wanted)
+                                         or "none needed"))
+            return 0
+        changed = provision(args.userdata, pinned(versions, args.addons), args.store, wanted=wanted, mounted=MOUNTED,
                             owner=(args.uid, args.gid), anchored=True)
     except (OSError, ValueError) as exc:
         parser.exit(2, f"could not install the pinned add-on files: {exc}\n")
-    print(f"add-on repository: {len(changed)} changed" if changed else "add-on repository: as pinned")
+    for line in changed:
+        print(f"add-on repository: {line}")
+    if not changed:
+        print("add-on repository: as pinned")
     return 0
 
 

@@ -601,7 +601,7 @@ def release(context: steps.Context) -> dict:
     """What commit records about this version."""
     return {"release": {"site": context.head, "configuration": context.conf_digest,
                         "hostname": context.hostname, "address": context.address},
-            "pins": {**manifest.pins(context), "addons": steps.addon_pin(context)},
+            "pins": {**manifest.pins(context), **steps.addon_pins(context)},
             "images": manifest.images(context),
             "application": (context.application or {}).get("digest")}
 
@@ -635,8 +635,14 @@ def switching(context: steps.Context, transaction: str | None, how: str = "upgra
 
 
 def verification(context: steps.Context) -> list[Step]:
+    # The binding repairs' own check only for a house that runs one.
+    try:
+        repaired = bool(steps.binding_repairs(context))
+    except steps.oh_addons.AddonError:
+        repaired = False
     return [Authorize(), steps.MetricsAnswer(context),
-            *([steps.MusicAnswer(context)] if music.enabled(context.host) else []), steps.Health(context)]
+            *([steps.MusicAnswer(context)] if music.enabled(context.host) else []),
+            *([steps.BindingRepairs(context)] if repaired else []), steps.Health(context)]
 
 
 def operator_files(context: steps.Context) -> list[Path]:
@@ -676,9 +682,9 @@ def install_work(context: steps.Context, id: str | None, *, kind: str = "install
         work.confirm = Confirm(
             "Confirm the clean install", layout.root,
             lambda system: f"This clean install deletes the state under {layout.root} once it commits: accounts, "
-            "pairings, credentials, the deploy's records, monitoring data, "
-            + ("Music Assistant's settings and library, " if steps.music_state(context, system) else "")
-            + "and manually installed binding repairs; it "
+            "pairings, credentials, the deploy's records"
+            + (", Music Assistant's settings and library" if steps.music_state(context, system) else "")
+            + " and monitoring data; it "
             f"also clears {context.token_file}, {context.grafana_password_file} and "
             f"{context.runtime_credentials_file}. Logs, the deploy history and old backups stay; so do the "
             "site's configuration and the gateway's identity and TLS state. Until the commit a rollback puts "
