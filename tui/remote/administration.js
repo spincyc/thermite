@@ -38,10 +38,10 @@ function create(client, house, changed) {
     };
     if (state.error) { line(state.error, "alert"); y++; }
     if (state.loading) { line("Reading access settings…"); return y; }
-    if (!client || client.native) { line("Authentication cannot be changed in native testing mode. Configure and open the thermite gateway, then use Security to enable accounts, pairing, locks and schedules."); return y; }
+    if (!client || client.native) { line("Native testing mode has no accounts. Configure and open the thermite gateway, then create the first administrator in Security for accounts, pairing, locks and schedules."); return y; }
     if (state.kind === "security") {
       const mode = client.security();
-      line(mode ? (mode.bootstrap_required ? "No accounts yet" : "Accounts exist") : "Authentication status unavailable", "strong");
+      line(mode ? (mode.bootstrap_required ? "No accounts yet" : "Accounts exist") : "Access settings unavailable", "strong");
       if (mode) line("Guests " + (mode.guest_cameras ? "see" : "do not see") + " the cameras; they " + (mode.guest_text ? "see" : "do not see") + " titles, artists and apps.");
       line("Accounts and what guests see are set in your browser:"); line(client.origin + "/security/", "link"); y++;
       if (mode?.bootstrap_required) {
@@ -56,7 +56,7 @@ function create(client, house, changed) {
       line("An administrator can make an account an administrator in Users (F8); that user must sign in again.");
       return y;
     }
-    if (!client.security()) { line("Authentication status unavailable. Reopen the remote after the access service is ready."); return y; }
+    if (!client.security()) { line("Access settings unavailable. Reopen the remote after the access service is ready."); return y; }
     if (!client.accountsExist()) {
       line("No accounts yet", "strong");
       line("Basic remote controls are available without signing in. Create the first administrator in Security (F3) for cameras, accounts, device pairing, locks and room schedules."); return y;

@@ -99,6 +99,15 @@ class BrowserSmoke(unittest.TestCase):
             with self.subTest(page=page):
                 self.assertEqual(self.pages[page]["phone"]["small"], [])
 
+    def test_what_a_page_opens_on_a_phone_is_held_to_the_same(self):
+        # Remotes' room information, a sheet over the page: its switch, its buttons.
+        self.assertEqual(sorted(self.pages["index.html"]["phone"]["states"]), ["info"])
+        for page in PAGES:
+            for name, seen in self.pages[page]["phone"]["states"].items():
+                with self.subTest(page=page, state=name):
+                    self.assertTrue(seen["opened"])
+                    self.assertEqual((seen["small"], seen["wide"], seen["sideways"]), ([], [], 0))
+
     def test_nothing_in_sight_is_painted_under_the_bar(self):
         # Remotes answered the driver's key with a toast: once it opened under the bar.
         for size in SIZES:

@@ -714,6 +714,14 @@ body[data-stale] :is([data-led], .target) .led {
 .room-lock__toggle { min-height: 40px; }
 .room-lock__toggle[aria-disabled="true"] { opacity: 0.6; cursor: progress; }
 
+/* For a thumb the lock menu's rows and the Lock room button are a key's height. */
+@media (pointer: coarse) {
+  .lock-menu__item,
+  .room-lock__toggle {
+    min-height: var(--tap);
+  }
+}
+
 /* What the room's source plays, under its bubble: one quiet line. */
 .now {
   display: flex;
@@ -1815,6 +1823,12 @@ body[data-stale] :is([data-led], .target) .led {
   min-height: 40px;
   margin: 0;
   padding: 4px 8px;
+}
+
+@media (pointer: coarse) {
+  .room-control__actions .button {
+    min-height: var(--tap);
+  }
 }
 
 .button[aria-disabled="true"] {

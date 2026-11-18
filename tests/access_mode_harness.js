@@ -211,7 +211,7 @@ async function browser(page, client) {
   assert(grid.text().includes("Create the first administrator in Security")); assert.equal(terminal.state.form, null);
   const offlineTerminal = Administration.create(unavailable, house, () => {}); await offlineTerminal.open("account");
   grid = new Grid(100, null, "base"); offlineTerminal.content(grid, 100, { ui: {} });
-  assert(grid.text().includes("Authentication status unavailable")); assert(!grid.text().includes("No accounts yet"));
+  assert(grid.text().includes("Access settings unavailable")); assert(!grid.text().includes("No accounts yet"));
   const guestTerminal = Administration.create(unsigned, house, () => {}); await guestTerminal.open("account");
   grid = new Grid(100, null, "base"); guestTerminal.content(grid, 100, { ui: {} });
   assert(grid.text().includes("Guest · no sign-in required"));

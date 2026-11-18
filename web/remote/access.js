@@ -21,9 +21,9 @@
     invalid_user: "Check the username and password.",
     csrf_failed: "The sign-in form expired. Reload and try again.", access_unavailable: "Access service unavailable.",
     auth_disabled: "Create the first administrator in Security to use accounts, pairing, locks and schedules.",
-    security_unavailable: "Authentication settings are unavailable. Try again when the access service is ready.",
+    security_unavailable: "Access settings are unavailable. Try again when the access service is ready.",
     authorization_changed: "Your account permissions changed. Sign in again.",
-    invalid_security: "Check the authentication settings and try again.",
+    invalid_security: "Check the access settings and try again.",
     setup_required: "Generate a setup code on the thermite host before creating the first administrator.",
     invalid_setup_code: "The setup code was not accepted or has expired. Generate a new code on the thermite host.",
     access_not_configured: "Access is not configured at this address.", invalid_response: "The access service could not answer.",
@@ -324,7 +324,7 @@
       const error = problem("session_expired", 401); error.stale = true; throw error;
     }
     // A Guest asking for an account-only resource has lost nothing; any other
-    // 401 means the credential or the authentication switch changed.
+    // 401 means the credential changed, or accounts exist where none did.
     const guestRefusal = (value) => Boolean(user && user.is_guest && value && value.error === "login_required");
     async function data(path, init, check, publicRequest) {
       const revision = authRevision;
@@ -410,7 +410,7 @@
       await ready();
       if (legacy) throw problem("access_not_configured", 404);
       if (!client.accountsExist() && (/^\/api\/v1\/(users|tokens)(\/|$)/.test(path) || /\/(policy|lock)$/.test(path))) throw problem("auth_disabled", 403);
-      if (mock) return (config.mockRequest || fake().request)(path, method || "GET", value);
+      if (mock) return fake().request(path, method || "GET", value);
       const init = { ...(options || {}), method: method || "GET", headers: { Accept: "application/json" } };
       if (value !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(value); }
       return data(path, init, true);

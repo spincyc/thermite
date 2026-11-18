@@ -202,7 +202,11 @@ whose heading says it in other words ("Site topology") marks its own.
 example house's pages at a phone's and a desktop's size, behind the gateway's
 Content-Security-Policy header (`tests/browser_smoke.py`). It also opens
 each page without `?backend=mock` and fails if a `*-mock.js` file is
-downloaded then.
+downloaded then. On the phone it opens Remotes' room information as
+well and holds that sheet to the same sizes. The sample cannot show a
+bubble's lock menu, the Lock room button or a room's own controls (its demo
+account has no lock to manage, its house no room controls); a test of
+`remote.css` holds their rules instead.
 
 Added to an iPhone home screen, every page draws under the translucent status
 bar: the bar (or sidebar) pads itself by the safe-area inset and the remote

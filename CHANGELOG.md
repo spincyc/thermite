@@ -7,6 +7,10 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- On a phone, the rows of a source's lock menu and a room control's
+  buttons on Remotes are 44 px tall, as the other controls are. The
+  last messages that spoke of "authentication" say "access settings"
+  or accounts, and System writes "thermite host" in lower case.
 - `thermite generate --prune` now removes a stale CEC, IR, HEOS or Sonos
   rule: these four generated rules were written without the generated
   header, so prune took them for your own files. The next

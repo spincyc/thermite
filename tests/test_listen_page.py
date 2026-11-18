@@ -200,6 +200,22 @@ class ListenPage(unittest.TestCase):
         since the last is what any other state says."""
         self.assertEqual([tuple(code[:2]) for code in self.out["problems"]["codes"]], list(CODES.items()))
 
+    def test_what_the_sample_cannot_show_is_a_keys_height_for_a_thumb(self):
+        """The lock menu's rows, the Lock room button and a room's own
+        controls: the sample's demo account has no lock to manage and its
+        house no room controls, so the browser check never sees them. With a
+        coarse pointer each is as tall as --tap, by a rule that follows the
+        one it overrides."""
+        css = (AREA / "web/remote/remote.css").read_text()
+        self.assertIn("--tap: 44px;", css)
+        coarse = {one: values for media, one, values in ListenMarkup.shared if media == "(pointer: coarse)"}
+        for selector in (".lock-menu__item", ".room-lock__toggle", ".room-control__actions .button"):
+            with self.subTest(selector=selector):
+                self.assertEqual(coarse[selector], {"min-height": "var(--tap)"})
+                plain = max(found.start() for found in re.finditer(re.escape(selector) + r"\s*\{[^}]*min-height: 40px", css))
+                held = max(found.start() for found in re.finditer(r"@media \(pointer: coarse\) \{[^@]*?" + re.escape(selector) + r"[\s,]", css))
+                self.assertLess(plain, held)
+
     def test_the_padlock_has_its_own_column_and_the_light_follows_the_source_at_the_right_edge(self):
         # The room, its padlock, its source, then what plays; the light after the source's words, in its cell.
         self.assertEqual(self.out["rooms"]["columns"], ["room__label", "icon room__lock", "room__source", "room__playing"])

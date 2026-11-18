@@ -18,6 +18,8 @@
  *   under     fixed boxes in sight that overlap the bar or sidebar without being
  *             above it; Remotes is first made to show a toast
  *   mocks     the sample's files (*-mock.js) the page downloaded
+ *   states    on the phone, what the page shows once opened (Remotes' room
+ *             information): whether it opened, and its small, wide, sideways
  *
  * and under "plain" the mocks of the page opened once more as a phone opens
  * it, without ?backend=mock: none.
@@ -43,6 +45,13 @@ const { spawn } = require("node:child_process");
 
 const RUN_MS = 120000, START_MS = 20000, CALL_MS = 10000, LOAD_MS = 15000, SETTLE_MS = 500, TOAST_MS = 300;
 const SIZES = { phone: [390, 844], desktop: [1440, 900] };
+// What a page shows only once something is opened, on the phone, where it
+// is a sheet over the page: [name, what opens it, whether it is open]. Each
+// is probed as the page was. The sample cannot show a room's lock menu, its
+// Lock room button or a room's own controls: its demo account is given no
+// lock to manage and its house has no room controls.
+const STATES = { "index.html": [["info", "document.querySelector('#info-open').click()", "document.querySelector('#info-sheet').open === true"]] };
+const STATE_MS = 400;
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
   ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".webmanifest": "application/manifest+json" };
 const NAMES = ["chromium", "chromium-browser", "google-chrome", "google-chrome-stable"];
@@ -221,7 +230,21 @@ async function look(tools, server, page, size, shots, sample = true) {
       const shot = await tools.send("Page.captureScreenshot", { format: "png" }, sessionId);
       fs.writeFileSync(path.join(shots, page.replace(/\.html$/, "") + "-" + size + ".png"), Buffer.from(shot.data, "base64"));
     }
-    return Object.assign(answer.result.value, { errors, mocks: mocks() });
+    const states = {};
+    for (const [name, open, opened] of phone ? STATES[page] || [] : []) {
+      const run = (expression) => tools.send("Runtime.evaluate", { expression, returnByValue: true }, sessionId);
+      await run(open);
+      await wait(STATE_MS);
+      const [shown, seen] = [await run(opened), await run("(" + probe + ")()")];
+      if (seen.exceptionDetails) throw new Error("the probe failed on " + page + " with " + name + " open: " + seen.exceptionDetails.text);
+      if (shots) {
+        const shot = await tools.send("Page.captureScreenshot", { format: "png" }, sessionId);
+        fs.writeFileSync(path.join(shots, page.replace(/\.html$/, "") + "-" + name + "-" + size + ".png"), Buffer.from(shot.data, "base64"));
+      }
+      const { small, wide, sideways } = seen.result.value;
+      states[name] = { opened: shown.result?.value === true, small, wide, sideways };
+    }
+    return Object.assign(answer.result.value, { errors, mocks: mocks(), states });
   } finally {
     stop();
     await tools.send("Target.closeTarget", { targetId }).catch(() => {});

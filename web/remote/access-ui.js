@@ -288,7 +288,7 @@
   if (client.native) {
     document.querySelectorAll("form, [data-policy-room], [data-policy-reload], .access-toolbar").forEach((item) => { item.hidden = true; });
     document.querySelectorAll(".access-login > p:not([data-access-status])").forEach((item) => { item.hidden = true; });
-    status("Authentication cannot be changed in native testing mode. Configure and open the thermite gateway, then use Security to enable accounts, pairing, locks and schedules.");
+    status("Native testing mode has no accounts. Configure and open the thermite gateway, then create the first administrator in Security for accounts, pairing, locks and schedules.");
     return;
   }
   if (page === "access") login().catch((error) => status(error.message, true));
