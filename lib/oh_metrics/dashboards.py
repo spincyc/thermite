@@ -514,9 +514,41 @@ def timeseries(title: str, series: list[Series], unit: str = "short", descriptio
 #: The width of an event bar. Each bar counts exactly its own width: an hour,
 #: or what Grafana's step is where a long range makes that longer.
 EVENT_BUCKET = "1h"
-_COUNTER = re.compile(r"[a-zA-Z_:][a-zA-Z0-9_:]*_(total|count)")
+_COUNTER = re.compile(r"[a-zA-Z_:][a-zA-Z0-9_:]*_(total|count|bucket)")
 _MATCHERS = re.compile(r'[a-z_]+(=|!=|=~|!~)"[^"{}()\[\]]*"(,[a-z_]+(=|!=|=~|!~)"[^"{}()\[\]]*")*')
 _LABELS = re.compile(r"[a-z_]+(, [a-z_]+)*")
+
+
+def _selector(counter: str, where: str) -> str:
+    """A counter's series by its name and label matchers, and nothing else:
+    the builders write the query around it."""
+    if not _COUNTER.fullmatch(counter):
+        raise ValueError(f"{counter!r} is not a counter's name: the builder writes the query itself")
+    if where and not _MATCHERS.fullmatch(where):
+        raise ValueError(f"{where!r} is not a list of label matchers")
+    return f"{counter}{{{where}}}" if where else counter
+
+
+def _grown(selector: str, ahead: bool) -> str:
+    """By how much each counter of `selector` grew in a bucket $__interval
+    wide: the bucket that ends at the query's time or, `ahead`, the one that
+    starts there, which may still be filling.
+
+    Its last sample in the bucket less its last sample before the bucket,
+    so buckets side by side count every event once. increase() alone would
+    not: it reads between the bucket's own samples, so the event that falls
+    between one bucket's last sample and the next one's first is in neither
+    (one in 120 at an hour of 30-second samples), and it stretches what it
+    read to the bucket's width, which makes two of one event while a bucket
+    is two samples old. A counter that began again before the bucket's
+    first sample counts from zero. One that began again inside the bucket
+    is left to increase(), the one function that knows a reset. A series'
+    first sample is never counted, here or by increase(): exporters start
+    their counters at zero for that reason."""
+    bucket = f"{selector}[$__interval]" + (" offset -$__interval" if ahead else "")
+    before = f"last_over_time({selector}[$__interval]" + ("" if ahead else " offset $__interval") + ")"
+    start = f"(({before} <= min_over_time({bucket})) or ({before} * 0))"
+    return f"((max_over_time({bucket}) - {start}) and (resets({bucket}) == 0)) or increase({bucket})"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -533,18 +565,14 @@ class Count:
 
     def expr(self) -> str:
         """The events in each bar. The bar at a time counts the bucket that
-        starts there (the negative offset), so the newest bar is the bucket
-        still filling: without it, what happened since the last full bucket
-        would not show."""
-        if not _COUNTER.fullmatch(self.counter):
-            raise ValueError(f"{self.counter!r} is not a counter's name: events() writes the query itself")
-        if self.where and not _MATCHERS.fullmatch(self.where):
-            raise ValueError(f"{self.where!r} is not a list of label matchers")
+        starts there (_grown() ahead), so the newest bar is the bucket still
+        filling: otherwise what happened since the last full bucket would
+        not show."""
+        selector = _selector(self.counter, self.where)
         if self.by and not _LABELS.fullmatch(self.by):
             raise ValueError(f"{self.by!r} is not a list of labels")
-        selector = f"{self.counter}{{{self.where}}}" if self.where else self.counter
         by = f" by ({self.by})" if self.by else ""
-        return f"round(sum{by} (increase({selector}[$__interval] offset -$__interval))) > 0"
+        return f"round(sum{by} ({_grown(selector, ahead=True)})) > 0"
 
 
 def events(title: str, counts: list[Count], description: str, *, none: str,
@@ -610,17 +638,23 @@ def bar_gauge(title: str, expr: str, label: str, color: str, description: str, *
                                          "calcs": []}}})
 
 
-def heatmap(title: str, expr: str, description: str, *, interval: str = "15m") -> Panel:
-    """Counts per `interval` ($__interval in `expr`) by bucket: wide enough
-    cells that sparse events read as counts, not fractions. A cell is tan,
-    the more opaque the more it counts."""
+def heatmap(title: str, histogram: str, where: str, description: str, *, interval: str = "15m") -> Panel:
+    """How many of a histogram's observations fell in each of its buckets,
+    per `interval`: wide enough cells that sparse events read as counts. The
+    builder writes the query from the histogram's name and the label
+    matchers that say `where`, as events() does, so a cell counts exactly
+    its own width. A cell is tan, the more opaque the more it counts.
+    Grafana draws a cell once its interval has ended."""
+    expr = f"sum by (le) ({_grown(_selector(f'{histogram}_bucket', where), ahead=False)})"
     return Panel({**_base("heatmap", title, description),
                   "targets": [{**target(expr, "{{le}}", "A"), "format": "heatmap", "interval": interval}],
                   "fieldConfig": {"defaults": {}, "overrides": []},
                   "options": {"calculate": False, "cellGap": 1, "yAxis": {"axisPlacement": "left", "unit": "s"},
                               "rowsFrame": {"layout": "le"},
+                              # From zero: a scale that began at the least count drew a count of one,
+                              # where no cell counts less, as no cell at all.
                               "color": {"mode": "opacity", "fill": IN_USE, "scale": "exponential", "exponent": 0.5,
-                                        "steps": 64},
+                                        "steps": 64, "min": 0},
                               "cellValues": {"unit": "short", "decimals": 0}, "filterValues": {"le": 1e-9},
                               "legend": {"show": True}, "tooltip": {"mode": "single", "yHistogram": True}}})
 
@@ -1073,9 +1107,10 @@ def switching(mapping: dict) -> dict:
     board = Board()
     zones = _zone_words(mapping)
     board.row("Switching sources")
-    board.add(heatmap("Time to switch", 'sum by (le) (increase(thermite_route_seconds_bucket{outcome="confirmed"}'
-                      '[$__interval]))', "How long confirmed source changes took, from the choice until the "
-                      "room's readback showed it, per quarter hour. More opaque cells: more changes."), 12, 8)
+    board.add(heatmap("Time to switch", "thermite_route_seconds", 'outcome="confirmed"',
+                      "How long confirmed source changes took, from the choice until the room's readback showed "
+                      "it, per quarter hour. More opaque cells: more changes. A quarter hour shows once it has "
+                      "ended; Source changes by outcome counts the hour still running."), 12, 8)
     board.add(events("Source changes by outcome", [
         Count("thermite_route_seconds_count", "{{outcome}}", UNKNOWN, by="outcome")],
         _per_bar("Source changes") + ". Confirmed: the readback showed the choice. Deadline: it did not "
@@ -1147,18 +1182,20 @@ def switching(mapping: dict) -> dict:
                "runtime 95th", IN_USE)], "s", minimum=0, none="No requests",
         description="95th percentile time to the first byte of the answer for the requests remotes wait on, "
                     "and of the gateway's own requests to the runtime."), 12, 8)
-    # The mean, not a quantile: the remotes' 8 s timeout sits on a bucket's bound, so a quantile of the
-    # histogram reads halfway into the next bucket whatever they waited.
+    # How often from the event counter: a report carries every give-up but at most 16 of the waits. And
+    # the mean of those, not a quantile: a quantile reads between a bucket's bounds whatever was waited.
+    gave_up = f'round(sum by (kind) (increase(thermite_client_events_total{{kind=~"{TIMEOUTS}"}}[$__range]))) > 0'
     waited = [f'sum by (kind) (increase(thermite_client_wait_seconds_{part}{{kind=~"{TIMEOUTS}"}}[$__range]))'
               for part in ("sum", "count")]
-    gave_up = f"round({waited[1]}) > 0"
     board.add(table("Waited before giving up", [
-        gave_up, f"({waited[0]} / {waited[1]}) and on (kind) ({gave_up})"], [
+        gave_up, f"({waited[0]} / ({waited[1]} > 0)) and on (kind) ({gave_up})"], [
         Column("kind", "Waited for", _words({kind: plain(KIND_WORDS[kind]) for kind in alerts.TIMEOUT_KINDS})),
         Column("Value #A", "Gave up", decimals=0, width=100),
         Column("Value #B", "Mean wait", unit="s", decimals=1, width=110)],
         "In the selected range: how often remotes gave up on each kind of request, and how long they had "
-        "waited by then on average, queued and in flight.", none="No remote gave up", sort=("Gave up", True)), 12, 8)
+        "waited by then on average, queued and in flight. A remote reports every give-up and the waits of at "
+        "most 16 of each kind at a time; the mean is of the waits reported.", none="No remote gave up",
+        sort=("Gave up", True)), 12, 8)
     board.add(timeseries("Requests by answer", [
         Series("sum by (code_class) (rate(thermite_gateway_requests_total[5m])) > 0", "{{code_class}}", UNKNOWN)],
         "reqps", minimum=0, none="No requests",
@@ -1287,7 +1324,7 @@ def devices(mapping: dict, probes: list[dict]) -> dict:
     needed = (f'((count by (device) ({alerts.CHECK}{{required="true",device!=""}}) * 0 + 1) '
               f"and on(device) {info}) or (count by (device) ({info}) * 0)")
     # Of the Things that are offline now, the one offline longest: when each was last online, and 0
-    # (Over a week ago) for one that never was in the week.
+    # (Not in the last week) for one that was at none of the week's five-minute steps.
     offline = f"({online} == 0)"
     last_online = (f"min by (device) (max by (device, thing) (max_over_time(timestamp({online} == 1)[7d:5m])) "
                    f"and on(device, thing) {offline} or on(device, thing) {offline} * 0) * 1000")
@@ -1316,7 +1353,7 @@ def devices(mapping: dict, probes: list[dict]) -> dict:
         Column("Value #F", "Problem", states=PROBLEM, width=92),
         Column("Value #I", "Ping", states=REACHABLE, width=104),
         Column("Value #D", "Probe", unit="ms", decimals=1, width=86),
-        Column("Value #E", "Offline since", _words({"0": "Over a week ago"}), unit="dateTimeFromNow", width=150),
+        Column("Value #E", "Offline since", _words({"0": "Not in the last week"}), unit="dateTimeFromNow", width=150),
         _room_column(mapping, last=True)],
         "One row per device, those in trouble first, then those needed now. Thing: the runtime's connection to "
         "it (Things not online says in what status). Port: its control port accepts a TCP connection; Probe: "
@@ -1325,8 +1362,8 @@ def devices(mapping: dict, probes: list[dict]) -> dict:
         "Needed: a room's selected source uses it (the source the room last reported, "
         f"for {alerts.HELD} at most, while it reports none), it is routing infrastructure, or it is "
         f"a speaker in use: it played in the last {alerts.IN_USE}, or was playing when it stopped answering. "
-        "An offline device no room needs is usually asleep. Offline since: when the Thing that has been offline "
-        "longest was last online. A click on a room keeps the board to that room.",
+        "An offline device no room needs is usually asleep. Offline since: when the Thing of it that has been "
+        "offline longest was last online, to five minutes. A click on a room keeps the board to that room.",
         none="No device in the chosen rooms",
         order=(("room", False), ("Value #G", True), ("Value #H", True))),
         24, min(20, max(8, len(known) + 2)))

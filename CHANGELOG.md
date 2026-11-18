@@ -7,6 +7,24 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Dashboards: a bar or a heatmap cell counts every event exactly once.
+  - The bar charts on Switching & remotes and Host, and **Time to
+    switch**, missed an event that fell between two bars' samples: one
+    in 120 on the bars, one in 30 on the heatmap, and every schedule
+    boundary, which happens on the hour. The newest bar could show 2
+    for one event in its first two minutes. Both are exact now, and a
+    service's restart inside a bar is still counted through.
+  - **Waited before giving up** counts give-ups from the remotes'
+    reports of them, not from the waits they sent along (at most 16 of
+    each kind a report), and shows no mean wait where none was sent.
+  - The histogram of those waits (`thermite_client_wait_seconds`) has
+    bounds at 7.5 and 8.5 s in place of 8: a bound on the remotes'
+    8-second timeout put every give-up in the bucket that ends at 16.
+    Its `le="8.0"` series ends with this release; no dashboard or rule
+    read it.
+  - Devices: **Offline since** reads "Not in the last week" for a Thing
+    that was online at no time in the week, where it said "Over a week
+    ago".
 - `thermite device ID` shows everything about one device in one place.
   What it is: its label, room, kind and address, the interfaces that
   observe and command it, the Things and Items generated for it, and the

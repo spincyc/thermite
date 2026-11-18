@@ -90,7 +90,11 @@ CLIENTS = ("web", "tui")
 CLIENT_KINDS = ("policy_timeout", "locks_timeout", "command_timeout", "stream_error", "stream_refused",
                 "snapshot_timeout")
 CLIENT_PROTOCOLS = ("h2", "http/1.1", "h3", "unknown")
-CLIENT_BUCKETS = (.1, .25, .5, 1, 2, 4, 8, 16)
+#: No bound on the remotes' 8-second timeout: a give-up is counted a moment after
+#: it, so a bound of 8 put every one in the bucket that ends at 16, and a
+#: quantile read 15 s for a wait of 8. The two bounds around it keep a give-up
+#: at the timeout apart from one that had also queued.
+CLIENT_BUCKETS = (.1, .25, .5, 1, 2, 4, 7.5, 8.5, 16)
 CLIENT_EVENTS = Counter("thermite_client_events", "Client-side give-ups and stream failures clients reported.",
                         ["client", "kind"], registry=GATEWAY)
 CLIENT_WAIT = Histogram("thermite_client_wait_seconds", "Seconds a client waited (queued and in flight) before "
