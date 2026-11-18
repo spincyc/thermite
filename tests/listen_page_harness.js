@@ -810,6 +810,43 @@ async function failure(out) {
   out.read = [drawn(), view().unconfirmed];
 }
 
+// Home's alerts: the panel above the rooms as alerts.js gives it, on each
+// of the preview's samples (?alerts=<name>), and the rows of the rooms an
+// alert is about.
+async function alerts(out) {
+  out.samples = {};
+  for (const name of ['', 'firing', 'admin', 'hidden', 'house', 'stalled', 'silent', 'unreachable', 'unanswered']) {
+    const p = page(null, {html: 'home.html', search: name ? '&alerts=' + name : ''});
+    const {time, $, all, words} = p;
+    await time.tick(1500);
+    const panel = $('[data-home-alerts]');
+    out.samples[name] = {
+      panel: [panel.hidden, panel.dataset.state, panel.dataset.tone, words($('[data-home-alerts-summary]')), $('[data-home-alerts-summary]').getAttribute('role')],
+      lines: all('[data-home-alerts-list] li').map((item) => [item.dataset.severity].concat(item.querySelector('summary').children.map((part) => words(part)),
+        words(item.querySelector('details p')))),
+      list: $('[data-home-alerts-list]').hidden,
+      more: $('[data-home-alerts-more]').hidden ? null : words($('[data-home-alerts-more]')),
+      rows: all('[data-home-rooms] tr').map((row) => [words(row.children[0]), row.dataset.alert || null, row.querySelector('.home__alerted').getAttribute('aria-label')]),
+      toasts: p.toast()[0] || null,
+    };
+  }
+  // Read again every half minute, the panel is drawn again only when it
+  // changes: an alert a person opened stays open, and "min" moves on.
+  const p = page(null, {html: 'home.html', search: '&alerts=firing'});
+  await p.time.tick(1500);
+  const first = p.$('[data-home-alerts-list] details');
+  first.open = true;
+  await p.time.tick(31000);
+  const same = p.$('[data-home-alerts-list] details') === first;
+  await p.time.tick(120000);
+  const later = p.all('[data-home-alerts-list] details');
+  out.kept = [same, later[0] !== first, later.map((item) => Boolean(item.open)), p.words(later[1].querySelector('p')).slice(-19)];
+  // In Listen the alerts stay and the rows of its rooms carry the marks.
+  p.$('[data-home-modes] [data-mode="listen"]').click();
+  await p.time.tick(100);
+  out.listen = [p.$('[data-home-alerts]').dataset.state, p.all('[data-home-rooms] tr').map((row) => row.dataset.alert || null)];
+}
+
 // A device's problem is a code, and the page says the code's words after
 // the device's label: each code of the options the page was given, in the
 // alert and in the log; a state that is no code says the last code's words.
@@ -910,7 +947,7 @@ async function sideways(out) {
 (async () => {
   const report = {};
   for (const [name, run] of Object.entries({rooms, modes, bar, face, alone, watch, locks, library, browse, pages, group, covers, music, inputs, signal,
-    sideways, home, keys, policy, link, failure, problems, stopped})) {
+    sideways, home, alerts, keys, policy, link, failure, problems, stopped})) {
     report[name] = {};
     // A scenario that throws says where, and the rest still run.
     await run(report[name]).catch((error) => { report[name].error = error.stack.split('\n').slice(0, 3).join(' '); });

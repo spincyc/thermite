@@ -51,6 +51,22 @@ that code (`items.<id>_problem.options`, the last one for a problem of any
 other kind), as the activity log does. The terminal and the handheld remote
 read all of it from the same place (`session.js` `view()`).
 
+Home shows the house's firing alerts above its rooms, from the gateway's
+feed (`GET /api/v1/alerts`), read when the page is shown and every 30 s
+while it is. `alerts.js` is the one model of them: what is shown, in the
+feed's order, with the room and the device named by their labels and the
+check in words, and what the panel's one sentence says. “Nothing is
+firing.” is said only of an answer in which monitoring is evaluating its
+rules, counts nothing firing and lists nothing; when monitoring is stalled
+or does not answer, or the gateway does not, the panel says that alerts
+cannot be read. Alerts the viewer is not given are counted (“and 2 more
+that are not shown here”), since the feed says how many fire in all. One
+reading that is not “ok” is held back and read again after 16 s, so a
+restart does not flash a warning. A room an alert is about carries a mark
+beside its name. There is no toast and no sound. `?backend=mock&alerts=`
+`firing`, `admin`, `hidden`, `house`, `stalled`, `silent`, `unreachable`
+or `unanswered` shows each state on the sample house.
+
 Volume is each audio device's own number on its own scale: 38 on a WiiM or a
 Sonos, 69.5 on a Denon or Marantz receiver, or −10.5 dB when the receiver's
 own display is set to show dB. The slider runs from the device's minimum to

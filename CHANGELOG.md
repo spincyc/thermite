@@ -7,6 +7,21 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Home shows the house's firing alerts above its rooms: one sentence
+  for what is firing, then each alert with its severity in a word,
+  what it is, and its room, device and check by name; it opens to the
+  full text and how long the alert has fired. A room an alert is about
+  is marked in Home's list of rooms. Home reads the alerts when it is
+  shown and every half minute while it is, for a Guest as for anyone;
+  there is no toast and no sound.
+  - "Nothing is firing." appears only while monitoring is evaluating
+    its rules. When monitoring is stalled or does not answer, or the
+    gateway does not, Home says that alerts cannot be read.
+  - Alerts a viewer is not shown are counted: "and 2 more that are not
+    shown here. An Admin sees those about the house as a whole."
+  - `?backend=mock&alerts=firing` (also `admin`, `hidden`, `house`,
+    `stalled`, `silent`, `unreachable`, `unanswered`) shows each state
+    on the sample house.
 - Health: which readings say whether a device answers is derived in one
   place, and a device none covers is named instead of passed over.
   - `thermite validate` prints a note (no problem, same exit status;

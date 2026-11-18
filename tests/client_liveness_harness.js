@@ -285,5 +285,22 @@ function sources() {
     proof.refusals = refused;
   }
 
+  {
+    // The alerts are one bounded read: the feed's answer as it is, and a
+    // gateway that never answers given up on, so Home's poll goes on.
+    const { box, site, client } = accessClient();
+    const feed = { version: 1, monitoring: "ok", evaluated: 1, firing: 0, alerts: [] };
+    site.refuse.set("/api/v1/alerts", answer(feed));
+    assert.deepEqual(JSON.parse(JSON.stringify(await client.alerts())), feed);
+    site.refuse.delete("/api/v1/alerts"); site.hold.add("/api/v1/alerts");
+    let settled = null;
+    client.alerts().then(value => { settled = value; }, error => { settled = error; });
+    for (let turn = 0; turn < 10 && !site.held.length; turn++) await tick();
+    box.advance(7999); await tick(); assert.equal(settled, null);
+    box.advance(1); await tick(); await tick();
+    assert.equal(settled.code, "client_timeout"); assert(site.held[0].aborted, "the read is aborted");
+    proof.alerts = { read_ms: 8000 };
+  }
+
   process.stdout.write(JSON.stringify(proof));
 })().catch(error => { process.stderr.write(error.stack + "\n"); process.exitCode = 1; });

@@ -573,6 +573,8 @@
       // The house's music (oh_identity.music_api): a read gives up after ms
       // (readTimeout unless given) as client_timeout; a command (path below
       // /api/v1/music/) is bounded and refused as a device's.
+      // The house's firing alerts, as this viewer is given them (oh_identity.alerts); it gives up as every read does.
+      async alerts() { await ready(); return bounded("/api/v1/alerts", "GET", undefined, config.readTimeout || 8000, "client_timeout"); },
       async musicRead(path, ms) { await ready(); return bounded("/api/v1/music" + path, "GET", undefined, ms || config.readTimeout || 8000, "client_timeout"); },
       async musicCommand(path, value) {
         await ready();

@@ -53,6 +53,9 @@ class ClientLiveness(unittest.TestCase):
         for words in refused.values():
             self.assertRegex(words, r"was not (sent|taken)\. Try again")
 
+    def test_the_alerts_read_gives_up_as_every_read_does(self):
+        self.assertEqual(self.proof["alerts"], {"read_ms": 8000})
+
     def test_the_pairing_page_replaces_its_statuses_with_each_snapshot(self):
         self.assertTrue(self.proof["pairSnapshot"])
 

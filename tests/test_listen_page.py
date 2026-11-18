@@ -97,6 +97,48 @@ class ListenPage(unittest.TestCase):
                                        "Not connected to thermite. Reconnecting…"])
         self.assertEqual(out["heard"], [[["Off", "Room off"]] * 2, ["off"] * 2, "Sample room sources · no device commands"])
 
+    def test_home_shows_the_houses_alerts_above_its_rooms_and_marks_their_rows(self):
+        """The panel is the alerts model's view (tests/test_home_alerts.py):
+        its sentence, each alert's severity in a word, what it is and where,
+        the catalogue's text behind it, and the room it is about marked."""
+        samples = self.out["alerts"]["samples"]
+        quiet = [["Example West", None, ""], ["Example East", None, ""]]
+        clear = samples[""]
+        self.assertEqual(clear["panel"], [False, "clear", "ok", "Nothing is firing.", "status"])
+        self.assertEqual((clear["lines"], clear["list"], clear["more"], clear["rows"]), ([], True, None, quiet))
+        firing = samples["firing"]
+        self.assertEqual(firing["panel"][1:4], ["firing", "critical", "1 critical alert and 1 warning"])
+        self.assertEqual([line[:4] for line in firing["lines"]], [
+            ["critical", "Critical", "A room's control path needs attention", "Example West · Example Tv · Not responding to control"],
+            ["warning", "Warning", "A room in use cannot be read", "Example West · Source not reported"]])
+        self.assertTrue(firing["lines"][0][4].endswith("under Needs attention now. Firing for 3 h."))
+        self.assertEqual(firing["rows"], [["Example West", "critical", "Critical alert"], ["Example East", None, ""]])
+        # A house-wide alert names its service and marks no room.
+        self.assertEqual(samples["admin"]["lines"][2][:4], ["warning", "Warning", "Host storage is nearly full", "node"])
+        self.assertEqual(samples["admin"]["rows"], firing["rows"])
+        for name, shown in samples.items():
+            self.assertIsNone(shown["toasts"], name)
+
+    def test_home_counts_the_alerts_it_does_not_show_and_says_when_none_can_be_read(self):
+        samples = self.out["alerts"]["samples"]
+        admin = "An Admin sees those about the house as a whole."
+        self.assertEqual(samples["hidden"]["more"], "and 2 more that are not shown here. " + admin)
+        self.assertEqual((samples["house"]["panel"][1:4], samples["house"]["more"]),
+                         (["firing", "warning", "2 alerts firing"], "They are not shown here. " + admin))
+        said = {name: samples[name]["panel"][3] for name in ("stalled", "silent", "unreachable", "unanswered")}
+        self.assertEqual(said, {"stalled": "Monitoring is not evaluating its rules. It last left:",
+                                "silent": "Monitoring is not evaluating its rules, so alerts cannot be read.",
+                                "unreachable": "Monitoring does not answer, so alerts cannot be read.",
+                                "unanswered": "thermite does not answer, so alerts cannot be read."})
+        # Only the one sample says that nothing is firing, and no other is drawn in its tone.
+        self.assertEqual([name for name, shown in samples.items() if "Nothing" in shown["panel"][3] or shown["panel"][2] == "ok"], [""])
+
+    def test_an_alert_a_person_opened_stays_open_when_the_panel_is_drawn_again(self):
+        same, redrawn, opened, since = self.out["alerts"]["kept"]
+        # Read again with nothing changed, nothing is drawn; two minutes on, the alerts have aged.
+        self.assertEqual((same, redrawn, opened, since), (True, True, [True, False], " Firing for 16 min."))
+        self.assertEqual(self.out["alerts"]["listen"][0], "firing")
+
     def test_the_house_not_heard_is_what_every_room_shows_until_it_is_heard_again(self):
         """Not a toast: the alert line says it and every light loses its
         colour for as long as it lasts, and the room's words carry it."""

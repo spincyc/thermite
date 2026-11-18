@@ -218,6 +218,7 @@ class Element extends Node {
   get disabled() { return this.hasAttribute('disabled'); }
   set disabled(value) { this.toggleAttribute('disabled', Boolean(value)); }
   get open() { return this.hasAttribute('open'); }
+  set open(value) { this.toggleAttribute('open', Boolean(value)); }
   get id() { return this.getAttribute('id') || ''; }
   set id(value) { this.setAttribute('id', value); }
   get title() { return this.getAttribute('title') || ''; }
