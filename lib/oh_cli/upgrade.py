@@ -8,19 +8,14 @@ pins, or show what that would do.
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import os
 import sys
-import subprocess
 from pathlib import Path
 
 import oh_cli
-import oh_deploy as deploy
-from oh_cli import AREA
-from oh_install import changeover, manifest, progress, runner, steps
+from oh_cli import install
+from oh_install import steps
 from oh_install.system import System
-
-RERUN = "Run thermite upgrade again to go on from here."
 
 DESCRIPTION = """\
 Upgrade the complete Thermite installation from the official GitHub main branch.
@@ -81,63 +76,6 @@ EXAMPLES = (
 )
 
 
-def upgrade(system: System, dry_run: bool, *, runtime_token_file: Path | None = None,
-            run_approved: bool = False, native_timeout: int | None = None, site_before: str | None = None) -> int:
-    context = steps.committed_context(AREA, system, runtime_token_file)
-    if native_timeout is not None:
-        context = dataclasses.replace(context, native_timeout=native_timeout)
-    if not dry_run:
-        found = changeover.resolve(AREA, system, "upgrade")
-        if found is not None:
-            # This run stopped there and installed nothing, even when it
-            # finished an earlier transaction's commit: never success.
-            return changeover.REFUSED if found == changeover.COMMITTED else found
-    try:
-        installed = manifest.installed(system, context.installation.root)
-    except manifest.ManifestError as exc:
-        print(f"thermite upgrade: {exc}. {manifest.missing_recovery(context)}", file=sys.stderr)
-        return 2
-    if installed is None:
-        if manifest.thermite_present(context, system):
-            print(f"thermite upgrade: {manifest.missing_recovery(context)}", file=sys.stderr)
-        else:
-            print("thermite upgrade: Thermite is not installed on this host yet: thermite install", file=sys.stderr)
-        return 2
-    system.say(f"{'What upgrading' if dry_run else 'Upgrading'} thermite on this host, {context.hostname}, to what "
-               f"{context.head[:12]} pins, {'would do' if dry_run else 'step by step'}:")
-    code = runner.run([steps.Preconditions(context), steps.Committed(context)], system, AREA,
-                      dry_run=dry_run, rerun=RERUN)
-    if dry_run:
-        return changeover.preview(context, system, changeover.install_work(context, None, kind="upgrade"),
-                                  first=3) or code
-    if code:
-        return code
-    if changeover.unchanged(context, system, installed):
-        system.say(f"Nothing differs from the installed version (transaction {installed['transaction']}); "
-                   "checking its health.")
-        return runner.run([steps.Health(context)], system, AREA, first=3, rerun=RERUN)
-    if not run_approved and not runner.confirm_run(system, "upgrade", RERUN):
-        return 1
-    return changeover.run(context, system, lambda id: changeover.install_work(context, id, kind="upgrade"),
-                          installed=installed, before=site_before if site_before else None,
-                          first=3)
-
-
-def host_phase(system: System, arguments) -> int:
-    """The upgrade the application workflow approved (changeover.pinned)."""
-    import oh_paths
-
-    def body(before: str | None) -> int:
-        oh_paths.require_compatible()
-        return upgrade(system, arguments.dry_run, runtime_token_file=arguments.runtime_token_file,
-                       run_approved=arguments._run_approved, native_timeout=arguments.native_timeout,
-                       site_before=before)
-    return changeover.scoped(
-        AREA, system, "upgrade",
-        lambda: changeover.pinned(system, AREA, arguments._site_before, arguments.dry_run, body),
-        dry_run=arguments.dry_run)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = oh_cli.command("upgrade", DESCRIPTION, EXAMPLES, NOTES)
     oh_cli.add_dry_run(parser)
@@ -159,33 +97,4 @@ def main(argv: list[str] | None = None) -> int:
         print("thermite upgrade: run it as your user; it asks once before applying the upgrade",
               file=sys.stderr)
         return 2
-    system = System()
-    try:
-        if not arguments._host_phase:
-            if arguments._run_approved:
-                raise ValueError("run approval is only valid inside the application workflow")
-            if not arguments.dry_run:
-                found = changeover.scoped(AREA, system, "upgrade",
-                                          lambda: changeover.resolve(AREA, system, "upgrade"))
-                if found is not None:
-                    return changeover.REFUSED if found == changeover.COMMITTED else found
-            import oh_application_update
-            return oh_application_update.upgrade(
-                AREA, source=arguments.source, revision=arguments.revision,
-                dry_run=arguments.dry_run, approve=lambda: runner.confirm_run(system, "upgrade", RERUN),
-                runtime_token_file=arguments.runtime_token_file, allow_downgrade=arguments.allow_downgrade,
-                host_args=(["--native-timeout", str(arguments.native_timeout)]
-                           if arguments.native_timeout is not None else []) +
-                          (["--verbose"] if oh_cli.switches.verbose else []), say=system.say,
-                stage=lambda title: progress.stage(system, title))
-        return host_phase(system, arguments)
-    except subprocess.CalledProcessError as exc:
-        print(f"thermite upgrade: {changeover.escaped(AREA, 'upgrade', exc)}", file=sys.stderr)
-        return exc.returncode if exc.returncode > 0 else 1
-    except (deploy.DeployError, ValueError, OSError) as exc:
-        print(f"thermite upgrade: {exc}", file=sys.stderr)
-        return 2
-    except KeyboardInterrupt:
-        system.say(f"\nInterrupted. {RERUN}")
-        return changeover.INTERRUPTED
-
+    return install.run(System(), arguments, "upgrade")

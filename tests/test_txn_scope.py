@@ -215,21 +215,23 @@ class OnlyInside(Site):
             seen.append(scope.held(self.var).verb)
             return 0
 
-        def enter(module, argv=()):
-            with patch.object(module, "AREA", self.site), patch.object(module.os, "geteuid", return_value=1000):
+        def enter(module, argv=(), sequence=None):
+            with patch.object(sequence or module, "AREA", self.site), \
+                    patch.object(module.os, "geteuid", return_value=1000):
                 self.assertEqual(module.main(list(argv)), 0)
 
         for module, name in ((rollback_cli, "roll_back"), (revert_cli, "revert"), (uninstall_cli, "uninstall")):
             with patch.object(module, name, inside):
                 enter(module)
-        # install and upgrade: the check for an earlier transaction, then
-        # (as the application workflow's child) the host phase.
+        # install and upgrade, one sequence in install's module: the check
+        # for an earlier transaction, then (as the application workflow's
+        # child) the host phase.
         for module, verb in ((install_cli, "install"), (upgrade_cli, "upgrade")):
             with patch.object(changeover, "resolve", side_effect=lambda *args: inside() and None or None), \
                     patch(f"oh_application_update.{verb}", return_value=0):
-                enter(module)
+                enter(module, sequence=install_cli)
             with patch.object(changeover, "pinned", inside):
-                enter(module, ["--_host-phase", "--_run-approved"])
+                enter(module, ["--_host-phase", "--_run-approved"], sequence=install_cli)
         self.assertEqual(seen, ["rollback", "revert", "uninstall", "install", "install", "upgrade", "upgrade"])
         self.assertEqual(scope._held, {}, "and none holds it afterwards")
 

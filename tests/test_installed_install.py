@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import dataclasses
 import json
 import os
 import shlex
@@ -14,6 +15,7 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 import oh_paths
 import oh_cli
+import oh_deploy as deploy
 from oh_install import steps
 from oh_install.native_auth import NativeAuthError
 
@@ -27,12 +29,23 @@ class InstalledInstall(unittest.TestCase):
         self.site = Path(self.temporary.name) / "private site"
         self.site.mkdir(); (self.site / oh_paths.SITE_FILE).write_text("{}")
         self.program = Path(self.temporary.name) / "immutable application"
-        self.context = steps.Context(self.site, {}, {"gid": 9001}, "a" * 40, "b" * 64, "server", None)
+        (self.site / "conf/yaml").mkdir(parents=True); (self.site / "conf/yaml/a.yaml").write_text("a: 1\n")
+        self.context = steps.Context(self.site, {}, {"uid": 9001, "gid": 9001}, "a" * 40, "b" * 64, "server", None)
         self.host = Mock()
         self.host.process_groups.return_value = {9001}
 
     def command(self, *args):
         return (sys.executable, str(self.program / "bin/thermite"), "--config", str(self.site), *args)
+
+    def write(self, *args):
+        return (sys.executable, str(self.program / "lib/oh_install/writes.py"), *args)
+
+    def deployment(self, how="install"):
+        return self.write("--config", str(self.site), "deploy", "a" * 40, how)
+
+    def handoff(self):
+        return ("/usr/bin/python3", str(self.program / "lib/oh_service.py"), "/srv/thermite/runtime",
+                "--uid", "9001", "--gid", "9001", "--deployment")
 
     def test_runtime_access_credentials_belong_to_the_private_site(self):
         self.host.read_bytes.return_value = None
@@ -103,15 +116,17 @@ class InstalledInstall(unittest.TestCase):
         self.host.native_probe.assert_not_called()
 
     def test_boot_deploy_and_verification_use_application_interpreter_and_explicit_site(self):
-        with patch.object(oh_paths, "PROGRAM", self.program):
+        with patch.object(oh_paths, "PROGRAM", self.program), patch.object(oh_cli.switches, "verbose", True):
             self.assertEqual(steps.BootTest(self.context).actions(self.host)[0].argv, self.command("test", "boot"))
             actions = steps.Deploy(self.context).actions(self.host)
-            commands = [action.argv for action in actions]
-            self.assertEqual(commands, [self.command("generate", "--check"), self.command("validate"),
-                                        self.command("lint"), self.command("deploy", "--_configuration-phase")])
-            self.assertEqual(actions[-1].approved_argv, self.command("deploy", "--_configuration-phase", "--yes", "--quiet"))
-            self.assertTrue(all(action.approved_argv is None for action in actions[:-1]))
-            self.assertEqual([action.terminal for action in actions], [False, False, False, True])
+            self.assertEqual([action.argv for action in actions],
+                             [self.command("generate", "--check"), self.command("validate"), self.command("lint"),
+                              self.deployment(), self.handoff()])
+            # The write is the owner's and the handoff root's; neither asks,
+            # holds the terminal or has an approved form of its own.
+            self.assertEqual([action.root for action in actions], [False, False, False, False, True])
+            self.assertTrue(all(action.approved_argv is None and not action.terminal and not action.show_output
+                                for action in actions))
             self.assertEqual([action.argv for action in steps.Verify(self.context).actions(self.host)],
                              [self.command("health", "--production", "--installation", "--settle", "120"),
                               self.command("status")])
@@ -119,14 +134,34 @@ class InstalledInstall(unittest.TestCase):
             self.assertTrue(verification[0].show_output)
             self.assertFalse(verification[0].terminal)
 
+    def test_a_conf_that_pairs_is_checked_as_root_before_the_write(self):
+        pairing = {"automation/js/sony_ip_control.js": "// pairing rule\n",
+                   "automation/js/androidtv_googletv.js": "// pairing rule\n",
+                   "automation/js/pyatv_http.js": "// pairing rule\n",
+                   "yaml/other.yaml": "items:\n  dev_pairing:\n    metadata:\n      pairing:\n        value: other\n"}
+        guarded = [(*self.handoff(), "--check-pairing-logging"), self.deployment(), self.handoff()]
+        for name, content in pairing.items():
+            with self.subTest(name=name), patch.object(oh_paths, "PROGRAM", self.program):
+                (self.site / "conf" / name).parent.mkdir(parents=True, exist_ok=True)
+                (self.site / "conf" / name).write_text(content)
+                actions = steps.Deploy(self.context).actions(self.host)[3:]
+                self.assertEqual([action.argv for action in actions], guarded)
+                self.assertEqual([action.root for action in actions], [True, False, True])
+                (self.site / "conf" / name).unlink()
+        # A site whose configuration is derived asks its reviewed bytes, not the working tree.
+        (self.site / "conf/automation/js/sony_ip_control.js").write_text("// pairing rule\n")
+        for prepared, expected in (({"conf/yaml/a.yaml": deploy.Blob(b"a: 1\n")}, guarded[1:]),
+                                   ({"conf/automation/js/pyatv_http.js": deploy.Blob(b"// pairing rule\n")}, guarded)):
+            with self.subTest(prepared=list(prepared)), patch.object(oh_paths, "PROGRAM", self.program):
+                context = dataclasses.replace(self.context, prepared=prepared)
+                self.assertEqual([action.argv for action in steps.Deploy(context).actions(self.host)], expected)
+
     def test_an_upgrades_deploy_and_gateway_activation_reach_the_deploy_history(self):
         deployment = steps.Deploy(self.context)
         deployment.how = "upgrade"
         with patch.object(oh_paths, "PROGRAM", self.program):
-            action = deployment.actions(self.host)[-1]
-        trail = ("--_how", "upgrade")
-        self.assertEqual(action.argv, self.command("deploy", "--_configuration-phase", *trail))
-        self.assertEqual(action.approved_argv, self.command("deploy", "--_configuration-phase", *trail, "--yes", "--quiet"))
+            action = deployment.actions(self.host)[-2]
+        self.assertEqual(action.argv, self.deployment("upgrade"))
         event = {"commit": "a" * 40, "release": "/srv/thermite/access/releases/fixture-a1b2c3", "previous_release": None,
                  "application": {"version": "1.2.3"}}
         record = steps.gateway_history(self.context)
@@ -136,8 +171,8 @@ class InstalledInstall(unittest.TestCase):
                 self.assertIs(record(self.host, event), recorded)
             command, host, area = perform.call_args.args
             self.assertEqual((host, area), (self.host, self.site))
-            self.assertEqual(command.argv, self.command("history", "--state", "/srv/thermite/runtime",
-                                                        "--_record-gateway", json.dumps(event, sort_keys=True)))
+            self.assertEqual(command.argv, self.write("gateway", "/srv/thermite/runtime",
+                                                      json.dumps(event, sort_keys=True)))
             self.assertFalse(command.root)
 
     def test_group_refresh_preserves_quoted_program_site_and_interpreter(self):
@@ -145,51 +180,37 @@ class InstalledInstall(unittest.TestCase):
         self.host.which.return_value = "/usr/bin/sg"
         self.host.login.return_value = "owner"
         with patch.object(oh_paths, "PROGRAM", self.program):
-            command = steps.Deploy(self.context).actions(self.host)[-1]
+            *_, command, handoff = steps.Deploy(self.context).actions(self.host)
             self.assertEqual(command.argv[:3], ("sg", "thermite", "-c"))
-            self.assertEqual(tuple(shlex.split(command.argv[-1])), self.command("deploy", "--_configuration-phase"))
+            self.assertEqual(tuple(shlex.split(command.argv[-1])), self.deployment())
+            self.assertFalse(command.root)
             status = steps.Verify(self.context).actions(self.host)[-1]
             self.assertEqual(status.argv[:3], ("sg", "thermite", "-c"))
             self.assertEqual(tuple(shlex.split(status.argv[-1])), self.command("status"))
-            self.assertEqual(command.approved_argv[:3], command.argv[:3])
-            self.assertEqual(tuple(shlex.split(command.approved_argv[-1])), self.command("deploy", "--_configuration-phase", "--yes", "--quiet"))
-            self.assertTrue(command.terminal)
             self.host.which.return_value = None
-            fallback = steps.Deploy(self.context).actions(self.host)[-1]
+            *_, fallback, handoff = steps.Deploy(self.context).actions(self.host)
             self.assertTrue(fallback.root)
-            self.assertEqual(fallback.argv, ("-u", "owner", *self.command("deploy", "--_configuration-phase")))
+            self.assertEqual(fallback.argv, ("-u", "owner", *self.deployment()))
+            # The handoff is root's own either way, never the owner's through sg or sudo -u.
+            self.assertEqual((handoff.argv, handoff.root), (self.handoff(), True))
             status = steps.Verify(self.context).actions(self.host)[-1]
             self.assertTrue(status.root)
             self.assertEqual(status.argv, ("-u", "owner", *self.command("status")))
-            self.assertEqual(fallback.approved_argv, ("-u", "owner", *self.command("deploy", "--_configuration-phase", "--yes", "--quiet")))
-            self.assertTrue(fallback.terminal)
 
     def test_source_checkout_uses_the_same_configuration_checks_as_an_installed_site(self):
         with patch.object(oh_paths, "PROGRAM", self.program):
             installed = steps.Deploy(self.context).actions(self.host)
-        installed_checks = [action.argv[len(self.command()):] for action in installed[:-1]]
+        installed_checks = [action.argv[len(self.command()):] for action in installed[:3]]
         (self.site / oh_paths.SITE_FILE).unlink()
         self.assertEqual(steps.BootTest(self.context).actions(self.host)[0].argv, ("bin/thermite", "test", "boot"))
-        *checks, action = steps.Deploy(self.context).actions(self.host)
+        with patch.object(oh_paths, "PROGRAM", self.program):
+            *checks, write, handoff = steps.Deploy(self.context).actions(self.host)
         self.assertEqual([check.argv for check in checks], [("bin/thermite", "generate", "--check"),
                                                           ("bin/thermite", "validate"), ("bin/thermite", "lint")])
         self.assertEqual([check.argv[1:] for check in checks], installed_checks)
         self.assertTrue(all(check.approved_argv is None and not check.terminal for check in checks))
-        self.assertEqual(action.argv, ("bin/thermite", "deploy", "--_configuration-phase"))
-        self.assertEqual(action.approved_argv, ("bin/thermite", "deploy", "--_configuration-phase", "--yes", "--quiet"))
-        self.assertTrue(action.terminal)
-
-    def test_verbose_source_and_installed_deployment_keep_child_output(self):
-        with patch.object(oh_paths, "PROGRAM", self.program), patch.object(oh_cli.switches, "verbose", True):
-            for installed in (True, False):
-                with self.subTest(installed=installed):
-                    if not installed:
-                        (self.site / oh_paths.SITE_FILE).unlink()
-                    action = steps.Deploy(self.context).actions(self.host)[-1]
-                    expected = self.command("deploy", "--_configuration-phase") if installed else ("bin/thermite", "deploy", "--_configuration-phase")
-                    self.assertEqual(action.argv, expected)
-                    self.assertEqual(action.approved_argv, (*expected, "--yes"))
-                    self.assertTrue(action.terminal)
+        # The write is the same file of the running application for both.
+        self.assertEqual([write.argv, handoff.argv], [action.argv for action in installed[3:]])
 
     def stage_access(self, **arguments):
         """Stage the gateway from an installed application: (its root, the

@@ -48,7 +48,7 @@ first run and again whenever addons.cfg or a runtime pin changes, or with
 --rebuild; that run takes about a minute longer.
 
 A clean run records the digest of CONF's files in var/boot-check/passed/;
-thermite deploy installs only a conf/ with such a record.
+thermite install deploys only a conf/ with such a record.
 
 The instance is stopped at the end unless --keep is given. Its userdata is a
 disposable copy, so it is killed if it has not stopped within 3s.
@@ -410,5 +410,5 @@ def run(args) -> int:
     else:
         print_human(report)
         if not report["failures"]:
-            print(f"recorded the pass for this conf/ ({digest[:12]}): thermite deploy may install it")
+            print(f"recorded the pass for this conf/ ({digest[:12]}): thermite install may deploy it")
     return 1 if report["failures"] else 0

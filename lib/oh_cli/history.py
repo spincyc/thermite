@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 from pathlib import Path
@@ -33,8 +32,7 @@ per tree and exact counts.
 
 Deploys from before the history recorded the boot test show ? there,
 except the one deployed now, which deployed.json describes; older deploys
-have no details. Each deploy also writes a start and an end line to the
-journal: journalctl -t thermite-deploy.
+have no details.
 """
 
 EXAMPLES = (
@@ -138,32 +136,6 @@ def show(layout: deploy.State, last: int, as_json: bool, with_details: bool = Fa
     return 0
 
 
-def record_gateway(layout: deploy.State, event: str) -> int:
-    """The installer's record of a gateway activation (oh_install.steps.gateway_history)."""
-    try:
-        value = json.loads(event)
-        if not isinstance(value, dict):
-            raise ValueError("not a JSON object")
-        deploy.record_gateway(layout, value)
-    except (ValueError, OSError, deploy.DeployError) as exc:
-        print(f"thermite history: could not record the gateway release in {layout.history}: {exc}", file=sys.stderr)
-        return 2
-    return 0
-
-
-def record_rollback(layout: deploy.State, event: str) -> int:
-    """The upgrade's record of an install transaction it rolled back (oh_install.changeover)."""
-    try:
-        value = json.loads(event)
-        if not isinstance(value, dict):
-            raise ValueError("not a JSON object")
-        deploy.record_rollback(layout, value)
-    except (ValueError, OSError, deploy.DeployError) as exc:
-        print(f"thermite history: could not record the rollback in {layout.history}: {exc}", file=sys.stderr)
-        return 2
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = oh_cli.command("history", DESCRIPTION, EXAMPLES)
     parser.add_argument("--last", type=int, default=10, metavar="N",
@@ -173,14 +145,8 @@ def main(argv: list[str] | None = None) -> int:
     oh_cli.add_json(parser)
     parser.add_argument("--state", type=Path, metavar="DIR",
                         help="the runtime state (default: runtime/ in instance/host.yaml's root, /srv/thermite)")
-    parser.add_argument("--_record-gateway", metavar="JSON", help=argparse.SUPPRESS)
-    parser.add_argument("--_record-rollback", metavar="JSON", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.last < 0:
         parser.error("--last takes 0 or more")
     layout = deploy.State(args.state) if args.state else deploy.state(deploy.load(AREA)[1])
-    if args._record_gateway is not None:
-        return record_gateway(layout, args._record_gateway)
-    if args._record_rollback is not None:
-        return record_rollback(layout, args._record_rollback)
     return show(layout, args.last, args.json, args.details)

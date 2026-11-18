@@ -170,7 +170,7 @@ class Fixture(unittest.TestCase):
             return 0
         if argv[1:4] == (changeover.PYTHON, "-I", "-S"):
             return self.verb(argv[5:])[0]
-        if "--_record-rollback" in argv:
+        if "rolled-back" in argv:
             self.log.append("history")
         elif argv[:3] == ("sudo", "systemctl", "stop"):
             return self.host.run(argv[1:])

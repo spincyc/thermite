@@ -829,9 +829,8 @@ denied sign-ins. Requests that change something or fail have a `req` line
 Event streams log `stream open` and `stream close` with their duration and
 the peer's and gateway's stream counts. openHAB writes everything to the
 journal at one priority, so its warnings are found by their `[WARN ]` text.
-Deploys write a start and an end line, `journalctl -t thermite-deploy`, and
-`thermite history --details` lists what each changed and reloaded and the
-gateway release it activated.
+`thermite history --details` lists what each deploy changed and reloaded
+and the gateway release it activated.
 
 ## Update or remove
 

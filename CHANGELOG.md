@@ -7,6 +7,11 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- `thermite deploy` is removed. A deploy is a step of `thermite
+  install`, `upgrade` and `rollback`, which ask once and record what
+  they do. The step no longer asks a second time or writes its own
+  start and end lines to the journal: `thermite history` is the
+  record, and `journalctl -t thermite-deploy` shows nothing new.
 - The web remote no longer sends the preview's sample house to every
   phone. The fakes behind `?backend=mock` (the sample house, its
   music library, Home's sample alerts, the sample pairing and the

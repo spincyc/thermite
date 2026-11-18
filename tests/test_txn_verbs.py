@@ -22,13 +22,11 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
 import oh_deploy as deploy  # noqa: E402
-from oh_cli import history as history_cli  # noqa: E402
 from oh_cli import install as install_cli  # noqa: E402
 from oh_cli import revert as revert_cli  # noqa: E402
 from oh_cli import rollback as rollback_cli  # noqa: E402
 from oh_cli import uninstall as uninstall_cli  # noqa: E402
-from oh_cli import upgrade as upgrade_cli  # noqa: E402
-from oh_install import changeover, manifest, runner, steps  # noqa: E402
+from oh_install import changeover, manifest, runner, steps, writes  # noqa: E402
 from oh_install.model import Check, Step, Task  # noqa: E402
 from oh_install.system import System  # noqa: E402
 from tests import txn_fakes  # noqa: E402
@@ -176,7 +174,7 @@ class DryRuns(Fixture):
         super().setUp()
         self.installed = {"installed": True, "transaction": txn_fakes.OLD, "kept": txn_fakes.OLD,
                           "release": {"site": BEFORE}}
-        for module in (install_cli, upgrade_cli, uninstall_cli, rollback_cli, revert_cli):
+        for module in (install_cli, uninstall_cli, rollback_cli, revert_cli):
             self.patch(module, "AREA", new=self.site)
         self.patch(steps, "committed_context", return_value=self.context)
         self.patch(manifest, "installed", return_value=self.installed)
@@ -209,7 +207,7 @@ class DryRuns(Fixture):
         self.assertEqual(work.confirm.path, self.context.layout.root)
 
     def test_upgrade(self):
-        _, work, first = self.previewed(upgrade_cli.upgrade(self.system, True))
+        _, work, first = self.previewed(install_cli.install(self.system, True, verb="upgrade"))
         self.assertEqual((work.kind, work.verb, first), ("upgrade", "upgrade", 3))
         self.assertIsNotNone(work.release)
 
@@ -253,7 +251,7 @@ class DryRuns(Fixture):
         self.preview.return_value = 0
         self.runs.return_value = 1
         self.assertEqual(install_cli.install(self.system, True), 1)
-        self.assertEqual(upgrade_cli.upgrade(self.system, True), 1)
+        self.assertEqual(install_cli.install(self.system, True, verb="upgrade"), 1)
         self.transaction.assert_not_called()
 
 
@@ -414,7 +412,7 @@ class Rollback(Fixture):
 
 
 class RecordRollback(unittest.TestCase):
-    """thermite history --_record-rollback: the history line of a rolled-back transaction."""
+    """oh_install.writes rolled-back: the history line of a rolled-back transaction."""
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -427,7 +425,7 @@ class RecordRollback(unittest.TestCase):
     def record(self, event):
         error = io.StringIO()
         with redirect_stderr(error):
-            code = history_cli.record_rollback(self.layout, event)
+            code = writes.main(["rolled-back", str(self.layout.root), event])
         return code, error.getvalue()
 
     def test_a_valid_event_is_recorded(self):
@@ -444,7 +442,7 @@ class RecordRollback(unittest.TestCase):
             with self.subTest(event=event):
                 code, error = self.record(event)
                 self.assertEqual(code, 2)
-                self.assertTrue(error.startswith(f"thermite history: could not record the rollback in "
+                self.assertTrue(error.startswith(f"thermite: could not record the rollback in "
                                                  f"{self.layout.history}: "))
                 self.assertIn(words, error)
         self.assertEqual(self.layout.history.read_text(), before)

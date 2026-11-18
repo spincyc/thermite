@@ -55,7 +55,7 @@ class Packaging(unittest.TestCase):
         for name in reviewed:
             self.assertEqual(self.public[name], (AREA / name).read_bytes(), name)
         expected = {"lib/oh_identity/test_settings.py", "tests/test_packaging.py", "tests/test_deploy.py",
-                    "tests/test_deploy_auth.py"}
+                    "tests/test_install_writes.py"}
         expected.update(path.relative_to(AREA).as_posix()
                         for path in (AREA / "lib/oh_identity/tests").glob("*.py"))
         self.assertTrue(expected <= self.release["files"].keys())

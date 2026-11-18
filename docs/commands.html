@@ -43,7 +43,7 @@
 <h2 id="test">Test on a test runtime, never production</h2>
 <table class="verbs"><tbody><tr><td><a href="#test"><code>thermite test</code></a></td><td>boot conf/ on a test runtime; test routing and the controls end to end</td></tr><tr><td><a href="#sandbox"><code>thermite sandbox</code></a></td><td>run a thermite sandbox from a copy of conf/ on 127.0.0.1:13616</td></tr></tbody></table>
 <h2 id="production">Production runtime on this host</h2>
-<table class="verbs"><tbody><tr><td><a href="#install"><code>thermite install</code></a></td><td>install thermite on this host, with one approval for the whole run</td></tr><tr><td><a href="#upgrade"><code>thermite upgrade</code></a></td><td>update the application, native services and HTTPS gateway together</td></tr><tr><td><a href="#uninstall"><code>thermite uninstall</code></a></td><td>stop thermite here and remove its units; --purge deletes its state</td></tr><tr><td><a href="#deploy"><code>thermite deploy</code></a></td><td>compatibility alias for the complete install workflow</td></tr><tr><td><a href="#rollback"><code>thermite rollback</code></a></td><td>install the commit deployed before the current one, or another</td></tr><tr><td><a href="#revert"><code>thermite revert</code></a></td><td>go back to the version, and state, the last upgrade set aside</td></tr><tr><td><a href="#status"><code>thermite status</code></a></td><td>what is deployed and running here, against this checkout</td></tr><tr><td><a href="#history"><code>thermite history</code></a></td><td>this host&#x27;s deploys, numbered, the latest last</td></tr><tr><td><a href="#health"><code>thermite health</code></a></td><td>read-only: every Thing ONLINE in the runtime</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#install"><code>thermite install</code></a></td><td>install thermite on this host, with one approval for the whole run</td></tr><tr><td><a href="#upgrade"><code>thermite upgrade</code></a></td><td>update the application, native services and HTTPS gateway together</td></tr><tr><td><a href="#uninstall"><code>thermite uninstall</code></a></td><td>stop thermite here and remove its units; --purge deletes its state</td></tr><tr><td><a href="#rollback"><code>thermite rollback</code></a></td><td>install the commit deployed before the current one, or another</td></tr><tr><td><a href="#revert"><code>thermite revert</code></a></td><td>go back to the version, and state, the last upgrade set aside</td></tr><tr><td><a href="#status"><code>thermite status</code></a></td><td>what is deployed and running here, against this checkout</td></tr><tr><td><a href="#history"><code>thermite history</code></a></td><td>this host&#x27;s deploys, numbered, the latest last</td></tr><tr><td><a href="#health"><code>thermite health</code></a></td><td>read-only: every Thing ONLINE in the runtime</td></tr></tbody></table>
 <h2 id="devices">The house&#x27;s devices</h2>
 <table class="verbs"><tbody><tr><td><a href="#dhcp-reservations"><code>thermite dhcp-reservations</code></a></td><td>list the UniFi DHCP reservations the house file needs</td></tr><tr><td><a href="#matrix-settings"><code>thermite matrix-settings</code></a></td><td>show matrix settings that differ from the house file; --apply sets them</td></tr><tr><td><a href="#control4"><code>thermite control4</code></a></td><td>export the Control4 project read-only and compare it</td></tr><tr><td><a href="#discover"><code>thermite discover</code></a></td><td>scan the LAN read-only and compare it with the house file</td></tr><tr><td><a href="#pair"><code>thermite pair</code></a></td><td>pair a TV with runtime, or check the Sony TVs&#x27; pairing</td></tr><tr><td><a href="#device"><code>thermite device</code></a></td><td>everything about one device: what it is, what watches it, what holds now</td></tr><tr><td><a href="#reboot"><code>thermite reboot</code></a></td><td>restart a device now as the nightly reboots do, or list how each went</td></tr><tr><td><a href="#cameras"><code>thermite cameras</code></a></td><td>read camera status, or configure native Protect bridges privately</td></tr><tr><td><a href="#apple-tv"><code>thermite apple-tv</code></a></td><td>run the Apple TV helper runtime calls</td></tr><tr><td><a href="#ir-profile"><code>thermite ir-profile</code></a></td><td>validate verified IR keys or print an iTach packet without transmitting</td></tr></tbody></table>
 <h2 id="use">Front ends, themes and docs</h2>
@@ -72,7 +72,6 @@ production runtime on this host:
   install              install thermite on this host, with one approval for the whole run
   upgrade              update the application, native services and HTTPS gateway together
   uninstall            stop thermite here and remove its units; --purge deletes its state
-  deploy               compatibility alias for the complete install workflow
   rollback             install the commit deployed before the current one, or another
   revert               go back to the version, and state, the last upgrade set aside
   status               what is deployed and running here, against this checkout
@@ -369,7 +368,7 @@ first run and again whenever addons.cfg or a runtime pin changes, or with
 --rebuild; that run takes about a minute longer.
 
 A clean run records the digest of CONF&#x27;s files in var/boot-check/passed/;
-thermite deploy installs only a conf/ with such a record.
+thermite install deploys only a conf/ with such a record.
 
 The instance is stopped at the end unless --keep is given. Its userdata is a
 disposable copy, so it is killed if it has not stopped within 3s.
@@ -1015,39 +1014,6 @@ examples:
   thermite uninstall -n --purge     what removing the state too would do
 </pre>
 </section>
-<section class="verb" id="deploy"><h3><code>thermite deploy</code></h3><p>Compatibility alias for the complete install workflow.</p><pre class="help">usage: thermite deploy [-h] [--config DIR] [-n] [--yes] [--force] [--state DIR] [REV]
-
-Compatibility alias for thermite install. Deployments apply the complete
-application, native services and HTTPS gateway workflow. Use --config DIR
-to select committed private configuration. Use thermite upgrade for a newer
-application release. The old partial-conf deployment switches are reserved
-for the installer&#x27;s internal phase and are not a separate deployment path.
-
-positional arguments:
-  REV            the commit (default: HEAD)
-
-options:
-  -h, --help     show this help message and exit
-  --config DIR   use this private configuration directory
-  -n, --dry-run  report what it would do; change nothing
-  --yes          approve the ownership handoff for this invocation; install/upgrade use
-                 their run approval
-  --force        install a conf thermite test boot has not passed on here
-  --state DIR    the runtime state (default: runtime/ in instance/host.yaml&#x27;s root,
-                 /srv/thermite)
-
-switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
-
-examples:
-  thermite install --config /path/to/private-site
-                                    deploy everything with one approval
-  thermite upgrade --config /path/to/private-site
-                                    update the application and every service
-</pre>
-</section>
 <section class="verb" id="rollback"><h3><code>thermite rollback</code></h3><p>Install the commit deployed before the current one, or another.</p><pre class="help">usage: thermite rollback [-h] [--config DIR] [-n] [COMMIT]
 
 Install an earlier site commit on this host as one install transaction:
@@ -1148,7 +1114,7 @@ examples:
 </section>
 <section class="verb" id="status"><h3><code>thermite status</code></h3><p>What is deployed and running here, against this checkout.</p><pre class="help">usage: thermite status [-h] [--config DIR] [--json] [--state DIR]
 
-Report, read-only, what runs here: the commit thermite deploy installed
+Report, read-only, what runs here: the commit thermite install deployed
 (and whether HEAD is it, or how many commits after it), whether the
 installed conf/, Apple TV helper, metrics/ and metrics exporter still match
 that deploy, whether each installed systemd unit matches deploy/ (the owner
@@ -1214,8 +1180,7 @@ per tree and exact counts.
 
 Deploys from before the history recorded the boot test show ? there,
 except the one deployed now, which deployed.json describes; older deploys
-have no details. Each deploy also writes a start and an end line to the
-journal: journalctl -t thermite-deploy.
+have no details.
 
 options:
   -h, --help     show this help message and exit

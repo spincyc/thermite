@@ -37,6 +37,7 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+import sys
 from typing import Callable
 
 import oh_cli
@@ -375,13 +376,6 @@ def _operator(record: dict, system: System, argv: tuple[str, ...]) -> Command:
     if system.which("sg"):
         return Command(("sg", steps.NAME, "-c", shlex.join(argv)))
     return Command(("-u", system.login(), *argv), root=True)
-
-
-def _application(record: dict, *args: str) -> tuple[str, ...]:
-    """This application's own command for the site."""
-    import sys
-    from oh_paths import PROGRAM
-    return (sys.executable, str(PROGRAM / "bin/thermite"), "--config", record["site"], *args)
 
 
 # Steps of the transaction ---------------------------------------------------
@@ -1024,8 +1018,9 @@ def rolled_back(system: System, transaction: Transaction) -> int:
     record = transaction.record
     if record.get("head_after") and record.get("history", True):
         event = {"transaction": transaction.id, "commit": record["head_after"], "restored": record.get("head_before")}
-        argv = _application(record, "history", "--state", record["state"], "--_record-rollback",
-                            json.dumps(event, sort_keys=True))
+        # This application's own, whichever release began the transaction.
+        argv = (sys.executable, str(Path(__file__).with_name("writes.py")), "rolled-back", record["state"],
+                json.dumps(event, sort_keys=True))
         if runner.staged(system, "Record the rollback in thermite history", _operator(record, system, argv),
                          transaction.site) != 0:
             system.say("   The rollback was not added to thermite history.")

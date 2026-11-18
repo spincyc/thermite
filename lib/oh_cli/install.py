@@ -131,24 +131,31 @@ def main(argv: list[str] | None = None) -> int:
         UNATTENDED.reset(approval)
 
 
-def run(system: System, arguments: argparse.Namespace) -> int:
-    """thermite install, or its host phase, with `arguments` parsed."""
+def rerun(verb: str) -> str:
+    """How the owner goes on after a stop."""
+    return f"Run {changeover.command(AREA, verb)} again to go on from here."
+
+
+def run(system: System, arguments: argparse.Namespace, verb: str = "install") -> int:
+    """thermite install or thermite upgrade (`verb`), or its host phase,
+    with `arguments` parsed: the two differ in what they may be given and
+    in what install() does for each."""
+    given = vars(arguments)
     try:
         if not arguments._host_phase:
             if arguments._run_approved:
                 raise ValueError("run approval is only valid inside the application workflow")
             if not arguments.dry_run:
-                found = changeover.scoped(AREA, system, "install",
-                                          lambda: changeover.resolve(AREA, system, "install"))
+                found = changeover.scoped(AREA, system, verb, lambda: changeover.resolve(AREA, system, verb))
                 if found is not None:
                     return changeover.REFUSED if found == changeover.COMMITTED else found
             import oh_application_update
-            return oh_application_update.install(
+            return getattr(oh_application_update, verb)(
                 AREA, source=arguments.source, revision=arguments.revision,
-                dry_run=arguments.dry_run, approve=lambda: runner.confirm_run(system, "install"),
+                dry_run=arguments.dry_run, approve=lambda: runner.confirm_run(system, verb, rerun(verb)),
                 runtime_token_file=arguments.runtime_token_file, allow_downgrade=arguments.allow_downgrade,
-                host_args=(["--clean"] if arguments.clean else []) + (["--yes"] if arguments.yes else []) +
-                          (["--restart-runtime"] if arguments.restart_runtime else []) +
+                host_args=[flag for flag, name in (("--clean", "clean"), ("--yes", "yes"),
+                                                   ("--restart-runtime", "restart_runtime")) if given.get(name)] +
                           (["--native-timeout", str(arguments.native_timeout)]
                            if arguments.native_timeout is not None else []) +
                           (["--verbose"] if oh_cli.switches.verbose else []), say=system.say,
@@ -157,22 +164,23 @@ def run(system: System, arguments: argparse.Namespace) -> int:
 
         def body(before: str | None) -> int:
             oh_paths.require_compatible()
-            return install(system, arguments.dry_run, clean=arguments.clean,
-                           runtime_token_file=arguments.runtime_token_file, restart_runtime=arguments.restart_runtime,
+            return install(system, arguments.dry_run, verb=verb, clean=given.get("clean", False),
+                           runtime_token_file=arguments.runtime_token_file,
+                           restart_runtime=given.get("restart_runtime", False),
                            run_approved=arguments._run_approved, native_timeout=arguments.native_timeout,
                            site_before=before)
         return changeover.scoped(
-            AREA, system, "install",
+            AREA, system, verb,
             lambda: changeover.pinned(system, AREA, arguments._site_before, arguments.dry_run, body),
             dry_run=arguments.dry_run)
     except subprocess.CalledProcessError as exc:
-        print(f"thermite install: {changeover.escaped(AREA, 'install', exc)}", file=sys.stderr)
+        print(f"thermite {verb}: {changeover.escaped(AREA, verb, exc)}", file=sys.stderr)
         return exc.returncode if exc.returncode > 0 else 1
     except (deploy.DeployError, ValueError, OSError) as exc:
-        print(f"thermite install: {exc}", file=sys.stderr)
+        print(f"thermite {verb}: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
-        system.say(f"\nInterrupted. {runner.RERUN}")
+        system.say(f"\nInterrupted. {rerun(verb)}")
         return changeover.INTERRUPTED
 
 
@@ -189,9 +197,17 @@ def approve(system: System, context: steps.Context, clean: bool) -> bool:
     return runner.confirm_run(system, "clean install" if clean else "install")
 
 
-def install(system: System, dry_run: bool, *, clean: bool = False, runtime_token_file: Path | None = None,
-            restart_runtime: bool = False, run_approved: bool = False, native_timeout: int | None = None,
-            site_before: str | None = None) -> int:
+def install(system: System, dry_run: bool, *, verb: str = "install", clean: bool = False,
+            runtime_token_file: Path | None = None, restart_runtime: bool = False, run_approved: bool = False,
+            native_timeout: int | None = None, site_before: str | None = None) -> int:
+    """The host phase of thermite install and of thermite upgrade (`verb`):
+    finish any open transaction, read the committed site and what is
+    installed, run the checks that need nothing stopped, then install the
+    version as one transaction, or only check its health when nothing
+    differs. An upgrade needs an installation and has no --clean or
+    --restart-runtime; an install also makes the first one."""
+    upgrade = verb == "upgrade"
+    again = rerun(verb)
     if clean and runtime_token_file is not None:
         system.say("A clean installation creates new runtime credentials; an existing token cannot be imported into it.")
         return 2
@@ -204,9 +220,10 @@ def install(system: System, dry_run: bool, *, clean: bool = False, runtime_token
             runner.run([steps.Packages()], system, AREA, dry_run=True)
         return 2
     if not dry_run:
-        found = changeover.resolve(AREA, system, "install")
+        found = changeover.resolve(AREA, system, verb)
         if found is not None:
-            # This run stopped there and installed nothing: never success.
+            # This run stopped there and installed nothing, even when it
+            # finished an earlier transaction's commit: never success.
             return changeover.REFUSED if found == changeover.COMMITTED else found
     context = steps.committed_context(AREA, system, runtime_token_file)
     if native_timeout is not None:
@@ -219,6 +236,10 @@ def install(system: System, dry_run: bool, *, clean: bool = False, runtime_token
         system.say(f"{exc}. {manifest.missing_recovery(context)}")
         return 2
     present = [] if installed is not None else manifest.thermite_present(context, system)
+    if upgrade and installed is None:
+        system.say(manifest.missing_recovery(context) if present else
+                   "Thermite is not installed on this host yet: thermite install")
+        return 2
     # The state under the installation root alone does not refuse an install:
     # the recovery it prints ends with this command, on the state that
     # stayed. The preconditions prove the root Thermite's, and the install
@@ -226,14 +247,17 @@ def install(system: System, dry_run: bool, *, clean: bool = False, runtime_token
     if any(path != context.installation.root for path in present):
         system.say(manifest.missing_recovery(context))
         return 2
-    kind = "clean" if clean else "install"
-    versions = context.versions
-    where = f"{context.hostname} ({context.address})" if context.address else context.hostname
-    system.say(f"{'What installing' if dry_run else 'Installing'} thermite (runtime {versions['openhab']['version']}) "
-               f"on this host, {where}, as {system.login()}, at {context.head[:12]}, "
-               f"{'would do' if dry_run else 'step by step'}:")
+    kind = "upgrade" if upgrade else "clean" if clean else "install"
+    if upgrade:
+        system.say(f"{'What upgrading' if dry_run else 'Upgrading'} thermite on this host, {context.hostname}, to "
+                   f"what {context.head[:12]} pins, {'would do' if dry_run else 'step by step'}:")
+    else:
+        where = f"{context.hostname} ({context.address})" if context.address else context.hostname
+        system.say(f"{'What installing' if dry_run else 'Installing'} thermite (runtime "
+                   f"{context.versions['openhab']['version']}) on this host, {where}, as {system.login()}, at "
+                   f"{context.head[:12]}, {'would do' if dry_run else 'step by step'}:")
     preflight = steps.install_preflight(context)
-    code = runner.run(preflight, system, AREA, dry_run=dry_run)
+    code = runner.run(preflight, system, AREA, dry_run=dry_run, rerun=again)
     if dry_run:
         return changeover.preview(context, system, changeover.install_work(context, None, kind=kind),
                                   first=len(preflight) + 1) or code
@@ -242,12 +266,13 @@ def install(system: System, dry_run: bool, *, clean: bool = False, runtime_token
     if not clean and not restart_runtime and changeover.unchanged(context, system, installed):
         system.say(f"Nothing differs from the installed version (transaction {installed['transaction']}); "
                    "checking its health.")
-        return runner.run([steps.Health(context)], system, AREA, first=len(preflight) + 1)
-    if not run_approved and not approve(system, context, clean):
+        return runner.run([steps.Health(context)], system, AREA, first=len(preflight) + 1, rerun=again)
+    if not run_approved and not (runner.confirm_run(system, verb, again) if upgrade
+                                 else approve(system, context, clean)):
         return 1
     code = changeover.run(context, system, lambda id: changeover.install_work(context, id, kind=kind),
                           installed=installed, before=site_before or None, first=len(preflight) + 1)
-    if code == changeover.COMMITTED:
+    if code == changeover.COMMITTED and not upgrade:
         completion(context, system)
         if context.host["gid"] not in system.process_groups():
             system.say("Log out and in again, so that your shell is in the thermite group for later deploys.")

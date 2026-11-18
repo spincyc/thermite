@@ -100,7 +100,7 @@ class Host:
         if argv[0] == "sudo" and (verb := self.verb(argv[1:])):
             self.log.append(verb)
             return self.answers[verb]
-        if "--_record-rollback" in argv:
+        if argv[-3:-2] == ("rolled-back",) and argv[-4].endswith("lib/oh_install/writes.py"):
             self.log.append("history " + json.loads(argv[-1])["transaction"])
             return 0
         if argv[-5:] == ("health", "--production", "--installation", "--settle", "120"):
@@ -368,8 +368,8 @@ class Moved(Fixture):
         self.assertEqual({str(call.args[1]) for call in self.host.system.run.call_args_list}, {str(self.site)},
                          "every command runs in the site as it is now")
         history = next(call.args[0] for call in self.host.system.run.call_args_list
-                       if "--_record-rollback" in call.args[0])
-        self.assertIn(str(self.site), history)
+                       if "rolled-back" in call.args[0])
+        self.assertEqual(history[-2], self.record()["state"], "the history line names the state, never a site")
         self.assertNotIn(str(old), history)
         self.assertEqual((self.record()["site"], self.record()["phase"]), (str(self.site), "rolled-back"))
         self.assertIsNone(self.is_open())

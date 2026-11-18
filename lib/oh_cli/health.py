@@ -300,11 +300,10 @@ def print_human(report: dict) -> None:
 def production(args) -> None:
     """Point args at production on this host and the token the install saved."""
     from oh_paths import SITE_FILE
-    from oh_cli.deploy import deployment_selection
     revision = getattr(args, "revision", None)
     requirement = None
     if revision is not None or (AREA / SITE_FILE).is_file():
-        revision, args.host, requirement = deployment_selection(revision or "HEAD", area=AREA)
+        revision, args.host, requirement = deploy.selection(AREA, revision or "HEAD")
     else:
         args.host = deploy.load(AREA)[1]
     args.url = deploy.production_url(args.host)

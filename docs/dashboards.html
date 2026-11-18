@@ -68,7 +68,7 @@ devices:
 <h2 id="changing-them">Changing them</h2>
 <p>The dashboards are made from the house file, like thermite's configuration. Add a device or a room, then:</p>
 <pre><code class="language-sh">thermite generate        # writes the dashboards and Prometheus' targets too
-thermite deploy          # installs them; the services pick them up by themselves</code></pre>
+thermite install         # installs them with the rest of the commit, and starts the services on them</code></pre>
 <p>Grafana won't save edits to these dashboards: change the house file instead, so the next generate doesn't undo your work.</p>
 <h2 id="yoke-observers">Yoke observers</h2>
 <p>Yoke monitoring is optional. Run an observer independently on the Thermite host:</p>

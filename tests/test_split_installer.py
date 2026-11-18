@@ -23,7 +23,7 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_deploy as deploy  # noqa: E402
 import oh_paths  # noqa: E402
 import oh_release  # noqa: E402
-from oh_cli import deploy as deploy_cli, install as install_cli, health, status  # noqa: E402
+from oh_cli import install as install_cli, health, status  # noqa: E402
 from oh_install import changeover, runner, steps  # noqa: E402
 from oh_testing import boot  # noqa: E402
 from tests import txn_fakes  # noqa: E402
@@ -204,11 +204,13 @@ class SplitInstaller(unittest.TestCase):
         self.assertTrue(installs)
         self.assertEqual({name for command in installs for name in command.argv[5:]},
                          {str(root / name) for name in deploy.host_units(self.host)})
-        deploy_actions = steps.Deploy(self.context).actions(self.system)
-        self.assertEqual(len(deploy_actions), 1)
-        self.assertEqual(deploy_actions[0].argv, (*prefix, "deploy", self.context.head, "--state", str(self.runtime), "--_configuration-phase"))
-        self.assertIn("--yes", deploy_actions[0].approved_argv)
-        self.assertTrue(deploy_actions[0].terminal)
+        write, handoff = steps.Deploy(self.context).actions(self.system)
+        self.assertEqual(write.argv, (sys.executable, str(self.context.program / "lib/oh_install/writes.py"),
+                                      "--config", str(self.site), "deploy", self.context.head, "install"))
+        self.assertEqual((write.root, write.approved_argv, write.terminal), (False, None, False))
+        self.assertEqual(handoff.argv, ("/usr/bin/python3", str(self.context.program / "lib/oh_service.py"),
+                                        str(self.runtime), "--uid", "9001", "--gid", "9001", "--deployment"))
+        self.assertTrue(handoff.root)
         verification = steps.Verify(self.context).actions(self.system)[0]
         self.assertIn(str(root / "conf/services/addons.cfg"), verification.argv)
         self.assertEqual(verification.argv[-2:], ("--revision", self.context.head))
@@ -234,17 +236,21 @@ class SplitInstaller(unittest.TestCase):
 
     def test_schema_one_and_source_checkouts_keep_their_previous_installer_commands(self):
         legacy = dataclasses.replace(self.context, prepared=None, application=None)
+        (self.site / "conf").mkdir()  # theirs is the working tree's, which the checks compare with the commit
         with patch.object(oh_paths, "PROGRAM", self.site / "installed app"):
             self.assertEqual(steps.BootTest(legacy).actions(self.system)[0].argv[-2:], ("test", "boot"))
-            self.assertEqual(len(steps.Deploy(legacy).actions(self.system)), 4)
+            *checks, write, handoff = steps.Deploy(legacy).actions(self.system)
+            self.assertEqual([check.argv[-1] for check in checks], ["--check", "validate", "lint"])
+            self.assertEqual(write.argv[-3:], ("deploy", legacy.head, "install"))
         self.assertEqual(steps.configuration_steps(legacy), [])
 
-    def test_standalone_deploy_destination_uses_selected_committed_host(self):
-        with patch.object(deploy_cli, "AREA", self.site), patch.object(deploy, "resolve", return_value=self.context.head), \
+    def test_a_deploys_destination_uses_the_selected_committed_host(self):
+        with patch.object(deploy, "resolve", return_value=self.context.head), \
                 patch.object(deploy, "export", return_value={oh_paths.SITE_FILE: deploy.Blob(b"manifest")}), \
                 patch.object(deploy, "committed_inputs", return_value=(self.versions, self.host, self.requirement)) as inputs, \
                 patch.object(deploy, "load", side_effect=AssertionError("mutable destination used")):
-            self.assertEqual(deploy_cli.deployment_host("reviewed-commit"), self.host)
+            self.assertEqual(deploy.selection(self.site, "reviewed-commit"),
+                             (self.context.head, self.host, self.requirement))
         inputs.assert_called_once_with(self.site, self.context.head)
 
     def test_schema2_unit_status_reads_the_selected_snapshot_without_top_level_deploy(self):
@@ -297,12 +303,6 @@ class SplitInstaller(unittest.TestCase):
             # Nothing deployed and no runtime answering: status reports a problem.
             self.assertEqual(status.show(args, host), 1)
             units.assert_called_once_with(status.AREA, rev=self.context.head)
-
-    def test_symbolic_deploy_targets_are_pinned_before_the_body(self):
-        with patch.object(deploy_cli, "deployment_selection", return_value=(self.context.head, self.host, self.requirement)), \
-                patch.object(deploy_cli, "apply", return_value=0) as apply, patch.object(oh_paths, "require_compatible"):
-            self.assertEqual(deploy_cli.main(["HEAD", "--dry-run", "--_configuration-phase"]), 0)
-            self.assertEqual(apply.call_args.args[0].rev, self.context.head)
 
     def test_privileged_helper_paths_use_the_frozen_application(self):
         program = self.site / "var/application-releases" / self.application["digest"]

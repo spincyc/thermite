@@ -12,7 +12,6 @@ import tempfile
 from pathlib import Path
 
 import oh_addons
-import oh_cli
 import oh_deploy as deploy
 import oh_apparmor
 import oh_http
@@ -402,6 +401,13 @@ def application(context: Context, *args: str) -> tuple[str, ...]:
     if (context.area / SITE_FILE).is_file():
         return (sys.executable, str(context.program / "bin/thermite"), "--config", str(context.area), *args)
     return ("bin/thermite", *args)
+
+
+def write(context: Context, *args: str) -> tuple[str, ...]:
+    """One of the transaction's own writes below the installation root
+    (oh_install.writes), run with this release's Python; operator_command
+    gives it the thermite group."""
+    return (sys.executable, str(context.program / "lib/oh_install/writes.py"), *args)
 
 
 def operator_command(context: Context, system: System, argv: tuple[str, ...]) -> Command:
@@ -955,15 +961,20 @@ class PairingLogging(Step):
 
 class Deploy(Step):
     title = "Deploy this commit"
-    #: What the deploy history calls it (the upgrade sets "upgrade").
+    #: What the deploy history calls it: install, upgrade or rollback.
     how = "install"
 
     def __init__(self, context: Context):
         self.context = context
         self.applied = False
 
-    def trail(self) -> tuple[str, ...]:
-        return ("--_how", self.how) if self.how != "install" else ()
+    def pairs(self) -> bool:
+        """Whether this commit's conf/ pairs a device: its command payloads
+        hold credentials, which the native log must not take."""
+        prepared = self.context.prepared
+        conf = (deploy.read_tree(self.context.area / "conf") if prepared is None else
+                {name.removeprefix("conf/"): blob for name, blob in prepared.items() if name.startswith("conf/")})
+        return oh_logging.pairing_conf(conf)
 
     def check(self, system: System) -> Check:
         head, layout = self.context.head, self.context.layout
@@ -991,18 +1002,24 @@ class Deploy(Step):
 
     def actions(self, system: System) -> list[Action]:
         self.applied = True
-        revision = (self.context.head, "--state", str(self.context.layout.root)) if self.context.prepared is not None else ()
-        argv = application(self.context, "deploy", *revision, "--_configuration-phase", *self.trail())
-        approved = application(self.context, "deploy", *revision, "--_configuration-phase", *self.trail(), "--yes", *(("--quiet",) if not oh_cli.switches.verbose else ()))
+        context = self.context
         # Installation checks the selected configuration just as the packaged
         # application does. The full unit suite is a developer/release gate;
         # repeating it here delays deployment and can expire sudo credentials.
         checks = ([Command(application(self.context, *args)) for args in
                   (("generate", "--check"), ("validate",), ("lint",))]
                   if self.context.prepared is None else [])
-        command = operator_command(self.context, system, argv)
-        accepted = operator_command(self.context, system, approved)
-        return [*checks, dataclasses.replace(command, approved_argv=accepted.argv, terminal=True)]
+        # The owner writes the commit's files through the thermite group.
+        # Root is asked only for what the owner cannot do: before the
+        # write, that the native log drops pairing payloads; after it, the
+        # written paths handed to the service account. Both are commands of
+        # the approved run, as every root command of the transaction is.
+        helper = ("/usr/bin/python3", str(context.program / "lib/oh_service.py"), str(context.layout.root),
+                  "--uid", str(context.host["uid"]), "--gid", str(context.host["gid"]), "--deployment")
+        guard = [Command((*helper, "--check-pairing-logging"), root=True)] if self.pairs() else []
+        deployment = operator_command(context, system, write(context, "--config", str(context.area), "deploy",
+                                                             context.head, self.how))
+        return [*checks, *guard, deployment, Command(helper, root=True)]
 
     def desired(self, system: System) -> list[manifest.Item]:
         # The deploy's records are files, so that its history (shared, as
@@ -2297,8 +2314,7 @@ def gateway_history(context: Context):
     deploy history, through the thermite group as the deploy itself does."""
     def record(system: System, event: dict) -> bool:
         from oh_install.runner import perform
-        argv = application(context, "history", "--state", str(context.layout.root),
-                           "--_record-gateway", json.dumps(event, sort_keys=True))
+        argv = write(context, "gateway", str(context.layout.root), json.dumps(event, sort_keys=True))
         return perform(operator_command(context, system, argv), system, context.area) == 0
     return record
 

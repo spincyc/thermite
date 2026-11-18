@@ -19,7 +19,7 @@ from oh_cli import AREA
 from oh_cli.history import lines as history_lines
 
 DESCRIPTION = """\
-Report, read-only, what runs here: the commit thermite deploy installed
+Report, read-only, what runs here: the commit thermite install deployed
 (and whether HEAD is it, or how many commits after it), whether the
 installed conf/, Apple TV helper, metrics/ and metrics exporter still match
 that deploy, whether each installed systemd unit matches deploy/ (the owner
@@ -265,9 +265,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         from oh_paths import SITE_FILE
-        from oh_cli.deploy import deployment_selection
         if args.revision is not None or (AREA / SITE_FILE).is_file():
-            commit, host, requirement = deployment_selection(args.revision or "HEAD", area=AREA)
+            commit, host, requirement = deploy.selection(AREA, args.revision or "HEAD")
             if requirement is not None or args.revision is not None:
                 args.revision = commit
         else:

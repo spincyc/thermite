@@ -61,7 +61,7 @@ The dashboards are made from the house file, like thermite's configuration. Add 
 
 ```sh
 thermite generate        # writes the dashboards and Prometheus' targets too
-thermite deploy          # installs them; the services pick them up by themselves
+thermite install         # installs them with the rest of the commit, and starts the services on them
 ```
 
 Grafana won't save edits to these dashboards: change the house file instead, so the next generate doesn't undo your work.

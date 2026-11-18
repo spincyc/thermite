@@ -73,7 +73,6 @@ VERBS = {
     "install": Verb("production", "install thermite on this host, with one approval for the whole run", site=False),
     "upgrade": Verb("production", "update the application, native services and HTTPS gateway together", site=False),
     "uninstall": Verb("production", "stop thermite here and remove its units; --purge deletes its state"),
-    "deploy": Verb("production", "compatibility alias for the complete install workflow", site=False),
     "rollback": Verb("production", "install the commit deployed before the current one, or another"),
     "revert": Verb("production", "go back to the version, and state, the last upgrade set aside"),
     "status": Verb("production", "what is deployed and running here, against this checkout"),

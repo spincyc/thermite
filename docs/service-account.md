@@ -90,10 +90,10 @@ on reuse, since wheel installers can set modes explicitly despite the umask.
 Upgrades no longer write state backups to `runtime/backups/`; archives and
 mode-0640 completion receipts earlier releases wrote there keep their modes,
 and permission maintenance preserves them without widening private files.
-Before an operator's deploy or rollback writes, it asks for approval of the
-exact ownership-handoff command. When it needs that privilege, a
-noninteractive run refuses before writing. A successful deploy hands its
-named paths to the service account.
+An install, upgrade or rollback writes the shared configuration as the
+owner, through the `thermite` group, and then hands the paths it wrote to
+the service account with a root command of the same approved run. It asks
+no separate question for that.
 
 ### What each service may use
 

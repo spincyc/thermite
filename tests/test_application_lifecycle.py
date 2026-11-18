@@ -349,10 +349,11 @@ class Commands(unittest.TestCase):
                 self.assertNotIn("--allow-downgrade", host_args)
             # The host phase holds its site's transaction scope: a site of its own.
             with self.subTest(operation=operation, phase="host"), tempfile.TemporaryDirectory() as site, \
-                    patch.object(module, "AREA", Path(site)), patch.object(module.os, "geteuid", return_value=1000), \
-                    patch("oh_paths.require_compatible"), patch.object(module, operation, return_value=0) as host:
+                    patch.object(install_cli, "AREA", Path(site)), patch.object(module.os, "geteuid", return_value=1000), \
+                    patch("oh_paths.require_compatible"), patch.object(install_cli, "install", return_value=0) as host:
                 self.assertEqual(module.main(["--_host-phase", "--_run-approved", "--native-timeout", "900"]), 0)
-                self.assertEqual(host.call_args.kwargs["native_timeout"], 900)
+                self.assertEqual((host.call_args.kwargs["verb"], host.call_args.kwargs["native_timeout"]),
+                                 (operation, 900))
             with self.subTest(operation=operation, value="outside"), patch("sys.stderr", new=io.StringIO()), \
                     self.assertRaises(SystemExit):
                 module.main(["--native-timeout", "10", "--dry-run"])
@@ -377,7 +378,7 @@ class Commands(unittest.TestCase):
                 patch.object(manifest, "installed", return_value={"transaction": "fixture"}), \
                 patch.object(steps, "Preconditions", side_effect=capture):
             for call in (lambda: install_cli.install(system, True, native_timeout=1200),
-                         lambda: upgrade_cli.upgrade(system, True, native_timeout=1500),
+                         lambda: install_cli.install(system, True, verb="upgrade", native_timeout=1500),
                          lambda: install_cli.install(system, True)):
                 with self.assertRaises(Seen):
                     call()

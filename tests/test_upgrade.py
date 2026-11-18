@@ -19,7 +19,7 @@ sys.path.insert(0, str(AREA / "lib"))
 
 import oh_deploy as deploy  # noqa: E402
 import oh_units  # noqa: E402
-from oh_cli import upgrade as upgrade_cli  # noqa: E402
+from oh_cli import install as install_cli  # noqa: E402
 from oh_install import changeover, manifest, runner, steps  # noqa: E402
 from oh_install import system as system_module  # noqa: E402
 from oh_install.model import Command, Task  # noqa: E402
@@ -113,8 +113,9 @@ class Upgrade(unittest.TestCase):
 
 
 class HostPhase(unittest.TestCase):
-    """thermite upgrade's host phase: what it resolves, refuses, or hands
-    the install transaction (tests/test_txn_changeover.py runs that)."""
+    """thermite upgrade's host phase, which is install's sequence told the
+    verb: what it resolves, refuses, or hands the install transaction
+    (tests/test_txn_changeover.py runs that)."""
 
     def setUp(self):
         self.site = AREA / ".scratch/update-site/fictional-site"
@@ -126,7 +127,7 @@ class HostPhase(unittest.TestCase):
         self.installed = {"transaction": "20261105T101500Z-3f9a2c"}
         scope = ExitStack()
         self.addCleanup(scope.close)
-        scope.enter_context(patch.object(upgrade_cli, "AREA", self.site))
+        scope.enter_context(patch.object(install_cli, "AREA", self.site))
         scope.enter_context(patch.object(steps, "committed_context", return_value=self.context))
         self.resolve = scope.enter_context(patch.object(changeover, "resolve", return_value=None))
         self.manifest = scope.enter_context(patch.object(manifest, "installed", return_value=self.installed))
@@ -138,9 +139,10 @@ class HostPhase(unittest.TestCase):
         scope.enter_context(patch.object(changeover, "install_work"))
 
     def upgrade(self, dry_run=False, **kwargs):
-        with redirect_stderr(io.StringIO()) as stderr:
-            code = upgrade_cli.upgrade(self.system, dry_run, **kwargs)
-        return code, stderr.getvalue()
+        """(its exit status, what it said to the owner after the heading)."""
+        self.system.say.reset_mock()
+        code = install_cli.install(self.system, dry_run, verb="upgrade", **kwargs)
+        return code, "\n".join(str(call.args[0]) for call in self.system.say.call_args_list[1 if code != 2 else 0:])
 
     def test_a_change_is_one_install_transaction(self):
         self.assertEqual(self.upgrade(site_before="1" * 40), (0, ""))
@@ -179,8 +181,7 @@ class HostPhase(unittest.TestCase):
         self.assertIn(manifest.missing_recovery(self.context), said)
         with patch.object(manifest, "thermite_present", return_value=[]):
             code, said = self.upgrade()
-        self.assertEqual((code, said), (2, "thermite upgrade: Thermite is not installed on this host yet: "
-                                           "thermite install\n"))
+        self.assertEqual((code, said), (2, "Thermite is not installed on this host yet: thermite install"))
         self.manifest.side_effect = manifest.ManifestError("/etc/thermite/installed.json is damaged")
         code, said = self.upgrade()
         self.assertEqual(code, 2)
@@ -189,19 +190,19 @@ class HostPhase(unittest.TestCase):
 
     def test_a_rerun_that_resolves_undoes_its_own_pin_commit_first(self):
         import oh_source_upgrade
-        arguments = Namespace(dry_run=False, runtime_token_file=None, _run_approved=True, native_timeout=None,
-                              _site_before="1" * 40)
+        arguments = Namespace(dry_run=False, runtime_token_file=None, _host_phase=True, _run_approved=True,
+                              native_timeout=None, _site_before="1" * 40)
         order = []
         self.resolve.side_effect = lambda *args: order.append("resolve") or changeover.ROLLED_BACK
         # The host phase takes the site's transaction scope, so the site is real.
         site = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        with patch.object(upgrade_cli, "AREA", site), \
+        with patch.object(install_cli, "AREA", site), \
                 patch.object(oh_source_upgrade, "git", return_value="2" * 40), \
                 patch.object(oh_source_upgrade, "reset_pin",
                              side_effect=lambda *args, **kwargs: order.append(kwargs) or True), \
                 patch.object(changeover, "open_transaction", return_value="20261105T101500Z-3f9a2c"), \
                 patch("oh_paths.require_compatible"):
-            self.assertEqual(upgrade_cli.host_phase(self.system, arguments), changeover.ROLLED_BACK)
+            self.assertEqual(install_cli.run(self.system, arguments, "upgrade"), changeover.ROLLED_BACK)
         self.assertEqual(order, [{"expected": "2" * 40, "previous": "1" * 40}, "resolve"])
 
 
@@ -363,7 +364,7 @@ class RollbackHostPhase(unittest.TestCase):
         with patch.object(changeover, "release", return_value={}), patch.object(steps.NativeDeadline, "of"):
             work = changeover.install_work(self.earlier, "20261105T101500Z-3f9a2c", verb="rollback")
         deployment = next(step for step in work.switching if isinstance(step, steps.Deploy))
-        self.assertEqual(deployment.trail(), ("--_how", "rollback"))
+        self.assertEqual(deployment.how, "rollback")
         self.assertEqual((work.kind, work.verb), ("install", "rollback"))
 
 

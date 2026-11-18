@@ -8,10 +8,11 @@ The openHAB quadlet has the shape of the factory services role's (ADR 0054)
 so that role can adopt openHAB unchanged once it supports more than one
 volume.
 
-A deploy installs one commit, never the working tree. Trusted operators
-write shared configuration through the thermite group. Before any write,
-an operator explicitly approves the finite administrative ownership handoff;
-successful deployment leaves runtime state owned by thermite:thermite.
+A deploy installs one commit, never the working tree. The owner writes
+shared configuration through the thermite group, and the install
+transaction that runs the deploy hands what was written to the service
+account as root (oh_install.steps.Deploy): a successful deployment leaves
+runtime state owned by thermite:thermite.
 """
 
 from __future__ import annotations
@@ -26,12 +27,10 @@ import ipaddress
 import json
 import os
 import re
-import shlex
 import shutil
 import socket
 import stat
 import subprocess
-import sys
 import tarfile
 import tempfile
 import time
@@ -42,7 +41,6 @@ from collections.abc import Iterable
 from pathlib import Path
 
 import oh_cli
-import oh_logging
 import oh_ports
 import oh_service
 import oh_units
@@ -1343,10 +1341,6 @@ def ahead(area: Path, old: str, new: str) -> int:
     return int(_git(area, "rev-list", "--count", f"{old}..{new}").decode().strip())
 
 
-def pushed(area: Path, commit: str) -> bool:
-    return bool(_git(area, "branch", "--remotes", "--contains", commit).strip())
-
-
 def export(area: Path, commit: str, paths: Iterable[str]) -> dict[str, Blob]:
     """The files below `paths` (relative to the area) in `commit`, as they
     are in Git: what a deploy installs, whatever the working tree holds."""
@@ -1612,87 +1606,7 @@ def preflight(layout: State) -> None:
         _safe_parents(directory, directory)
         if not os.access(directory, os.W_OK | os.X_OK):
             raise DeployError(f"{user} cannot write {directory}: join the thermite group, then log in again "
-                              "(`id -nG` lists your groups; docs/deploy.md)")
-
-
-def ownership_argv(layout: State, host: dict | None = None) -> tuple[str, ...]:
-    """The finite administrative helper, independent of an operator's home."""
-    from oh_paths import PROGRAM
-    uid = host["uid"] if host else layout.root.stat().st_uid
-    gid = host["gid"] if host else layout.root.stat().st_gid
-    oh_service.validate_identity(uid, gid)
-    return ("/usr/bin/python3", str(PROGRAM / "lib/oh_service.py"), str(layout.root),
-            "--uid", str(uid), "--gid", str(gid), "--deployment")
-
-
-@contextlib.contextmanager
-def ownership_handoff(layout: State, host: dict | None, dry_run: bool, require_logging: bool, *, approved: bool = False):
-    """Approve before writes; repair ownership even when a write later fails."""
-    argv = ownership_argv(layout, host)
-    uid, gid = int(argv[argv.index("--uid") + 1]), int(argv[argv.index("--gid") + 1])
-    direct = os.geteuid() == 0 or (os.geteuid() == uid and gid in {os.getegid(), *os.getgroups()})
-    command = argv if direct else ("sudo", "-n", *argv)
-    checks = (*command, "--check-pairing-logging")
-    if dry_run:
-        if require_logging:
-            print("pairing logging check: " + shlex.join(checks))
-        print("ownership handoff: " + shlex.join(command))
-        yield
-        return
-    if not direct:
-        if not approved and not sys.stdin.isatty():
-            raise DeployError("deployment needs an explicitly approved thermite ownership handoff; "
-                              "run interactively (no files were changed): " + shlex.join(command))
-        if shutil.which("sudo") is None:
-            raise DeployError("sudo is unavailable for the thermite ownership handoff; no files were changed")
-        print("Deployment will run these administrative commands:")
-        if require_logging:
-            print("  " + shlex.join(checks))
-        print("  " + shlex.join(command))
-        if not approved and input("Approve this ownership handoff before deployment writes? [y/N] ").strip().lower() not in ("y", "yes"):
-            raise DeployError("ownership handoff declined; no files were changed")
-        # Validate in this process's terminal/parent context, before writes.
-        # Parent approval is not authentication, and a preceding test or group
-        # refresh may have outlived or changed the parent's sudo timestamp.
-        validation = ("sudo", "-v") if sys.stdin.isatty() else ("sudo", "-n", "-v")
-        try:
-            oh_cli.trace_run(validation)
-            authenticated = subprocess.run(validation, check=False).returncode == 0
-        except OSError:
-            authenticated = False
-        if not authenticated:
-            raise DeployError("sudo authentication failed before deployment; no deployment files were changed. "
-                              "Rerun the install or deployment from a terminal")
-    if require_logging:
-        try:
-            if direct:
-                protected = oh_service.pairing_logging(layout.root)
-            else:
-                oh_cli.trace_run(checks)
-                result = subprocess.run(checks, check=False).returncode
-                if result not in (0, oh_service.PAIRING_LOGGING_UNPROTECTED):
-                    raise DeployError("could not verify native pairing-log protection; the administrative check failed. "
-                                      "No deployment files were changed")
-                protected = result == 0
-        except (OSError, ValueError) as exc:
-            raise DeployError("could not verify native pairing-log protection; the administrative check could not read "
-                              "its configuration. No deployment files were changed") from exc
-        if not protected:
-            raise DeployError("pairing credentials would enter openHAB's native logs; run thermite install "
-                              "to protect native logging before deploying")
-    try:
-        yield
-    finally:
-        try:
-            if direct:
-                oh_service.normalize_state(layout.root, uid, gid, deployment=True)
-            else:
-                oh_cli.trace_run(command)
-                subprocess.run(command, check=True)
-        except (OSError, ValueError, subprocess.CalledProcessError) as exc:
-            repair = argv if direct else ("sudo", *argv)
-            raise DeployError("thermite ownership handoff failed; deployment is incomplete. Run "
-                              + shlex.join(repair) + f": {exc}") from exc
+                              "(`id -nG` lists your groups; docs/service-account.md)")
 
 
 @dataclasses.dataclass
@@ -1716,8 +1630,7 @@ class Deployed:
 
 
 def deploy(area: Path, layout: State, var: Path, rev: str = "HEAD", *, force: bool = False,
-           dry_run: bool = False, how: str = "deploy", host: dict | None = None,
-           ownership_approved: bool = False, marker=None) -> Deployed:
+           dry_run: bool = False, how: str = "deploy", host: dict | None = None) -> Deployed:
     """Install commit `rev`'s conf/ into the state's conf and the helper's
     files into atv/app (and, once the state has their directories, its
     metrics/ into metrics and the exporter into exporter/app), then record
@@ -1726,26 +1639,11 @@ def deploy(area: Path, layout: State, var: Path, rev: str = "HEAD", *, force: bo
     a clean area, since make check has just tested the working tree.
     `how` (deploy, install, upgrade or rollback) goes into the history.
 
-    `marker(line, priority)` receives one start and one end line for the
-    journal (journal_marker; the CLI passes it, tests and dry runs do not)."""
+    The caller is the install transaction's Deploy step, as the owner with
+    the thermite group (oh_install.writes): it checks the pairing-log
+    protection before this and hands the written files to the service
+    account after it, both as root."""
     commit = resolve(area, rev)
-    mark = None if dry_run else marker
-    if mark is not None:
-        mark(marker_line("start", commit=commit, how=how, by=getpass.getuser()), "info")
-    try:
-        result = _deploy(area, layout, var, commit, force=force, dry_run=dry_run, how=how, host=host,
-                         ownership_approved=ownership_approved)
-    except BaseException as exc:
-        if mark is not None:
-            mark(marker_line("end", commit=commit, how=how, outcome="failed", error=type(exc).__name__), "warning")
-        raise
-    if mark is not None:
-        mark(end_marker(result), "info")
-    return result
-
-
-def _deploy(area: Path, layout: State, var: Path, commit: str, *, force: bool, dry_run: bool, how: str,
-            host: dict | None, ownership_approved: bool) -> Deployed:
     if commit == resolve(area, "HEAD"):
         dirt = uncommitted(area)
         if dirt:
@@ -1759,8 +1657,7 @@ def _deploy(area: Path, layout: State, var: Path, commit: str, *, force: bool, d
         if locked is not None and _site_requirement(locked.data)["version"] == 2:
             host = committed_inputs(area, commit)[1]
     return install(files, commit, subject(area, commit), layout, var, force=force, dry_run=dry_run,
-                   how=how, host=host, application=application,
-                   ownership_approved=ownership_approved)
+                   how=how, host=host, application=application)
 
 
 def deployment_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob], dict | None]:
@@ -1792,6 +1689,20 @@ def committed_inputs(area: Path, commit: str) -> tuple[dict, dict, dict | None]:
     except (KeyError, TypeError, ValueError) as exc:
         raise DeployError("the committed site has invalid host, version or application inputs") from exc
     return versions, load_host(data, f"instance/host.yaml at {commit[:12]}"), requirement
+
+
+def selection(area: Path, rev: str) -> tuple[str, dict, dict | None]:
+    """(`rev`'s commit, its host facts, its application requirement):
+    resolved once, so host facts and derived output share one revision. A
+    schema-2 site's host facts are the committed ones; any other area's are
+    its working tree's, and its requirement is None."""
+    from oh_paths import SITE_FILE
+    commit = resolve(area, rev)
+    if export(area, commit, (SITE_FILE,)):
+        _, host, requirement = committed_inputs(area, commit)
+        if requirement and requirement["version"] == 2:
+            return commit, host, requirement
+    return commit, load(area)[1], None
 
 
 def prepared_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob], dict | None]:
@@ -1899,8 +1810,7 @@ def gateway_trust(host: dict | None) -> Blob | None:
 
 def install(files: dict[str, Blob], commit: str, title: str, layout: State, var: Path, *,
             force: bool = False, dry_run: bool = False, how: str = "deploy",
-            host: dict | None = None, post=None, application: dict | None = None,
-            ownership_approved: bool = False) -> Deployed:
+            host: dict | None = None, post=None, application: dict | None = None) -> Deployed:
     """deploy() once the commit's files ({area path: Blob}) are exported."""
     conf = {path[len("conf/"):]: blob for path, blob in files.items() if path.startswith("conf/")}
     app = {path: files[path] for path in ATV_APP if path in files}
@@ -1912,72 +1822,71 @@ def install(files: dict[str, Blob], commit: str, title: str, layout: State, var:
                           "this host: run thermite test boot on that commit first (thermite install and "
                           "thermite rollback run it before they deploy)")
     preflight(layout)
-    with ownership_handoff(layout, host, dry_run, bool(oh_logging.pairing_conf(conf)), approved=ownership_approved):
-        previous = read_record(layout)
-        pending = read_pending(layout)
-        tree = {path[len("metrics/"):]: blob for path, blob in files.items() if path.startswith("metrics/")}
-        trust = gateway_trust(host) if tree else None
-        if trust is not None:
-            # blackbox_exporter's gateway probe checks the gateway's certificate against it.
-            tree[metrics.GATEWAY_TRUST] = trust
-        exporter = {path: files[path] for path in metrics.EXPORTER_APP if path in files}
-        with_metrics = layout.with_metrics()
-        # A commit from before the metrics (rolling back past them) has neither: syncing its nothing would delete
-        # what the running services read, so they keep what the last deploy installed.
-        kept = with_metrics and not (tree and metrics.EXPORTER_APP[0] in exporter)
-        synced = with_metrics and not kept
-        wanted = {"conf": conf, "atv_app": app, **({"metrics": tree, "exporter_app": exporter} if synced else {})}
-        # What an earlier deploy recorded, or an interrupted one may have
-        # written, is this deploy's to remove if the commit no longer has it.
-        installed = {key: {*previous.get(key, {}), *pending.get(key, ())} for key in RECORDED_TREES}
-        if not dry_run:
-            # Durable before the first write: an interruption leaves every
-            # possibly written path known to the next deploy or rollback.
-            _write_pending(layout, commit, {**pending, **{key: installed[key] | set(wanted[key]) for key in wanted}})
-        conf_changes = sync(conf, layout.conf, installed["conf"], dry_run)
-        app_changes = sync(app, layout.atv_app, installed["atv_app"], dry_run)
-        metrics_changes = sync(tree, layout.metrics, installed["metrics"], dry_run) if synced else Changes()
-        exporter_changes = (sync(exporter, layout.exporter_app, installed["exporter_app"], dry_run)
-                            if synced else Changes())
-        record = {
-            "commit": commit,
-            "subject": title,
-            "deployed_at": _now(),
-            "by": getpass.getuser(),
-            "conf_digest": digest,
-            "boot_checked": boot_checked(var, digest),
-            "conf": {path: sha256(blob.data) for path, blob in conf.items()},
-            "atv_app": {path: sha256(blob.data) for path, blob in app.items()},
-        }
-        if application is not None:
-            record["application"] = application
-        if synced:
-            record["metrics"] = {path: sha256(blob.data) for path, blob in tree.items()}
-            record["exporter_app"] = {path: sha256(blob.data) for path, blob in exporter.items()}
-        elif kept:
-            record.update({key: previous[key] for key in ("metrics", "exporter_app") if key in previous})
-        reloads: list[str] = []
-        outcomes: list[dict] = []
-        changes = {"conf": conf_changes, "atv_app": app_changes,
-                   **({"metrics": metrics_changes, "exporter_app": exporter_changes} if synced else {})}
-        entry = history_entry(record, how, changes, outcomes, metrics_kept=kept)
-        if not dry_run:
-            _replace(layout.record, (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8"), FILE_MODE)
-            _settle_pending(layout, commit, {key: paths for key, paths in pending.items() if key not in wanted})
-            try:
-                if synced:
-                    reloads = apply_metrics(host or {}, metrics_changes, post or http_post, outcomes)
-            except BaseException as exc:
-                outcomes.append({"outcome": "failed", "error": type(exc).__name__})
-                raise
-            finally:
-                # Once the reloads are asked for, so the entry says what became
-                # of them; and even when one failed, since deployed.json
-                # already names this commit.
-                _shared_write(layout.history, json.dumps(entry, sort_keys=True) + "\n", append=True)
-                deploy_metrics(layout, how)
-        return Deployed(commit, record["subject"], conf_changes, app_changes, record, dry_run, with_metrics,
-                        metrics_changes, exporter_changes, reloads, kept, entry)
+    previous = read_record(layout)
+    pending = read_pending(layout)
+    tree = {path[len("metrics/"):]: blob for path, blob in files.items() if path.startswith("metrics/")}
+    trust = gateway_trust(host) if tree else None
+    if trust is not None:
+        # blackbox_exporter's gateway probe checks the gateway's certificate against it.
+        tree[metrics.GATEWAY_TRUST] = trust
+    exporter = {path: files[path] for path in metrics.EXPORTER_APP if path in files}
+    with_metrics = layout.with_metrics()
+    # A commit from before the metrics (rolling back past them) has neither: syncing its nothing would delete
+    # what the running services read, so they keep what the last deploy installed.
+    kept = with_metrics and not (tree and metrics.EXPORTER_APP[0] in exporter)
+    synced = with_metrics and not kept
+    wanted = {"conf": conf, "atv_app": app, **({"metrics": tree, "exporter_app": exporter} if synced else {})}
+    # What an earlier deploy recorded, or an interrupted one may have
+    # written, is this deploy's to remove if the commit no longer has it.
+    installed = {key: {*previous.get(key, {}), *pending.get(key, ())} for key in RECORDED_TREES}
+    if not dry_run:
+        # Durable before the first write: an interruption leaves every
+        # possibly written path known to the next deploy or rollback.
+        _write_pending(layout, commit, {**pending, **{key: installed[key] | set(wanted[key]) for key in wanted}})
+    conf_changes = sync(conf, layout.conf, installed["conf"], dry_run)
+    app_changes = sync(app, layout.atv_app, installed["atv_app"], dry_run)
+    metrics_changes = sync(tree, layout.metrics, installed["metrics"], dry_run) if synced else Changes()
+    exporter_changes = (sync(exporter, layout.exporter_app, installed["exporter_app"], dry_run)
+                        if synced else Changes())
+    record = {
+        "commit": commit,
+        "subject": title,
+        "deployed_at": _now(),
+        "by": getpass.getuser(),
+        "conf_digest": digest,
+        "boot_checked": boot_checked(var, digest),
+        "conf": {path: sha256(blob.data) for path, blob in conf.items()},
+        "atv_app": {path: sha256(blob.data) for path, blob in app.items()},
+    }
+    if application is not None:
+        record["application"] = application
+    if synced:
+        record["metrics"] = {path: sha256(blob.data) for path, blob in tree.items()}
+        record["exporter_app"] = {path: sha256(blob.data) for path, blob in exporter.items()}
+    elif kept:
+        record.update({key: previous[key] for key in ("metrics", "exporter_app") if key in previous})
+    reloads: list[str] = []
+    outcomes: list[dict] = []
+    changes = {"conf": conf_changes, "atv_app": app_changes,
+               **({"metrics": metrics_changes, "exporter_app": exporter_changes} if synced else {})}
+    entry = history_entry(record, how, changes, outcomes, metrics_kept=kept)
+    if not dry_run:
+        _replace(layout.record, (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8"), FILE_MODE)
+        _settle_pending(layout, commit, {key: paths for key, paths in pending.items() if key not in wanted})
+        try:
+            if synced:
+                reloads = apply_metrics(host or {}, metrics_changes, post or http_post, outcomes)
+        except BaseException as exc:
+            outcomes.append({"outcome": "failed", "error": type(exc).__name__})
+            raise
+        finally:
+            # Once the reloads are asked for, so the entry says what became
+            # of them; and even when one failed, since deployed.json
+            # already names this commit.
+            _shared_write(layout.history, json.dumps(entry, sort_keys=True) + "\n", append=True)
+            deploy_metrics(layout, how)
+    return Deployed(commit, record["subject"], conf_changes, app_changes, record, dry_run, with_metrics,
+                    metrics_changes, exporter_changes, reloads, kept, entry)
 
 
 def _touched(changes: Changes) -> list[str]:
@@ -2031,8 +1940,6 @@ GATEWAY_EVENT = ("at", "by", "commit", "application", "release", "previous_relea
 #: `commit` is the site commit the transaction deployed, `restored` the
 #: one deployed again.
 ROLLBACK_EVENT = ("at", "by", "transaction", "commit", "restored")
-#: The journal identifier of a deploy's start and end lines: journalctl -t thermite-deploy.
-JOURNAL_TAG = "thermite-deploy"
 
 
 def change_entry(changes: Changes, limit: int = HISTORY_PATHS) -> dict:
@@ -2060,44 +1967,6 @@ def history_entry(record: dict, how: str, changes: dict[str, Changes], reloads: 
         entry["metrics_kept"] = True
     entry["reloads"] = reloads
     return entry
-
-
-def changed_paths(entry: dict) -> int:
-    """How many paths a deploy's history entry says it added, changed or removed."""
-    return sum(tree["counts"][kind] for tree in entry.get("changes", {}).values()
-               for kind in ("added", "changed", "removed"))
-
-
-_MARKER_VALUE = re.compile(r"[^A-Za-z0-9._@:+,/-]")
-
-
-def marker_line(event: str, **fields: object) -> str:
-    """`deploy EVENT key=value ...`, one line, its values without spaces or
-    `=`, so journal searches can match it whole."""
-    return " ".join(("deploy", event, *(f"{key}={_MARKER_VALUE.sub('_', str(value)) or '-'}"
-                                        for key, value in fields.items())))
-
-
-def end_marker(result: Deployed) -> str:
-    entry = result.history
-    reloads = ",".join(f"{outcome.get('unit', '-')}:{outcome['outcome']}" for outcome in entry.get("reloads", ()))
-    return marker_line("end", commit=result.commit, how=entry.get("how", "deploy"), outcome="ok",
-                       changes=changed_paths(entry), reloads=reloads or "none")
-
-
-def journal_marker(line: str, priority: str = "info") -> None:
-    """Send one line to the journal as thermite-deploy. Best effort: a host
-    without systemd-cat, or a journal that does not take the line within
-    seconds, never fails or holds up a deploy. The lines carry commit
-    hashes, counts and unit names only."""
-    program = shutil.which("systemd-cat")
-    if program is None:
-        return
-    try:
-        subprocess.run((program, "-t", JOURNAL_TAG, "-p", priority), input=line + "\n", text=True,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=False)
-    except (OSError, ValueError, subprocess.SubprocessError):
-        pass
 
 
 def _optional_path(value: object, what: str) -> str | None:

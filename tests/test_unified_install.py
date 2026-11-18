@@ -25,7 +25,7 @@ sys.path.insert(0, str(AREA / "lib"))
 
 import oh_application_update
 import oh_paths
-from oh_cli import deploy, install, upgrade
+from oh_cli import install, upgrade
 from oh_install import changeover, runner, steps
 from oh_install.access import Gateway, GatewayInputs
 from oh_install.ingress import NativeIngress, NativeIngressPrerequisites, unit_text
@@ -97,7 +97,7 @@ class UnifiedInstall(unittest.TestCase):
         for module, operation in ((install, "install"), (upgrade, "upgrade")):
             with self.subTest(operation=operation), patch.object(module.os, "geteuid", return_value=1000), \
                     patch.object(oh_application_update, operation, return_value=0) as apply, \
-                    patch.object(module, operation) as host:
+                    patch.object(install, "install") as host:
                 self.assertEqual(module.main(["--dry-run", "--source", "/fictional/application", "--revision", "fixture"]), 0)
                 apply.assert_called_once()
                 self.assertEqual(apply.call_args.kwargs["source"], Path("/fictional/application"))
@@ -109,30 +109,24 @@ class UnifiedInstall(unittest.TestCase):
         for module, operation in ((install, "install"), (upgrade, "upgrade")):
             # The host phase holds its site's transaction scope: a site of its own.
             with self.subTest(operation=operation), tempfile.TemporaryDirectory() as site, \
-                    patch.object(module, "AREA", Path(site)), patch.object(module.os, "geteuid", return_value=1000), \
+                    patch.object(install, "AREA", Path(site)), patch.object(module.os, "geteuid", return_value=1000), \
                     patch.object(oh_application_update, operation) as apply, \
                     patch.object(oh_paths, "require_compatible") as compatible, \
-                    patch.object(module, operation, return_value=0) as host:
+                    patch.object(install, "install", return_value=0) as host:
                 self.assertEqual(module.main(["--_host-phase", "--_run-approved"]), 0)
                 compatible.assert_called_once()
                 host.assert_called_once()
                 self.assertTrue(host.call_args.kwargs["run_approved"])
+                self.assertEqual(host.call_args.kwargs["verb"], operation, "one sequence, told which verb runs it")
                 apply.assert_not_called()
 
     def test_failed_candidate_child_returns_its_status(self):
         for module, operation in ((install, "install"), (upgrade, "upgrade")):
             # Before it, the command looks for an open transaction inside the site's scope.
             with self.subTest(operation=operation), tempfile.TemporaryDirectory() as site, \
-                    patch.object(module, "AREA", Path(site)), patch.object(module.os, "geteuid", return_value=1000), \
+                    patch.object(install, "AREA", Path(site)), patch.object(module.os, "geteuid", return_value=1000), \
                     patch.object(oh_application_update, operation, side_effect=subprocess.CalledProcessError(7, ["fixture"])):
                 self.assertEqual(module.main([]), 7)
-
-    def test_legacy_deploy_alias_cannot_partially_update_native_configuration(self):
-        with patch.object(install, "main", return_value=0) as whole, patch.object(deploy, "apply") as partial:
-            self.assertEqual(deploy.main(["--dry-run"]), 0)
-            whole.assert_called_once_with(["--dry-run"])
-            self.assertEqual(deploy.main(["--force"]), 2)
-            partial.assert_not_called()
 
     def test_setup_and_migration_keep_service_descriptor_option(self):
         for action in ("setup", "migrate", "serve", "worker", "verify", "callbacks", "bootstrap"):

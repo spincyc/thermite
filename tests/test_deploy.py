@@ -23,13 +23,11 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
 import oh_deploy as deploy  # noqa: E402
-import oh_logging  # noqa: E402
 import oh_music  # noqa: E402
 import oh_units  # noqa: E402
 import oh_sandbox as sandbox_lib  # noqa: E402
 from oh_cli import sandbox as sandbox_cli  # noqa: E402
 from oh_cli import health as health_cli  # noqa: E402
-from oh_cli import deploy as deploy_cli  # noqa: E402
 from oh_cli import generate as generate_cli  # noqa: E402
 
 VERSIONS = {
@@ -1111,205 +1109,12 @@ class Install(unittest.TestCase):
         self.assertTrue(result.atv_app)
         self.assertEqual(len(deploy.history(self.layout)), 1)
 
-    def test_operator_noninteractive_handoff_refuses_before_any_write(self):
-        host = {**HOST, "uid": os.geteuid() + 100, "gid": os.getegid() + 100}
-        with mock.patch.object(sys.stdin, "isatty", return_value=False):
-            with self.assertRaisesRegex(deploy.DeployError, "no files were changed"):
-                self.install(host=host)
-        self.assertFalse(self.layout.record.exists())
-        self.assertEqual(list(self.layout.conf.iterdir()), [])
-
-    def test_declined_handoff_refuses_before_any_write(self):
-        host = {**HOST, "uid": os.geteuid() + 100, "gid": os.getegid() + 100}
-        with mock.patch.object(sys.stdin, "isatty", return_value=True), \
-                mock.patch.object(deploy.shutil, "which", return_value="/usr/bin/sudo"), \
-                mock.patch("builtins.input", return_value="no"), \
-                mock.patch.object(deploy.subprocess, "run") as run, contextlib.redirect_stdout(io.StringIO()):
-            with self.assertRaisesRegex(deploy.DeployError, "declined"):
-                self.install(host=host)
-        run.assert_not_called()
-        self.assertFalse(self.layout.record.exists())
-        self.assertEqual(list(self.layout.conf.iterdir()), [])
-
-    def test_approved_handoff_executes_only_displayed_finite_command(self):
-        host = {**HOST, "uid": os.geteuid() + 100, "gid": os.getegid() + 100}
-        expected = ("sudo", "-n", *deploy.ownership_argv(self.layout, host))
-        with mock.patch.object(sys.stdin, "isatty", return_value=True), \
-                mock.patch.object(deploy.shutil, "which", return_value="/usr/bin/sudo"), \
-                mock.patch("builtins.input", return_value="yes"), \
-                mock.patch.object(deploy.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run, \
-                contextlib.redirect_stdout(io.StringIO()) as output:
-            self.install(host=host)
-        self.assertEqual(run.call_args_list, [mock.call(("sudo", "-v"), check=False), mock.call(expected, check=True)])
-        self.assertIn(str(self.layout.root), output.getvalue())
-        self.assertIn("--uid", output.getvalue())
-
-    def test_parent_approval_reuses_handoff_permission_without_a_child_terminal_or_question(self):
-        host = {**HOST, "uid": os.geteuid() + 100, "gid": os.getegid() + 100}
-        expected = ("sudo", "-n", *deploy.ownership_argv(self.layout, host))
-        with mock.patch.object(sys.stdin, "isatty", return_value=False), \
-                mock.patch.object(deploy.shutil, "which", return_value="/usr/bin/sudo"), \
-                mock.patch("builtins.input", side_effect=AssertionError("nested approval question")) as ask, \
-                mock.patch.object(deploy.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run, \
-                contextlib.redirect_stdout(io.StringIO()):
-            self.install(host=host, ownership_approved=True)
-        ask.assert_not_called()
-        self.assertEqual(run.call_args_list, [mock.call(("sudo", "-n", "-v"), check=False), mock.call(expected, check=True)])
-        self.assertTrue(self.layout.record.exists())
-
-    def test_parent_approval_cannot_bypass_missing_sudo_or_write_before_privilege_check(self):
-        host = {**HOST, "uid": os.geteuid() + 100, "gid": os.getegid() + 100}
-        with mock.patch.object(sys.stdin, "isatty", return_value=False), \
-                mock.patch.object(deploy.shutil, "which", return_value=None), \
-                mock.patch("builtins.input", side_effect=AssertionError("nested approval question")), \
-                mock.patch.object(deploy.subprocess, "run") as run:
-            with self.assertRaisesRegex(deploy.DeployError, "sudo is unavailable"):
-                self.install(host=host, ownership_approved=True)
-        run.assert_not_called()
-        self.assertFalse(self.layout.record.exists())
-        self.assertEqual(list(self.layout.conf.iterdir()), [])
-
-    def test_parent_approval_does_not_force_unverified_configuration(self):
-        receipt = deploy.passed_dir(self.var) / deploy.tree_digest(
-            {path[len("conf/"):]: content for path, content in self.FILES.items() if path.startswith("conf/")})
-        receipt.unlink()
-        with mock.patch("builtins.input", side_effect=AssertionError("unexpected approval question")), \
-                mock.patch.object(deploy.subprocess, "run") as run:
-            with self.assertRaisesRegex(deploy.DeployError, "thermite test boot.*has not passed"):
-                self.install(ownership_approved=True)
-        run.assert_not_called()
-        self.assertFalse(self.layout.record.exists())
-
-    def test_parent_approval_preserves_the_privileged_pairing_logging_precheck(self):
-        host = {**HOST, "uid": os.geteuid() + 100, "gid": os.getegid() + 100}
-        files = {**self.FILES, "conf/automation/js/sony_ip_control.js": blob("// pairing rule\n")}
-        expected = ("sudo", "-n", *deploy.ownership_argv(self.layout, host), "--check-pairing-logging")
-        with mock.patch.object(sys.stdin, "isatty", return_value=False), \
-                mock.patch.object(deploy.shutil, "which", return_value="/usr/bin/sudo"), \
-                mock.patch("builtins.input", side_effect=AssertionError("nested approval question")), \
-                mock.patch.object(deploy.subprocess, "run", side_effect=[subprocess.CompletedProcess([], code)
-                                  for code in (0, deploy.oh_service.PAIRING_LOGGING_UNPROTECTED)]) as run, \
-                contextlib.redirect_stdout(io.StringIO()):
-            with self.assertRaisesRegex(deploy.DeployError, "pairing credentials would enter"):
-                self.install(files, host=host, force=True, ownership_approved=True)
-        self.assertEqual(run.call_args_list, [mock.call(("sudo", "-n", "-v"), check=False), mock.call(expected, check=False)])
-        self.assertFalse(self.layout.record.exists())
-        self.assertEqual(list(self.layout.conf.iterdir()), [])
-
-    def test_private_logging_precheck_runs_before_writes_and_handoff_after_them(self):
-        host = {**HOST, "uid": os.geteuid() + 100, "gid": os.getegid() + 100}
-        command = ("sudo", "-n", *deploy.ownership_argv(self.layout, host))
-        files = {**self.FILES, "conf/automation/js/sony_ip_control.js": blob("// pairing rule\n")}
-        calls = []
-
-        def run(argv, *, check):
-            calls.append((argv, check, self.layout.record.exists()))
-            return subprocess.CompletedProcess(argv, 0)
-
-        with mock.patch.object(sys.stdin, "isatty", return_value=True), \
-                mock.patch.object(deploy.shutil, "which", return_value="/usr/bin/sudo"), \
-                mock.patch("builtins.input", return_value="yes"), \
-                mock.patch.object(deploy.subprocess, "run", side_effect=run), \
-                contextlib.redirect_stdout(io.StringIO()):
-            self.install(files, host=host, force=True)
-        self.assertEqual(calls, [(("sudo", "-v"), False, False),
-                                ((*command, "--check-pairing-logging"), False, False), (command, True, True)])
-
-    def test_failed_privileged_logging_precheck_is_not_proof_of_unsafe_logging(self):
-        host = {**HOST, "uid": os.geteuid() + 100, "gid": os.getegid() + 100}
-        files = {**self.FILES, "conf/automation/js/sony_ip_control.js": blob("// pairing rule\n")}
-        for code in (1, 2, -9):
-            with self.subTest(code=code), mock.patch.object(sys.stdin, "isatty", return_value=True), \
-                    mock.patch.object(deploy.shutil, "which", return_value="/usr/bin/sudo"), \
-                    mock.patch("builtins.input", return_value="yes"), \
-                    mock.patch.object(deploy.subprocess, "run", side_effect=[subprocess.CompletedProcess([], value)
-                                      for value in (0, code)]) as run, contextlib.redirect_stdout(io.StringIO()):
-                with self.assertRaisesRegex(deploy.DeployError, "could not verify") as error:
-                    self.install(files, host=host, force=True)
-            self.assertNotIn("pairing credentials would enter", str(error.exception))
-            self.assertEqual(run.call_count, 2)
-            self.assertFalse(self.layout.record.exists())
-            self.assertEqual(list(self.layout.conf.iterdir()), [])
-
-    def test_failed_authentication_refuses_even_a_deploy_without_pairing_before_writes(self):
-        host = {**HOST, "uid": os.geteuid() + 100, "gid": os.getegid() + 100}
-        for result in (subprocess.CompletedProcess([], 1), FileNotFoundError("sudo disappeared")):
-            with self.subTest(result=type(result).__name__), mock.patch.object(sys.stdin, "isatty", return_value=True), \
-                    mock.patch.object(deploy.shutil, "which", return_value="/usr/bin/sudo"), \
-                    mock.patch.object(deploy.subprocess, "run", side_effect=[result]) as run, \
-                    contextlib.redirect_stdout(io.StringIO()):
-                with self.assertRaisesRegex(deploy.DeployError, "sudo authentication failed.*no deployment files") as error:
-                    self.install(host=host, ownership_approved=True)
-            self.assertNotIn("pairing credentials would enter", str(error.exception))
-            run.assert_called_once_with(("sudo", "-v"), check=False)
-            self.assertFalse(self.layout.record.exists())
-            self.assertEqual(list(self.layout.conf.iterdir()), [])
-
-    def test_direct_unreadable_logging_is_not_proof_of_unsafe_logging(self):
-        files = {**self.FILES, "conf/automation/js/sony_ip_control.js": blob("// pairing rule\n")}
-        with mock.patch.object(deploy.oh_service, "pairing_logging", side_effect=PermissionError("unreadable")):
-            with self.assertRaisesRegex(deploy.DeployError, "could not verify"):
-                self.install(files, force=True)
-        self.assertFalse(self.layout.record.exists())
-        self.assertEqual(list(self.layout.conf.iterdir()), [])
-
-    def test_expired_final_handoff_fails_without_retrying_the_mutator(self):
-        host = {**HOST, "uid": os.geteuid() + 100, "gid": os.getegid() + 100}
-        command = ("sudo", "-n", *deploy.ownership_argv(self.layout, host))
-        with mock.patch.object(sys.stdin, "isatty", return_value=True), \
-                mock.patch.object(deploy.shutil, "which", return_value="/usr/bin/sudo"), \
-                mock.patch.object(deploy.subprocess, "run", side_effect=[subprocess.CompletedProcess([], 0),
-                                  subprocess.CalledProcessError(1, command)]) as run, \
-                contextlib.redirect_stdout(io.StringIO()):
-            with self.assertRaisesRegex(deploy.DeployError, "ownership handoff failed; deployment is incomplete"):
-                self.install(host=host, ownership_approved=True)
-        self.assertTrue(self.layout.record.exists())
-        self.assertEqual(run.call_args_list, [mock.call(("sudo", "-v"), check=False), mock.call(command, check=True)])
-
-    def test_partial_write_failure_still_hands_ownership_back(self):
-        with mock.patch.object(deploy, "sync", side_effect=OSError("disk full")), \
-                mock.patch.object(deploy.oh_service, "normalize_state") as normalize:
-            with self.assertRaisesRegex(OSError, "disk full"):
-                self.install()
-        normalize.assert_called_once_with(self.layout.root, os.geteuid(), os.getegid(), deployment=True)
-
-    def test_handoff_failure_is_not_reported_as_success(self):
-        with mock.patch.object(deploy.oh_service, "normalize_state", side_effect=PermissionError("denied")):
-            with self.assertRaisesRegex(deploy.DeployError, "ownership handoff failed"):
-                self.install()
-
-    def test_success_normalizes_owner_group_and_private_modes(self):
+    def test_what_a_deploy_writes_needs_no_repair_under_its_own_identity(self):
         self.install()
         self.assertEqual(deploy.oh_service.audit_state(self.layout.root, os.geteuid(), os.getegid()), [])
         self.assertEqual(stat.S_IMODE(self.layout.userdata.stat().st_mode), 0o700)
         self.assertEqual(stat.S_IMODE(self.layout.record.stat().st_mode), 0o660)
         self.assertEqual(stat.S_IMODE(self.layout.history.stat().st_mode), 0o660)
-
-    def test_pairing_conf_is_not_copied_before_native_logging_is_protected(self):
-        files = {**self.FILES, "conf/automation/js/sony_ip_control.js": blob("// pairing rule\n")}
-        with self.assertRaisesRegex(deploy.DeployError, "pairing credentials would enter"):
-            self.install(files, force=True)
-        self.assertFalse(self.layout.record.exists())
-        self.assertEqual(list(self.layout.conf.iterdir()), [])
-        native = self.layout.userdata / oh_logging.RELATIVE
-        native.parent.mkdir(parents=True)
-        native.write_bytes(oh_logging.guarded(b"<Configuration><Loggers><Root/></Loggers></Configuration>"))
-        selector = self.layout.userdata / oh_logging.SELECTOR
-        selector.write_text("org.ops4j.pax.logging.log4j2.config.file=${karaf.etc}/custom.xml\n")
-        with self.assertRaisesRegex(deploy.DeployError, "pairing credentials would enter"):
-            self.install(files, force=True)
-        self.assertEqual(list(self.layout.conf.iterdir()), [])
-        selector.write_bytes(oh_logging.DEFAULT_SELECTOR)
-        self.install(files, force=True)
-        self.assertTrue((self.layout.conf / "automation/js/sony_ip_control.js").exists())
-
-    def test_android_or_apple_only_pairing_also_requires_the_native_filter(self):
-        for name in ("androidtv_googletv", "pyatv_http"):
-            with self.subTest(name=name), self.assertRaisesRegex(deploy.DeployError, "pairing credentials would enter"):
-                self.install({**self.FILES, f"conf/automation/js/{name}.js": blob("// pairing rule\n")}, force=True)
-        with self.assertRaisesRegex(deploy.DeployError, "pairing credentials would enter"):
-            self.install({**self.FILES, "conf/yaml/other.yaml": blob("items:\n  dev_pairing:\n    metadata:\n"
-                                                                       "      pairing:\n        value: other\n")}, force=True)
 
     def test_a_changed_helper_is_installed_and_nothing_is_asked_to_restart_it(self):
         self.install()
@@ -1770,52 +1575,6 @@ class DeployHistory(unittest.TestCase):
         self.assertEqual(self.lines(), [])
         self.assertEqual(result.history["changes"]["conf"]["counts"]["added"], 2)
 
-    def test_markers_bracket_a_deploy_and_say_how_it_ended(self):
-        said = []
-        result = self.install(how="upgrade")
-        with mock.patch.object(deploy, "resolve", return_value="c" * 40), \
-                mock.patch.object(deploy, "_deploy", return_value=result) as applied:
-            self.assertIs(deploy.deploy(Path("/nonexistent"), self.layout, self.var, how="upgrade",
-                                        marker=lambda line, priority: said.append((priority, line))), result)
-        self.assertEqual(applied.call_args.kwargs["how"], "upgrade")
-        self.assertEqual(said, [
-            ("info", f"deploy start commit={'c' * 40} how=upgrade by={deploy.getpass.getuser()}"),
-            ("info", f"deploy end commit={'c' * 40} how=upgrade outcome=ok changes={2 + len(deploy.ATV_APP)} "
-                     "reloads=none")])
-        said.clear()
-        with mock.patch.object(deploy, "resolve", return_value="c" * 40), \
-                mock.patch.object(deploy, "_deploy", side_effect=deploy.DeployError("refused")), \
-                self.assertRaises(deploy.DeployError):
-            deploy.deploy(Path("/nonexistent"), self.layout, self.var, how="rollback",
-                          marker=lambda line, priority: said.append((priority, line)))
-        self.assertEqual(said[-1], ("warning", f"deploy end commit={'c' * 40} how=rollback outcome=failed error=DeployError"))
-        said.clear()
-        with mock.patch.object(deploy, "resolve", return_value="c" * 40), \
-                mock.patch.object(deploy, "_deploy", return_value=result):
-            deploy.deploy(Path("/nonexistent"), self.layout, self.var, dry_run=True,
-                          marker=lambda line, priority: said.append(line))
-        self.assertEqual(said, [], "a dry run writes no journal markers")
-
-    def test_marker_values_are_single_words(self):
-        self.assertEqual(deploy.marker_line("start", by="a b=c\nd", empty=""), "deploy start by=a_b_c_d empty=-")
-
-    def test_journal_marker_is_best_effort(self):
-        with mock.patch.object(deploy.shutil, "which", return_value=None), \
-                mock.patch.object(deploy.subprocess, "run") as run:
-            deploy.journal_marker("deploy start commit=x")
-        run.assert_not_called()
-        for failure in (FileNotFoundError("gone"), subprocess.TimeoutExpired("systemd-cat", 5), PermissionError("no")):
-            with self.subTest(failure=type(failure).__name__), \
-                    mock.patch.object(deploy.shutil, "which", return_value="/usr/bin/systemd-cat"), \
-                    mock.patch.object(deploy.subprocess, "run", side_effect=failure):
-                self.assertIsNone(deploy.journal_marker("deploy end commit=x outcome=ok", "warning"))
-        with mock.patch.object(deploy.shutil, "which", return_value="/usr/bin/systemd-cat"), \
-                mock.patch.object(deploy.subprocess, "run") as run:
-            deploy.journal_marker("deploy end commit=x outcome=failed", "warning")
-        self.assertEqual(run.call_args.args[0], ("/usr/bin/systemd-cat", "-t", "thermite-deploy", "-p", "warning"))
-        self.assertEqual(run.call_args.kwargs["input"], "deploy end commit=x outcome=failed\n")
-        self.assertEqual(run.call_args.kwargs["timeout"], 5)
-
     def test_gateway_activations_join_their_commits_deploy(self):
         self.install(how="install")
         older = GATEWAY.replace("a1b2c3", "000000")
@@ -1842,6 +1601,7 @@ class DeployHistory(unittest.TestCase):
 
     def test_history_details_and_the_installers_gateway_record(self):
         from oh_cli import history as history_cli
+        from oh_install import writes
         self.install(how="upgrade")
         # A line from before the install engine names the state backup that
         # upgrade took, and the restart its path unit was asked for; both are
@@ -1853,10 +1613,13 @@ class DeployHistory(unittest.TestCase):
                  "previous_release": None}
         state = ["--state", str(self.layout.root)]
         with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(history_cli.main([*state, "--_record-gateway", json.dumps(event)]), 0)
+            self.assertEqual(writes.main(["gateway", str(self.layout.root), json.dumps(event)]), 0)
         with contextlib.redirect_stderr(io.StringIO()) as error:
-            self.assertEqual(history_cli.main([*state, "--_record-gateway", json.dumps({**event, "release": "relative"})]), 2)
-        self.assertIn("could not record the gateway release", error.getvalue())
+            self.assertEqual(writes.main(["gateway", str(self.layout.root),
+                                          json.dumps({**event, "release": "relative"})]), 2)
+        self.assertIn(f"could not record the gateway release in {self.layout.history}", error.getvalue())
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            history_cli.main([*state, "--_record-gateway", json.dumps(event)])
         with contextlib.redirect_stdout(io.StringIO()) as plain:
             self.assertEqual(history_cli.main(state), 0)
         self.assertEqual(len(plain.getvalue().splitlines()), 2, "the table alone, without --details")
@@ -2041,113 +1804,6 @@ class HelperVenv(unittest.TestCase):
             self.assertTrue(tool.ready())
             (venv / tool.STAMP).write_text("0" * 64 + "\n")
             self.assertFalse(tool.ready())
-
-
-class CliApproval(unittest.TestCase):
-    def test_yes_only_preapproves_ownership_and_does_not_force_or_hide_a_dry_run(self):
-        for arguments, approved, dry_run in (([], False, False), (["--yes"], True, False),
-                                              (["--yes", "--dry-run"], True, True)):
-            with self.subTest(arguments=arguments), \
-                    mock.patch.object(deploy_cli.deploy, "load", return_value=(VERSIONS, HOST)), \
-                    mock.patch.object(deploy_cli.deploy, "deploy", side_effect=deploy.DeployError("fixture stop")) as apply, \
-                    contextlib.redirect_stderr(io.StringIO()):
-                self.assertEqual(deploy_cli.main([*arguments, "--_configuration-phase"]), 2)
-            self.assertEqual(apply.call_args.kwargs["ownership_approved"], approved)
-            self.assertEqual(apply.call_args.kwargs["dry_run"], dry_run)
-            self.assertFalse(apply.call_args.kwargs["force"])
-            self.assertEqual(apply.call_args.kwargs["how"], "install")
-            self.assertNotIn("backup", apply.call_args.kwargs)
-            self.assertIs(apply.call_args.kwargs["marker"], deploy.journal_marker)
-
-    def test_the_installer_phase_names_an_upgrade_for_the_history(self):
-        with mock.patch.object(deploy_cli.deploy, "load", return_value=(VERSIONS, HOST)), \
-                mock.patch.object(deploy_cli.deploy, "deploy", side_effect=deploy.DeployError("fixture stop")) as apply, \
-                contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(deploy_cli.main(["--_configuration-phase", "--_how", "upgrade"]), 2)
-        self.assertEqual(apply.call_args.kwargs["how"], "upgrade")
-        for arguments in (["--_how", "upgrade"],):
-            with self.subTest(arguments=arguments), \
-                    mock.patch.object(deploy_cli.deploy, "deploy") as apply, \
-                    contextlib.redirect_stderr(io.StringIO()) as error:
-                self.assertEqual(deploy_cli.main(arguments), 2)
-            apply.assert_not_called()
-            self.assertIn("complete install workflow", error.getvalue())
-
-
-class CliSummary(unittest.TestCase):
-    """What thermite deploy's configuration phase prints about a deploy."""
-
-    def setUp(self):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        self.layout = deploy.State(Path(temporary.name))
-        self.result = deploy.Deployed(
-            "d" * 40, "Pin the fixture release",
-            deploy.Changes(added=["items/new.items"], changed=["rules/a.rules"], removed=["things/old.things"],
-                           unchanged=4),
-            deploy.Changes(changed=["oh_atv.py"], unchanged=2),
-            {"boot_checked": False}, False, with_metrics=True,
-            metrics=deploy.Changes(changed=["prometheus/prometheus.yml"], unchanged=3),
-            exporter_app=deploy.Changes(unchanged=5),
-            reloads=["prometheus reloaded", "grafana restarted"])
-
-    def apply(self, *, dry_run=False, pushed=False, units=()):
-        args = argparse.Namespace(state=self.layout.root, rev="d" * 40, force=True, dry_run=dry_run, yes=False,
-                                  _how="install")
-        with mock.patch.object(deploy, "deploy", return_value=self.result) as run, \
-                mock.patch.object(deploy, "pushed", return_value=pushed), \
-                mock.patch.object(deploy, "installed_units", return_value=list(units)), \
-                contextlib.redirect_stdout(io.StringIO()) as printed:
-            self.assertEqual(deploy_cli.apply(args, HOST), 0)
-        self.assertEqual(run.call_args.args[1].root, self.layout.root)
-        return printed.getvalue().splitlines()
-
-    def test_the_summary_lists_each_change_and_the_notes(self):
-        lines = self.apply(units=[("deploy/thermite-openhab.container", Path("/etc/fixture"), "differs"),
-                                  ("deploy/thermite-atv.container", Path("/etc/fixture-atv"), "current")])
-        self.assertEqual(lines[:12], [
-            f"deploy  {'d' * 12} Pin the fixture release",
-            "conf    1 added, 1 changed, 1 removed, 4 unchanged",
-            "          added   items/new.items",
-            "          changed rules/a.rules",
-            "          removed things/old.things",
-            "helper  0 added, 1 changed, 0 removed, 2 unchanged",
-            "          changed oh_atv.py",
-            "metrics 0 added, 1 changed, 0 removed, 3 unchanged",
-            "          changed prometheus/prometheus.yml",
-            "exporter0 added, 0 changed, 0 removed, 5 unchanged",
-            "metrics prometheus reloaded",
-            "metrics grafana restarted"])
-        notes = "\n".join(lines[12:])
-        self.assertIn(f"--userdata {self.layout.userdata}", lines[12])
-        self.assertNotIn("restarts", notes)
-        self.assertIn("note    installed without passing thermite test boot (--force)", notes)
-        self.assertIn(f"note    {'d' * 12} is not on a remote branch", notes)
-        self.assertIn("note    the installed deploy/thermite-openhab.container differ", notes)
-        self.assertNotIn("thermite-atv.container", notes)
-
-    def test_a_checked_pushed_deploy_without_changes_has_no_notes(self):
-        self.result.conf, self.result.atv_app = deploy.Changes(unchanged=4), deploy.Changes(unchanged=2)
-        self.result.record = {"boot_checked": True}
-        lines = self.apply(pushed=True)
-        self.assertFalse([line for line in lines if line.startswith(("note", "helper  changed", "runtime"))])
-
-    def test_a_dry_run_prints_the_changes_and_no_notes(self):
-        self.result.dry_run = True
-        lines = self.apply(dry_run=True)
-        self.assertEqual(lines[0], f"dry run {'d' * 12} Pin the fixture release")
-        self.assertEqual(lines[-1], "metrics grafana restarted")
-
-    def test_missing_or_kept_metrics_say_so_instead_of_their_changes(self):
-        self.result.with_metrics = False
-        printed = "\n".join(self.apply(dry_run=True))
-        self.assertIn(f"metrics not installed yet ({self.layout.metrics} is missing)", printed)
-        self.assertNotIn("exporter", printed)
-        self.result.with_metrics, self.result.metrics_kept = True, True
-        printed = "\n".join(self.apply(dry_run=True))
-        self.assertIn(f"metrics kept as deployed: {'d' * 12} predates the installed metrics, "
-                      f"so {self.layout.metrics} and {self.layout.exporter_app} keep", printed)
-        self.assertNotIn("reloaded", printed)
 
 
 if __name__ == "__main__":
