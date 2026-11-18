@@ -223,19 +223,19 @@ class Units(unittest.TestCase):
 
 
 class Services(unittest.TestCase):
-    def test_it_starts_pulled_and_has_no_path_unit(self):
+    def test_it_starts_pulled(self):
         found = host_system()
         found.unit.return_value = Unit("inactive", "disabled")
         found.capture.return_value = (0, "--policy")
         step = steps.MusicServices(context(base=MUSIC_HOST))
-        self.assertEqual(step.plan(found), ([oh_units.MUSIC], [], False))
+        self.assertEqual(step.plan(found), ([oh_units.MUSIC], []))
         self.assertEqual([action.argv for action in step.actions(found)],
                          [("podman", "pull", "--policy=missing", deploy.image(VERSIONS, "music_assistant")),
                           ("systemctl", "start", oh_units.MUSIC)])
 
     def test_a_changed_unit_restarts_it(self):
         found = host_system(stats={QUADLET: Stat(0, 0, 0o644, False, 20.0)})
-        self.assertEqual(steps.MusicServices(context(base=MUSIC_HOST)).plan(found), ([], [oh_units.MUSIC], False))
+        self.assertEqual(steps.MusicServices(context(base=MUSIC_HOST)).plan(found), ([], [oh_units.MUSIC]))
         found = host_system(stats={QUADLET: Stat(0, 0, 0o644, False, 5.0)})
         self.assertTrue(steps.MusicServices(context(base=MUSIC_HOST)).check(found).done)
 

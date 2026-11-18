@@ -83,27 +83,18 @@ class Membership(unittest.TestCase):
             found = directives(text)
             with self.subTest(unit=name):
                 self.assertEqual(found.get(("Unit", "PartOf")), [TARGET])
-                if name.endswith(".service"):
-                    self.assertEqual(found.get(("Service", "Slice")), [SLICE])
-                else:
-                    # A path unit runs no process, and systemd takes Slice=
-                    # only for units that do; PartOf= stops it with the target.
-                    self.assertTrue(name.endswith(".path"), name)
-                    self.assertNotIn(("Path", "Slice"), found)
+                self.assertTrue(name.endswith(".service"), name)
+                self.assertEqual(found.get(("Service", "Slice")), [SLICE])
                 install = {key: values for (section, key), values in found.items() if section == "Install"}
-                if name in oh_units.RESTART_SERVICES:
-                    # Started only by its path unit.
-                    self.assertEqual(install, {})
-                else:
-                    self.assertEqual(install, {"WantedBy": [TARGET]})
+                self.assertEqual(install, {"WantedBy": [TARGET]})
                 for key in ("Requires", "BindsTo", "Requisite", "Upholds"):
                     self.assertNotIn(("Unit", key), found, "only the target and slice bring members along")
 
-    def test_the_targets_members_are_every_daemon_and_restart_path(self):
+    def test_the_targets_members_are_every_daemon(self):
         members = {name for name, text in self.units.items()
                    if directives(text).get(("Install", "WantedBy")) == [TARGET]}
-        self.assertEqual(members, {*oh_units.DAEMONS, *oh_units.RESTART_PATHS})
-        self.assertEqual(set(self.units) - members - set(EXCEPTIONS), set(oh_units.RESTART_SERVICES))
+        self.assertEqual(members, set(oh_units.DAEMONS))
+        self.assertEqual(set(self.units) - members - set(EXCEPTIONS), set())
 
     def test_target_and_slice_pull_in_nothing_themselves(self):
         target, slice_ = directives(self.units[TARGET]), directives(self.units[SLICE])

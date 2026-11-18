@@ -227,18 +227,13 @@ class Units(unittest.TestCase):
         for cid in expected:
             self.assertEqual(sum(argv[5] == "--cidfile=" + cid for argv in cleanup), 2)
 
-    def test_restart_path_watches_the_deploy_trigger(self):
-        self.assertIn("PathChanged=/srv/thermite/runtime/deploy/atv-restart", deploy.render_atv_restart_path(HOST))
-        self.assertIn("ExecStart=/usr/bin/systemctl try-restart thermite-atv.service",
-                      deploy.render_atv_restart_service(HOST))
-
-    def test_restart_services_log_under_their_own_names(self):
-        units = deploy.render_units(VERSIONS, HOST)
-        for source in (deploy.ATV_RESTART_SERVICE, deploy.METRICS_RESTART_SERVICE):
-            with self.subTest(unit=source):
-                service = configparser.ConfigParser(interpolation=None, strict=False)
-                service.read_string(units[source])
-                self.assertEqual(service["Service"]["SyslogIdentifier"], Path(source).stem)
+    def test_no_unit_watches_a_file_to_restart_another(self):
+        # Every change comes with an install transaction, which stops all of
+        # Thermite and starts it on the new files.
+        for host in (HOST, MUSIC_HOST):
+            units = deploy.render_units(VERSIONS, host)
+            self.assertFalse([name for name in units if name.endswith(".path")])
+            self.assertFalse([name for name, text in units.items() if "try-restart" in text or "[Path]" in text])
 
     def test_every_generated_unit_and_dropin_has_an_install_destination(self):
         # A share's mount unit is named after its mount point (tests/test_shares.py).
@@ -251,8 +246,8 @@ class Units(unittest.TestCase):
 
     def test_target_groups_only_thermite_members_and_services_share_the_slice(self):
         rendered = deploy.render_units(VERSIONS, MUSIC_HOST)
-        self.assertEqual(len(rendered), 22)
-        self.assertEqual(sum(not name.endswith(".conf") for name in rendered), 14)
+        self.assertEqual(len(rendered), 18)
+        self.assertEqual(sum(not name.endswith(".conf") for name in rendered), 10)
         self.assertEqual({path.name for path in deploy.host_units(MUSIC_HOST).values()},
                          {Path(name).name for name in rendered})
         containers = set()
@@ -597,12 +592,6 @@ class MetricsUnits(unittest.TestCase):
         self.assertEqual(deploy.exec_word(r"x=(a|b)\.c"), r'"x=(a|b)\\.c"')
         self.assertEqual(deploy.exec_word("50%$HOME"), '"50%%$$HOME"')
         self.assertEqual(deploy.exec_word('print("a")\nprint(1)'), r'"print(\"a\")\nprint(1)"')
-
-    def test_the_restart_path_restarts_the_exporter_and_grafana(self):
-        units = deploy.render_units(VERSIONS, HOST)
-        self.assertIn("PathChanged=/srv/thermite/runtime/deploy/metrics-restart\n", units[deploy.METRICS_RESTART_PATH])
-        self.assertIn("ExecStart=/usr/bin/systemctl try-restart thermite-metrics-exporter.service "
-                      "thermite-grafana.service\n", units[deploy.METRICS_RESTART_SERVICE])
 
     def test_installed_means_any_metrics_quadlet_is_there(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1108,7 +1097,6 @@ class Install(unittest.TestCase):
         self.assertEqual((record["commit"], record["subject"], record["boot_checked"]), ("c" * 40, "a subject", True))
         self.assertEqual(sorted(record["conf"]), ["html/remote/index.html", "yaml/a.yaml"])
         self.assertTrue(result.atv_app)
-        self.assertTrue(self.layout.atv_restart.exists())
         self.assertEqual(len(deploy.history(self.layout)), 1)
 
     def test_operator_noninteractive_handoff_refuses_before_any_write(self):
@@ -1284,7 +1272,6 @@ class Install(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(self.layout.userdata.stat().st_mode), 0o700)
         self.assertEqual(stat.S_IMODE(self.layout.record.stat().st_mode), 0o660)
         self.assertEqual(stat.S_IMODE(self.layout.history.stat().st_mode), 0o660)
-        self.assertEqual(stat.S_IMODE(self.layout.atv_restart.stat().st_mode), 0o660)
 
     def test_pairing_conf_is_not_copied_before_native_logging_is_protected(self):
         files = {**self.FILES, "conf/automation/js/sony_ip_control.js": blob("// pairing rule\n")}
@@ -1312,19 +1299,20 @@ class Install(unittest.TestCase):
             self.install({**self.FILES, "conf/yaml/other.yaml": blob("items:\n  dev_pairing:\n    metadata:\n"
                                                                        "      pairing:\n        value: other\n")}, force=True)
 
-    def test_restarts_the_helper_only_when_it_changes(self):
+    def test_a_changed_helper_is_installed_and_nothing_is_asked_to_restart_it(self):
         self.install()
-        self.layout.atv_restart.unlink()
         files = dict(self.FILES, **{"conf/yaml/a.yaml": blob("a: 2\n")})
         deploy.record_boot_check(self.var, deploy.tree_digest(
             {p[5:]: b for p, b in files.items() if p.startswith("conf/")}))
         result = self.install(files)
         self.assertEqual(result.conf.changed, ["yaml/a.yaml"])
         self.assertFalse(result.atv_app)
-        self.assertFalse(self.layout.atv_restart.exists())
         files["lib/oh_atv.py"] = blob("x = 2\n")
-        self.install(files)
-        self.assertTrue(self.layout.atv_restart.exists())
+        result = self.install(files)
+        self.assertEqual(result.atv_app.changed, ["lib/oh_atv.py"])
+        # The install transaction starts the helper after its deploy.
+        self.assertEqual(result.history["reloads"], [])
+        self.assertEqual(sorted(path.name for path in self.layout.records.iterdir() if "restart" in path.name), [])
 
     def test_removes_files_the_commit_dropped(self):
         self.install()
@@ -1406,7 +1394,6 @@ class MetricsDeploy(Install):
 
     def test_a_commit_without_metrics_leaves_them(self):
         self.deploy(**{"metrics/grafana/grafana.ini": "[server]\nold\n"})
-        self.layout.metrics_restart.unlink()
         installed = (deploy.read_tree(self.layout.metrics), deploy.read_tree(self.layout.exporter_app))
         recorded = {key: deploy.read_record(self.layout)[key] for key in ("metrics", "exporter_app")}
         without_exporter = {path: data for path, data in {**self.FILES, **self.METRICS}.items()
@@ -1422,7 +1409,6 @@ class MetricsDeploy(Install):
                 record = deploy.read_record(self.layout)
                 self.assertEqual({key: record[key] for key in ("metrics", "exporter_app")}, recorded)
                 self.assertEqual(self.posted, [])
-                self.assertFalse(self.layout.metrics_restart.exists())
         result = self.deploy()
         self.assertFalse(result.metrics_kept)
         self.assertEqual(result.metrics.changed, ["grafana/grafana.ini"])
@@ -1439,9 +1425,8 @@ class MetricsDeploy(Install):
         self.assertEqual(sorted(record["exporter_app"]), ["lib/oh_metrics/exporter.py", "lib/oh_ports.py"])
         self.assertEqual(len(record["metrics"]), 5)
         self.assertEqual(self.posted, ["http://127.0.0.1:13607/-/reload", "http://127.0.0.1:13609/-/reload"])
-        self.assertTrue(self.layout.metrics_restart.exists())
-        self.assertEqual(result.reloads[:2], ["Prometheus reloaded its configuration",
-                                              "blackbox_exporter reloaded its configuration"])
+        self.assertEqual(result.reloads, ["Prometheus reloaded its configuration",
+                                          "blackbox_exporter reloaded its configuration"])
 
     def test_the_gateway_authority_is_installed_for_the_https_probe(self):
         access = Path(self.tmp.name) / "installation" / "access"
@@ -1462,7 +1447,6 @@ class MetricsDeploy(Install):
             self.deploy(**theirs)
         self.assertLessEqual({"notifications/catalog.json", "ntfy/server.yml"}, set(deploy.read_tree(self.layout.metrics)))
         self.assertIn(adapter, deploy.read_tree(self.layout.exporter_app))
-        self.layout.metrics_restart.unlink()
         result = self.deploy()
         # Synced, never kept as deployed: the new rules must reach Prometheus.
         self.assertFalse(result.metrics_kept)
@@ -1476,40 +1460,34 @@ class MetricsDeploy(Install):
 
     def test_the_first_deploy_without_alertmanager_removes_its_settings_and_asks_it_nothing(self):
         self.deploy(**{"metrics/alertmanager/alertmanager.yml": "route: {}\n"})
-        self.layout.metrics_restart.unlink(missing_ok=True)
         self.posted.clear()
         result = self.deploy()
         self.assertEqual(result.metrics.removed, ["alertmanager/alertmanager.yml"])
         self.assertNotIn("alertmanager/alertmanager.yml", deploy.read_tree(self.layout.metrics))
         # Its unit is gone by now: nothing listens where a reload would go.
         self.assertEqual(self.posted, [])
-        self.assertFalse(self.layout.metrics_restart.exists())
 
-    def test_an_unchanged_deploy_reloads_and_restarts_nothing(self):
+    def test_an_unchanged_deploy_reloads_nothing(self):
         self.deploy()
-        self.layout.metrics_restart.unlink()
         result = self.deploy()
         self.assertEqual((self.posted, result.reloads), ([], []))
-        self.assertFalse(self.layout.metrics_restart.exists())
 
     def test_a_prometheus_change_reloads_only_prometheus(self):
         self.deploy()
-        self.layout.metrics_restart.unlink()
         result = self.deploy(**{"metrics/prometheus/prometheus.yml": "global: {scrape_interval: 1m}\n"})
         self.assertEqual(self.posted, ["http://127.0.0.1:13607/-/reload"])
         self.assertEqual(result.reloads, ["Prometheus reloaded its configuration"])
-        self.assertFalse(self.layout.metrics_restart.exists())
 
-    def test_a_dashboard_change_needs_no_restart_but_a_setting_or_the_code_does(self):
+    def test_a_change_to_grafana_or_the_exporter_asks_nothing_of_what_runs(self):
+        # They read their files when the install transaction starts them.
         self.deploy()
-        for path, restarts in (("metrics/grafana/dashboards/house.json", False),
-                               ("metrics/exporter/map.json", False),
-                               ("metrics/grafana/grafana.ini", True),
-                               ("lib/oh_metrics/exporter.py", True)):
+        for path in ("metrics/grafana/dashboards/house.json", "metrics/exporter/map.json",
+                     "metrics/grafana/grafana.ini", "lib/oh_metrics/exporter.py"):
             with self.subTest(path=path):
-                self.layout.metrics_restart.unlink(missing_ok=True)
-                self.deploy(**{path: f"changed for {path}\n"})
-                self.assertEqual(self.layout.metrics_restart.exists(), restarts)
+                result = self.deploy(**{path: f"changed for {path}\n"})
+                self.assertEqual((self.posted, result.reloads, result.history["reloads"]), ([], [], []))
+                self.assertEqual(sorted(path.name for path in self.layout.records.iterdir() if "restart" in path.name),
+                                 [])
 
     def test_a_service_not_running_yet_or_refusing_is_said(self):
         self.status = None
@@ -1520,16 +1498,25 @@ class MetricsDeploy(Install):
         self.assertEqual(result.reloads, ["blackbox_exporter refused the reload (HTTP 400) and keeps the old "
                                           "configuration: sudo journalctl -u thermite-blackbox.service says why"])
 
+    def test_a_failed_reload_is_still_recorded_with_its_outcome(self):
+        def refuse(url):
+            raise OSError("no route")
+
+        files = {**self.FILES, **self.METRICS}
+        with self.assertRaisesRegex(OSError, "no route"):
+            self.install(files, post=refuse)
+        entry = json.loads(deploy.history(self.layout)[-1])
+        self.assertEqual(entry["reloads"], [{"outcome": "failed", "error": "OSError"}])
+        self.assertEqual(entry["commit"], deploy.read_record(self.layout)["commit"])
+
     def test_the_history_says_what_became_of_each_reload(self):
         self.deploy()
         entry = json.loads(deploy.history(self.layout)[-1])
         self.assertEqual(set(entry["changes"]), {"conf", "atv_app", "metrics", "exporter_app"})
         self.assertEqual(entry["changes"]["metrics"]["counts"]["added"], 5)
         self.assertEqual(entry["reloads"], [
-            {"unit": "thermite-atv-restart.path", "outcome": "triggered", "restarts": ["thermite-atv.service"]},
             {"unit": "thermite-prometheus.service", "outcome": "reloaded", "status": 200},
-            {"unit": "thermite-blackbox.service", "outcome": "reloaded", "status": 200},
-            {"unit": "thermite-metrics-restart.path", "outcome": "triggered", "restarts": list(deploy.METRICS_RESTARTED)}])
+            {"unit": "thermite-blackbox.service", "outcome": "reloaded", "status": 200}])
         self.status = 400
         result = self.deploy(**{"metrics/blackbox/blackbox.yml": "modules: {a: {}}\n"})
         self.assertEqual(result.history["reloads"], [{"unit": "thermite-blackbox.service", "outcome": "refused", "status": 400}])
@@ -1746,8 +1733,7 @@ class DeployHistory(unittest.TestCase):
         self.assertEqual(entry["changes"]["conf"], {"added": ["html/remote/index.html", "yaml/a.yaml"], "changed": [],
                                                     "removed": [], "truncated": False,
                                                     "counts": {"added": 2, "changed": 0, "removed": 0, "unchanged": 0}})
-        self.assertEqual(entry["reloads"], [{"unit": "thermite-atv-restart.path", "outcome": "triggered",
-                                             "restarts": ["thermite-atv.service"]}])
+        self.assertEqual(entry["reloads"], [])
         files = {**self.FILES, "conf/yaml/a.yaml": blob("a: 2\n")}
         deploy.record_boot_check(self.var, deploy.tree_digest({p[5:]: b for p, b in files.items() if p.startswith("conf/")}))
         self.install(files)
@@ -1767,19 +1753,6 @@ class DeployHistory(unittest.TestCase):
         self.assertTrue(entry["truncated"])
         self.assertFalse(deploy.change_entry(deploy.Changes(changed=["a"]))["truncated"])
 
-    def test_a_failed_trigger_is_still_recorded_with_its_outcome(self):
-        real = deploy._shared_write
-
-        def write(target, data, *, append=False):
-            if Path(target) == self.layout.atv_restart:
-                raise OSError("disk full")
-            return real(target, data, append=append)
-
-        with mock.patch.object(deploy, "_shared_write", side_effect=write), self.assertRaisesRegex(OSError, "disk full"):
-            self.install()
-        self.assertEqual(self.lines()[-1]["reloads"], [{"outcome": "failed", "error": "OSError"}])
-        self.assertEqual(self.lines()[-1]["commit"], deploy.read_record(self.layout)["commit"])
-
     def test_a_dry_run_appends_nothing(self):
         result = self.install(dry_run=True)
         self.assertEqual(self.lines(), [])
@@ -1796,7 +1769,7 @@ class DeployHistory(unittest.TestCase):
         self.assertEqual(said, [
             ("info", f"deploy start commit={'c' * 40} how=upgrade by={deploy.getpass.getuser()}"),
             ("info", f"deploy end commit={'c' * 40} how=upgrade outcome=ok changes={2 + len(deploy.ATV_APP)} "
-                     "reloads=thermite-atv-restart.path:triggered")])
+                     "reloads=none")])
         said.clear()
         with mock.patch.object(deploy, "resolve", return_value="c" * 40), \
                 mock.patch.object(deploy, "_deploy", side_effect=deploy.DeployError("refused")), \
@@ -1859,9 +1832,11 @@ class DeployHistory(unittest.TestCase):
         from oh_cli import history as history_cli
         self.install(how="upgrade")
         # A line from before the install engine names the state backup that
-        # upgrade took; it is still shown.
+        # upgrade took, and the restart its path unit was asked for; both are
+        # still shown.
         [line] = self.lines()
-        self.layout.history.write_text(json.dumps({**line, "backup": OLD_BACKUP}) + "\n")
+        asked = [{"unit": "thermite-atv-restart.path", "outcome": "triggered", "restarts": ["thermite-atv.service"]}]
+        self.layout.history.write_text(json.dumps({**line, "backup": OLD_BACKUP, "reloads": asked}) + "\n")
         event = {"commit": "c" * 40, "application": {"version": "1.2.3", "digest": "b" * 64}, "release": GATEWAY,
                  "previous_release": None}
         state = ["--state", str(self.layout.root)]
@@ -2133,8 +2108,7 @@ class CliSummary(unittest.TestCase):
             "metrics grafana restarted"])
         notes = "\n".join(lines[12:])
         self.assertIn(f"--userdata {self.layout.userdata}", lines[12])
-        self.assertIn(f"helper  changed: thermite-atv-restart.path restarts thermite-atv.service "
-                      f"({self.layout.atv_restart})", notes)
+        self.assertNotIn("restarts", notes)
         self.assertIn("note    installed without passing thermite test boot (--force)", notes)
         self.assertIn(f"note    {'d' * 12} is not on a remote branch", notes)
         self.assertIn("note    the installed deploy/thermite-openhab.container differ", notes)

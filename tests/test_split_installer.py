@@ -323,7 +323,7 @@ class SplitInstaller(unittest.TestCase):
         self.system.unit.return_value = SimpleNamespace(active="active", enabled="enabled", since=10)
         self.system.stat.return_value = SimpleNamespace(mtime=0)
         self.system.interactive.return_value = True
-        self.assertEqual(steps.Services(context).plan(self.system), ([], [], False),
+        self.assertEqual(steps.Services(context).plan(self.system), ([], []),
                          "the rollout flag must not make native-preparation's internal plan request another restart")
         with patch.object(service, "prefetch", side_effect=lambda *_: []):
             self.assertFalse(service.check(self.system).done)

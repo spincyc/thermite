@@ -435,7 +435,7 @@ class NativePreparationScope(unittest.TestCase):
 
     def owned_everything(self):
         names = ("thermite-openhab.service", "thermite-atv.service", "thermite-grafana.service",
-                 "thermite-prometheus.service", "thermite.target", "thermite-atv-restart.path")
+                 "thermite-prometheus.service", "thermite.target")
         return mock.patch.object(ownership, "inspect", return_value=ownership.Owned(
             entries=tuple((name, name, Path("/fictional")) for name in names)))
 

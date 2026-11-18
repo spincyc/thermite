@@ -12,10 +12,6 @@ MUSIC = "thermite-music.service"
 
 TARGET = "thermite.target"
 SLICE = "thermite.slice"
-ATV_RESTART_PATH = "thermite-atv-restart.path"
-ATV_RESTART_SERVICE = "thermite-atv-restart.service"
-METRICS_RESTART_PATH = "thermite-metrics-restart.path"
-METRICS_RESTART_SERVICE = "thermite-metrics-restart.service"
 #: Waits for a network share's server name, one instance per server (oh_shares).
 SHARE_GATE = "thermite-share-gate@.service"
 
@@ -31,6 +27,4 @@ ACCESS_UNITS = (ACCESS, ACCESS_WORKER, ACCESS_CALLBACKS)
 CONTAINED = (RUNTIME, ATV, *METRICS, MUSIC)
 #: Every long-running Thermite service a host may have.
 DAEMONS = (*CONTAINED, *ACCESS_UNITS)
-RESTART_PATHS = (ATV_RESTART_PATH, METRICS_RESTART_PATH)
-RESTART_SERVICES = (ATV_RESTART_SERVICE, METRICS_RESTART_SERVICE)
 CONTAINERS = {unit: unit.removesuffix(".service") for unit in CONTAINED}

@@ -84,8 +84,6 @@ def apply(args, host: dict) -> int:
     if result.conf:
         print("runtime reloads regular configuration; shared script-library updates need a controlled runtime restart. Follow it with "
               f"bin/thermite sandbox logs -f --userdata {layout.userdata}")
-    if result.atv_app:
-        print(f"helper  changed: thermite-atv-restart.path restarts thermite-atv.service ({layout.atv_restart})")
     if not result.record["boot_checked"]:
         print("note    installed without passing thermite test boot (--force)")
     if not deploy.pushed(AREA, result.commit):

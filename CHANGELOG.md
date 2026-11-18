@@ -7,6 +7,11 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- `thermite-atv-restart.path`, `thermite-metrics-restart.path` and
+  their services are removed. They restarted the Apple TV helper, the
+  exporter and Grafana after a deploy changed them, and every deploy
+  now runs inside an install transaction that stops and starts all of
+  Thermite. `thermite status` no longer lists them.
 - `/etc/thermite/units.json` is gone: the installer recognizes its
   unit files by the digests in `/etc/thermite/installed.json`. The
   upgrade removes the file, and `thermite revert` puts it back with the

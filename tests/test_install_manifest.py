@@ -60,7 +60,7 @@ class Inventory(unittest.TestCase):
         links = {path: item.target for path, item in items.items() if item.cls == "link"}
         self.assertEqual(links, {
             **{UNITS / "thermite.target.wants" / name: UNITS / name
-               for name in (oh_units.ATV_RESTART_PATH, oh_units.METRICS_RESTART_PATH, *oh_units.ACCESS_UNITS[:2])},
+               for name in oh_units.ACCESS_UNITS[:2]},
             UNITS / "multi-user.target.wants" / ingress.UNIT: ingress.UNIT_FILE,
         }, "the boot target's own link is the guard's, never an item")
 
@@ -88,8 +88,8 @@ class Inventory(unittest.TestCase):
             **{runtime / name: "tree" for name in ("conf", "userdata", "addons", "metrics", "exporter/app", "atv/app",
                                                    "atv/venv", "atv/secrets", "secrets", "monitoring/grafana",
                                                    "monitoring/secrets")},
-            **{runtime / "deploy" / name: "file" for name in ("deployed.json", "deployed.pending.json", "atv-restart",
-                                                               "metrics-restart", "service-account.json")},
+            **{runtime / "deploy" / name: "file" for name in ("deployed.json", "deployed.pending.json",
+                                                               "service-account.json")},
             **{runtime / name: "shared" for name in ("logs", "backups", "deploy/history", "textfile")},
             runtime / "monitoring/prometheus": "shared-pinned",
             access / "releases": "versioned", access / "state": "tree", access / "inputs": "tree",
@@ -151,8 +151,8 @@ class Inventory(unittest.TestCase):
 
 class Links(unittest.TestCase):
     def test_wants_links_come_from_our_own_install_section(self):
-        text = deploy.render_atv_restart_path(HOST)
-        self.assertEqual(manifest.wants_links(text, oh_units.ATV_RESTART_PATH), [manifest.link(oh_units.ATV_RESTART_PATH)])
+        text = "[Unit]\nPartOf=thermite.target\n\n[Install]\nWantedBy=thermite.target\n"
+        self.assertEqual(manifest.wants_links(text, oh_units.ACCESS), [manifest.link(oh_units.ACCESS)])
         self.assertEqual(manifest.wants_links(deploy.render_target(), oh_units.TARGET), [],
                          "the target is wanted by multi-user.target: the boot guard")
         self.assertEqual(manifest.wants_links("[Unit]\nWantedBy=thermite.target\n", "x"), [],

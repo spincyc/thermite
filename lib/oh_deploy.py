@@ -54,12 +54,8 @@ from oh_access import guest
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 QUADLET = f"deploy/{oh_units.CONTAINERS[oh_units.RUNTIME]}.container"
 ATV_QUADLET = f"deploy/{oh_units.CONTAINERS[oh_units.ATV]}.container"
-ATV_RESTART_PATH = f"deploy/{oh_units.ATV_RESTART_PATH}"
-ATV_RESTART_SERVICE = f"deploy/{oh_units.ATV_RESTART_SERVICE}"
 #: The metrics services' quadlets (oh_metrics.services()), by unit.
 METRICS_QUADLETS = {unit: f"deploy/{unit.removesuffix('.service')}.container" for unit in metrics.SERVICE_UNITS}
-METRICS_RESTART_PATH = f"deploy/{oh_units.METRICS_RESTART_PATH}"
-METRICS_RESTART_SERVICE = f"deploy/{oh_units.METRICS_RESTART_SERVICE}"
 MUSIC_QUADLET = f"deploy/{oh_units.CONTAINERS[oh_units.MUSIC]}.container"
 TARGET = f"deploy/{oh_units.TARGET}"
 SLICE = f"deploy/{oh_units.SLICE}"
@@ -72,18 +68,11 @@ MUSIC_UNITS = (MUSIC_QUADLET, CONTAINER_DROPINS[oh_units.MUSIC])
 SHARE_GATE = f"deploy/{oh_units.SHARE_GATE}"
 #: The units only some hosts have.
 OPTIONAL_UNITS = (*MUSIC_UNITS, SHARE_GATE)
-#: What thermite-metrics-restart.service restarts: the services a deploy
-#: cannot reload over HTTP.
-METRICS_RESTARTED = (oh_units.EXPORTER, oh_units.GRAFANA)
 #: Where the owner installs each generated unit on the host.
 INSTALLED = {
     QUADLET: Path("/etc/containers/systemd") / Path(QUADLET).name,
     ATV_QUADLET: Path("/etc/containers/systemd") / Path(ATV_QUADLET).name,
-    ATV_RESTART_PATH: Path("/etc/systemd/system") / oh_units.ATV_RESTART_PATH,
-    ATV_RESTART_SERVICE: Path("/etc/systemd/system") / oh_units.ATV_RESTART_SERVICE,
     **{name: Path("/etc/containers/systemd") / Path(name).name for name in METRICS_QUADLETS.values()},
-    METRICS_RESTART_PATH: Path("/etc/systemd/system") / oh_units.METRICS_RESTART_PATH,
-    METRICS_RESTART_SERVICE: Path("/etc/systemd/system") / oh_units.METRICS_RESTART_SERVICE,
     MUSIC_QUADLET: Path("/etc/containers/systemd") / Path(MUSIC_QUADLET).name,
     SHARE_GATE: Path("/etc/systemd/system") / oh_units.SHARE_GATE,
     TARGET: Path("/etc/systemd/system") / oh_units.TARGET,
@@ -92,9 +81,7 @@ INSTALLED = {
        for source in CONTAINER_DROPINS.values()},
 }
 #: The units of openHAB and its helper, and those of metrics and dashboards.
-METRICS_UNITS = (*METRICS_QUADLETS.values(), METRICS_RESTART_PATH, METRICS_RESTART_SERVICE)
-SERVICES = (oh_units.RUNTIME, oh_units.ATV, oh_units.ATV_RESTART_PATH, *metrics.SERVICE_UNITS,
-            oh_units.METRICS_RESTART_PATH, oh_units.TARGET)
+SERVICES = (oh_units.RUNTIME, oh_units.ATV, *metrics.SERVICE_UNITS, oh_units.TARGET)
 
 
 def share_units(host: dict) -> dict[str, Path]:
@@ -346,11 +333,6 @@ class State:
         return self.root / "backups"
 
     @property
-    def atv_restart(self) -> Path:
-        """Written by a deploy that changes the helper; thermite-atv-restart.path watches it."""
-        return self.records / "atv-restart"
-
-    @property
     def metrics(self) -> Path:
         """The deployed copy of metrics/: Prometheus', blackbox's, Grafana's and
         the exporter's configuration, written by a deploy through the group."""
@@ -391,11 +373,6 @@ class State:
         a deploy, through the group, its DEPLOY_TEXTFILE."""
         return self.root / metrics.STATE_TEXTFILE
 
-    @property
-    def metrics_restart(self) -> Path:
-        """Written by a deploy that changes the exporter's code or Grafana's
-        settings; thermite-metrics-restart.path watches it."""
-        return self.records / "metrics-restart"
 
     @property
     def music(self) -> Path:
@@ -832,45 +809,6 @@ def render_atv_quadlet(versions: dict, host: dict) -> str:
     return "\n".join(lines)
 
 
-def render_atv_restart_path(host: dict) -> str:
-    lines = [
-        "# Restarts the Apple TV helper when a deploy changes its code",
-        "# (bin/thermite deploy writes the watched file).",
-        *HEADER,
-        "[Unit]",
-        "Description=Restart the Apple TV helper after a deploy changes it",
-        f"PartOf={oh_units.TARGET}",
-        "",
-        "[Path]",
-        f"PathChanged={state(host).atv_restart}",
-        f"Unit={oh_units.ATV_RESTART_SERVICE}",
-        "",
-        "[Install]",
-        f"WantedBy={oh_units.TARGET}",
-        "",
-    ]
-    return "\n".join(lines)
-
-
-def render_atv_restart_service(host: dict) -> str:
-    lines = [
-        "# Started by thermite-atv-restart.path.",
-        *HEADER,
-        "[Unit]",
-        "Description=Restart the Apple TV helper after a deploy changed it",
-        f"PartOf={oh_units.TARGET}",
-        "",
-        "[Service]",
-        f"Slice={oh_units.SLICE}",
-        "Type=oneshot",
-        f"ExecStart=/usr/bin/systemctl try-restart {oh_units.ATV}",
-        # The journal names this unit, not the program it runs (systemctl).
-        f"SyslogIdentifier={oh_units.ATV_RESTART_SERVICE.removesuffix('.service')}",
-        "",
-    ]
-    return "\n".join(lines)
-
-
 _PLAIN_WORD = re.compile(r"^[A-Za-z0-9_@+=:,./-]+$")
 
 
@@ -977,45 +915,6 @@ def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service)
         "",
         "[Install]",
         f"WantedBy={oh_units.TARGET}",
-        "",
-    ]
-    return "\n".join(lines)
-
-
-def render_metrics_restart_path(host: dict) -> str:
-    lines = [
-        "# Restarts the metrics applications when a deploy changes their",
-        "# programs or Grafana settings (deploy writes the watched file).",
-        "# Prometheus and blackbox reload over HTTP.",
-        *HEADER,
-        "[Unit]",
-        "Description=Restart the metrics applications after a deploy changes them",
-        f"PartOf={oh_units.TARGET}",
-        "",
-        "[Path]",
-        f"PathChanged={state(host).metrics_restart}",
-        f"Unit={Path(METRICS_RESTART_SERVICE).name}",
-        "",
-        "[Install]",
-        f"WantedBy={oh_units.TARGET}",
-        "",
-    ]
-    return "\n".join(lines)
-
-
-def render_metrics_restart_service(host: dict) -> str:
-    lines = [
-        f"# Started by {Path(METRICS_RESTART_PATH).name}.",
-        *HEADER,
-        "[Unit]",
-        "Description=Restart the metrics applications after a deploy changed them",
-        f"PartOf={oh_units.TARGET}",
-        "",
-        "[Service]",
-        f"Slice={oh_units.SLICE}",
-        "Type=oneshot",
-        f"ExecStart=/usr/bin/systemctl try-restart {' '.join(METRICS_RESTARTED)}",
-        f"SyslogIdentifier={oh_units.METRICS_RESTART_SERVICE.removesuffix('.service')}",
         "",
     ]
     return "\n".join(lines)
@@ -1217,15 +1116,11 @@ def render_units(versions: dict, host: dict) -> dict[str, str]:
     units = {
         QUADLET: render_quadlet(versions, host),
         ATV_QUADLET: render_atv_quadlet(versions, host),
-        ATV_RESTART_PATH: render_atv_restart_path(host),
-        ATV_RESTART_SERVICE: render_atv_restart_service(host),
         TARGET: render_target(host),
         SLICE: render_slice(),
     }
     for service in metrics.services(host):
         units[METRICS_QUADLETS[service.unit]] = render_metrics_quadlet(versions, host, service)
-    units[METRICS_RESTART_PATH] = render_metrics_restart_path(host)
-    units[METRICS_RESTART_SERVICE] = render_metrics_restart_service(host)
     if music.enabled(host):
         units[MUSIC_QUADLET] = render_music_quadlet(versions, host)
     if shares.gated(host):
@@ -2025,14 +1920,8 @@ def install(files: dict[str, Blob], commit: str, title: str, layout: State, var:
             _replace(layout.record, (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8"), FILE_MODE)
             _settle_pending(layout, commit, {key: paths for key, paths in pending.items() if key not in wanted})
             try:
-                if app_changes:
-                    # A plain write: the path unit reacts to the file being closed.
-                    _shared_write(layout.atv_restart, f"{record['deployed_at']} {commit}\n")
-                    outcomes.append({"unit": oh_units.ATV_RESTART_PATH, "outcome": "triggered",
-                                     "restarts": [oh_units.ATV]})
                 if synced:
-                    reloads = apply_metrics(layout, host or {}, metrics_changes, exporter_changes, record,
-                                            post or http_post, outcomes)
+                    reloads = apply_metrics(host or {}, metrics_changes, post or http_post, outcomes)
             except BaseException as exc:
                 outcomes.append({"outcome": "failed", "error": type(exc).__name__})
                 raise
@@ -2050,22 +1939,12 @@ def _touched(changes: Changes) -> list[str]:
     return [*changes.added, *changes.changed, *changes.removed]
 
 
-def metrics_restart_needed(metrics_changes: Changes, exporter_changes: Changes) -> bool:
-    """Whether a deploy's changes need the exporter and Grafana restarted:
-    the exporter's code, or Grafana's settings and provisioning (it rereads
-    its dashboards and the exporter its map by themselves)."""
-    return bool(exporter_changes) or any(
-        path.startswith("grafana/") and not path.startswith(f"{metrics.GRAFANA_DASHBOARDS}/")
-        for path in _touched(metrics_changes))
-
-
-def apply_metrics(layout: State, host: dict, metrics_changes: Changes, exporter_changes: Changes, record: dict,
-                  post, outcomes: list[dict] | None = None) -> list[str]:
+def apply_metrics(host: dict, metrics_changes: Changes, post, outcomes: list[dict] | None = None) -> list[str]:
     """Make the running metrics services take a deploy's changes, without
-    root: Prometheus and blackbox_exporter reload over HTTP, and the trigger
-    file has thermite-metrics-restart.path restart the exporter and Grafana.
+    root: Prometheus and blackbox_exporter reload over HTTP. The exporter
+    and Grafana read theirs when the install transaction starts them.
     Says what became of each, in words; `outcomes` also gets each as it
-    happens, for the history: {unit, outcome, and status or restarts}."""
+    happens, for the history: {unit, outcome, and status}."""
     said = []
     outcomes = [] if outcomes is None else outcomes
     port = metrics.ports(host)
@@ -2085,12 +1964,6 @@ def apply_metrics(layout: State, host: dict, metrics_changes: Changes, exporter_
             outcomes.append({"unit": unit, "outcome": "refused", "status": status})
             said.append(f"{name} refused the reload (HTTP {status}) and keeps the old configuration: "
                         f"sudo journalctl -u {unit} says why")
-    if metrics_restart_needed(metrics_changes, exporter_changes):
-        _shared_write(layout.metrics_restart, f"{record['deployed_at']} {record['commit']}\n")
-        outcomes.append({"unit": oh_units.METRICS_RESTART_PATH, "outcome": "triggered",
-                         "restarts": list(METRICS_RESTARTED)})
-        said.append(f"{Path(METRICS_RESTART_PATH).name} restarts {' and '.join(METRICS_RESTARTED)} "
-                    f"({layout.metrics_restart})")
     return said
 
 

@@ -40,19 +40,12 @@ PODMAN = (4, 5)
 #: The Apple TV helper's pins have no wheels for anything else.
 MACHINE = "x86_64"
 NAME = oh_service.ACCOUNT
-PATH_UNIT = "thermite-atv-restart.path"
-METRICS_PATH_UNIT = Path(deploy.METRICS_RESTART_PATH).name
-#: The unit a changed file in deploy/ restarts; the restart service runs only
-#: when the path unit triggers it.
+#: The unit each quadlet in deploy/ runs.
 RESTARTS = {
     deploy.QUADLET: "thermite-openhab.service",
     deploy.ATV_QUADLET: "thermite-atv.service",
-    deploy.ATV_RESTART_PATH: PATH_UNIT,
 }
-METRICS_RESTARTS = {
-    **{quadlet: unit for unit, quadlet in deploy.METRICS_QUADLETS.items()},
-    deploy.METRICS_RESTART_PATH: METRICS_PATH_UNIT,
-}
+METRICS_RESTARTS = {quadlet: unit for unit, quadlet in deploy.METRICS_QUADLETS.items()}
 MUSIC_RESTARTS = {deploy.MUSIC_QUADLET: oh_units.MUSIC}
 #: How long the metrics services' first start may take (it pulls the
 #: images, then Prometheus scrapes every target once).
@@ -963,8 +956,7 @@ class Deploy(Step):
         # all logs are) can stay beside them.
         layout = self.context.layout
         return [*(manifest.Item(path, "tree") for path in (layout.conf, layout.metrics, layout.exporter_app, layout.atv_app)),
-                *(manifest.Item(path, "file") for path in (layout.record, layout.pending, layout.atv_restart,
-                                                           layout.metrics_restart)),
+                *(manifest.Item(path, "file") for path in (layout.record, layout.pending)),
                 manifest.Item(layout.history, "shared")]
 
 
@@ -1024,16 +1016,15 @@ class Units(Step):
 class Services(Step):
     title = "Runtime and Apple TV helper"
     restarts = RESTARTS
-    path_unit = PATH_UNIT
 
     def __init__(self, context: Context, *, restart_runtime: bool = False):
         self.context = context
         self.force_runtime = restart_runtime
         self.runtime_restarted = False
 
-    def plan(self, system: System) -> tuple[list[str], list[str], bool]:
-        """Units to start, units to restart (their file changed after they
-        started), and whether the path unit, if any, needs enabling."""
+    def plan(self, system: System) -> tuple[list[str], list[str]]:
+        """Units to start, and units to restart (their file changed after
+        they started)."""
         start, restart = [], []
         for name, unit in self.restarts.items():
             state = system.unit(unit)
@@ -1050,11 +1041,11 @@ class Services(Step):
                     or state.since is not None and any(info is not None and info.mtime > state.since
                                                        for info in (installed, support, confinement))):
                 restart.append(unit)
-        return start, restart, self.path_unit is not None and system.unit(self.path_unit).enabled != "enabled"
+        return start, restart
 
     def check(self, system: System) -> Check:
-        start, restart, enable = self.plan(system)
-        if not (start or restart or enable):
+        start, restart = self.plan(system)
+        if not (start or restart):
             return Check(True, "running on the installed units")
         parts = []
         if start:
@@ -1063,25 +1054,20 @@ class Services(Step):
             reason = ("explicit fresh runtime requested" if self.force_runtime and oh_units.RUNTIME in restart
                       else "its unit or confinement changed since it started")
             parts.append("to restart, " + reason + ": " + ", ".join(restart))
-        if enable:
-            parts.append(f"to enable: {self.path_unit}")
         if "thermite-openhab.service" in start:
             parts.append("stop any live test instance first (make openhab-sandbox-stop where it runs): "
                          "two live openHABs would fight over the devices")
         return Check(False, "; ".join(parts))
 
     def actions(self, system: System) -> list[Action]:
-        start, restart, enable = self.plan(system)
-        services = [unit for unit in start if unit != self.path_unit]
-        actions = self.prefetch(system, [*services, *restart])
-        if services:
-            actions.append(Command(("systemctl", "start", *services), root=True))
+        start, restart = self.plan(system)
+        actions = self.prefetch(system, [*start, *restart])
+        if start:
+            actions.append(Command(("systemctl", "start", *start), root=True))
         if restart:
             actions.append(Command(("systemctl", "restart", *restart), root=True))
-        if self.force_runtime and oh_units.RUNTIME in (*services, *restart) and not self.runtime_restarted:
+        if self.force_runtime and oh_units.RUNTIME in (*start, *restart) and not self.runtime_restarted:
             actions.append(Task("record the requested fresh runtime start", self.record_runtime_restart))
-        if enable or self.path_unit in start:
-            actions.append(Command(("systemctl", "enable", "--now", self.path_unit), root=True))
         return actions
 
     def record_runtime_restart(self, system: System) -> int:
@@ -1111,14 +1097,12 @@ class Services(Step):
 class MetricsServices(Services):
     title = "Monitoring"
     restarts = METRICS_RESTARTS
-    path_unit = METRICS_PATH_UNIT
 
 
 class MusicServices(Services):
     """Music Assistant, on a host with music:; each start pins its listeners."""
     title = "Music Assistant"
     restarts = MUSIC_RESTARTS
-    path_unit = None
 
 
 def _opaque(system: System, context: Context, path: Path) -> bool:
@@ -1213,7 +1197,7 @@ class NativePreparation(Step):
             return Check(True, "offline preparation, native guards and ownership repair succeeded")
         if self.custody(system):
             return Check(False, "repair custody, prepare native userdata without root, then verify guards and repair final modes")
-        start, restart, _ = Services(self.context).plan(system)
+        start, restart = Services(self.context).plan(system)
         needed = (oh_units.RUNTIME in (*start, *restart)
                   or Units(self.context).stale(system, RUNTIME_FILES)
                   or not PairingLogging(self.context).check(system).done
@@ -2230,8 +2214,7 @@ class Halt(Step):
     title = "Stop Thermite"
     #: What runs while Thermite does. The slice holds every service, so it
     #: is the authority; the names say what still runs.
-    UNITS = (oh_units.TARGET, oh_units.SLICE, *oh_units.DAEMONS, *oh_units.RESTART_PATHS,
-             *oh_units.RESTART_SERVICES)
+    UNITS = (oh_units.TARGET, oh_units.SLICE, *oh_units.DAEMONS)
 
     def __init__(self, context: Context):
         self.context = context

@@ -65,7 +65,7 @@ NATIVE_ROOTS = ("conf", "userdata", LOGS, "addons", "atv", "deploy", "secrets", 
 RUNTIME_STORES = ("conf", "userdata", LOGS, "addons", "secrets")
 RUNTIME_ROOTS = ("", "addons", "atv", "atv/venv", "monitoring", "monitoring/prometheus", "monitoring/grafana",
                  "exporter")
-DEPLOY_RECORDS = ("deploy/history", "deploy/deployed.json", "deploy/atv-restart", "deploy/metrics-restart", RECEIPT)
+DEPLOY_RECORDS = ("deploy/history", "deploy/deployed.json", RECEIPT)
 
 
 class ServiceError(ValueError):

@@ -92,10 +92,6 @@ f8469bf3f39bf596587788729420f9ae52699f3bb078f4dac341da9c35374660  */conf/html/re
 
 88f4cc5f633e1066be9db9bcf5dd87a5ec45a3f2c5af4aaf63e7c3fbc49a77a7  */conf/services/runtime.cfg
 
-c4a2bdada18b844fd685b20064fff968fc62aedeaff43bde58fd1f68537241ea  */deploy/thermite-atv-restart.path
-
-e9a7180ad0dc2c93adaff0ccb6bb361f2511b845653575ab382beb73c625d6c7  */deploy/thermite-atv-restart.service
-
 1b8ef2786ef0f16056d8243a7a24af12c3f58b1b2883b7762dd68ceae7347528  */deploy/thermite-atv.container
 
 b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/thermite-atv.service.d/50-container-lifecycle.conf
@@ -111,10 +107,6 @@ b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/therm
 c420d18a875d55cf035b1b39b02ae2753567d15272f17bd3be90adf0b73dc591  */deploy/thermite-metrics-exporter.container
 
 b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/thermite-metrics-exporter.service.d/50-container-lifecycle.conf
-
-ada17bcb69f3336269be83f85cfe93e7594afec9ff9e024dd0212982797f8f28  */deploy/thermite-metrics-restart.path
-
-a11a7f814cce174eef2dd4a0196085423b33906086cd480c665b7af3e3d6adc8  */deploy/thermite-metrics-restart.service
 
 40741fc11914795ddb8cc4c9fd4374cb58c4a231071db139c3db5f654424edb9  */deploy/thermite-node-exporter.container
 
