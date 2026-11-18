@@ -12,9 +12,11 @@ uid, all querying the one provisioned datasource by its fixed uid:
                routing executor, the gateway's latency, event streams and
                problems, what remotes gave up on, and the policy worker
     devices    Devices: one row per device, trouble first (Thing, port,
-               problem, whether a room needs it now), the Things not
-               online, then every source, power and speaker through the
-               day; its Room variable narrows all of it to some rooms
+               reads, whether a room needs it now, the last problem the
+               remotes still show), the Things not online, the commands
+               devices took and how they ended, then every source, power
+               and speaker through the day; its Room variable narrows all
+               of it to some rooms
     openhab    openHAB runtime: the runtime's Metrics add-on (JVM, events,
                rules, Things, thread pools) and its thingHandler pool
     host       Host: scrape targets, the Thermite units and their restarts,
@@ -57,7 +59,8 @@ import re
 import oh_units
 
 from . import alerts
-from .exporter import FAILURE_REASONS, HOUSE_LABEL, HOUSE_ROOM, OPERATION_OUTCOMES, ROUND_SECONDS, ROUTE_BUCKETS
+from .exporter import (COMMAND_OUTCOMES, FAILURE_REASONS, HOUSE_LABEL, HOUSE_ROOM, OPERATION_OUTCOMES, ROUND_SECONDS,
+                       ROUTE_BUCKETS)
 
 DATASOURCE_UID = "thermite-prometheus"
 DATASOURCE = {"type": "prometheus", "uid": DATASOURCE_UID}
@@ -137,7 +140,14 @@ UP_DOWN = value_map({0: ("Down", FAIL), 1: ("Up", OK)})
 ON_OFF = value_map({0: ("Off", OFF), 1: ("On", IN_USE)})
 ONLINE = value_map({0: ("Offline", FAIL), 1: ("Online", OK)})
 OPEN = value_map({0: ("Closed", FAIL), 1: ("Open", OK)})
-PROBLEM = value_map({0: ("None", OK), 1: ("Reported", WARN)})
+#: What the remotes still show of a device (thermite_device_problem): what
+#: its last failed read or command met, which stays until the device takes a
+#: command, however long ago its cause went. Amber, never red: it is what a
+#: person last ran into, not a reading of the device now.
+PROBLEM = value_map({0: ("None", OK), 1: ("Still shown", WARN)})
+#: Whether a device answers the reads its integration's script makes of it
+#: (thermite_device_read_ok, which the `reads` check reads).
+READS = value_map({0: ("Failing", FAIL), 1: ("Answered", OK)})
 #: A device's `<id>_online` (point online). No response is not a failure by
 #: itself: a device that sleeps answers no ping.
 REACHABLE = value_map({0: ("No response", OFF), 1: ("Reachable", OK)})
@@ -191,6 +201,16 @@ BOUNDARIES = {"dispatched": OK, "already_current": OK, "leave": UNKNOWN, "coales
               "stale_revision": UNKNOWN, "stale_schedule": UNKNOWN, "other": UNKNOWN, "dispatch_unconfirmed": WARN,
               "shared_resource_conflict": WARN, "missed": FAIL, "invalid_policy": FAIL}
 REPAIRS = {"sent": WARN, "unconfirmed": FAIL}
+#: How a command a device's script took ended (every one of
+#: exporter.COMMAND_OUTCOMES, so that each has a name in words). Green: the
+#: device took it. Amber: it answered no, or not now. Red: nothing reached
+#: it. Grey: sent, its effect not known. Slate: the rule itself sent
+#: nothing, which says nothing of the device.
+COMMANDS = {"applied": ("Acknowledged", OK), "sent": ("Sent", OK), "dropped": ("Not sent", OFF),
+            "unsent": ("Did not arrive", FAIL), "refused": ("Refused", WARN), "busy": ("Busy", WARN),
+            "unknown": ("Effect unknown", UNKNOWN)}
+#: The outcomes of a command the device did not take, or may not have.
+NOT_TAKEN = ("unsent", "refused", "busy", "unknown")
 #: The policy worker's rooms that are not unlocked (oh_access.metrics.ROOM_STATES).
 LOCKS = {"manual": ("Locked by hand", IN_USE), "scheduled": ("Locked by a schedule", IN_USE),
          "unavailable": ("Lock cannot be held", FAIL)}
@@ -1039,8 +1059,9 @@ def house(mapping: dict, probes: list[dict]) -> dict:
     board.add(_attention(mapping), 24, 6)
     board.add(stat("Alerts firing", 'count(ALERTS{alertstate="firing"}) or vector(0)',
                    steps=((OK, None), (WARN, 1)),
-                   description="Alerts firing now. The thermite app's Home shows them; nothing is sent to a phone."),
-              12, TILE)
+                   description="Alerts firing now, every one Prometheus has: the table below lists them. The "
+                               "thermite app's Home shows them without those another firing alert already "
+                               "explains, so it can show fewer. Nothing is sent to a phone."), 12, TILE)
     problems = ('(count(up == 0) or vector(0)) + (count(node_systemd_unit_state{job="node",name=~"thermite-.*",'
                 'state="failed"} == 1) or vector(0)) + (count((node_filesystem_avail_bytes{job="node",'
                 'fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes < 0.10) and '
@@ -1331,6 +1352,7 @@ def devices(mapping: dict, probes: list[dict]) -> dict:
     # How many of a device's signals say trouble, 0 for one with none: the order of the rows.
     signals = (("thing", f"min by (device) ({online}) == bool 0"),
                ("port", f"min by (device) (probe_success{{{probe}}}) == bool 0"),
+               ("reads", f"min by (device) (thermite_device_read_ok{{{ROOMS}}}) == bool 0"),
                ("problem", f"max by (device) (thermite_device_problem{{{ROOMS}}}) > bool 0"),
                ("none", f"count by (device) ({info}) * 0"))
     trouble = "sum by (device) (" + " or ".join(
@@ -1346,18 +1368,24 @@ def devices(mapping: dict, probes: list[dict]) -> dict:
         f"max by (device) (thermite_device_problem{{{ROOMS}}})",
         needed,
         trouble,
-        f'min by (device) (thermite_item_value{{point="online",{ROOMS}}})'], [
+        f'min by (device) (thermite_item_value{{point="online",{ROOMS}}})',
+        f"min by (device) (thermite_device_read_ok{{{ROOMS}}})"], [
         Column("label", "Device", least=130, wrap=True),
         Column("Value #B", "Thing", states=ONLINE, **state), Column("Value #C", "Port", states=OPEN, **state),
+        Column("Value #J", "Reads", states=READS, width=90),
         Column("Value #G", "Needed", states=NEEDED, **state),
-        Column("Value #F", "Problem", states=PROBLEM, width=92),
+        Column("Value #F", "Last problem", states=PROBLEM, width=112),
         Column("Value #I", "Ping", states=REACHABLE, width=104),
         Column("Value #D", "Probe", unit="ms", decimals=1, width=86),
         Column("Value #E", "Offline since", _words({"0": "Not in the last week"}), unit="dateTimeFromNow", width=150),
         _room_column(mapping, last=True)],
         "One row per device, those in trouble first, then those needed now. Thing: the runtime's connection to "
         "it (Things not online says in what status). Port: its control port accepts a TCP connection; Probe: "
-        "how long that took. Ping: it answers a ping, or its controller reports it connected; a device that "
+        "how long that took. Reads: it answers what thermite's own script asks it; a dash where no script "
+        "reads it now, as with a TV in standby. Last problem: the remotes still show what its last failed "
+        "read or command met. That stays until the device takes a command, however long ago its cause went, "
+        "so it says what a person last ran into, not what holds now: Thing, Port and Reads do. "
+        "Ping: it answers a ping, or its controller reports it connected; a device that "
         "sleeps answers none, so this alone is no trouble and no alert. "
         "Needed: a room's selected source uses it (the source the room last reported, "
         f"for {alerts.HELD} at most, while it reports none), it is routing infrastructure, or it is "
@@ -1368,6 +1396,31 @@ def devices(mapping: dict, probes: list[dict]) -> dict:
         order=(("room", False), ("Value #G", True), ("Value #H", True))),
         24, min(20, max(8, len(known) + 2)))
     board.add(_things_not_online(mapping), 24, 6)
+    commands = f"thermite_device_commands_total{{{ROOMS}}}"
+    took = f"round(sum by (device) (increase({commands}[$__range]))) > 0"
+    board.add(events("Commands by outcome", [
+        Count("thermite_device_commands_total", "{{outcome}}", UNKNOWN, by="outcome", where=ROOMS)],
+        _per_bar("Commands thermite's own scripts took for the devices of the chosen rooms, from a remote or "
+                 "from routing, by how each ended") + ". Acknowledged: the device said so. Sent: handed to a "
+        "transport that acknowledges nothing, such as an infrared code. Not sent: the rule itself dropped it "
+        "(a value the device does not take, a read-only copy, routing holding the device). Did not arrive: "
+        "nothing reached the device. Refused, Busy: it answered no, or not now. Effect unknown: sent, and "
+        "nothing says what became of it. Devices a binding commands are not counted.",
+        none="No command", names=COMMANDS), 12, 7)
+    board.add(table("Commands by device", [
+        took,
+        f'(round(sum by (device) (increase(thermite_device_commands_total{{outcome=~"{"|".join(NOT_TAKEN)}",'
+        f"{ROOMS}}}[$__range])))) and on (device) ({took})",
+        f"(sum by (device) (increase(thermite_device_command_seconds_total{{{ROOMS}}}[$__range])) / "
+        f"sum by (device) (increase({commands}[$__range]))) and on (device) ({took})"], [
+        Column("device", "Device", _words(_device_words(mapping)), least=130),
+        Column("Value #A", "Commands", decimals=0, width=100),
+        Column("Value #B", "Not taken", decimals=0, steps=_thresholds((OK, None), (WARN, 1)), width=100),
+        Column("Value #C", "Mean time", unit="s", decimals=2, width=100)],
+        "The devices of the chosen rooms that took a command in the selected range. Not taken: those that did not arrive, were "
+        "refused or met a busy device, or whose effect is not known; a command the rule itself dropped is "
+        "not among them. Mean time: from the command to its outcome.",
+        none="No device took a command", sort=("Not taken", True)), 12, 7)
     # One timeline of every room per signal: the time axes line up, and a row is as tall in one as in another.
     zones = _zones(mapping)
     queries, names = _source_timeline(mapping, zones)
@@ -1404,9 +1457,10 @@ def devices(mapping: dict, probes: list[dict]) -> dict:
                              description="Receivers', amplifiers' and speakers' volume settings in their own "
                                          "scales: not percentages, not loudness. Unknown stays a gap. Choose a "
                                          "room at the top to tell its lines apart."), 24, 8)
-    return dashboard(DEVICES, board, "Every device's connection, control port, problem and whether a room needs it "
-                     "now, trouble first; then every source, power and speaker through the day. Room narrows it "
-                     "to the rooms you choose.", variables=(room_variable(mapping),))
+    return dashboard(DEVICES, board, "Every device's connection, control port, reads and whether a room needs it "
+                     "now, trouble first; the commands devices took and how they ended; then every source, power "
+                     "and speaker through the day. Room narrows it to the rooms you choose.",
+                     variables=(room_variable(mapping),))
 
 
 # ---------------------------------------------------------------- openHAB and the host

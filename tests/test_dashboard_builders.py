@@ -198,8 +198,8 @@ class Builders(unittest.TestCase):
             for query in panel["targets"]:
                 self.assertTrue(counts_a_bucket(query["expr"], EVENT_BAR, ahead=True), (where, query["expr"]))
                 self.assertEqual(query["interval"], dashboards.EVENT_BUCKET, where)
-        # Seven on Switching & remotes and btrfs errors on Host, in each of four houses.
-        self.assertEqual(bars, 4 * 8)
+        # Seven on Switching & remotes, the commands on Devices and btrfs errors on Host, in each of four houses.
+        self.assertEqual(bars, 4 * 9)
         for _, panel in drawn():
             for config in configs(panel):
                 self.assertNotIn("custom.drawStyle", config, panel["title"])
@@ -479,6 +479,28 @@ class OnSeries(unittest.TestCase):
             ("1h", query("switching", "Waited before giving up", 0),
              [('{kind="policy_timeout"}', 5), ('{kind="locks_timeout"}', 3)]),
             ("1h", query("switching", "Waited before giving up", 1), [('{kind="policy_timeout"}', 8.2)])],
+            last="1h")
+
+    def test_commands_by_device_counts_those_not_taken_and_the_mean_time(self):
+        """An hour in which a TV took ten commands in 4 s and two more did
+        not arrive after 16 s, a display dropped one itself, and a player
+        took none: 12 commands, 2 not taken, 20 s / 12 each; 1 and 0."""
+        def tally(device, room, outcome, count, seconds):
+            labels = f'{{device="{device}",room="{room}",kind="tv",integration="example",outcome="{outcome}"}}'
+            return {f"thermite_device_commands_total{labels}": f"0x60 {count}x59",
+                    f"thermite_device_command_seconds_total{labels}": f"0x60 {seconds}x59"}
+        inputs = {**tally("example_tv", "example_west", "applied", 10, 4),
+                  **tally("example_tv", "example_west", "unsent", 2, 16),
+                  **tally("example_display", "example_east", "dropped", 1, 0),
+                  **tally("example_display", "example_east", "unsent", 0, 0),
+                  **tally("example_player", "example_west", "applied", 0, 0)}
+        tv, display = '{device="example_tv"}', '{device="example_display"}'
+        self.shows(inputs, [
+            ("1h", query("devices", "Commands by device", 0), [(tv, 12), (display, 1)]),
+            ("1h", query("devices", "Commands by device", 1), [(tv, 2), (display, 0)]),
+            ("1h", query("devices", "Commands by device", 2), [(tv, 20 / 12), (display, 0)]),
+            ("0s", query("devices", "Commands by outcome"), [('{outcome="applied"}', 10), ('{outcome="dropped"}', 1),
+                                                           ('{outcome="unsent"}', 2)])],
             last="1h")
 
     def test_the_wait_histogram_has_no_bound_on_the_remotes_timeout(self):

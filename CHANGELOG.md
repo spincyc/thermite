@@ -7,6 +7,25 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Dashboards: Devices shows how the commands devices took ended, and
+  whether a device's problem is one that holds now.
+  - **Commands by outcome** counts the commands thermite's scripts took
+    for the devices of the chosen rooms, an hour a bar: acknowledged or
+    sent in green, refused or busy in amber, did not arrive in red,
+    effect unknown in grey, dropped by the rule itself in slate.
+    **Commands by device** lists each device that took a command in the
+    selected range with how many, how many were not taken and the mean
+    time to an outcome.
+  - The **Problem** column is **Last problem**, and reads "Still shown"
+    where it read "Reported": the remotes show what a device's last
+    failed read or command met until the device takes a command, however
+    long ago its cause went. A new **Reads** column says what holds now:
+    whether the device answers thermite's own reads, the reading the
+    "Cannot be read" check is made of. Reads that fail put a device
+    among those in trouble at the top.
+  - **Alerts firing** on House health says that it counts every firing
+    alert, so it can be higher than the app's Home, which leaves out
+    alerts another firing alert explains.
 - Dashboards: a bar or a heatmap cell counts every event exactly once.
   - The bar charts on Switching & remotes and Host, and **Time to
     switch**, missed an event that fell between two bars' samples: one

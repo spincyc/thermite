@@ -72,13 +72,10 @@ def items(**states):
 #: The gateway's subscriptions opened and resyncs repeat its connects, which
 #: are routine (the first remote page opens it): its failures are what
 #: matters, and the gateway is to stop exporting both (handoff).
-#: What became of each device's commands is counted for a query when one
-#: fails, and for a board that has yet to be drawn.
 #: The code a device's problem Item holds is what `thermite device` puts
 #: into words; the Devices board shows only that it holds one.
 UNREAD = {"thermite_zone_info", "thermite_item_device_off",
           "thermite_gateway_upstream_connects_total", "thermite_gateway_upstream_resyncs_total",
-          "thermite_device_commands_total", "thermite_device_command_seconds_total",
           "thermite_device_problem_info"}
 
 
@@ -1274,7 +1271,7 @@ class Dashboards(unittest.TestCase):
         self.assertFalse([title for title in titles if "Routing selections" in title])
         table = next(panel for panel in panels(board) if panel["title"] == "Devices")
         self.assertEqual(table["transformations"][0]["id"], "merge")
-        self.assertEqual(len(table["targets"]), 9)
+        self.assertEqual(len(table["targets"]), 10)
         # Trouble first. Each sort keeps the order of the one before among equals, so the last is the
         # first key: how many of a device's signals say trouble, then needed now, then the room.
         self.assertEqual([step["options"]["sort"] for step in table["transformations"][1:4]], [
@@ -1292,6 +1289,53 @@ class Dashboards(unittest.TestCase):
         shown = {option["text"]: option["color"] for prop in ping["properties"] if prop["id"] == "mappings"
                  for mapping in prop["value"] for option in mapping["options"].values()}
         self.assertEqual(shown, {"No response": dashboards.OFF, "Reachable": dashboards.OK})
+
+    def test_devices_says_whether_reads_are_answered_and_what_the_remotes_still_show(self):
+        """A command's problem stays on its Item until the device takes a
+        command, however long ago its cause went: the column says so, in
+        amber at most, and Reads says what holds now."""
+        table = next(panel for panel in panels(boards()[dashboards.DEVICES]) if panel["title"] == "Devices")
+        names = table["transformations"][-1]["options"]["renameByName"]
+        self.assertEqual((names["Value #F"], names["Value #J"]), ("Last problem", "Reads"))
+        self.assertNotIn("Problem", names.values())
+        self.assertEqual(table["targets"][5]["expr"], 'max by (device) (thermite_device_problem{room=~"$room"})')
+        self.assertEqual(table["targets"][9]["expr"], 'min by (device) (thermite_device_read_ok{room=~"$room"})')
+
+        def shown(field):
+            column = next(override for override in table["fieldConfig"]["overrides"]
+                          if override["matcher"]["options"] == field)
+            return {option["text"]: option["color"] for prop in column["properties"] if prop["id"] == "mappings"
+                    for mapping in prop["value"] for option in mapping["options"].values()}
+        self.assertEqual(shown("Value #F"), {"None": dashboards.OK, "Still shown": dashboards.WARN})
+        self.assertEqual(shown("Value #J"), {"Failing": dashboards.FAIL, "Answered": dashboards.OK})
+        # Reads that fail are trouble, and so is what the remotes show: both are in the order of the rows.
+        for signal in ("thermite_device_read_ok", "thermite_device_problem"):
+            self.assertIn(signal, table["targets"][7]["expr"])
+        for words in ("Last problem: the remotes still show", "not what holds now"):
+            self.assertIn(words, table["description"])
+
+    def test_devices_shows_how_the_commands_devices_took_ended(self):
+        board = {panel["title"]: panel for panel in panels(boards()[dashboards.DEVICES])}
+        bars, table = board["Commands by outcome"], board["Commands by device"]
+        named = {override["matcher"]["options"]: {prop["id"]: prop["value"] for prop in override["properties"]}
+                 for override in bars["fieldConfig"]["overrides"] if override["matcher"]["id"] == "byName"}
+        # Every outcome the exporter counts has words and a colour of its meaning.
+        self.assertEqual(set(named), set(exporter.COMMAND_OUTCOMES))
+        self.assertEqual({name: each["color"]["fixedColor"] for name, each in named.items()},
+                         {"applied": dashboards.OK, "sent": dashboards.OK, "dropped": dashboards.OFF,
+                          "unsent": dashboards.FAIL, "refused": dashboards.WARN, "busy": dashboards.WARN,
+                          "unknown": dashboards.UNKNOWN})
+        for each in named.values():
+            self.assertNotIn("_", each["displayName"])
+        self.assertLess(set(dashboards.NOT_TAKEN), set(exporter.COMMAND_OUTCOMES))
+        self.assertFalse({"applied", "sent", "dropped"} & set(dashboards.NOT_TAKEN))
+        for query in bars["targets"] + table["targets"]:
+            self.assertIn('room=~"$room"', query["expr"])
+        self.assertEqual(table["transformations"][-1]["options"]["renameByName"],
+                         {"device": "Device", "Value #A": "Commands", "Value #B": "Not taken",
+                          "Value #C": "Mean time"})
+        self.assertIn('outcome=~"unsent|refused|busy|unknown"', table["targets"][1]["expr"])
+        self.assertIn("thermite_device_command_seconds_total", table["targets"][2]["expr"])
 
     def test_a_shared_receivers_power_shows_in_the_room_each_zone_plays_in(self):
         from tests import test_zone_sync as zones
