@@ -7,6 +7,10 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The copies in `web/remote/` of the files `thermite generate` writes itself
+  are checked against the example house's and are current again: `house.js`
+  has `speakers` and `speakerRooms`, `activity.json` each Item's `power`.
+  `python -m tests.test_remote_samples --write` rewrites a stale copy.
 - Tests: `tests/generated_output.sha256` records the SHA-256 of every file
   `thermite generate` writes for the example house, a house for each
   integration and a routed house. `make check` fails, naming the files,

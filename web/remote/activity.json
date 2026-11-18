@@ -21,7 +21,8 @@
         "hdmi2": "HDMI 2",
         "hdmi3": "HDMI 3",
         "hdmi4": "HDMI 4"
-      }
+      },
+      "power": "example_tv_power"
     },
     "example_tv_volume": {
       "label": "Volume",
@@ -32,7 +33,8 @@
       "commands": true,
       "min": 0,
       "max": 100,
-      "step": 1
+      "step": 1,
+      "power": "example_tv_power"
     },
     "example_tv_mute": {
       "label": "Mute",
@@ -40,7 +42,8 @@
       "room": "Example West",
       "kind": "switch",
       "states": true,
-      "commands": true
+      "commands": true,
+      "power": "example_tv_power"
     },
     "example_tv_key": {
       "label": "Remote Key",
@@ -48,7 +51,8 @@
       "room": "Example West",
       "kind": "key",
       "states": false,
-      "commands": true
+      "commands": true,
+      "power": "example_tv_power"
     },
     "example_tv_pairing_status": {
       "label": "Pairing Status",
@@ -67,7 +71,8 @@
         "closed": "Pairing port closed",
         "unreachable": "Not answering",
         "unavailable": "Cannot pair now"
-      }
+      },
+      "power": "example_tv_power"
     },
     "example_tv_pairing_result": {
       "label": "Pairing result",
@@ -75,7 +80,8 @@
       "room": "Example West",
       "kind": "pairing_result",
       "states": true,
-      "commands": false
+      "commands": false,
+      "power": "example_tv_power"
     },
     "example_tv_problem": {
       "label": "Problem",
@@ -99,7 +105,8 @@
       "room": "Example West",
       "kind": "key",
       "states": false,
-      "commands": true
+      "commands": true,
+      "power": "example_player_power"
     },
     "example_player_pairing_status": {
       "label": "Pairing Status",
@@ -118,7 +125,8 @@
         "closed": "Pairing port closed",
         "unreachable": "Not answering",
         "unavailable": "Cannot pair now"
-      }
+      },
+      "power": "example_player_power"
     },
     "example_display_power": {
       "label": "Power",
@@ -140,7 +148,8 @@
         "hdmi2": "HDMI 2",
         "hdmi3": "HDMI 3",
         "hdmi4": "HDMI 4"
-      }
+      },
+      "power": "example_display_power"
     },
     "example_display_volume": {
       "label": "Volume",
@@ -151,7 +160,8 @@
       "commands": true,
       "min": 0,
       "max": 100,
-      "step": 1
+      "step": 1,
+      "power": "example_display_power"
     },
     "example_display_mute": {
       "label": "Mute",
@@ -159,7 +169,8 @@
       "room": "Example East",
       "kind": "switch",
       "states": true,
-      "commands": true
+      "commands": true,
+      "power": "example_display_power"
     },
     "example_display_key": {
       "label": "Remote Key",
@@ -167,7 +178,8 @@
       "room": "Example East",
       "kind": "key",
       "states": false,
-      "commands": true
+      "commands": true,
+      "power": "example_display_power"
     },
     "example_display_pairing_status": {
       "label": "Pairing Status",
@@ -186,7 +198,8 @@
         "closed": "Pairing port closed",
         "unreachable": "Not answering",
         "unavailable": "Cannot pair now"
-      }
+      },
+      "power": "example_display_power"
     },
     "example_display_pairing_result": {
       "label": "Pairing result",
@@ -194,7 +207,8 @@
       "room": "Example East",
       "kind": "pairing_result",
       "states": true,
-      "commands": false
+      "commands": false,
+      "power": "example_display_power"
     },
     "example_display_problem": {
       "label": "Problem",

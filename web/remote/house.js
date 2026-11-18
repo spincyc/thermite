@@ -16,6 +16,7 @@ globalThis.REMOTE_HOUSE = {
         "example_player",
         "example_matrix"
       ],
+      "speakers": [],
       "routeProblem": "loc_example_west_source_problem"
     },
     {
@@ -30,6 +31,7 @@ globalThis.REMOTE_HOUSE = {
         "example_display",
         "example_computer"
       ],
+      "speakers": [],
       "routeProblem": "loc_example_east_source_problem"
     }
   ],
@@ -112,5 +114,6 @@ globalThis.REMOTE_HOUSE = {
     }
   },
   "initial": {},
-  "holdMs": 15000
+  "holdMs": 15000,
+  "speakerRooms": []
 };

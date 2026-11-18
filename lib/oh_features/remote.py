@@ -10,7 +10,7 @@ THEMED, the page's colors and icons, are not copied but drawn by oh_brand
 from the house's theme: `theme` in devices.yaml, a built-in theme's name or
 a theme file relative to instance/, and thermite's own without one. The
 copies in web/remote/ are the default theme's, for a preview from disk;
-tests/test_remote_ui.py keeps them so.
+tests/test_remote_samples.py keeps them so.
 """
 
 from __future__ import annotations

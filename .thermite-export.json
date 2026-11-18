@@ -498,6 +498,7 @@
     "tests/test_reboots.py",
     "tests/test_remote_audio.py",
     "tests/test_remote_lock_ui.py",
+    "tests/test_remote_samples.py",
     "tests/test_remote_site_model.py",
     "tests/test_remote_system.py",
     "tests/test_remote_tui.py",
