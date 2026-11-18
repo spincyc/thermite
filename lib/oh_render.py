@@ -50,15 +50,20 @@ def validate(data: object) -> list[str]:
                     and not uses(device, module.PHASE, module.NAME)):
                 problems.append(f"{device['id']}: {module.NAME} under control needs it under {module.PHASE} too")
             problems += module.validate(device)
-    for module in integrations.REGISTRY:
-        if hasattr(module, "validate_house"):
-            problems += module.validate_house(data)
     if problems:
         # The features below ask the integrations about their devices (a
         # remote's inputs, say), which assumes each device is one they know.
         return problems
     for feature in features.REGISTRY:
         problems += feature.validate(data)
+    if problems:
+        # An integration's house-wide check reads the sections the features
+        # own (routing, say), which assumes each has the shape its feature
+        # checked.
+        return problems
+    for module in integrations.REGISTRY:
+        if hasattr(module, "validate_house"):
+            problems += module.validate_house(data)
     return problems
 
 

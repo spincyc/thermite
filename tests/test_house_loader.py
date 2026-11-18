@@ -2,12 +2,13 @@
 validates it; and a house file that is wrong in shape ends in a ConfigError
 that names the problem, whatever is wrong with it.
 
-The mutation tests are the guard for the second. They take a valid house,
-replace each of its values in turn by a null, a text, a number, a list and a
-mapping, and remove each key and list entry; each changed house then goes
-through the verbs as a house file would. Any outcome but "valid" or
-ConfigError (a TypeError from a validator that looked a list up in a dict,
-say) fails, naming the change and where it raised.
+The mutation tests are the guard for the second. They take each fixture
+house, replace each of its values in turn by a null, a text, a number, a
+list and a mapping, and remove each key and list entry; each changed house
+is then loaded as a house file would be, and the example's go through the
+verbs as well. Any outcome but "valid" or ConfigError (a TypeError from a
+validator that looked a list up in a dict, say) fails, naming the change
+and where it raised.
 """
 import contextlib
 import copy
@@ -41,7 +42,7 @@ EXAMPLE = json.loads(HOUSE.read_text(encoding="utf-8"))
 #: that is no integer. REMOVED takes the key or the list entry away.
 REMOVED = object()
 REPLACEMENTS = (None, "x", 7, 1.5, True, [], ["x"], {}, {"x": 1}, REMOVED)
-#: The most changed houses one test may make: the houses are fixed, so this
+#: The most changed houses one house may make: the houses are fixed, so this
 #: only stops a house that grew from making the suite slow unnoticed.
 MOST = 3000
 #: Seconds one changed house may take (a valid one generates in about 0.2).
@@ -70,13 +71,10 @@ def places(node, prefix=()):
             yield from places(value, (*prefix, key))
 
 
-def changes(house: dict, below: tuple = ()):
+def changes(house: dict):
     """(description, changed copy of `house`) for every replacement of every
-    value at or below `below`, one at a time."""
-    start = house
-    for key in below:
-        start = start[key]
-    for place in places(start, below):
+    value in it, one at a time."""
+    for place in places(house):
         current = house
         for key in place:
             current = current[key]
@@ -112,12 +110,12 @@ class Changed(unittest.TestCase):
         self.addCleanup(signal.signal, signal.SIGALRM, before)
         self.addCleanup(signal.alarm, 0)
 
-    def survey(self, house: dict, below: tuple, use) -> tuple[int, int]:
+    def survey(self, house: dict, use) -> tuple[int, int]:
         """use() on every changed house; (how many there were, how many were
         valid). Fails naming each that raised anything but ConfigError."""
         count = valid = 0
         failures = []
-        for what, self.content in changes(house, below):
+        for what, self.content in changes(house):
             count += 1
             self.assertLessEqual(count, MOST, "the house has grown: mutate a part of it, or sample")
             signal.alarm(DEADLINE)
@@ -164,18 +162,30 @@ class Mutations(Changed):
                                             "--root", str(self.root / "none")]), 1)
 
     def test_every_single_change_to_the_example_house_validates_and_generates_or_is_a_config_error(self):
-        count, valid = self.survey(EXAMPLE, (), self.verbs)
+        count, valid = self.survey(EXAMPLE, self.verbs)
         # Both outcomes occur, so the survey reaches the generator as well as the validators.
         self.assertGreater(valid, 20)
         self.assertGreater(count - valid, 500)
 
-    def test_every_single_change_to_fuller_routing_validates_or_is_a_config_error(self):
-        # The routing the example has none of: zones that follow one
-        # another, an HDMI switch, USB, EDID. Its changed houses are only
-        # loaded: generating each valid one as well takes half a minute.
-        count, valid = self.survey(test_generated_output.ROUTED, ("routing",), lambda: House.load(HOUSE))
-        self.assertGreater(valid, 20)
-        self.assertGreater(count - valid, 500)
+    def test_every_single_change_to_every_other_fixture_house_loads_or_is_a_config_error(self):
+        # One house per integration and phase, and the routed house (zones
+        # that follow one another, an HDMI switch, USB, EDID): the fields
+        # and the routing the example has none of. These are only loaded;
+        # generating each valid one as well takes over a minute.
+        houses = {name: house for name, house in test_generated_output.houses().items() if isinstance(house, dict)}
+        self.assertGreater(len(houses), 20)
+        for name, house in houses.items():
+            with self.subTest(house=name):
+                count, valid = self.survey(house, lambda: House.load(HOUSE))
+                self.assertGreater(valid, 10)
+                self.assertGreater(count - valid, 100)
+
+    def test_a_house_with_rooms_and_no_devices_key_generates(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            house = Path(scratch) / "devices.yaml"
+            house.write_text(json.dumps({"version": 1, "rooms": {"den": {"label": "Den", "tag": "Room"}}}))
+            (Path(scratch) / "out").mkdir()
+            self.assertIn("conf/yaml/model.yaml", test_generated_output.written(house, Path(scratch) / "out"))
 
 
 class Loader(unittest.TestCase):

@@ -23,7 +23,9 @@ Optional provider hooks preserve dormant integrations and validate gateways:
     addons(devices) -> Addon sequence
               conditional add-ons; otherwise static ADDONS is unchanged
     validate_house(data) -> list[str]
-              cross-device wiring/dependency validation before rendering
+              cross-device wiring/dependency validation before rendering;
+              it runs last, on a house whose every device and section
+              (routing, say) has passed its own validation
     transport_addresses(device) -> {exactThingUID: [IPv4, ...]}
               validated endpoint authority for that provider's own Things
               only; unrelated Things retain their inventory address checks

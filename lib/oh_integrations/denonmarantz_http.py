@@ -260,7 +260,7 @@ def inputs(device: dict, zone: int | None = None) -> list[tuple[str, str]]:
 def validate(device: dict) -> list[str]:
     problems = []
     zones = device.get("zones")
-    if zones is not None and (not isinstance(zones, int) or isinstance(zones, bool) or zones not in ZONES):
+    if "zones" in device and (not isinstance(zones, int) or isinstance(zones, bool) or zones not in ZONES):
         problems.append(f"{device.get('id')}: zones {zones!r} is not {ZONES.start}-{ZONES.stop - 1}")
     return problems
 

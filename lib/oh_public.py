@@ -97,13 +97,18 @@ def _private(area: Path) -> set[str]:
     import yaml
     path = area / "instance/devices.yaml"
     house = yaml.safe_load(path.read_text()) if path.is_file() else {}
-    identifiers = {d["id"].lower() for d in (house or {}).get("devices", [])}
+    # Nothing has validated this file: the scan runs on a site that is being
+    # edited too, and takes every name it finds where a house keeps one.
+    house = house if isinstance(house, dict) else {}
+    devices = [d for d in house["devices"] if isinstance(d, dict)] if isinstance(house.get("devices"), list) else []
+    rooms = house["rooms"].values() if isinstance(house.get("rooms"), dict) else []
+    identifiers = {d["id"].lower() for d in devices if isinstance(d.get("id"), str)}
     facts = set(identifiers)
-    for room in (house or {}).get("rooms", {}).values():
-        label = str(room.get("label") or "").lower()
+    for room in rooms:
+        label = str(room.get("label") or "").lower() if isinstance(room, dict) else ""
         if " " in label:
             facts.add(label)
-    for d in (house or {}).get("devices", []):
+    for d in devices:
         name = str(d.get("name") or "").lower()
         products = {str(d.get("make") or "").lower(), str(d.get("model") or "").lower(),
                     (str(d.get("make") or "") + " " + str(d.get("model") or "")).strip().lower()}

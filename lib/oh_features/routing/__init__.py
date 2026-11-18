@@ -1127,7 +1127,7 @@ HOLD = 15
 def hold_ms(data: dict) -> int:
     """routing.js's RECENT_MS: HOLD, or the slowest read-back (READ_BACK)
     of a room's receiver or display and 2 s, if longer."""
-    devices = {d["id"]: d for d in data["devices"]}
+    devices = {d["id"]: d for d in data.get("devices") or []}
     rooms = ((data.get("routing") or {}).get("rooms") or {}).values()
     staged = {(entry.get(role) or {}).get("device") for entry in rooms for role in ("receiver", "display")}
     slowest = max((module.READ_BACK for ident in staged if ident in devices

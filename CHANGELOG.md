@@ -7,6 +7,10 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- More house files of the wrong shape are a message and exit status 2
+  instead of a traceback: text or a null where routing lists its
+  sources (with a BK808 matrix), `zones:` with nothing after it on a
+  Denon or Marantz receiver, and a house with rooms and no `devices`.
 - A command refused because another was still running in its room now
   says so, and that it was not sent. A request refused because one
   address had too many open at once, or because it arrived too

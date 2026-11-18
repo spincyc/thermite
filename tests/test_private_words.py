@@ -79,6 +79,16 @@ class PrivateWords(unittest.TestCase):
             self.write("instance/private-words.txt", "fixture-buildhost\n")
             self.assert_blocked_by_both_guards("fixture-buildhost")
 
+    def test_the_public_scan_takes_the_names_of_a_house_file_of_any_shape(self):
+        named = "{id: fixture_named_device, name: Fixture Named Device}"
+        for content in ("devices: [{name: No Id}, 7, " + named + "]\nrooms: {den: 7, hall: {label: [x]}}\n",
+                        "devices:\nrooms: [den]\n", "devices: {a: " + named + "}\n", "- " + named + "\n", "7\n", ""):
+            with self.subTest(content=content):
+                self.write("instance/devices.yaml", content)
+                found = oh_public.guard({"fixture.md": b"Synthetic disclosure: fixture_named_device."}, self.site)
+                # Only the first is a list of devices, one of them with an id.
+                self.assertEqual(bool(found), content.startswith("devices: ["), found)
+
 
 if __name__ == "__main__":
     unittest.main()
