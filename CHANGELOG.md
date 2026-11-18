@@ -7,6 +7,42 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Dashboards: every chart uses the six documented colours, and the
+  panels that misled on real data are corrected.
+  - A failure draws red, a warning amber and a plain measure tan on
+    every chart; Grafana's own palette, which could draw an error green,
+    is gone. Label values that reached the reader raw (`probe_failed`,
+    `web locks_timeout`) are words.
+  - The seven bar charts on Switching & remotes, and btrfs errors on
+    Host, count each event once: a bar is the events of its own hour.
+    They plotted a rolling hour at every step, so 16 source changes
+    summed to 481.
+  - **Since yesterday evening** and **Switch time by room** cover 18:00
+    yesterday to now. Grafana had ignored their range and shown the
+    dashboard's.
+  - House health has two rows of tiles that stay readable with Grafana's
+    menu docked, **Needs attention now** right under the house's tiles,
+    and the alerts firing on the first screen; its usage timelines moved
+    to Usage. **Phone delivery** reads "No subscribers" in amber while
+    nobody is subscribed, instead of a green "Last delivered".
+  - Devices lists devices in trouble first, then those needed now;
+    **Offline since** is that of the Thing offline longest; one timeline
+    of every room each for sources, power and speakers replaces a panel
+    per room; **Room**, at the top, keeps the dashboard to the rooms you
+    choose. On a phone the device, its Thing and its port come first.
+    Tiles and rooms link to the dashboard that says more.
+  - Switching & remotes: **Waited before giving up** is a table of
+    give-ups and mean waits (the chart read a constant 15.6 s for a real
+    8 s); the policy worker's passes and its oldest locked-room check
+    have a chart each.
+  - Host: **Metrics textfiles age** shows the three access services'
+    files against the 120 seconds after which their metrics count as
+    stopped, without the deploy file's age of hours.
+  - openHAB runtime: the busiest topics and rules are tables; the Things
+    timeline shows the 12 that were away longest; **Thread pool use**
+    leaves out the pool that is busy by design.
+  - Usage: a bar of time is full at the whole selected range, not at the
+    largest bar, and rooms where no speaker played are left out.
 - A first `thermite install` that rolled back can be run again. It had
   refused with "Thermite's files are installed here, but
   /etc/thermite/installed.json is missing or damaged": the rollback left

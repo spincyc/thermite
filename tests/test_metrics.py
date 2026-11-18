@@ -65,13 +65,14 @@ def items(**states):
     return [{"name": name, "state": state} for name, state in states.items()]
 
 
-#: Families no rule or board reads, each for its reason. The info families
-#: are facts to join a check with (on(zone), on(room) group_left(label)).
+#: Families no rule or board reads, each for its reason. The zone info family
+#: is a fact to join a check with (on(zone)); the Devices board reads the
+#: room's, to show a row while its room is chosen.
 #: A reading whose device is off is a fact to query, not a fault to show.
 #: The gateway's subscriptions opened and resyncs repeat its connects, which
 #: are routine (the first remote page opens it): its failures are what
 #: matters, and the gateway is to stop exporting both (handoff).
-UNREAD = {"thermite_room_info", "thermite_zone_info", "thermite_item_device_off",
+UNREAD = {"thermite_zone_info", "thermite_item_device_off",
           "thermite_gateway_upstream_connects_total", "thermite_gateway_upstream_resyncs_total"}
 
 
@@ -343,6 +344,10 @@ class Playing(unittest.TestCase):
         # Only what a room showed, each title in any interval it played, however short.
         self.assertIn('count_over_time(thermite_playing_timestamp_seconds{zones!=""}[$__interval])',
                       timeline["targets"][0]["expr"])
+        # A row is named by what played, cut at its end: the timeline cuts a long name at its start.
+        self.assertEqual(timeline["targets"][0]["legendFormat"], "{{what}}")
+        self.assertTrue(timeline["targets"][0]["expr"].endswith(
+            f', "what", "$1…", "what", "(.{{{dashboards.ROW_NAME}}}).+"))'), timeline["targets"][0]["expr"])
         self.assertEqual(timeline["interval"], "1m")
         rows = next(panel for panel in panels(board) if panel["title"] == "What played, where and for how long")
         # First and last are the readings' own times; no subquery.
@@ -456,21 +461,26 @@ class Speakers(unittest.TestCase):
     def test_boards_show_speakers_beside_rooms(self):
         house = self.BOARDS[dashboards.HOUSE]
         titles = [panel["title"] for panel in panels(house)]
-        self.assertEqual(titles[:7], ["Control", "Rooms ready", "Speakers ready", "Remotes", "Alerts firing",
-                                      "Phone delivery", "Host"])
-        # The tiles still fill one row.
-        self.assertEqual(sum(panel["gridPos"]["w"] for panel in list(panels(house))[:7]), 24)
+        self.assertEqual(titles[:8], ["Control", "Rooms ready", "Speakers ready", "Remotes", "Needs attention now",
+                                      "Alerts firing", "Phone delivery", "Host"])
+        # The house's tiles fill one row and monitoring's the next.
+        widths = [panel["gridPos"]["w"] for panel in panels(house)]
+        self.assertEqual((sum(widths[:4]), sum(widths[5:8])), (24, 24))
         ready = next(panel for panel in panels(house) if panel["title"] == "Speakers ready")
         self.assertIn('device=~"example_amp|example_speaker"', ready["targets"][0]["expr"])
-        listening = next(panel for panel in panels(house) if panel["title"] == "Listening through the day")
+        # How the house is used is on Usage, not between the tiles and the alerts.
+        self.assertNotIn("state-timeline", {panel["type"] for panel in panels(house)})
+        usage = self.BOARDS[dashboards.USAGE]
+        listening = next(panel for panel in panels(usage) if panel["title"] == "Listening through the day")
         self.assertEqual([target["legendFormat"] for target in listening["targets"]], ["Example East", "Example Patio"])
         self.assertEqual(listening["fieldConfig"]["defaults"]["mappings"], dashboards.PLAYBACK)
         devices = self.BOARDS[dashboards.DEVICES]
-        patio = next(panel for panel in panels(devices) if panel["title"] == "Example Patio")
-        self.assertEqual([target["legendFormat"] for target in patio["targets"]], ["Sonos Arc · Playing"])
-        self.assertEqual(patio["fieldConfig"]["overrides"][0]["properties"][0]["value"], dashboards.PLAYBACK)
-        usage = [panel["title"] for panel in panels(self.BOARDS[dashboards.USAGE])]
-        self.assertLessEqual({"Listening", "Listening through the day", "Where listening time went"}, set(usage))
+        speakers = next(panel for panel in panels(devices) if panel["title"] == "Speakers")
+        self.assertEqual([target["legendFormat"] for target in speakers["targets"]],
+                         ["Example East · WiiM Amp Pro", "Example Patio · Sonos Arc"])
+        self.assertEqual(speakers["fieldConfig"]["defaults"]["mappings"], dashboards.PLAYBACK)
+        self.assertLessEqual({"Listening", "Rooms through the day", "Where listening time went"},
+                             {panel["title"] for panel in panels(usage)})
 
     def test_a_house_of_speakers_alone_shows_what_played_and_listening_on_its_usage_board(self):
         from tests.test_wiim import house
@@ -933,7 +943,9 @@ class Dashboards(unittest.TestCase):
     def test_house_health_reads_the_recorded_health(self):
         house = boards()[dashboards.HOUSE]
         titles = [panel["title"] for panel in panels(house)]
-        self.assertEqual(titles[:6], ["Control", "Rooms ready", "Remotes", "Alerts firing", "Phone delivery", "Host"])
+        # The house's tiles, what they point at, then monitoring's: a phone stacks them in this order.
+        self.assertEqual(titles[:7], ["Control", "Rooms ready", "Remotes", "Needs attention now", "Alerts firing",
+                                      "Phone delivery", "Host"])
         control = next(panel for panel in panels(house) if panel["title"] == "Control")
         self.assertEqual(control["targets"][0]["expr"], alerts.HEALTH)
         attention = next(panel for panel in panels(house) if panel["title"] == "Needs attention now")
@@ -942,8 +954,11 @@ class Dashboards(unittest.TestCase):
                  for mapping in prop["value"] for option in mapping["options"].values()}
         self.assertLessEqual({"Not responding to control", "Control port closed", "Off while in use",
                               "Reports a problem", "Commands quarantined"}, words)
-        names = {annotation["name"] for annotation in house["annotations"]["list"]}
-        self.assertLessEqual({"Service starts", "Deploys"}, names)
+        # Service starts and deploys are marked where a board has time axes; House health has none.
+        marked = {name: {annotation["name"] for annotation in board["annotations"]["list"]}
+                  for name, board in boards().items()}
+        self.assertLessEqual({"Service starts", "Deploys"}, marked[dashboards.SWITCHING])
+        self.assertFalse({"Service starts", "Deploys"} & marked[dashboards.HOUSE])
         self.assertNotIn("hour()", json.dumps(boards()), "hour() is UTC only")
 
     def test_routing_counts_read_unknown_not_zero_while_telemetry_is_unreadable(self):
@@ -1041,23 +1056,36 @@ class Dashboards(unittest.TestCase):
         self.assertFalse([title for title in titles if "Routing selections" in title])
         table = next(panel for panel in panels(board) if panel["title"] == "Devices")
         self.assertEqual(table["transformations"][0]["id"], "merge")
-        self.assertEqual(len(table["targets"]), 7)
+        self.assertEqual(len(table["targets"]), 8)
+        # Trouble first. Each sort keeps the order of the one before among equals, so the last is the
+        # first key: how many of a device's signals say trouble, then needed now, then the room.
+        self.assertEqual([step["options"]["sort"] for step in table["transformations"][1:4]], [
+            [{"field": "room", "desc": False}], [{"field": "Value #G", "desc": True}],
+            [{"field": "Value #H", "desc": True}]])
+        self.assertNotIn("Value #H", table["transformations"][-1]["options"]["includeByName"])
 
     def test_a_shared_receivers_power_shows_in_the_room_each_zone_plays_in(self):
         from tests import test_zone_sync as zones
         files = rendered(zones.house())
         board = json.loads(files[f"{oh_metrics.GRAFANA_DASHBOARDS}/{dashboards.DEVICES}.json"])
-        rows = {panel["title"]: {target["legendFormat"]: target["expr"] for target in panel["targets"]}
-                for panel in panels(board) if panel["type"] == "state-timeline"}
-        cinema, lounge = rows["Example Cinema"], rows["Example Lounge"]
-        avr = "Example Avr (Marantz CINEMA 30)"
-        self.assertEqual(cinema[f"{avr} · Main"], 'max(thermite_item_value{item="example_avr_main_power"})')
-        self.assertEqual(lounge[f"{avr} · Zone 2"], 'max(thermite_item_value{item="example_avr_zone2_power"})')
-        self.assertFalse([label for label in cinema if "Zone 2" in label])
-        self.assertFalse([label for label in lounge if avr in label and "Zone 2" not in label])
+        power = next(panel for panel in panels(board) if panel["title"] == "Power")
+        rows = {target["legendFormat"]: target["expr"] for target in power["targets"]}
+        # One timeline of every room: a row is named by its room, and shown while that room is chosen.
+        # A name too long for the row loses its model, and then its middle: never its start or its zone.
+        chosen = ' and on() thermite_room_info{{room="{}",room=~"$room"}}'
+        self.assertEqual(rows["Example Cinema · Example Avr · Main"],
+                         '(max(thermite_item_value{item="example_avr_main_power"}))' + chosen.format("example_cinema"))
+        self.assertEqual(rows["Example Lounge · Example Avr · Zone 2"],
+                         '(max(thermite_item_value{item="example_avr_zone2_power"}))' + chosen.format("example_lounge"))
+        self.assertEqual(len([label for label in rows if "Example Avr" in label]), 2)
+        self.assertLessEqual(max(map(len, rows)), dashboards.ROW_NAME)
+        self.assertEqual(dashboards._in_room("Example Den", "Example Receiver Of Some Length (Marantz) · Zone 2"),
+                         "Example Den · Example Receiver… · Zone 2")
+        self.assertEqual(dashboards._in_room("Example Den", "Example Den Tv (Sony Example TV)"),
+                         "Example Den Tv (Sony Example TV)")
         # A device with one power Item keeps its name, in the room of the zone that needs it.
-        self.assertIn("Example Tv", lounge)
-        self.assertIn("Example Screen (Sony Example TV)", cinema)
+        self.assertIn("Example Lounge · Example Tv", rows)
+        self.assertIn("Example Cinema · Example Screen", rows)
 
     def test_devices_table_has_no_row_for_a_house_wide_check(self):
         """The house-wide checks name jobs and services (openhab, node...) as
@@ -1072,7 +1100,7 @@ class Dashboards(unittest.TestCase):
             if alerts.CHECK in query["expr"]:
                 head, _, _ = query["expr"].partition(" or ")
                 self.assertIn(alerts.CHECK, head)
-                self.assertTrue(head.endswith("and on(device) thermite_device_info)"), query["expr"])
+                self.assertTrue(head.endswith('and on(device) thermite_device_info{room=~"$room"})'), query["expr"])
 
     def test_items_the_runtime_lacks_and_refused_streams_are_shown(self):
         openhab = boards()[dashboards.OPENHAB]
@@ -1099,8 +1127,8 @@ class Dashboards(unittest.TestCase):
         busiest = [panel["targets"][0]["expr"] for panel in panels(openhab) if panel["title"].startswith("Busiest")]
         self.assertEqual(len(busiest), 2)
         for expr in busiest:
-            # One set of series for the whole range, not a new top set at every step.
-            self.assertRegex(expr, r" and topk\(6, sum by \(\w+\) \(increase\(.+\[\$__range\] @ end\(\)\)\)\)$")
+            # One top set for the whole range, in a table: on a chart, those with one rate drew one line.
+            self.assertRegex(expr, r"^topk\(6, sum by \(\w+\) \(increase\(.+\[\$__range\]\)\)\)$")
 
     def test_every_exporter_family_is_read(self):
         read = read_families()
@@ -1118,7 +1146,7 @@ class Dashboards(unittest.TestCase):
         self.assertEqual(samples, [("thermite_thing_online", labels, 0.0),
                                    ("thermite_thing_status_info", {**labels, "status": "OFFLINE"}, 1.0)])
         table = next(panel for panel in panels(boards()[dashboards.DEVICES]) if panel["title"] == "Things not online")
-        self.assertEqual(table["targets"][0]["expr"], 'thermite_thing_status_info{status!="ONLINE"}')
+        self.assertEqual(table["targets"][0]["expr"], 'thermite_thing_status_info{status!="ONLINE",room=~"$room"}')
         self.assertEqual(table["fieldConfig"]["defaults"]["noValue"], "Every Thing is online")
         words = {override["matcher"]["options"]: prop["value"][0]["options"]
                  for override in table["fieldConfig"]["overrides"] for prop in override["properties"]
