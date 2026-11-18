@@ -24,7 +24,7 @@ import oh_sandbox
 from oh_access import AccessError
 from oh_access.service import CONFIG_VERSION, load_config
 from oh_cli import docs
-from oh_install import changeover, steps
+from oh_install import changeover, engine, steps
 from oh_metrics import exporter
 
 
@@ -367,6 +367,94 @@ with mock.patch.object(oh_ports.socket, 'create_connection', side_effect=Connect
             self.assertTrue(oh_ports.native_configured_bytes((userdata / oh_ports.SHELL_CFG).read_bytes()))
             self.assertTrue(oh_ports.shutdown_configured_bytes((userdata / oh_ports.CUSTOM_PROPERTIES).read_bytes()))
 
+    STOCK_USERS = ("# openhab = example,_g_:admingroup\n"
+                   "openhab = habopen,_g_:admingroup\n"
+                   "_g_\\:admingroup = group,admin,manager,viewer,systembundles\n")
+
+    def native(self, temporary, users=STOCK_USERS):
+        userdata = Path(temporary) / "userdata"
+        (userdata / "etc").mkdir(parents=True)
+        (userdata / oh_ports.SHELL_CFG).write_text("sshPort = 8101\nsshHost = 127.0.0.1\n")
+        (userdata / oh_ports.CUSTOM_PROPERTIES).write_text("# custom\n")
+        if users is not None:
+            (userdata / oh_ports.USERS).write_text(users)
+        return userdata, Path(temporary) / "keys/karaf-password"
+
+    def test_karaf_keeps_a_password_as_this_digest(self):
+        # What Karaf itself wrote for the distribution's password, in a sandbox's userdata.
+        self.assertEqual(oh_ports.console_digest(oh_sandbox.KARAF_PASSWORD),
+                         "{CRYPT}4F61A0FD056BC0FD8231899EC4D9F9CA06AF0DEC895B2A3B0773F6FBC1C99776{CRYPT}")
+
+    def test_production_console_gets_a_random_password_in_place_of_the_stock_one(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            userdata, kept = self.native(temporary)
+            users = userdata / oh_ports.USERS
+            oh_ports.configure_native(userdata, console_password=kept)
+            self.assertEqual(kept.stat().st_mode & 0o777, 0o600)
+            self.assertEqual([path.name for path in kept.parent.iterdir()], [kept.name])
+            password = kept.read_text()
+            self.assertRegex(password, r"\A[0-9a-f]{48}\n\Z")
+            first = users.read_text()
+            self.assertEqual(first, self.STOCK_USERS.replace(
+                "openhab = habopen,", f"openhab = {oh_ports.console_digest(password.strip())},"))
+            # Neither the distribution's password nor the new one is in userdata.
+            self.assertNotIn(oh_sandbox.KARAF_PASSWORD, first.split("\n", 1)[1])
+            self.assertNotIn(password.strip(), first)
+            # A rerun keeps the password and the file that already holds its digest.
+            before = users.stat().st_ino
+            oh_ports.configure_native(userdata, console_password=kept)
+            self.assertEqual((kept.read_text(), users.read_text(), users.stat().st_ino), (password, first, before))
+            # Userdata initialized again, or as Karaf rewrote the stock password, gets the same one.
+            for stock in (self.STOCK_USERS, self.STOCK_USERS.replace(
+                    "= habopen,", f"= {oh_ports.console_digest(oh_sandbox.KARAF_PASSWORD)},")):
+                users.write_text(stock)
+                oh_ports.configure_native(userdata, console_password=kept)
+                self.assertEqual((kept.read_text(), users.read_text()), (password, first))
+
+    def test_only_a_named_password_file_changes_the_console_account(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            userdata, kept = self.native(temporary)
+            oh_ports.configure_native(userdata)
+            self.assertEqual((userdata / oh_ports.USERS).read_text(), self.STOCK_USERS)
+            self.assertFalse(kept.parent.exists())
+        with tempfile.TemporaryDirectory() as temporary:
+            # No account file, no account: the password the manifest names is still made.
+            userdata, kept = self.native(temporary, users=None)
+            oh_ports.configure_native(userdata, console_password=kept)
+            self.assertRegex(kept.read_text(), r"\A[0-9a-f]{48}\n\Z")
+            self.assertFalse((userdata / oh_ports.USERS).exists())
+
+    def test_console_password_file_that_others_read_or_that_holds_none_changes_nothing(self):
+        for mode, content, problem in ((0o640, "a" * 48, "alone"), (0o600, "short\n", "no console password"),
+                                       (0o600, "with space " * 3, "no console password")):
+            with self.subTest(mode=mode, content=content), tempfile.TemporaryDirectory() as temporary:
+                userdata, kept = self.native(temporary)
+                kept.parent.mkdir()
+                kept.write_text(content)
+                kept.chmod(mode)
+                before = {path.name: path.read_bytes() for path in (userdata / "etc").iterdir()}
+                with self.assertRaisesRegex(ValueError, problem):
+                    oh_ports.configure_native(userdata, console_password=kept)
+                self.assertEqual({path.name: path.read_bytes() for path in (userdata / "etc").iterdir()}, before)
+                self.assertEqual(kept.read_text(), content)
+        with tempfile.TemporaryDirectory() as temporary:
+            userdata, kept = self.native(temporary)
+            kept.parent.mkdir(mode=0o777)
+            kept.parent.chmod(0o777)
+            with self.assertRaisesRegex(ValueError, "writable by no one else"):
+                oh_ports.configure_native(userdata, console_password=kept)
+            self.assertFalse(kept.exists())
+
+    def test_helper_passes_the_console_password_file_only_when_named(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.object(oh_ports.socket, "create_connection", side_effect=ConnectionRefusedError()), \
+                mock.patch.object(oh_ports, "configure_native") as configure:
+            userdata = Path(temporary)
+            self.assertEqual(oh_ports.main([str(userdata), "--uid", "9001", "--gid", "9001",
+                                            "--console-password", "/etc/thermite/karaf-password"]), 0)
+        configure.assert_called_once_with(userdata, anchored=True, uid=9001, gid=9001,
+                                          console_password=Path("/etc/thermite/karaf-password"))
+
     def test_installer_sets_console_before_start_or_restart(self):
         host = oh_public.demo_host()
         versions = json.loads((AREA / "versions.json").read_text())
@@ -383,6 +471,12 @@ with mock.patch.object(oh_ports.socket, 'create_connection', side_effect=Connect
         receipt = next(i for i, argv in enumerate(commands) if "--receipt" in argv)
         self.assertLess(logging, listeners)
         self.assertLess(listeners, receipt)
+        # The same root command gives the console its own password, root's alone.
+        self.assertEqual(commands[listeners][-2:], ("--console-password", "/etc/thermite/karaf-password"))
+        self.assertEqual(steps.NativeListeners(context).actions(system)[-1].argv[-2:], commands[listeners][-2:])
+        items = {str(item.path): item.cls for item in steps.NativePreparation(context).desired(system)}
+        self.assertEqual(items["/etc/thermite/karaf-password"], "file")
+        self.assertTrue(engine.allowed(context.installation.root, "/etc/thermite/karaf-password", "file"))
         configured = (f"sshPort = {oh_ports.KARAF_PORT}\nsshHost = 127.0.0.1\n").encode()
         system.read_bytes.side_effect = lambda path: configured if path.name == oh_ports.SHELL_CFG.name else oh_ports.shutdown_properties("", oh_ports.SHUTDOWN_PORT).encode()
         self.assertTrue(steps.NativeListeners(context).check(system).done)

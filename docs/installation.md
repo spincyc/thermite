@@ -1080,7 +1080,8 @@ print these steps. To recover, as root: stop Thermite
 (`/etc/systemd/system/thermite*`, `/etc/containers/systemd/thermite*` and
 their links in `/etc/systemd/system/multi-user.target.wants`), its shares'
 mount units (`/etc/systemd/system/*.mount` whose `Description` starts
-`Thermite share`) and logins (`/etc/thermite/share-*.credentials`), the native-port
+`Thermite share`) and logins (`/etc/thermite/share-*.credentials`), the
+console password `/etc/thermite/karaf-password`, the native-port
 rule file `/etc/thermite-native.nft`, the node exporter's AppArmor files
 with their licence
 (`/usr/share/doc/thermite/licenses/node-exporter-apparmor.LICENSE`) and

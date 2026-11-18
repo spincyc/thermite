@@ -21,6 +21,7 @@ import oh_deploy as deploy
 import oh_apparmor
 import oh_metrics as metrics
 import oh_music as music
+import oh_ports
 import oh_units
 from oh_install import engine
 
@@ -161,7 +162,8 @@ def missing_recovery(context: Context) -> str:
             f"stop Thermite (systemctl stop {oh_units.TARGET} {oh_units.SLICE}); move its units "
             f"({UNITS}/thermite*, /etc/containers/systemd/thermite*, {UNITS}/multi-user.target.wants/thermite*, "
             f"and the network shares' {UNITS}/*.mount whose Description starts Thermite share, with "
-            f"/etc/thermite/share-*.credentials), {ingress.RULE_FILE}, {oh_apparmor.CONFIG}, {oh_apparmor.POLICY}, "
+            f"/etc/thermite/share-*.credentials), {oh_ports.CONSOLE_PASSWORD}, {ingress.RULE_FILE}, "
+            f"{oh_apparmor.CONFIG}, {oh_apparmor.POLICY}, "
             f"{oh_apparmor.LICENSE} and what is left of the manifests ({INSTALLED}, {UNIT_RECORD}) aside, "
             f"out of those directories; run systemctl daemon-reload; then run thermite install --config {site}. "
             f"The state under {root} stays where it is, and that install takes it up; see "

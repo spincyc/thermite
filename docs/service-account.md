@@ -52,6 +52,26 @@ replaces existing operator credentials, changes accounts, or rewrites the
 service token. Keep the original managed credential record in private backups;
 the helper cannot reconstruct it from an API token.
 
+openHAB's Karaf console (SSH on 127.0.0.1:13604, account `openhab`) does not
+keep the password the distribution publishes. Every install and upgrade,
+while openHAB is stopped, gives the account this installation's
+own: 48 random hexadecimal digits in `/etc/thermite/karaf-password`, root's
+alone (0600), made the first time and kept after that. Userdata's
+`etc/users.properties` holds only its SHA-256 digest, as Karaf stores a
+password, and no service is given the file: read it with `sudo cat` when you
+want the console. Leave the file as it is. The installed manifest records
+it, like every root file of Thermite's, and a changed or missing one refuses
+the next transaction. `thermite revert` to a release from before it takes
+the file away as it puts that release's userdata back, and the next upgrade
+makes a new one. A developer sandbox and the boot check keep the
+distribution's password on purpose: their consoles are loopback listeners on
+their own ports, over userdata in the developer's own `var/`.
+
+Of the monitoring credentials in `runtime/monitoring/secrets`, Prometheus and
+the Item exporter, which send the API token, mount the directory. Grafana's
+container is given the file of its own administrator password and nothing
+else there.
+
 More restrictive existing configuration modes are retained. Native userdata
 is private as a whole because it also contains identities and pairing keys.
 openHAB therefore writes its logs outside it, to `runtime/logs`, where the

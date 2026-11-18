@@ -83,8 +83,11 @@ STATE_EXPORTER_APP = "exporter/app"
 #: The area's files the exporter's container runs, below STATE_EXPORTER_APP.
 EXPORTER_APP = ("lib/oh_metrics/exporter.py", "lib/oh_ports.py")
 
-#: Inside the containers. Directories, never single files: a deploy renames a
-#: new file over the old one, and a bind-mounted file would keep the old inode.
+#: Inside the containers. Directories, never single files, for whatever a
+#: deploy rewrites: it renames a new file over the old one, and a bind-mounted
+#: file would keep the old inode. Grafana's password is the one file mounted
+#: alone (services()): it is made once and never replaced under a running
+#: Grafana, which reads it only when it starts.
 SECRETS_MOUNT = "/secrets"
 OPENHAB_TOKEN = "openhab-token"
 GRAFANA_ADMIN_PASSWORD = "grafana-admin-password"
@@ -209,10 +212,13 @@ SERVICE_UNITS = oh_units.METRICS
 
 def services(host: dict) -> list[Service]:
     """The metrics containers, in start order. All run Network=host as the
-    state's uid and gid; only Grafana listens beyond this host."""
+    state's uid and gid; only Grafana listens beyond this host. Prometheus
+    and the exporter, which send the openHAB token, mount the secrets;
+    Grafana mounts its own password's file and nothing else of them."""
     port = ports(host)
     keep, size = retention(host)
     secrets = Volume(STATE_SECRETS, SECRETS_MOUNT, "ro")
+    password = f"{SECRETS_MOUNT}/{GRAFANA_ADMIN_PASSWORD}"
     return [
         Service(
             oh_units.PROMETHEUS, oh_units.CONTAINERS[oh_units.PROMETHEUS], "prometheus", "Prometheus for openHAB",
@@ -281,15 +287,16 @@ def services(host: dict) -> list[Service]:
             (),
             (Volume(f"{STATE_CONFIG}/grafana", GRAFANA_CONFIG_DIR, "ro"),
              Volume(STATE_GRAFANA, GRAFANA_DATA_DIR, "rw"),
-             secrets),
+             Volume(f"{STATE_SECRETS}/{GRAFANA_ADMIN_PASSWORD}", password, "ro")),
             environment=(("GF_PATHS_CONFIG", f"{GRAFANA_CONFIG_DIR}/grafana.ini"),
                          ("GF_PATHS_PROVISIONING", f"{GRAFANA_CONFIG_DIR}/provisioning"),
                          ("GF_PATHS_DATA", GRAFANA_DATA_DIR),
-                         ("GF_SECURITY_ADMIN_PASSWORD__FILE", f"{SECRETS_MOUNT}/{GRAFANA_ADMIN_PASSWORD}")),
+                         ("GF_SECURITY_ADMIN_PASSWORD__FILE", password)),
             notes=("The only one that listens beyond this host: anonymous visitors on the",
                    "LAN view the dashboards, and edits need the admin login. Grafana rereads",
                    f"the dashboards every {GRAFANA_RELOAD_SECONDS}s; a deploy that changes its settings or",
-                   "provisioning restarts it."),
+                   "provisioning restarts it. Of the secrets it is given the file of its own",
+                   "password, never their directory, which also holds the openHAB token."),
         ),
     ]
 

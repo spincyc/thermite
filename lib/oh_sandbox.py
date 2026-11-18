@@ -47,8 +47,11 @@ DOWNLOADS = CACHE / "downloads"
 VERSIONS_FILE = AREA / "versions.json"
 
 KARAF_USER = "openhab"
-# The distribution's stock Karaf console credentials (userdata/etc/users.properties).
-# The console only listens on 127.0.0.1, and sandbox userdata never leaves var/.
+# The distribution's stock Karaf console credentials (userdata/etc/users.properties),
+# which the sandbox and the boot check keep on purpose: start logs in with them to
+# make the API token, the console only listens on 127.0.0.1, and sandbox userdata
+# never leaves var/. A production install replaces the password with a random one
+# (oh_ports.CONSOLE_PASSWORD).
 KARAF_PASSWORD = "habopen"
 ADMIN_USER = "admin"
 TOKEN_NAME = "automation"

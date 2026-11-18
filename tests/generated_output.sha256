@@ -100,7 +100,7 @@ b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/therm
 
 b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/thermite-blackbox.service.d/50-container-lifecycle.conf
 
-a6ec2798e8a8af28915a2ee22c05cabf5bdc123558bb53a503ebee1b1000be2a  */deploy/thermite-grafana.container
+44807f5f30b2dc0a002e706966dedb3f8b2640f51f4f4a2378323d2dbac1f3f0  */deploy/thermite-grafana.container
 
 b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/thermite-grafana.service.d/50-container-lifecycle.conf
 

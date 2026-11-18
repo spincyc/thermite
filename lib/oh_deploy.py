@@ -354,8 +354,9 @@ class State:
 
     @property
     def monitoring_secrets(self) -> Path:
-        """The openHAB API token Prometheus and the exporter send, and Grafana's
-        admin password, mounted read-only at oh_metrics.SECRETS_MOUNT."""
+        """The openHAB API token Prometheus and the exporter send, mounted
+        read-only at oh_metrics.SECRETS_MOUNT, and Grafana's admin password,
+        the one file of it Grafana is given."""
         return self.root / metrics.STATE_SECRETS
 
     @property
@@ -827,7 +828,8 @@ def _volume(service: metrics.Service, volume: metrics.Volume, root: Path, shared
     options = [option for option in volume.options.split(",") if option and option != "rw"]
     if not volume.source.startswith("/"):
         # Under SELinux: a private label for a directory one container
-        # mounts, a shared one for the secrets several mount.
+        # mounts, a shared one for the secrets several mount, and for
+        # the one file of them that Grafana mounts.
         options.append("z" if volume.source in shared else "Z")
     source = volume.source if volume.source.startswith("/") else str(root / volume.source)
     return f"Volume={source}:{volume.target}" + (f":{','.join(options)}" if options else "")
@@ -853,7 +855,10 @@ def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service)
     root = state(host).root
     every = metrics.services(host)
     used = [volume.source for other in every for volume in other.volumes]
-    shared = {source for source in used if used.count(source) > 1}
+    # Mounted more than once, or inside what another mount relabels whole.
+    shared = {source for source in used
+              if sum(other == source or f"{source}/".startswith(f"{other}/") or f"{other}/".startswith(f"{source}/")
+                     for other in used) > 1}
     address = service.listen
     # Python as a container's PID 1 installs no SIGTERM handler, and PID 1
     # ignores the signals it does not handle: podman waited out its stop

@@ -584,6 +584,14 @@ class MetricsUnits(unittest.TestCase):
     def test_grafana_reads_its_password_from_a_file(self):
         text = self.unit("grafana")
         self.assertIn("Environment=GF_SECURITY_ADMIN_PASSWORD__FILE=/secrets/grafana-admin-password\n", text)
+        # Its own password alone: the directory also holds the openHAB token.
+        self.assertEqual([line for line in text.splitlines() if "secrets" in line and line.startswith("Volume=")],
+                         ["Volume=/srv/thermite/runtime/monitoring/secrets/grafana-admin-password"
+                          ":/secrets/grafana-admin-password:ro,z"])
+        for name in ("prometheus", "metrics-exporter"):
+            self.assertIn("Volume=/srv/thermite/runtime/monitoring/secrets:/secrets:ro,z\n", self.unit(name))
+        for name in ("node-exporter", "blackbox"):
+            self.assertNotIn("monitoring/secrets", self.unit(name))
         self.assertIn("Volume=/srv/thermite/runtime/monitoring/grafana:/var/lib/grafana:Z\n", text)
         self.assertNotIn("Exec=", text)
 

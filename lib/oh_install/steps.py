@@ -850,7 +850,8 @@ class NativeListeners(Step):
             actions.append(Command(("systemctl", "stop", "thermite-openhab.service"), root=True))
         actions.append(Command(("python3", str(PROGRAM / "lib/oh_ports.py"),
                                 str(self.context.layout.userdata), "--http-port", str(self.context.host["http_port"]),
-                                "--uid", str(self.context.host["uid"]), "--gid", str(self.context.host["gid"])), root=True))
+                                "--uid", str(self.context.host["uid"]), "--gid", str(self.context.host["gid"]),
+                                "--console-password", str(oh_ports.CONSOLE_PASSWORD)), root=True))
         if running:
             actions.append(Command(("systemctl", "start", "thermite-openhab.service"), root=True))
         return actions
@@ -1216,8 +1217,12 @@ class NativePreparation(Step):
         return [Command(repair, root=True),
                 Command(deploy.prepare_openhab_argv(self.context.versions, host), root=True),
                 Command(("python3", str(PROGRAM / "lib/oh_logging.py"), userdata, "--http-port", str(host["http_port"])), root=True),
+                # The listeners, and the console's own password in place of the
+                # distribution's: every transaction runs this, so the first
+                # upgrade of an older install makes the password.
                 Command(("python3", str(PROGRAM / "lib/oh_ports.py"), userdata, "--http-port", str(host["http_port"]),
-                         "--uid", str(host["uid"]), "--gid", str(host["gid"])), root=True),
+                         "--uid", str(host["uid"]), "--gid", str(host["gid"]),
+                         "--console-password", str(oh_ports.CONSOLE_PASSWORD)), root=True),
                 Command((*helper, "--check-pairing-logging"), root=True),
                 Command(final, root=True)]
 
@@ -1228,8 +1233,12 @@ class NativePreparation(Step):
         # that went with the trees it reinstates, and takes away a first
         # install's, which would otherwise be all that is left of it under
         # runtime/ and stop the next install.
+        # The console password goes with the userdata that holds its digest:
+        # a revert to a version without one takes the file away as it puts
+        # that version's userdata back.
         return [manifest.Item(self.context.layout.userdata, "tree"), manifest.Item(self.context.layout.addons, "tree"),
-                manifest.Item(self.context.layout.root / oh_service.RECEIPT, "file")]
+                manifest.Item(self.context.layout.root / oh_service.RECEIPT, "file"),
+                manifest.Item(oh_ports.CONSOLE_PASSWORD, "file")]
 
 
 def _secret_wrong(system: System, context: Context, path: Path) -> str | None:

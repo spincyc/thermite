@@ -9,6 +9,7 @@ import argparse
 from contextlib import contextmanager
 import errno
 import fcntl
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -46,6 +47,19 @@ MUSIC = {"music": "port", "music_stream": "stream_port"}
 SHELL_CFG = Path("etc/org.apache.karaf.shell.cfg")
 CUSTOM_PROPERTIES = Path("etc/custom.properties")
 SHUTDOWN_KEYS = frozenset(("karaf.shutdown.port", "karaf.shutdown.host"))
+USERS = Path("etc/users.properties")
+#: The console account the distribution ships in USERS, with a password its
+#: documentation prints. A production install replaces that password
+#: (configure_native(console_password=)); the sandbox and the boot check,
+#: whose userdata is a developer's own, keep it (oh_sandbox.KARAF_PASSWORD).
+CONSOLE_USER = "openhab"
+#: The production console's password, made by the first install or upgrade
+#: that finds none: root's alone (0600), beside the share logins. No service
+#: reads it, and userdata holds only its digest; an administrator who wants
+#: the console reads it with sudo.
+CONSOLE_PASSWORD = Path("/etc/thermite/karaf-password")
+_CONSOLE_SECRET = re.compile(r"[!-~]{16,256}")
+_CONSOLE_LINE = re.compile(r"(\s*" + CONSOLE_USER + r"\s*[=:]\s*)[^,\r\n]*(.*)")
 
 
 def checked(name: str, value: int) -> int:
@@ -213,6 +227,22 @@ def shutdown_properties(text: str, port: int) -> str:
     return prefix + f"karaf.shutdown.port = {port}\nkaraf.shutdown.host = 127.0.0.1\n"
 
 
+def console_digest(password: str) -> str:
+    """A password as Karaf itself keeps it in USERS (the distribution's
+    etc/org.apache.karaf.jaas.cfg: SHA-256, hexadecimal, between {CRYPT}
+    marks), so that Karaf need not rewrite the file and userdata never holds
+    the password."""
+    return "{CRYPT}" + hashlib.sha256(password.encode("ascii")).hexdigest().upper() + "{CRYPT}"
+
+
+def console_users(text: str, password: str) -> str:
+    """USERS with the console account's password replaced; its groups and
+    every other line stay as they are."""
+    stored = console_digest(password)
+    return "\n".join(f"{match[1]}{stored}{match[2]}" if (match := _CONSOLE_LINE.fullmatch(line)) else line
+                     for line in text.split("\n"))
+
+
 #: Native configuration files are small; anything larger is refused unread.
 MAXIMUM_CONFIG = 1024 * 1024
 _DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -322,6 +352,60 @@ def replace_regular(directory: int, name: str, data: bytes, previous: os.stat_re
     os.fsync(directory)
 
 
+def console_secret(path: Path) -> str:
+    """The console password kept in `path`, made there when there is none.
+
+    The file is the caller's alone, root's in production, in a directory no
+    one else writes. One that exists is never replaced: a rerun, a later
+    upgrade and a rollback to another commit of this release keep it.
+    """
+    path = Path(os.path.abspath(path))
+    parent = open_directory(path.parent.parent)
+    try:
+        try:
+            directory = os.open(path.parent.name, _DIRECTORY, dir_fd=parent)
+        except FileNotFoundError:
+            os.mkdir(path.parent.name, 0o755, dir_fd=parent)
+            directory = os.open(path.parent.name, _DIRECTORY, dir_fd=parent)
+    finally:
+        os.close(parent)
+    try:
+        held = os.fstat(directory)
+        if held.st_uid != os.geteuid() or held.st_mode & 0o022:
+            raise ValueError(f"{path.parent} must be the administrator's and writable by no one else")
+        try:
+            data, info = read_regular(directory, path.name, 1024)
+        except FileNotFoundError:
+            data = os.urandom(24).hex().encode("ascii")
+            temporary = f".{path.name}.{os.urandom(8).hex()}.tmp"
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                 0o600, dir_fd=directory)
+            try:
+                try:
+                    os.fchmod(descriptor, 0o600)
+                    os.write(descriptor, data + b"\n")
+                    os.fsync(descriptor)
+                finally:
+                    os.close(descriptor)
+                os.rename(temporary, path.name, src_dir_fd=directory, dst_dir_fd=directory)
+            except BaseException:
+                try:
+                    os.unlink(temporary, dir_fd=directory)
+                except FileNotFoundError:
+                    pass
+                raise
+            os.fsync(directory)
+        else:
+            if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077:
+                raise ValueError(f"{path} must be the administrator's alone (0600)")
+    finally:
+        os.close(directory)
+    text = data.decode("ascii", "replace").strip()
+    if not _CONSOLE_SECRET.fullmatch(text):
+        raise ValueError(f"{path} holds no console password; remove it and rerun for a new one")
+    return text
+
+
 def configure_shutdown(userdata: Path, port: int, *, anchored: bool = False) -> None:
     with native_etc(userdata, anchored=anchored) as etc:
         data, info = read_regular(etc, CUSTOM_PROPERTIES.name)
@@ -330,21 +414,38 @@ def configure_shutdown(userdata: Path, port: int, *, anchored: bool = False) -> 
 
 
 def configure_native(userdata: Path, *, anchored: bool = False, uid: int | None = None,
-                     gid: int | None = None) -> None:
+                     gid: int | None = None, console_password: Path | None = None) -> None:
     """Pin native console/shutdown sockets without changing other Karaf settings.
 
-    Both files are read and validated before either is replaced. Root callers
-    pass anchored=True and the service identity that should own both files.
+    With console_password, the file a production install keeps it in
+    (CONSOLE_PASSWORD), the console account gets that password in place of
+    the distribution's, on every run: a userdata that was initialized again,
+    or restored from before the password existed, gets it again.
+
+    Every file is read and validated before any is replaced. Root callers
+    pass anchored=True and the service identity that should own the files.
     """
     with native_etc(userdata, anchored=anchored) as etc:
         console, console_info = read_regular(etc, SHELL_CFG.name)
         custom, custom_info = read_regular(etc, CUSTOM_PROPERTIES.name)
+        users = accounts = users_info = None
+        if console_password is not None:
+            # Made even when no account takes it: the installed manifest names the file.
+            secret = console_secret(console_password)
+            try:
+                users, users_info = read_regular(etc, USERS.name)
+            except FileNotFoundError:
+                pass  # No account file: nothing holds the distribution's password.
+            else:
+                accounts = console_users(users.decode("utf-8"), secret).encode("utf-8")
         shutdown = shutdown_properties(custom.decode("utf-8"), SHUTDOWN_PORT)
         lines = [line for line in console.decode("utf-8").splitlines()
                  if not re.match(r"\s*(sshPort|sshHost)\s*=", line)]
         text = "\n".join([*lines, f"sshPort = {KARAF_PORT}", "sshHost = 127.0.0.1", ""])
         replace_regular(etc, SHELL_CFG.name, text.encode("utf-8"), console_info, uid=uid, gid=gid)
         replace_regular(etc, CUSTOM_PROPERTIES.name, shutdown.encode("utf-8"), custom_info, uid=uid, gid=gid)
+        if accounts != users:
+            replace_regular(etc, USERS.name, accounts, users_info, uid=uid, gid=gid)
 
 
 @contextmanager
@@ -391,6 +492,9 @@ def _native_stopped(userdata: Path):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Set stopped native console/shutdown listeners to Thermite's loopback ports")
+    parser.add_argument("--console-password", type=Path, metavar="FILE",
+                        help="also give the console account the password kept in FILE, the administrator's "
+                             "alone, made there when missing")
     parser.add_argument("userdata", type=Path)
     parser.add_argument("--http-port", type=int, default=HTTP_PORT)
     parser.add_argument("--uid", type=int)
@@ -406,12 +510,14 @@ def main(argv=None):
         except OSError:
             pass
     owner = {"uid": args.uid, "gid": args.gid} if args.uid is not None and args.gid is not None else {}
+    if args.console_password is not None:
+        owner["console_password"] = args.console_password
     try:
         # Root runs this inside service-writable state: never follow a link.
         with _native_stopped(args.userdata):
             configure_native(args.userdata, anchored=True, **owner)
     except (OSError, ValueError) as exc:
-        parser.exit(2, f"could not configure the initialized native listeners: {exc}\n")
+        parser.exit(2, f"could not configure the initialized native listeners and console: {exc}\n")
     return 0
 
 

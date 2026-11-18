@@ -7,6 +7,13 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The production Karaf console no longer keeps openHAB's published
+  password. The first install or upgrade makes a random one in
+  `/etc/thermite/karaf-password` (root only); read it with `sudo cat`
+  when you want the console. Do not edit or remove the file. A
+  developer sandbox keeps the stock password.
+- Grafana's container is given only its own admin password, no longer
+  the directory that also holds the monitoring API token.
 - Messages that told you to run `make openhab-test`,
   `make openhab-deploy` or `make openhab-sandbox-stop` now name the
   thermite command: `thermite test`, `thermite test boot`,
