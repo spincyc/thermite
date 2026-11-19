@@ -17,6 +17,7 @@ from pathlib import Path
 
 import oh_cli
 import oh_ports
+import oh_trace
 from oh_cli import AREA, PROGRAM_ROOT
 
 TUI = PROGRAM_ROOT / "tui/remote"
@@ -123,7 +124,7 @@ def setup(build: Path = BUILD, tui: Path = TUI, npm: str | None = None, verb: st
     (build / STAMP).unlink(missing_ok=True)
     for name in PINNED:
         shutil.copyfile(tui / name, build / name)
-    oh_cli.trace_run([npm, "ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"], build)
+    oh_trace.run([npm, "ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"], build)
     subprocess.run([npm, "ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"],
                    cwd=build, check=True)
     (build / STAMP).write_text(lock_digest(tui) + "\n", encoding="utf-8")
@@ -376,7 +377,7 @@ def launch(verb: str, prepare, build: Path = BUILD) -> int:
     except LaunchError as exc:
         print(f"thermite {verb}: {exc}", file=sys.stderr)
         return 2
-    oh_cli.trace_run(command)
+    oh_trace.run(command)
     os.execve(node, command, environment)
     return 0
 

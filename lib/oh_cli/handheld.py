@@ -28,6 +28,7 @@ import tty
 from pathlib import Path
 
 import oh_cli
+import oh_trace
 from oh_cli import remote, tui
 
 MAIN = oh_cli.PROGRAM_ROOT / "handheld/main.js"
@@ -228,7 +229,7 @@ class Console:
     def write(self, line: str) -> None:
         data = (line + "\n").encode("ascii")
         # The words after the second (an enrolment's key) are not traced.
-        oh_cli.trace(f"{self.device} <- " + " ".join(line.split(" ")[:2]))
+        oh_trace.trace(f"{self.device} <- " + " ".join(line.split(" ")[:2]))
         deadline = time.monotonic() + ANSWER
         while data:
             try:
@@ -397,7 +398,7 @@ def cmd_serve(arguments) -> int:
         argv += ["--listen", str(Path(arguments.listen).expanduser().absolute())]
     if oh_cli.switches.verbose:
         argv.append("--verbose")
-    oh_cli.trace_run(argv)
+    oh_trace.run(argv)
     os.execve(node, argv, environment)
     return 0
 

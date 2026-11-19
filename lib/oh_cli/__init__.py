@@ -27,6 +27,7 @@ import difflib
 import importlib
 import io
 import json
+import logging
 import os
 import re
 import shlex
@@ -241,18 +242,24 @@ def color() -> bool:
     return not switches.no_color and not os.environ.get("NO_COLOR")
 
 
-def trace(what: str) -> None:
-    """With -v: something thermite does outside itself, on stderr."""
-    if switches.verbose:
-        print(f"{PROGRAM}: {what}", file=sys.stderr, flush=True)
+#: The logger libraries say what thermite does outside itself to
+#: (oh_trace.NAME). Named here too: this package runs where oh_trace is
+#: not installed (the Apple TV helper's container).
+TRACE = "thermite.trace"
 
 
-def trace_run(argv: Sequence[object], cwd: Path | str | None = None) -> None:
-    trace("run " + shlex.join(str(part) for part in argv) + (f"   (in {cwd})" if cwd else ""))
+class _Trace(logging.Handler):
+    """With -v: each of those lines, on stderr."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if switches.verbose:
+            print(f"{PROGRAM}: {record.getMessage()}", file=sys.stderr, flush=True)
 
 
-def trace_http(method: str, url: str) -> None:
-    trace(f"{method} {url}")
+_trace = logging.getLogger(TRACE)
+_trace.setLevel(logging.DEBUG)
+_trace.propagate = False
+_trace.handlers[:] = [_Trace()]
 
 
 def add_global(parser: argparse.ArgumentParser) -> None:
@@ -457,12 +464,12 @@ def commit(area: Path = AREA, timeout: float = 5) -> tuple[str, bool] | None:
     without Git or outside a repository."""
     try:
         argv = ["git", "-C", str(area), "rev-parse", "--verify", "--quiet", "HEAD"]
-        trace_run(argv)
+        _trace.debug("run %s", shlex.join(argv))
         head = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
         if head.returncode or not head.stdout.strip():
             return None
         argv = ["git", "-C", str(area), "status", "--porcelain", "--untracked-files=no", "--", "."]
-        trace_run(argv)
+        _trace.debug("run %s", shlex.join(argv))
         status = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
     except (OSError, subprocess.SubprocessError):
         return None

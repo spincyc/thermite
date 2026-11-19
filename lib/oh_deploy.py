@@ -40,9 +40,9 @@ import urllib.request
 from collections.abc import Iterable
 from pathlib import Path
 
-import oh_cli
 import oh_ports
 import oh_service
+import oh_trace
 import oh_units
 import oh_metrics as metrics
 import oh_music as music
@@ -1314,7 +1314,7 @@ def boot_checked(var: Path, digest: str) -> bool:
 
 
 def _git(area: Path, *args: str) -> bytes:
-    oh_cli.trace_run(["git", "-C", str(area), *args])
+    oh_trace.run(["git", "-C", str(area), *args])
     try:
         return subprocess.run(["git", "-C", str(area), *args], check=True, capture_output=True).stdout
     except FileNotFoundError:
@@ -2133,7 +2133,7 @@ def running_here(host: dict) -> str | None:
 def openhab_version(url: str, timeout: float = 2.0) -> str | None:
     """The version of the openHAB answering at url, or None when nothing,
     or something other than openHAB, answers."""
-    oh_cli.trace_http("GET", url.rstrip("/") + "/rest/")
+    oh_trace.http("GET", url.rstrip("/") + "/rest/")
     try:
         with urllib.request.urlopen(url.rstrip("/") + "/rest/", timeout=timeout) as response:
             body = json.load(response)
@@ -2149,7 +2149,7 @@ def token_status(url: str, token: str, timeout: float = 5.0) -> int | None:
     it refuses it, None when nothing answers."""
     request = urllib.request.Request(url.rstrip("/") + "/rest/things?summary=true",
                                      headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
-    oh_cli.trace_http("GET", request.full_url)
+    oh_trace.http("GET", request.full_url)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.status
@@ -2162,7 +2162,7 @@ def token_status(url: str, token: str, timeout: float = 5.0) -> int | None:
 
 def http_post(url: str, timeout: float = 5.0) -> int | None:
     """POST with no body: the HTTP status, or None when nothing answers."""
-    oh_cli.trace_http("POST", url)
+    oh_trace.http("POST", url)
     try:
         with urllib.request.urlopen(urllib.request.Request(url, data=b"", method="POST"), timeout=timeout) as answer:
             return answer.status
@@ -2175,7 +2175,7 @@ def http_post(url: str, timeout: float = 5.0) -> int | None:
 
 def http_get(url: str, timeout: float = 5.0) -> tuple[int | None, bytes]:
     """(HTTP status or None when nothing answers, body)."""
-    oh_cli.trace_http("GET", url)
+    oh_trace.http("GET", url)
     try:
         with urllib.request.urlopen(url, timeout=timeout) as answer:
             return answer.status, answer.read()
@@ -2296,7 +2296,7 @@ def tcp_listeners() -> str | None:
     when it cannot."""
     if not shutil.which("ss"):
         return None
-    oh_cli.trace_run(["ss", "-H", "-ltn"])
+    oh_trace.run(["ss", "-H", "-ltn"])
     out = subprocess.run(["ss", "-H", "-ltn"], capture_output=True, text=True, check=False)
     return out.stdout if out.returncode == 0 else None
 
@@ -2381,6 +2381,6 @@ def service_states(services: Iterable[str] = SERVICES) -> dict[str, str]:
     if not shutil.which("systemctl"):
         return {}
     services = list(services)
-    oh_cli.trace_run(["systemctl", "is-active", *services])
+    oh_trace.run(["systemctl", "is-active", *services])
     out = subprocess.run(["systemctl", "is-active", *services], capture_output=True, text=True, check=False)
     return dict(zip(services, out.stdout.split()))

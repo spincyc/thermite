@@ -17,6 +17,7 @@ import oh_matrix_sim as sim
 import oh_cli
 import oh_render as render
 import oh_sandbox as lib
+import oh_trace
 from oh_features import all_off, remote, routing, threadpools
 from oh_integrations import _instr as instr, vrroom_telnet
 
@@ -846,7 +847,7 @@ class Check:
 
     def _listen(self, topic: str, value: str, opened: threading.Event, heard: dict) -> None:
         """Read the remote's event stream until `topic` carries `value`."""
-        oh_cli.trace_http("GET", self.http.base + REMOTE_EVENTS)
+        oh_trace.http("GET", self.http.base + REMOTE_EVENTS)
         try:
             with urllib.request.urlopen(self.http.base + REMOTE_EVENTS, timeout=STEP) as stream:
                 opened.set()

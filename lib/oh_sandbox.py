@@ -31,10 +31,10 @@ import zipfile
 from pathlib import Path
 
 import oh_addons
-import oh_cli
 import oh_http
 import oh_logging
 import oh_ports
+import oh_trace
 
 from oh_deploy import JAVA_HEAP_OPTS
 from oh_paths import SITE as AREA
@@ -145,7 +145,7 @@ def download(url: str, expected_sha256: str, dest_dir: Path = DOWNLOADS, log=pri
     log(f"fetch   {url}")
     started = time.monotonic()
     request = urllib.request.Request(url, headers={"User-Agent": "homelab-openhab-sandbox"})
-    oh_cli.trace_http("GET", url)
+    oh_trace.http("GET", url)
     with urllib.request.urlopen(request, timeout=60) as response, open(part, "wb") as out:
         shutil.copyfileobj(response, out, 1 << 20)
     try:
@@ -274,7 +274,7 @@ def pin_addons(versions_file: Path, uids, log=print) -> dict:
         target.parent.mkdir(parents=True, exist_ok=True)
         log(f"fetch   {url}")
         request = urllib.request.Request(url, headers={"User-Agent": "homelab-openhab-sandbox"})
-        oh_cli.trace_http("GET", url)
+        oh_trace.http("GET", url)
         part = target.with_name(target.name + ".part")
         with urllib.request.urlopen(request, timeout=60) as response, open(part, "wb") as out:
             shutil.copyfileobj(response, out, 1 << 20)
@@ -730,7 +730,7 @@ class Http:
             req.add_header("Authorization", f"Bearer {self.token}")
         for key, value in (headers or {}).items():
             req.add_header(key, value)
-        oh_cli.trace_http(method, self.base + path)
+        oh_trace.http(method, self.base + path)
         return oh_http.request(req, timeout=self.timeout,
                                remaining=(lambda: self.remaining(path)) if self.deadline is not None else None)
 
@@ -1059,7 +1059,7 @@ def _launch(rt: Runtime, inst: Instance, env: dict, what: str) -> int:
     console = open(inst.console_log, "ab")
     console.write(f"\n=== {time.strftime('%Y-%m-%dT%H:%M:%S%z')} {what} {inst.name}\n".encode())
     console.flush()
-    oh_cli.trace_run([rt.karaf, "server"], inst.userdata)
+    oh_trace.run([rt.karaf, "server"], inst.userdata)
     proc = subprocess.Popen(
         [str(rt.karaf), "server"],
         cwd=str(inst.userdata),
@@ -1306,7 +1306,7 @@ def karaf_command(rt: Runtime, inst: Instance, command: str, retries: int = 30, 
     read_end, write_end = os.pipe()
     traced = [("***" if before == "-p" else part) for before, part in zip(["", *argv], argv)]
     traced[-1] = verb
-    oh_cli.trace_run(traced)
+    oh_trace.run(traced)
     try:
         proc = subprocess.Popen(
             argv, env=env, stdin=read_end, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True

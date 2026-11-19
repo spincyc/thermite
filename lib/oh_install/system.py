@@ -29,6 +29,7 @@ from pathlib import Path
 import oh_cli
 import oh_deploy as deploy
 import oh_http
+import oh_trace
 from oh_install import progress
 
 #: Whether the owner approved this run up front (thermite install --yes),
@@ -147,7 +148,7 @@ class System:
         executable = Path(str(argv[0])).name if argv else "command"
         executable = "".join(char if char.isascii() and (char.isalnum() or char in "._+-") else "?"
                              for char in executable[:64]) or "command"
-        oh_cli.trace_run((executable,) if diagnostics else argv)
+        oh_trace.run((executable,) if diagnostics else argv)
         try:
             out = subprocess.run(list(argv), capture_output=True, text=True, check=False, timeout=timeout)
         except FileNotFoundError:
@@ -381,7 +382,7 @@ class System:
             timeout = min(5, remaining())
             request = urllib.request.Request(url.rstrip("/") + path, method="GET", headers={
                 "Accept": "application/json" if json_body else "text/plain", "Authorization": f"Bearer {token}"})
-            oh_cli.trace_http("GET", url.rstrip("/") + path)
+            oh_trace.http("GET", url.rstrip("/") + path)
             status, body = oh_http.request(request, timeout=timeout, remaining=remaining)
         except urllib.error.HTTPError as exc:
             status, body = exc.code, b""
@@ -451,7 +452,7 @@ class System:
             print(text, flush=True)
 
     def run(self, argv: Sequence[str], cwd: Path, *, timeout: float | None = None) -> int:
-        oh_cli.trace_run(argv, cwd)
+        oh_trace.run(argv, cwd)
         try:
             if progress.capture_command.get():
                 from oh_install import output

@@ -27,6 +27,7 @@ import oh_render as render
 import oh_sandbox as lib
 import oh_sony_sim as sony_sim
 import oh_sonos_sim as sonos_sim
+import oh_trace
 from oh_cli import pair as pair_cli
 from oh_conf import Conf, House, YamlFile, uses
 from oh_features import all_off, remote_model, routing, threadpools
@@ -767,7 +768,7 @@ class Check:
 
     def _record(self, path: str, heard: list, opened: threading.Event, stop: threading.Event) -> None:
         """(time, Item, value) of every event on the stream, until stop is set."""
-        oh_cli.trace_http("GET", self.http.base + path)
+        oh_trace.http("GET", self.http.base + path)
         try:
             with urllib.request.urlopen(self.http.base + path, timeout=STEP) as stream:
                 opened.set()
@@ -833,7 +834,7 @@ class Check:
         self.each(lambda ident: ident in powered and self.agree(f"{ident} power OFF from All off", ident, {"power": "OFF"}))
 
     def _listen(self, path: str, topic: str, value: str, opened: threading.Event, heard: dict) -> None:
-        oh_cli.trace_http("GET", self.http.base + path)
+        oh_trace.http("GET", self.http.base + path)
         try:
             with urllib.request.urlopen(self.http.base + path, timeout=STEP) as stream:
                 opened.set()

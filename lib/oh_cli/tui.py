@@ -20,6 +20,7 @@ from urllib.request import HTTPSHandler, ProxyHandler, Request, build_opener
 
 import oh_cli
 import oh_ports
+import oh_trace
 from oh_cli import remote
 
 #: Most homes run their Thermite server on a computer of this name.
@@ -273,8 +274,8 @@ def fetch(url: str, ca: str | None, source: str) -> bytes:
     from oh_access.client import NoRedirect
 
     opener = build_opener(ProxyHandler({}), HTTPSHandler(context=context), NoRedirect())
-    oh_cli.trace(f"trust {ca or 'the system certificates'} ({source})")
-    oh_cli.trace_http("GET", url + MODEL_PATH)
+    oh_trace.trace(f"trust {ca or 'the system certificates'} ({source})")
+    oh_trace.http("GET", url + MODEL_PATH)
     host = urlsplit(url).hostname
     try:
         with opener.open(Request(url + MODEL_PATH), timeout=TIMEOUT) as response:
@@ -319,7 +320,7 @@ def plain_http(host: str, port: int) -> bool:
     """Whether host:port answers plain HTTP, as a Guest port does, where a TLS
     handshake failed: asked for a page's headers, its answer starts HTTP/."""
     shown = f"[{host}]" if ":" in host else host
-    oh_cli.trace_http("HEAD", f"http://{shown}:{port}/")
+    oh_trace.http("HEAD", f"http://{shown}:{port}/")
     try:
         with socket.create_connection((host, port), timeout=TIMEOUT) as connection:
             connection.sendall(f"HEAD / HTTP/1.1\r\nHost: {shown}:{port}\r\nConnection: close\r\n\r\n"

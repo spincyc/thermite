@@ -12,6 +12,7 @@ import sys
 import oh_cli
 import oh_docs
 import oh_secrets as secrets
+import oh_trace
 from oh_cli import AREA
 
 DESCRIPTION = """\
@@ -35,7 +36,7 @@ EXAMPLES = (("thermite lint", "scan the area's files Git has or would add, and c
 
 def secret_scan() -> int:
     argv = ["git", "-C", str(AREA), "ls-files", "-co", "--exclude-standard", "--", "."]
-    oh_cli.trace_run(argv)
+    oh_trace.run(argv)
     try:
         git = subprocess.run(argv, capture_output=True, text=True, check=False)
     except FileNotFoundError:
