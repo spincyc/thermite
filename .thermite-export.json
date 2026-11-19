@@ -374,6 +374,7 @@
     "lib/thermite-node-exporter.apparmor",
     "lib/thermite-node-exporter.apparmor.LICENSE",
     "pyproject.toml",
+    "requirements-static.txt",
     "requirements.txt",
     "site/FAQ.md",
     "site/README.md",

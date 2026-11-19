@@ -29,3 +29,17 @@ being asked for the sample (`tests/browser_smoke.py`). It installs nothing,
 takes about half a minute and is not part of `make check`; without Chromium,
 or with Node.js older than 22, it skips and says why. The nightly Boot
 workflow runs it.
+
+After a change to Python, also run `make check-static`: the linter (ruff)
+and the type checker (mypy), with the rules and the list of checked modules
+in `pyproject.toml`. Install the two into an environment of their own with
+`python -m pip install --require-hashes -r requirements-static.txt`. It
+takes a few seconds and is not part of `make check`; without the tools it
+skips and says why, and the Check workflow requires it. Fix what it finds.
+Where the code is right as it stands, the line carries the rule and the
+reason (`# noqa: B023 (called in this iteration)`,
+`# type: ignore[method-assign]  # why`), and `zip()` says which it means
+with `strict=`. A module joins `files` under `[tool.mypy]` once it passes.
+The house file's types (`Device`, `Room` and `HouseFile` in
+`lib/oh_inventory.py`) are a second writing of its declared keys, and
+`tests/test_house_types.py` holds them to the first: a new key goes in both.

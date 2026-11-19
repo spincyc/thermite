@@ -7,6 +7,12 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- For contributors: `make check-static` runs a linter (ruff) and a
+  type checker (mypy) over the Python, with the tools pinned by hash
+  in requirements-static.txt; the Check workflow requires it. A
+  device, a room and the house file are typed (`Device`, `Room`,
+  `HouseFile` in lib/oh_inventory.py), so a misspelt key in a checked
+  module is found before a test runs. `make check` is as it was.
 - The policy worker and the Sonos callback relay run as containers of
   the pinned Python image (`thermite-access-worker.service`,
   `thermite-access-callbacks.service`, quadlets in

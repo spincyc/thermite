@@ -13,3 +13,131 @@ license = {text = "All rights reserved"}
 
 [project.scripts]
 thermite = "thermite_app:main"
+
+# Static checks (`make check-static`; requirements-static.txt pins the
+# tools). Both keep what they write under .scratch/, which git ignores.
+[tool.ruff]
+target-version = "py311"
+cache-dir = ".scratch/ruff"
+# The launcher is Python without the suffix.
+extend-include = ["bin/thermite"]
+
+[tool.ruff.lint]
+# A family is here for a class of defect it holds in this code, not for
+# style: a line may be long, and a statement may follow its colon.
+select = [
+    # Names: an import or a variable nothing reads, a name bound twice
+    # before it is read, an f-string with nothing to fill in.
+    "F",
+    # A file that does not parse.
+    "E9",
+    # Among pylint's errors: a character that reorders the text beside it.
+    "PLE",
+    # zip() that drops the tail of the longer of two lists without saying
+    # so (strict= says which is meant), a function made in a loop that reads
+    # the loop's variable after the loop has moved on, an error raised
+    # while another is handled without saying whether that one caused it.
+    "B",
+]
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "lib"
+explicit_package_bases = true
+cache_dir = ".scratch/mypy"
+# Only the modules under `files` are reported; what they import is read for
+# its types and not reported.
+follow_imports = "silent"
+# Most functions here have no annotations, and their bodies are checked
+# all the same: that is where a misspelt key of a Device is.
+check_untyped_defs = true
+# A `type: ignore` names its error and is removed when it ignores nothing.
+enable_error_code = ["ignore-without-code"]
+warn_unused_ignores = true
+# The checked modules: every module that passes as it stands, the house's
+# shape, model and reader (oh_shape, oh_inventory, oh_conf) among them. A
+# module joins when it passes; one that is here stays clean.
+files = [
+    "lib/oh_access/__init__.py",
+    "lib/oh_access/client.py",
+    "lib/oh_access/deployment.py",
+    "lib/oh_access/environment.py",
+    "lib/oh_access/files.py",
+    "lib/oh_access_mode.py",
+    "lib/oh_androidtv_patch/__init__.py",
+    "lib/oh_androidtv_patch/__main__.py",
+    "lib/oh_apparmor.py",
+    "lib/oh_cec_sim.py",
+    "lib/oh_cli/access.py",
+    "lib/oh_cli/apple_tv.py",
+    "lib/oh_cli/check.py",
+    "lib/oh_cli/completion.py",
+    "lib/oh_cli/dhcp_reservations.py",
+    "lib/oh_cli/docs.py",
+    "lib/oh_cli/history.py",
+    "lib/oh_cli/init.py",
+    "lib/oh_cli/ir_profile.py",
+    "lib/oh_cli/iso.py",
+    "lib/oh_cli/lint.py",
+    "lib/oh_cli/package.py",
+    "lib/oh_cli/rollback.py",
+    "lib/oh_cli/sandbox.py",
+    "lib/oh_cli/status.py",
+    "lib/oh_cli/test.py",
+    "lib/oh_cli/theme.py",
+    "lib/oh_cli/upgrade.py",
+    "lib/oh_cli/validate.py",
+    "lib/oh_climate/__init__.py",
+    "lib/oh_conf.py",
+    "lib/oh_docs.py",
+    "lib/oh_entry/__init__.py",
+    "lib/oh_features/__init__.py",
+    "lib/oh_features/overview.py",
+    "lib/oh_features/remote_system.py",
+    "lib/oh_heos_patch/__init__.py",
+    "lib/oh_heos_patch/__main__.py",
+    "lib/oh_identity/__init__.py",
+    "lib/oh_identity/addresses.py",
+    "lib/oh_identity/hardening.py",
+    "lib/oh_identity/migrations/__init__.py",
+    "lib/oh_identity/settings.py",
+    "lib/oh_identity/state.py",
+    "lib/oh_install/__init__.py",
+    "lib/oh_install/access.py",
+    "lib/oh_install/ingress.py",
+    "lib/oh_install/manifest.py",
+    "lib/oh_install/model.py",
+    "lib/oh_install/output.py",
+    "lib/oh_install/ownership.py",
+    "lib/oh_install/writes.py",
+    "lib/oh_integrations/__init__.py",
+    "lib/oh_integrations/_commands.py",
+    "lib/oh_integrations/_diagnostics.py",
+    "lib/oh_integrations/_hooks.py",
+    "lib/oh_integrations/_pairing.py",
+    "lib/oh_integrations/_script.py",
+    "lib/oh_integrations/avpro_telnet/__init__.py",
+    "lib/oh_integrations/bk808_http.py",
+    "lib/oh_integrations/pyatv_http/__init__.py",
+    "lib/oh_integrations/sony_adcp/__init__.py",
+    "lib/oh_integrations/ukm404_http.py",
+    "lib/oh_integrations/vrroom_telnet/__init__.py",
+    "lib/oh_inventory.py",
+    "lib/oh_iso.py",
+    "lib/oh_logging.py",
+    "lib/oh_metrics/alerts.py",
+    "lib/oh_metrics/yoke.py",
+    "lib/oh_package.py",
+    "lib/oh_paths.py",
+    "lib/oh_release.py",
+    "lib/oh_room_policy/__init__.py",
+    "lib/oh_routes.py",
+    "lib/oh_secrets.py",
+    "lib/oh_semantic.py",
+    "lib/oh_shape.py",
+    "lib/oh_site_snapshot.py",
+    "lib/oh_source_upgrade.py",
+    "lib/oh_testing/__init__.py",
+    "lib/oh_trace.py",
+    "lib/oh_units.py",
+]
