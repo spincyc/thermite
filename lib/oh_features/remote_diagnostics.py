@@ -95,7 +95,7 @@ def validate(data: dict) -> list[str]:
     if not isinstance(observers, list):
         return problems + ["diagnostics.observers: must be a list"]
     devices = {device["id"]: device for device in data.get("devices") or [] if isinstance(device, dict) and device.get("id")}
-    house = House(data)
+    house = House.unchecked(data)
     try:
         rooms = _rooms(house)
         edges = {(a["device"], b["device"]) for room in rooms.values() for path in room["sources"].values()

@@ -93,7 +93,7 @@ def expected_plan(house, room: str, choice: str) -> Plan:
     entry = config["rooms"][room]
     # The gateway hands over the mapping its contract carries, which the
     # contract's compiler took from a loaded house.
-    house = house if hasattr(house, "data") else House(data)
+    house = house if hasattr(house, "data") else House.unchecked(data)
     devices = house.by_id
     for source in entry.get("sleep_sources", []):
         if any(other != room and source in spec["sources"] for other, spec in config["rooms"].items()):

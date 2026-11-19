@@ -120,10 +120,14 @@ class Rendering(unittest.TestCase):
         self.assertEqual(module.count('const SEND = true;'),1)
 
     def test_custom_actor_reuses_its_device_configuration_and_command_context(self):
-        for module,kind in ((pyatv_http,'streamer'),(sony_ip_control,'tv'),(sony_adcp,'projector'),(avpro_telnet,'hdmi_matrix')):
+        # Each as a house file may list it: an Apple TV, and a Sony with the
+        # integration that observes what this one controls.
+        for module,kind,make,observe in ((pyatv_http,'streamer','Apple',[]),(sony_ip_control,'tv','Example',[sony_rest.NAME]),
+                                         (sony_adcp,'projector','Example',[sony_adcp.NAME]),(avpro_telnet,'hdmi_matrix','Example',[])):
             with self.subTest(module=module.NAME):
                 data=self.inventory();device=data['devices'][0]
-                device.update(id='desk_device',kind=kind,make='Example',model='Test',controls={'control':[module.NAME]})
+                device.update(id='desk_device',kind=kind,make=make,model='Test',
+                              controls={'control':[module.NAME],**({'observe':observe} if observe else {})})
                 house=House(data);conf=Conf();out=conf.yaml_file(module.FILE,())
                 module.render(device,house,out)
                 if module is sony_ip_control:
@@ -168,7 +172,8 @@ def fictional(kind='http'):
         if kind == 'http':
             declared = {'kind': kind, 'thing': uid(device), 'channel': 'relay', **declared, 'ack': 'result'}
         return {f"{device['id']}_relay": declared}
-    module.render, module.fields = render, fields
+    # validate: every integration has one, and a house that lists this one is checked with it.
+    module.render, module.fields, module.validate = render, fields, lambda device: []
     if kind != 'http':
         module.rule_path = lambda device: f"automation/js/example_relay_{device['id']}.js"
         module.files = lambda devices, house: {module.rule_path(d): "const SEND = true;\n" + unfilled(lifecycle_io.CUSTOM) + "\n" for d in devices}
@@ -178,7 +183,7 @@ def fictional(kind='http'):
 class Declarations(unittest.TestCase):
     def inventory(self):
         return {"version":1,"rooms":{"desk":{"label":"Desk","tag":"Room"}},"devices":[
-            {"id":"desk_relay","room":"desk","kind":"relay","ip":"192.0.2.20","controls":{"control":["example_relay_http"]}}]}
+            {"id":"desk_relay","room":"desk","kind":"power","ip":"192.0.2.20","controls":{"control":["example_relay_http"]}}]}
 
     def test_the_generic_routing_core_names_no_integration(self):
         vendors = ('denon', 'marantz', 'pyatv', 'apple', 'sony', 'bravia', 'adcp', 'avpro', 'vrroom', 'hdfury', 'bk808', 'ukm404', 'orei')

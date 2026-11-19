@@ -133,7 +133,7 @@ class PollTiming(unittest.TestCase):
                     self.assertLess(config["refresh"] + config["timeout"] / 1000, window)
 
     def test_a_receivers_signal_snapshots_stay_fresh_between_polls(self):
-        receiver = device("example_avr", CINEMA, "avr", 23, make="Marantz", model="CINEMA 30",
+        receiver = device("example_avr", CINEMA, "avr", 24, make="Marantz", model="CINEMA 30",
                           controls={"observe": ["denonmarantz_http"], "control": ["denonmarantz_http"]})
         out = YamlFile(())
         denonmarantz_http.render(receiver, House({**HOUSE, "devices": [*HOUSE["devices"], receiver]}), out)

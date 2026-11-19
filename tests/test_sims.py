@@ -181,7 +181,8 @@ class ConfUnderLockTest(unittest.TestCase):
             with self.subTest(module=module.__name__):
                 check, entry = mock.MagicMock(), mock.MagicMock()
                 setattr(check, attr, {"fixture": entry})
-                with mock.patch.object(House, "load", return_value=House({"routing": {}})), \
+                # No house: Check is a mock, and a run reads only that there is routing.
+                with mock.patch.object(House, "load", return_value=House.unchecked({"routing": {}})), \
                         mock.patch.object(module, "Check", return_value=check), \
                         mock.patch.object(module.lib, "InstanceLock", return_value=held), \
                         mock.patch.object(module.lib, "wipe_dir") as wipe, \

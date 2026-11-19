@@ -1,6 +1,7 @@
 """A house file becomes a House in one place (oh_conf.House.load), which
-validates it; and a house file that is wrong in shape ends in a ConfigError
-that names the problem, whatever is wrong with it.
+validates it, as constructing one from a mapping does; and a house file
+that is wrong in shape ends in a ConfigError that names the problem,
+whatever is wrong with it.
 
 The mutation tests are the guard for the second. They take each fixture
 house, replace each of its values in turn by a null, a text, a number, a
@@ -251,6 +252,37 @@ class Loader(unittest.TestCase):
                          ["devices must be a list of devices; write `devices: []` for a house with none"])
         # The other sections may stand empty above entries that are commented out.
         self.assertEqual(oh_render.validate({**empty, "later": None, "services": None, "routing": None}), [])
+
+
+class Constructed(unittest.TestCase):
+    """Whoever holds a House holds a valid one."""
+
+    WRONG = {**EXAMPLE, "devices": [{**EXAMPLE["devices"][0], "model": 900}]}
+
+    def test_a_mapping_with_problems_does_not_become_a_house(self):
+        with self.assertRaises(inventory.ConfigError) as caught:
+            House(copy.deepcopy(self.WRONG))
+        problem = f"{EXAMPLE['devices'][0]['id']}: model 900 must be text"
+        self.assertEqual(caught.exception.problems, [problem])
+        self.assertEqual(str(caught.exception), "not a valid house: " + problem)
+        data = copy.deepcopy(EXAMPLE)
+        self.assertIs(House(data).data, data)
+
+    def test_the_unchecked_construction_checks_nothing_and_only_the_places_named_here_use_it(self):
+        self.assertEqual(House.unchecked({**EXAMPLE, "version": 2}).data["version"], 2)
+        unchecked, bare = {}, {}
+        for path in sorted((AREA / "lib").rglob("*.py")):
+            name, text = path.relative_to(AREA).as_posix(), path.read_text(encoding="utf-8")
+            if name == "lib/oh_conf.py" or "/tests/" in name:
+                continue
+            for found, call in ((unchecked, r"\bHouse\.unchecked\("), (bare, r"(?<![.\w])(?:oh_conf\.)?House\(")):
+                if count := len(re.findall(call, text)):
+                    found[name] = count
+        self.assertEqual(bare, {}, "a House comes from House.load(path); House(mapping) validates again")
+        # Two validators, which run while the mapping is being checked, and
+        # the gateway's planner, which is handed its contract's mapping.
+        self.assertEqual(unchecked, {"lib/oh_features/remote_diagnostics.py": 1, "lib/oh_features/routing/__init__.py": 2,
+                                     "lib/oh_room_policy/plan.py": 1})
 
 
 class OneReader(unittest.TestCase):

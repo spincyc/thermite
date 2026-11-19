@@ -66,6 +66,9 @@ class Rooms(unittest.TestCase):
 
     def test_a_speaker_two_routed_rooms_own_is_in_both(self):
         def both(data):
+            # A room's audio is in a room it covers: the other room is inside this one, a Building.
+            data["rooms"]["example_west"]["tag"] = "Building"
+            data["rooms"][ROOM]["in"] = "example_west"
             data["routing"]["rooms"]["example_west"]["audio"] = OWNED
         built = model(house(both=both))
         self.assertEqual([(room["id"], room["speakers"]) for room in built["rooms"]], [("example_west", [OWNED]), (ROOM, [OWNED])])

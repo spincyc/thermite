@@ -283,11 +283,31 @@ class House:
     code that reads a section itself); `devices`, `by_id` and `rooms` are
     that mapping's own entries, never copies.
 
-    House.load(file) is how a house file becomes one. House(data) is for a
-    mapping that has passed oh_render.validate already: it checks nothing.
+    House.load(file) is how a house file becomes one, and House(data) how a
+    mapping does: both refuse one with problems (ConfigError, naming each
+    that oh_render.validate finds), so whoever holds a House holds a valid
+    one. House.unchecked(data) checks nothing, and says so where it is used.
     """
 
     def __init__(self, data: dict) -> None:
+        # Imported here: oh_render imports this module.
+        import oh_render
+        problems = oh_render.validate(data)
+        if problems:
+            raise inventory.ConfigError(None, "not a valid house: " + "; ".join(problems), problems=problems)
+        self._hold(data)
+
+    @classmethod
+    def unchecked(cls, data: dict) -> House:
+        """A House of a mapping that is not checked here: for a validator,
+        which runs while the mapping is being checked and reads only what
+        the checks before it passed, and for the gateway, whose contract
+        carries the mapping of a house that was loaded when it was compiled."""
+        house = cls.__new__(cls)
+        house._hold(data)
+        return house
+
+    def _hold(self, data: dict) -> None:
         self.data = data
         self.rooms: dict[str, dict] = data.get("rooms") or {}
         self.devices: list[dict] = list(data.get("devices") or [])
@@ -303,14 +323,13 @@ class House:
         """The house file at `path`, validated: the one reader of a house
         file. ConfigError when it cannot be read or parsed, or naming every
         problem oh_render.validate finds in it."""
-        # Imported here: oh_render imports this module.
-        import oh_render
         data = inventory.load(path)
-        problems = oh_render.validate(data)
-        if problems:
-            raise inventory.ConfigError(path, f"{len(problems)} problem{'s' if len(problems) != 1 else ''}; nothing done",
-                                        problems=problems)
-        return cls(data)
+        try:
+            return cls(data)
+        except inventory.ConfigError as error:
+            count = len(error.problems)
+            raise inventory.ConfigError(path, f"{count} problem{'s' if count != 1 else ''}; nothing done",
+                                        problems=error.problems) from None
 
     @staticmethod
     def _base_label(device: dict) -> str:

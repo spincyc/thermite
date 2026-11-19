@@ -41,6 +41,14 @@ def house():
     return data
 
 
+def owned_by_both(data):
+    """WEST drives EAST's amplifier too. A room's audio is in a room it
+    covers, so EAST is inside WEST, a Building."""
+    data["rooms"][WEST]["tag"] = "Building"
+    data["rooms"][EAST]["in"] = WEST
+    data["routing"]["rooms"][WEST]["audio"] = WIIM
+
+
 def compiled(data):
     import oh_render
     import oh_site_contract
@@ -92,7 +100,7 @@ class Contract(TestCase):
 
     def test_a_device_two_rooms_own_is_locked_by_either(self):
         data = house()
-        data["routing"]["rooms"][WEST]["audio"] = WIIM
+        owned_by_both(data)
         rooms = compiled(data)["rooms"]
         self.assertEqual(rooms[WEST]["actions"][f"{WIIM}.volume"]["own_rooms"], [EAST])
         self.assertEqual(rooms[EAST]["actions"][f"{WIIM}.volume"]["own_rooms"], [WEST])
@@ -165,7 +173,7 @@ class Dispatch(TestCase):
         self.assertEqual(self.commands, [(f"{AMP}_volume", "30")])
 
     def test_another_rooms_remote_cannot_drive_a_device_a_locked_room_owns(self):
-        self.data["routing"]["rooms"][WEST]["audio"] = WIIM
+        owned_by_both(self.data)
         self.install(compiled(self.data))
         self.hold(EAST, "off")
         try:

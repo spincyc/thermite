@@ -44,7 +44,9 @@ def model():
         {"id": FREE, "room": DEN, "name": "Fixture Den Amp", "ip": "192.0.2.42", "kind": "streaming_amp", "model": "Amp Pro", **WIIM},
         {"id": OWNED, "room": ROOM, "ip": "192.0.2.41", "kind": "streaming_amp", "model": "Amp Pro", **WIIM},
         {"id": ARC, "room": LOUNGE, "name": "Fixture Lounge Arc", "ip": "192.0.2.44", "kind": "soundbar", "make": "Sonos", "model": "Arc",
-         "sonos_udn": "RINCON_02000000004401400", "controls": {"observe": ["sonos"], "control": ["sonos"]}}]
+         # The UDN a player derives from its mac (sonos.udn); the mac in two parts, for the public guard.
+         "mac": "02:00:00:00:00:" + "44", "sonos_udn": "RINCON_02000000004401400",
+         "controls": {"observe": ["sonos"], "control": ["sonos"]}}]
     data["routing"]["rooms"][ROOM]["audio"] = OWNED
     built = remote_model.build(House(data))
     mode = next(setting for setting in built["devices"][FREE]["audio"]["settings"] if setting["item"] == FREE + "_play_mode")

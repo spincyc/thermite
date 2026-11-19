@@ -525,7 +525,7 @@ def validate(data: object) -> list[str]:
                                       "rooms"}):
         problems.append(f"routing: unknown key '{key}'")
     if not problems and any(source.get("idle") == "standby" for source in sources.values()):
-        contract = table(House(data))["lifecycle"]
+        contract = table(House.unchecked(data))["lifecycle"]
         for source, coverage in contract.get("coverage", {}).items():
             if sources[source].get("idle") == "standby" and not coverage["complete"]:
                 problems.append(f"routing.sources.{source}.idle: standby requires complete observable consumer coverage; "
@@ -553,7 +553,7 @@ def _audio_problems(where: str, data: dict, room: str, devices: dict) -> list[st
     if ident in stages and stages[ident].get("zone") is not None:
         return [f"{where}.audio: {ident} is this room's receiver on zone {stages[ident]['zone']}, and its volume is "
                 "the main zone's"]
-    if ident not in stages and device.get("room") not in covered_rooms(House(data), room):
+    if ident not in stages and device.get("room") not in covered_rooms(House.unchecked(data), room):
         return [f"{where}.audio: {ident} is in {device.get('room')}, not in a room {room} covers"]
     return []
 
