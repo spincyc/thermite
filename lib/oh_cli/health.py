@@ -10,6 +10,7 @@ from pathlib import Path
 
 import oh_cli
 import oh_deploy as deploy
+import oh_host
 import oh_http
 import oh_music
 import oh_ports
@@ -348,7 +349,7 @@ def main(argv=None) -> int:
         elif args.sandbox:
             sandbox(args)
         report = settled(args)
-    except (lib.SandboxError, deploy.DeployError, OSError) as exc:
+    except (lib.SandboxError, deploy.DeployError, oh_host.HostError, OSError) as exc:
         lib.die(str(exc))
     if args.json:
         json.dump(report, sys.stdout, indent=2)

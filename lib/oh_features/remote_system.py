@@ -30,13 +30,13 @@ def manifest(host: dict, runtime_version: str) -> dict:
 
 def selected(*, site: Path | None = None, program: Path | None = None) -> dict:
     """Read only the selected host settings and the application's runtime pin.
-    The host file is checked by oh_deploy.load_host, the one host loader."""
-    import oh_deploy
+    The host file is checked by oh_host.load, the one host loader."""
+    import oh_host
     from oh_paths import PROGRAM, SITE
 
     try:
-        host = oh_deploy.load_host(Path(site or SITE) / "instance/host.yaml")
-    except oh_deploy.HostError as exc:
+        host = oh_host.load(Path(site or SITE) / "instance/host.yaml")
+    except oh_host.HostError as exc:
         raise ValueError(f"System metadata requires a valid host file: {exc}") from None
     versions = json.loads((Path(program or PROGRAM) / "versions.json").read_text(encoding="utf-8"))
     try:

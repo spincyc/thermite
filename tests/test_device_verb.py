@@ -28,6 +28,7 @@ import yaml  # noqa: E402
 
 import oh_cli  # noqa: E402
 import oh_deploy  # noqa: E402
+import oh_host  # noqa: E402
 import oh_metrics  # noqa: E402
 import oh_paths  # noqa: E402
 import oh_render  # noqa: E402
@@ -38,7 +39,7 @@ from oh_integrations import _commands  # noqa: E402
 from oh_metrics import alerts, exporter  # noqa: E402
 
 HOUSE = AREA / "instance/devices.yaml"
-HOST = oh_deploy.load_host(AREA / "instance/host.yaml")
+HOST = oh_host.load(AREA / "instance/host.yaml")
 #: The instant every stand-in answer is for.
 NOW = 1_800_000_000.0
 TV, PLAYER, MATRIX, COMPUTER = "example_tv", "example_player", "example_matrix", "example_computer"
@@ -257,7 +258,7 @@ class Offline(Guarded):
         with mock.patch.object(oh_deploy, "metrics_installed", return_value=True):
             self.assertEqual(device.installation(), (HOST, True))
         self.assertEqual(device.installation(), (HOST, False))
-        with mock.patch.object(oh_deploy, "load_host", side_effect=oh_deploy.HostError("no host facts")), \
+        with mock.patch.object(oh_host, "load", side_effect=oh_host.HostError("no host facts")), \
                 mock.patch.object(oh_deploy, "metrics_installed", return_value=True):
             self.assertEqual(device.installation(), (None, False))
         held = facts(houses()["example"], TV)["now"]

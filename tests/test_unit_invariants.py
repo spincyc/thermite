@@ -24,6 +24,7 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
 import oh_deploy as deploy  # noqa: E402
+import oh_host  # noqa: E402
 import oh_metrics  # noqa: E402
 import oh_service  # noqa: E402
 import oh_units  # noqa: E402
@@ -333,10 +334,10 @@ class Bounds(unittest.TestCase):
         chosen = {**host, "metrics": {"node_exporter_uid": 61000}}
         self.assertIn("User=61000\nGroup=61000\n", deploy.render_units(VERSIONS, chosen)[deploy.METRICS_QUADLETS[node]])
         for wrong in (9001, 0, -5, True, "9000", None):
-            with self.subTest(node_exporter_uid=wrong), self.assertRaisesRegex(deploy.HostError, "node_exporter_uid"):
-                deploy.validate_host({**host, "metrics": {"node_exporter_uid": wrong}})
-        with self.assertRaisesRegex(deploy.HostError, "node_exporter_uid"):
-            deploy.validate_host({**host, "uid": 9001, "gid": 9000})
+            with self.subTest(node_exporter_uid=wrong), self.assertRaisesRegex(oh_host.HostError, "node_exporter_uid"):
+                oh_host.validate({**host, "metrics": {"node_exporter_uid": wrong}})
+        with self.assertRaisesRegex(oh_host.HostError, "node_exporter_uid"):
+            oh_host.validate({**host, "uid": 9001, "gid": 9000})
 
     def test_a_record_cannot_leave_a_field_out(self):
         self.assertTrue(all(field.default is dataclasses.MISSING and field.default_factory is dataclasses.MISSING

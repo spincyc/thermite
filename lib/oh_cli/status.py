@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 import oh_cli
 import oh_deploy as deploy
+import oh_host
 import oh_music
 import oh_ports
 from oh_access import AccessError, guest
@@ -272,6 +273,6 @@ def main(argv: list[str] | None = None) -> int:
         else:
             _, host = deploy.load(AREA)
         return show(args, host)
-    except deploy.DeployError as exc:
+    except (deploy.DeployError, oh_host.HostError) as exc:
         print(f"thermite status: {exc}", file=sys.stderr)
         return 2

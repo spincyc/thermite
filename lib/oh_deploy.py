@@ -40,6 +40,7 @@ import urllib.request
 from collections.abc import Iterable
 from pathlib import Path
 
+import oh_host
 import oh_ports
 import oh_service
 import oh_trace
@@ -47,7 +48,6 @@ import oh_units
 import oh_metrics as metrics
 import oh_music as music
 import oh_shares as shares
-from oh_access import guest
 
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 QUADLET = f"deploy/{oh_units.CONTAINERS[oh_units.RUNTIME]}.container"
@@ -147,116 +147,16 @@ class DeployError(Exception):
     """A deploy that must not go ahead, with the reason for the owner."""
 
 
-class HostError(DeployError, ValueError):
-    """instance/host.yaml is unusable; generated units are never written from it."""
-
-
-#: Everything an installation keeps on the host's state filesystem lives in
-#: this one root-owned directory unless instance/host.yaml names another root
-#: (Installation).
-DEFAULT_ROOT = "/srv/thermite"
 #: Installation's two fixed children.
 RUNTIME = "runtime"
 ACCESS = "access"
 #: The installation root's mode; root owns it.
 ROOT_MODE = 0o755
-HOST_REQUIRED = ("timezone", "http_port", "https_port", "uid", "gid")
-HOST_KEYS = frozenset((*HOST_REQUIRED, "root", "gateway", "metrics", "guest_http", "music", "shares"))
-METRICS_KEYS = frozenset(("units", "retention", "retention_size", "yoke_targets", "node_exporter_uid",
-                          *(name + "_port" for name in oh_ports.METRICS)))
-#: Host values are pasted into unit files, container arguments and shell
-#: words: no whitespace, quotes, systemd specifiers or volume separators.
-_ROOT = re.compile(r"/[A-Za-z0-9._@+-]+(?:/[A-Za-z0-9._@+-]+)*")
-_TIMEZONE = re.compile(r"[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)*")
-_UNIT = re.compile(r"[A-Za-z0-9:_.@\\-]+")
-_DURATION = re.compile(r"0|(?=\d)(?:\d+y)?(?:\d+w)?(?:\d+d)?(?:\d+h)?(?:\d+m)?(?:\d+s)?(?:\d+ms)?")
-_SIZE = re.compile(r"\d+(?:B|KB|MB|GB|TB|PB|EB)")
-
-
-def validate_host(host: object, where: str = "instance/host.yaml") -> dict:
-    """The site's host facts, checked completely before anything uses them."""
-    def fail(problem: str):
-        raise HostError(f"{where}: {problem}")
-
-    if not isinstance(host, dict):
-        fail("must be a mapping")
-    missing = [key for key in HOST_REQUIRED if key not in host]
-    unknown = sorted(str(key) for key in host if key not in HOST_KEYS)
-    if missing:
-        fail("missing " + ", ".join(missing))
-    if unknown:
-        fail("unknown setting " + ", ".join(unknown) + " (allowed: " + ", ".join(sorted(HOST_KEYS)) + ")")
-    root = host.get("root", DEFAULT_ROOT)
-    if (not isinstance(root, str) or not _ROOT.fullmatch(root) or os.path.normpath(root) != root):
-        fail("root must be a normalized absolute path below / of letters, digits and ._@+-")
-    zone = host["timezone"]
-    if not isinstance(zone, str) or not _TIMEZONE.fullmatch(zone) or ".." in zone.split("/"):
-        fail("timezone must be an IANA time zone name such as Etc/UTC")
-    import zoneinfo
-    try:
-        zoneinfo.ZoneInfo(zone)
-    except (zoneinfo.ZoneInfoNotFoundError, ValueError):
-        fail(f"timezone {zone!r} is not a known IANA time zone")
-    overrides = host.get("metrics")
-    if overrides is not None:
-        if not isinstance(overrides, dict):
-            fail("metrics must be a mapping")
-        unknown = sorted(str(key) for key in overrides if key not in METRICS_KEYS)
-        if unknown:
-            fail("unknown metrics setting " + ", ".join(unknown))
-        units = overrides.get("units", [])
-        if not isinstance(units, list) or not all(isinstance(unit, str) and _UNIT.fullmatch(unit) for unit in units):
-            fail("metrics.units must be a list of systemd unit names")
-        if "retention" in overrides and not (isinstance(overrides["retention"], str)
-                                             and _DURATION.fullmatch(overrides["retention"])):
-            fail("metrics.retention must be a Prometheus duration such as 395d")
-        if "retention_size" in overrides and not (isinstance(overrides["retention_size"], str)
-                                                  and _SIZE.fullmatch(overrides["retention_size"])):
-            fail("metrics.retention_size must be a Prometheus size such as 12GB")
-    try:
-        guest.settings(host.get("guest_http"))
-        music.settings(host)
-        for name, share in shares.settings(host).items():
-            if share.where == root or share.where.startswith(root + "/") or root.startswith(share.where + "/"):
-                raise ValueError(f"shares.{name}.where and the installation root ({root}) overlap")
-        oh_service.validate_identity(host["uid"], host["gid"])
-        own = metrics.node_exporter_id(host)
-        if type(own) is not int or own <= 0 or own in (host["uid"], host["gid"]):
-            raise ValueError("metrics.node_exporter_uid must be a positive number that is neither uid nor gid "
-                             "(by default one below uid): node_exporter runs as an account of its own")
-        oh_ports.effective(host)
-        metrics.yoke_targets(host)
-    except ValueError as exc:
-        fail(str(exc))
-    return host
-
-
-def load_host(source: Path | bytes, where: str | None = None) -> dict:
-    """Parse and validate host facts from a file or committed bytes. The
-    file is read as the house file is (oh_inventory.StrictLoader): what
-    the versions of YAML read differently, and a key written twice, are
-    refused with the line and what to write."""
-    # Here, not at the top: the install imports this module before it has
-    # installed PyYAML.
-    import yaml
-    import oh_inventory
-
-    if isinstance(source, bytes):
-        where, data = where or "instance/host.yaml", source
-    else:
-        where, data = where or str(source), Path(source).read_bytes()
-    try:
-        host, refused = oh_inventory.read(data)
-    except yaml.YAMLError as exc:
-        raise HostError(f"{where}: not valid YAML ({str(exc).splitlines()[0]})") from None
-    if refused:
-        raise HostError(f"{where}: " + "; ".join(f"line {line}: {sentence}" for line, _, _, sentence in refused))
-    return validate_host(host, where)
 
 
 def load(area: Path) -> tuple[dict, dict]:
     versions = json.loads((Path(area) / "versions.json").read_text(encoding="utf-8"))
-    return versions, load_host(Path(area) / "instance/host.yaml")
+    return versions, oh_host.load(Path(area) / "instance/host.yaml")
 
 
 def image(versions: dict, name: str = "openhab") -> str:
@@ -432,7 +332,7 @@ class State:
 @dataclasses.dataclass(frozen=True)
 class Installation:
     """Everything an installation keeps on the host: one directory
-    (instance/host.yaml root, DEFAULT_ROOT by default) that root owns with
+    (instance/host.yaml root, oh_host.DEFAULT_ROOT by default) that root owns with
     ROOT_MODE, a btrfs subvolume where its parent filesystem is btrfs: the
     unit for snapshots, backups and removal. It holds only its two fixed
     children, neither the other's ancestor, so the gateway's custody checks
@@ -457,7 +357,7 @@ class Installation:
 
 
 def installation(host: dict) -> Installation:
-    return Installation(Path(host.get("root", DEFAULT_ROOT)))
+    return Installation(Path(host.get("root", oh_host.DEFAULT_ROOT)))
 
 
 def state(host: dict) -> State:
@@ -1155,7 +1055,7 @@ def check_pins(versions: dict, host: dict) -> None:
 def render_units(versions: dict, host: dict) -> dict[str, str]:
     """{area path: text} of every unit and service drop-in the owner installs."""
     # Every host value below lands in unit text; never render unchecked facts.
-    validate_host(host)
+    oh_host.validate(host)
     check_pins(versions, host)
     units = {
         QUADLET: render_quadlet(versions, host),
@@ -1688,7 +1588,7 @@ def committed_inputs(area: Path, commit: str) -> tuple[dict, dict, dict | None]:
         requirement = _site_requirement(files[SITE_FILE].data) if SITE_FILE in files else None
     except (KeyError, TypeError, ValueError) as exc:
         raise DeployError("the committed site has invalid host, version or application inputs") from exc
-    return versions, load_host(data, f"instance/host.yaml at {commit[:12]}"), requirement
+    return versions, oh_host.load(data, f"instance/host.yaml at {commit[:12]}"), requirement
 
 
 def selection(area: Path, rev: str) -> tuple[str, dict, dict | None]:

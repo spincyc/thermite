@@ -20,7 +20,7 @@ from unittest import mock
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
-import oh_deploy
+import oh_host
 import oh_ports
 from oh_access import AccessError, guest
 from oh_access.files import json_private
@@ -35,7 +35,7 @@ SINGLE = {"listen": ["192.0.2.10"], "clients": ["192.0.2.0/24"]}
 
 class Schema(unittest.TestCase):
     def test_host_yaml_opens_a_restricted_listener_only_when_asked(self):
-        self.assertEqual(oh_deploy.validate_host({**HOST, "guest_http": SINGLE})["guest_http"], SINGLE)
+        self.assertEqual(oh_host.validate({**HOST, "guest_http": SINGLE})["guest_http"], SINGLE)
         self.assertEqual(guest.settings(SINGLE), {"port": 13600, **SINGLE, "names": []})
         self.assertIsNone(guest.settings(None))
         full = {"port": 14626, "listen": ["198.51.100.1", "2001:DB8::1"], "clients": ["198.51.100.0/24", "2001:db8::/64"],
@@ -65,24 +65,24 @@ class Schema(unittest.TestCase):
             "guest_http.port: listener port": {**SINGLE, "port": "13600"},
         }
         for reason, value in cases.items():
-            with self.subTest(reason=reason), self.assertRaisesRegex(oh_deploy.HostError, reason):
-                oh_deploy.validate_host({**HOST, "guest_http": value})
+            with self.subTest(reason=reason), self.assertRaisesRegex(oh_host.HostError, reason):
+                oh_host.validate({**HOST, "guest_http": value})
 
     def test_port_is_allocated_and_cannot_collide(self):
         self.assertEqual(oh_ports.GUEST_HTTP_PORT, 13600)
         self.assertEqual(oh_ports.DEFAULTS["guest_http"], 13600)
         self.assertEqual(oh_ports.effective({"guest_http": {**SINGLE, "port": 14626}})["guest_http"], 14626)
         for port in (oh_ports.ACCESS_PORT, 13602, oh_ports.DOCS_PORT):
-            with self.subTest(port=port), self.assertRaisesRegex(oh_deploy.HostError, "collides"):
-                oh_deploy.validate_host({**HOST, "guest_http": {**SINGLE, "port": port}})
+            with self.subTest(port=port), self.assertRaisesRegex(oh_host.HostError, "collides"):
+                oh_host.validate({**HOST, "guest_http": {**SINGLE, "port": port}})
         with self.assertRaisesRegex(ValueError, "collides"):
             validate_listeners(oh_ports.NATIVE_URL, 14626, guest_port=14626)
 
     def test_guests_may_take_13601_only_once_the_gateway_moves_off_it(self):
         first = {**SINGLE, "port": 13601}
-        with self.assertRaisesRegex(oh_deploy.HostError, "listener port 13601 collides: guest_http and access"):
-            oh_deploy.validate_host({**HOST, "guest_http": first})
-        moved = oh_deploy.validate_host({**HOST, "gateway": {"port": 16301}, "guest_http": first})
+        with self.assertRaisesRegex(oh_host.HostError, "listener port 13601 collides: guest_http and access"):
+            oh_host.validate({**HOST, "guest_http": first})
+        moved = oh_host.validate({**HOST, "gateway": {"port": 16301}, "guest_http": first})
         ports = oh_ports.effective(moved)
         self.assertEqual((ports["access"], ports["guest_http"]), (16301, 13601))
         self.assertEqual(guest.origins(guest.settings(moved["guest_http"])), ["http://192.0.2.10:13601"])
@@ -93,8 +93,8 @@ class Schema(unittest.TestCase):
             with self.subTest(port=port, guest_port=guest_port), self.assertRaisesRegex(ValueError, "collides"):
                 validate_listeners(oh_ports.NATIVE_URL, port, guest_port=guest_port, host_ports=ports)
         # The freed default does not free anything else: the sandbox's ports stay reserved.
-        with self.assertRaisesRegex(oh_deploy.HostError, "collides"):
-            oh_deploy.validate_host({**HOST, "gateway": {"port": 16301}, "guest_http": {**SINGLE, "port": 13616}})
+        with self.assertRaisesRegex(oh_host.HostError, "collides"):
+            oh_host.validate({**HOST, "gateway": {"port": 16301}, "guest_http": {**SINGLE, "port": 13616}})
 
 
 class Peers(unittest.TestCase):

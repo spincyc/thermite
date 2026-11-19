@@ -23,6 +23,7 @@ import urllib.parse
 
 import oh_cli
 import oh_deploy as deploy
+import oh_host
 import oh_inventory as inventory
 import oh_metrics as metrics
 import oh_render as render
@@ -478,7 +479,7 @@ def installation() -> tuple[dict | None, bool]:
     has the monitoring services): the installation's Prometheus is asked
     only where it is installed."""
     try:
-        host = deploy.load_host(oh_cli.AREA / "instance/host.yaml")
+        host = oh_host.load(oh_cli.AREA / "instance/host.yaml")
     except (deploy.DeployError, OSError, ValueError):
         return None, False
     return host, deploy.metrics_installed()

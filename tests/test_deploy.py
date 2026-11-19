@@ -23,6 +23,7 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
 import oh_deploy as deploy  # noqa: E402
+import oh_host  # noqa: E402
 import oh_music  # noqa: E402
 import oh_units  # noqa: E402
 import oh_sandbox as sandbox_lib  # noqa: E402
@@ -410,7 +411,7 @@ class GrafanaConditions(unittest.TestCase):
                                       'credential=$(/usr/bin/cat -- "$1") && test -n "$credential"',
                                       "thermite-grafana", str(self.secret)])
         # Quoting is defense in depth: the host boundary refuses such a root.
-        with self.assertRaisesRegex(deploy.HostError, "root must be"):
+        with self.assertRaisesRegex(oh_host.HostError, "root must be"):
             deploy.render_units(VERSIONS, self.host)
         for name, text in deploy.render_units(VERSIONS, {**self.host, "root": "/srv/thermite"}).items():
             if not name.endswith("thermite-grafana.container"):
@@ -1361,9 +1362,9 @@ class HostFacts(unittest.TestCase):
         for key, value in list(host.items()):
             if value is None:
                 del host[key]
-        with self.assertRaisesRegex(deploy.HostError, pattern):
-            deploy.validate_host(host)
-        with self.assertRaises(deploy.HostError):
+        with self.assertRaisesRegex(oh_host.HostError, pattern):
+            oh_host.validate(host)
+        with self.assertRaises(oh_host.HostError):
             deploy.render_units(VERSIONS, host)
 
     def test_valid_hosts_pass_unchanged(self):
@@ -1372,13 +1373,13 @@ class HostFacts(unittest.TestCase):
                 "units": ["podman.service", "user@1000.service"], "retention": "30d12h", "retention_size": "8GB",
                 "grafana_port": 13700, "yoke_targets": ["127.0.0.1:9754"]}}):
             with self.subTest(host=host):
-                self.assertIs(deploy.validate_host(host), host)
+                self.assertIs(oh_host.validate(host), host)
 
     def test_missing_and_unknown_settings_are_named(self):
         self.refused("missing timezone", timezone=None)
         self.refused("unknown setting timezon ", timezon="Etc/UTC")
-        with self.assertRaisesRegex(deploy.HostError, "must be a mapping"):
-            deploy.validate_host(["root"])
+        with self.assertRaisesRegex(oh_host.HostError, "must be a mapping"):
+            oh_host.validate(["root"])
         self.refused("unknown metrics setting retension", metrics={"retension": "30d"})
         # The installation root replaced state_root, which has no other meaning now.
         self.refused(r"unknown setting state_root \(allowed: gateway, gid, guest_http, http_port, https_port, metrics, music, root, shares, timezone, uid\)",
@@ -1387,7 +1388,7 @@ class HostFacts(unittest.TestCase):
     def test_music_names_its_libraries_and_refuses_what_a_unit_cannot_hold(self):
         self.assertEqual(oh_music.settings({**HOST, "music": None}), {"libraries": {}})
         self.assertIsNone(oh_music.settings(HOST))
-        self.assertEqual(deploy.validate_host({**HOST, "music": {"libraries": {"flac": "/mnt/music/flac"}}})
+        self.assertEqual(oh_host.validate({**HOST, "music": {"libraries": {"flac": "/mnt/music/flac"}}})
                          ["music"], {"libraries": {"flac": "/mnt/music/flac"}})
         self.refused("unknown music setting librarys", music={"librarys": {}})
         self.refused("music: must be a mapping", music=["flac"])
@@ -1431,7 +1432,7 @@ class HostFacts(unittest.TestCase):
                                   (json.dumps({**HOST, "timezone": "Etc/UTC\nX=1"}), "timezone")):
                 with self.subTest(text=text):
                     path.write_text(text)
-                    with self.assertRaisesRegex(deploy.HostError, re.escape(str(path)) + ": " + pattern):
+                    with self.assertRaisesRegex(oh_host.HostError, re.escape(str(path)) + ": " + pattern):
                         deploy.load(area)
             path.write_text(json.dumps(HOST))
             self.assertEqual(deploy.load(area), (VERSIONS, HOST))

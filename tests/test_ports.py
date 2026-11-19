@@ -16,6 +16,7 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_atv
 from oh_conf import House
 import oh_deploy
+import oh_host
 import oh_metrics
 import oh_logging
 import oh_ports
@@ -74,7 +75,7 @@ class Allocation(unittest.TestCase):
         self.assertEqual(oh_ports.gateway_port(), oh_ports.ACCESS_PORT)
         self.assertEqual(oh_ports.gateway_port(host), 13601)
         moved = {**host, "gateway": {"port": 16301}}
-        self.assertEqual(oh_deploy.validate_host(moved)["gateway"], {"port": 16301})
+        self.assertEqual(oh_host.validate(moved)["gateway"], {"port": 16301})
         self.assertEqual(oh_ports.effective(moved)["access"], 16301)
         self.assertEqual(oh_ports.gateway_port(moved), 16301)
         self.assertEqual(oh_metrics.gateway_address(moved), "127.0.0.1:16301")
@@ -88,44 +89,44 @@ class Allocation(unittest.TestCase):
             "gateway.port: listener port": {"port": "16301"},
         }
         for value in (True, 0, 1023, 65536, None, 16301.0):
-            with self.subTest(port=value), self.assertRaisesRegex(oh_deploy.HostError, "gateway.port: listener port"):
-                oh_deploy.validate_host({**host, "gateway": {"port": value}})
+            with self.subTest(port=value), self.assertRaisesRegex(oh_host.HostError, "gateway.port: listener port"):
+                oh_host.validate({**host, "gateway": {"port": value}})
         for reason, value in rejected.items():
-            with self.subTest(reason=reason), self.assertRaisesRegex(oh_deploy.HostError, reason):
-                oh_deploy.validate_host({**host, "gateway": value})
+            with self.subTest(reason=reason), self.assertRaisesRegex(oh_host.HostError, reason):
+                oh_host.validate({**host, "gateway": value})
 
     def test_gateway_listen_chooses_the_https_addresses_and_always_keeps_loopback(self):
-        host = oh_deploy.load_host(AREA / "instance/host.yaml")
+        host = oh_host.load(AREA / "instance/host.yaml")
         # Unset, every IPv4 interface, as before the setting existed.
         self.assertEqual(oh_ports.gateway_listen(), ["0.0.0.0"])
         self.assertEqual(oh_ports.gateway_listen({**host, "gateway": {"port": 16301}}), ["0.0.0.0"])
         chosen = {**host, "gateway": {"listen": ["192.0.2.10", "2001:DB8::10", "192.0.2.10"]}}
-        self.assertEqual(oh_deploy.validate_host(chosen)["gateway"], chosen["gateway"])
+        self.assertEqual(oh_host.validate(chosen)["gateway"], chosen["gateway"])
         # Loopback first: the installer's readiness check and the monitoring probe use it.
         self.assertEqual(oh_ports.gateway_listen(chosen), ["127.0.0.1", "192.0.2.10", "2001:db8::10"])
         self.assertEqual(oh_ports.gateway_listen({"gateway": {"listen": ["192.0.2.10", "127.0.0.1"]}}),
                          ["127.0.0.1", "192.0.2.10"])
         self.assertEqual(oh_ports.gateway_port(chosen), oh_ports.ACCESS_PORT)
         for value in ("192.0.2.10", [], None, {"192.0.2.10": True}):
-            with self.subTest(listen=value), self.assertRaisesRegex(oh_deploy.HostError, "gateway.listen must be a non-empty list"):
-                oh_deploy.validate_host({**host, "gateway": {"listen": value}})
+            with self.subTest(listen=value), self.assertRaisesRegex(oh_host.HostError, "gateway.listen must be a non-empty list"):
+                oh_host.validate({**host, "gateway": {"listen": value}})
         for value in ("0.0.0.0", "::", "house.example.test", "192.0.2.0/24", "fe80::1%eth0",
                       "::ffff:192.0.2.10", 13601, None):
-            with self.subTest(address=value), self.assertRaisesRegex(oh_deploy.HostError, "gateway.listen: .* is not one of this host's own IP addresses"):
-                oh_deploy.validate_host({**host, "gateway": {"listen": ["192.0.2.10", value]}})
+            with self.subTest(address=value), self.assertRaisesRegex(oh_host.HostError, "gateway.listen: .* is not one of this host's own IP addresses"):
+                oh_host.validate({**host, "gateway": {"listen": ["192.0.2.10", value]}})
 
     def test_gateway_port_cannot_take_another_listener(self):
         host = {"timezone": "Etc/UTC", "http_port": 13602, "https_port": 13603, "uid": 9001, "gid": 9001}
         taken = {"native HTTP": 13602, "native HTTPS": 13603, "sandbox HTTP": 13616, "boot check": 13620,
                  "docs preview": oh_ports.DOCS_PORT, "default Guest port": oh_ports.GUEST_HTTP_PORT}
         for name, port in taken.items():
-            with self.subTest(listener=name), self.assertRaisesRegex(oh_deploy.HostError, "collides"):
-                oh_deploy.validate_host({**host, "gateway": {"port": port}})
+            with self.subTest(listener=name), self.assertRaisesRegex(oh_host.HostError, "collides"):
+                oh_host.validate({**host, "gateway": {"port": port}})
         moved = {**host, "gateway": {"port": 16301}}
         for clash in ({"https_port": 16301}, {"metrics": {"grafana_port": 16301}},
                       {"guest_http": {"port": 16301, "listen": ["192.0.2.10"], "clients": ["192.0.2.0/24"]}}):
-            with self.subTest(clash=clash), self.assertRaisesRegex(oh_deploy.HostError, "collides"):
-                oh_deploy.validate_host({**moved, **clash})
+            with self.subTest(clash=clash), self.assertRaisesRegex(oh_host.HostError, "collides"):
+                oh_host.validate({**moved, **clash})
 
     def test_explicit_upstream_cannot_free_the_selected_sites_configured_http_port(self):
         allocated = oh_ports.effective()

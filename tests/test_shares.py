@@ -19,6 +19,7 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
 import oh_deploy as deploy  # noqa: E402
+import oh_host  # noqa: E402
 import oh_iso  # noqa: E402
 import oh_shares as shares  # noqa: E402
 import oh_units  # noqa: E402
@@ -54,7 +55,7 @@ class Declaration(unittest.TestCase):
                          ("//nas.example/music", "192.0.2.20:/volume1/photos"))
         self.assertEqual(shares.settings(HOST), {})
         self.assertEqual(shares.settings({**HOST, "shares": None}), {})
-        self.assertEqual(deploy.validate_host(SHARE_HOST), SHARE_HOST)
+        self.assertEqual(oh_host.validate(SHARE_HOST), SHARE_HOST)
 
     def test_bad_declarations_are_refused_with_what_is_wrong(self):
         cases = [
@@ -89,15 +90,15 @@ class Declaration(unittest.TestCase):
             with self.subTest(expected):
                 with self.assertRaisesRegex(ValueError, expected):
                     shares.settings(host)
-                with self.assertRaisesRegex(deploy.HostError, "instance/host.yaml: "):
-                    deploy.validate_host({**HOST, **host})
+                with self.assertRaisesRegex(oh_host.HostError, "instance/host.yaml: "):
+                    oh_host.validate({**HOST, **host})
 
     def test_a_share_never_overlaps_the_installation_root(self):
         for where in ("/mnt/thermite", "/mnt/thermite/music", "/mnt"):
             host = {**HOST, "root": "/mnt/thermite", "shares": {"music": {**MUSIC, "where": where}}}
-            with self.subTest(where), self.assertRaises(deploy.HostError):
-                deploy.validate_host(host)
-        deploy.validate_host({**HOST, "root": "/mnt/thermite", "shares": {"music": {**MUSIC, "where": "/mnt/music"}}})
+            with self.subTest(where), self.assertRaises(oh_host.HostError):
+                oh_host.validate(host)
+        oh_host.validate({**HOST, "root": "/mnt/thermite", "shares": {"music": {**MUSIC, "where": "/mnt/music"}}})
 
     def test_the_unit_name_is_systemds_for_the_mount_point(self):
         expected = {"/mnt/nas/music": "mnt-nas-music", "/mnt/nas-music": "mnt-nas\\x2dmusic",

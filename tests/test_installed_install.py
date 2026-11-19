@@ -264,14 +264,14 @@ class InstalledInstall(unittest.TestCase):
         run.assert_not_called()
 
     def test_access_staging_writes_a_moved_https_port_beside_guests_on_13601(self):
-        import oh_deploy
+        import oh_host
         import oh_ports
         from oh_access import AccessError
         from oh_access.service import load_config
-        host = oh_deploy.validate_host({"timezone": "Etc/UTC", "http_port": 13602, "https_port": 13603, "uid": 9001,
-                                        "gid": 9001, "gateway": {"port": 16301},
-                                        "guest_http": {"port": 13601, "listen": ["192.0.2.10"],
-                                                       "clients": ["192.0.2.0/24"]}})
+        host = oh_host.validate({"timezone": "Etc/UTC", "http_port": 13602, "https_port": 13603, "uid": 9001,
+                                 "gid": 9001, "gateway": {"port": 16301},
+                                 "guest_http": {"port": 13601, "listen": ["192.0.2.10"],
+                                                "clients": ["192.0.2.0/24"]}})
         with self.assertRaisesRegex(AccessError, "listener port 13601 collides"):
             self.stage_access(port=13601, guest_http=host["guest_http"], host_ports=oh_ports.effective(host))
         self.assertFalse((Path(self.temporary.name) / "persistent-release").exists())

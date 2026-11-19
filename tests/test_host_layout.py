@@ -17,6 +17,7 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
 import oh_deploy as deploy  # noqa: E402
+import oh_host  # noqa: E402
 from oh_access import AccessError, staging  # noqa: E402
 from oh_cli import tui  # noqa: E402
 from oh_install import steps  # noqa: E402
@@ -110,9 +111,9 @@ class Paths(unittest.TestCase):
 
     def test_the_root_key_is_optional_and_state_root_is_unknown(self):
         host = {key: value for key, value in context().host.items()}
-        self.assertIs(deploy.validate_host(host), host)
-        with self.assertRaisesRegex(deploy.HostError, "unknown setting state_root"):
-            deploy.validate_host({**host, "state_root": str(TOP)})
+        self.assertIs(oh_host.validate(host), host)
+        with self.assertRaisesRegex(oh_host.HostError, "unknown setting state_root"):
+            oh_host.validate({**host, "state_root": str(TOP)})
 
 
 class InstallationRoot(unittest.TestCase):

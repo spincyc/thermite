@@ -28,7 +28,7 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA))
 sys.path.insert(0, str(AREA / "lib"))
 import oh_cli  # noqa: E402
-import oh_deploy as deploy  # noqa: E402
+import oh_host  # noqa: E402
 import oh_inventory as inventory  # noqa: E402
 import oh_paths  # noqa: E402
 import yaml  # noqa: E402
@@ -280,19 +280,19 @@ class Verbs(Scratch):
 
 
 class HostFile(Scratch):
-    """oh_deploy.load_host, the one reader of a host file, refuses what the
+    """oh_host.load, the one reader of a host file, refuses what the
     house file's reader refuses, in the same words."""
 
     HOST = json.loads((AREA / "instance/host.yaml").read_text(encoding="utf-8"))
 
     def test_what_a_house_file_is_refused_for_a_host_file_is_refused_for_in_the_same_words(self):
         written = "".join(f"{key}: {json.dumps(value)}\n" for key, value in self.HOST.items())
-        self.assertEqual(deploy.load_host(written.encode()), self.HOST)
+        self.assertEqual(oh_host.load(written.encode()), self.HOST)
         for scalar in REFUSED:
             with self.subTest(scalar=scalar):
                 text = f"{written}root: {scalar}\n"
-                with self.assertRaises(deploy.HostError) as caught:
-                    deploy.load_host(text.encode())
+                with self.assertRaises(oh_host.HostError) as caught:
+                    oh_host.load(text.encode())
                 self.assertEqual(str(caught.exception), "instance/host.yaml: " + self.refusal(text)[0][0])
                 self.assertIn(f"line {len(self.HOST) + 1}: {scalar} ", str(caught.exception))
 
@@ -302,8 +302,8 @@ class HostFile(Scratch):
         self.assertEqual(kinds, ["leading zero", "duplicate key", "tag"])
         self.house.write_text(text)
         for source, where in ((self.house, str(self.house)), (text.encode(), "instance/host.yaml at 0123456789ab")):
-            with self.subTest(source=type(source).__name__), self.assertRaises(deploy.HostError) as caught:
-                deploy.load_host(source, None if isinstance(source, Path) else where)
+            with self.subTest(source=type(source).__name__), self.assertRaises(oh_host.HostError) as caught:
+                oh_host.load(source, None if isinstance(source, Path) else where)
             self.assertEqual(str(caught.exception), f"{where}: " + "; ".join(problems))
             self.assertNotIn("\n", str(caught.exception))
 
@@ -320,7 +320,7 @@ class HostFile(Scratch):
                 content, problems = inventory.read(text.encode())
                 self.assertEqual(problems, [])
                 self.assertTrue(same(content, yaml.safe_load(text)))
-        self.assertEqual(deploy.load_host(yaml.safe_dump(self.HOST).encode("utf-16")), self.HOST)
+        self.assertEqual(oh_host.load(yaml.safe_dump(self.HOST).encode("utf-16")), self.HOST)
 
     def test_generate_writes_nothing_from_a_host_file_that_is_refused(self):
         site = self.house.parent

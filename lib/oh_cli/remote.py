@@ -141,13 +141,13 @@ def native_mode(arguments: argparse.Namespace) -> bool:
 def gateway_port(area: Path | None = None) -> int:
     """The HTTPS application port the site's instance/host.yaml configures
     (gateway.port), or the product default for an area without a host file.
-    Raises ValueError (oh_deploy.HostError) for a host file it cannot use."""
+    Raises ValueError (oh_host.HostError) for a host file it cannot use."""
     path = Path(oh_cli.AREA if area is None else area) / "instance/host.yaml"
     if not path.is_file():
         return oh_ports.ACCESS_PORT
-    import oh_deploy
+    import oh_host
 
-    return oh_ports.gateway_port(oh_deploy.load_host(path))
+    return oh_ports.gateway_port(oh_host.load(path))
 
 
 def target(arguments: argparse.Namespace) -> list[str]:
