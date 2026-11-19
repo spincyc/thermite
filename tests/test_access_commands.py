@@ -84,7 +84,7 @@ class Launcher(unittest.TestCase):
                           ["access", action, f"--descriptor={descriptor}", *more, "--config", str(site)]]
             with ThreadPoolExecutor(max_workers=8) as pool:
                 results = list(pool.map(run, cases))
-        for argv, result in zip(cases, results):
+        for argv, result in zip(cases, results, strict=True):
             with self.subTest(command=shlex.join(argv)):
                 # A command line the launcher or the parser turned down ends in
                 # argparse's usage or in "thermite: ..."; only the action's own

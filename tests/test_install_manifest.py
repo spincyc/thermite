@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 import unittest
-from unittest.mock import DEFAULT, Mock, patch
+from unittest.mock import DEFAULT, Mock
 
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))

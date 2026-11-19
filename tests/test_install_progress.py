@@ -324,7 +324,6 @@ class Presentation(unittest.TestCase):
 
     def test_terminal_command_inherits_streams_and_pauses_painting(self):
         stream = Terminal()
-        system = System()
 
         def child(argv, **options):
             self.assertGreater(progress.current.get().paused, 0)
@@ -503,7 +502,7 @@ class Presentation(unittest.TestCase):
                               [Command(("package-manager",), root=True, terminal=True)])
 
                 def child(argv, **options):
-                    return mock.Mock(returncode=1 if argv == ["sudo", "-n", "-v"] and not held else 0)
+                    return mock.Mock(returncode=1 if argv == ["sudo", "-n", "-v"] and not held else 0)  # noqa: B023 (called in this iteration)
 
                 with mock.patch.object(System, "interactive", return_value=True), \
                         mock.patch("oh_install.system.subprocess.run", side_effect=child) as ran:

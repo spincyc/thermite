@@ -128,7 +128,7 @@ class Devices:
 
 
 class Harness:
-    def make(self, *records, house=HOUSE, now=at(10, 5), observed=None, sources=None):
+    def make(self, *records, house=HOUSE, now=at(10, 5), observed=None, sources=None):  # noqa: B008 (one fixed moment)
         self.wall, self.mono, self.log = [now], [1000.0], []
         self.store = Store(*records, log=self.log)
         self.devices = Devices(lambda: self.wall[0], self.log, observed, sources)
@@ -620,7 +620,7 @@ class QuietDevices(unittest.TestCase):
         lines = trail(logs)
         receiver = [line for line in lines if line.startswith("repair room=cinema item=avr_power")]
         times = [when for when, _ in self.writes(AVR) if when < at(10, 5)]
-        gaps = [(later - earlier).total_seconds() for earlier, later in zip(times, times[1:])]
+        gaps = [(later - earlier).total_seconds() for earlier, later in zip(times, times[1:], strict=False)]
         # The receiver is back on 3 s after each repair: the backoff, not
         # the remote, sets the pace, and it stays at its longest step.
         self.assertEqual(gaps, [max(3, BACKOFF[min(n, len(BACKOFF) - 1)]) for n in range(len(gaps))])
@@ -634,7 +634,7 @@ class QuietDevices(unittest.TestCase):
             self.assertIn(f"repair room=cinema item={item} value=OFF revision=1 cmd=c0ffee00 "
                           "outcome=dispatched attempt=1", lines)
         everything = [when for when, _ in self.writes()]
-        self.assertGreaterEqual(min((b - a).total_seconds() for a, b in zip(everything, everything[1:])), BACKOFF[0])
+        self.assertGreaterEqual(min((b - a).total_seconds() for a, b in zip(everything, everything[1:], strict=False)), BACKOFF[0])
         # Once the receiver has needed no repair for SETTLED, it starts over.
         self.assertEqual(self.writes(AVR)[-1], (at(10, 10), AVR))
         self.assertEqual(receiver[len(times) - 1].rsplit(" ", 1)[1], f"attempt={len(times)}")

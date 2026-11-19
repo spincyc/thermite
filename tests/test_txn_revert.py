@@ -26,7 +26,7 @@ import oh_application_update  # noqa: E402
 import oh_paths  # noqa: E402
 import oh_release  # noqa: E402
 from oh_cli import revert as revert_cli  # noqa: E402
-from oh_install import changeover, engine, manifest, runner, steps  # noqa: E402
+from oh_install import changeover, manifest, runner, steps  # noqa: E402
 from oh_install.model import Check  # noqa: E402
 from oh_install.system import System, Unit  # noqa: E402
 from tests import txn_fakes  # noqa: E402

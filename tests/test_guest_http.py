@@ -307,7 +307,7 @@ class InstallerAndStatus(unittest.TestCase):
             # The installed gateway's verified profile still names the old port.
             profiles = [{"url": "https://house:13601", "ca_file": "/fictional/ca.pem"},
                         {"url": "https://house:16301", "ca_file": "/fictional/ca.pem"}]
-            for profile, expected in zip(profiles, (["gateway https://house:13601/: instance/host.yaml moves HTTPS to port 16301"], [])):
+            for profile, expected in zip(profiles, (["gateway https://house:13601/: instance/host.yaml moves HTTPS to port 16301"], []), strict=True):
                 report, problems, out = {}, [], io.StringIO()
                 with mock.patch("oh_access.client.deployment", return_value=profile), contextlib.redirect_stdout(out):
                     status.show_gateway({**HOST, "gateway": {"port": 16301}}, report, print, problems)

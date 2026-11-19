@@ -262,10 +262,12 @@ class NativeIngress(unittest.TestCase):
                 following = Mock()
                 perform = runner.perform
 
+                # ruff: disable[B023] (called in this iteration)
                 def fake_commands(action, host, area, *args, **kwargs):
                     if isinstance(action, Command):
                         return system.perform(action, host, area)
                     return perform(action, host, area, *args, **kwargs)
+                # ruff: enable[B023]
 
                 with patch.object(runner, "perform", side_effect=fake_commands):
                     result = runner.run([ingress.NativeIngressPrerequisites(self.context), following],

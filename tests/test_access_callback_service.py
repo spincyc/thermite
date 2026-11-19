@@ -4,7 +4,6 @@ import asyncio
 import importlib.util
 import io
 import json
-import os
 from pathlib import Path
 import stat
 import sys
@@ -293,7 +292,7 @@ class Protocol(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         if self.state.tasks:
             await asyncio.gather(*self.state.tasks)
-        for protocol, transport in self.connections:
+        for protocol, _ in self.connections:
             protocol.connection_lost(None)
         self.assertFalse(self.state.connections)
         self.assertFalse(self.state.tasks)

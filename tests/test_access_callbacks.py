@@ -2,7 +2,6 @@
 
 import asyncio
 from contextlib import asynccontextmanager
-import copy
 import json
 from pathlib import Path
 import sys
@@ -155,7 +154,7 @@ class Relay(unittest.IsolatedAsyncioTestCase):
             async def unread():
                 raise AssertionError("Rejected request must not read its body")
             sent = []
-            async def send(event):sent.append(event)
+            async def send(event):sent.append(event)  # noqa: B023 (called in this iteration)
             await app(value, unread, send)
             self.assertIn(sent[0]["status"], {403, 404, 405})
         self.assertEqual(self.client.calls, [])

@@ -38,7 +38,7 @@ def handshake(chain, key, authority, name):
     listening = server.wrap_bio(buffers[2], buffers[3], server_side=True)
     for _ in range(10):
         done = 0
-        for side, incoming, outgoing in ((talking, buffers[0], buffers[1]), (listening, buffers[2], buffers[3])):
+        for side in (talking, listening):
             try:
                 side.do_handshake()
                 done += 1
@@ -121,7 +121,7 @@ class PrivateFiles(PrivateFixture):
                 raise OSError(code, os.strerror(code))
             real(descriptor)
         for code in (errno.EINVAL, errno.ENOTSUP):
-            with patch.object(os, "fsync", lambda descriptor: fsync(descriptor, code)):
+            with patch.object(os, "fsync", lambda descriptor: fsync(descriptor, code)):  # noqa: B023 (called in this iteration)
                 path = self.private("record.json", str(code))
             self.assertEqual(path.read_text(), str(code))
         # Any other failure: the file is in place, but a crash may undo it.
@@ -166,15 +166,17 @@ class StagedUpstream(PrivateFixture):
                 now, requests, closes = [0.0], [], []
                 remaining = iter(replies)
 
+                # ruff: disable[B023] (called in this iteration)
                 def factory(*args, **kwargs):
                     status = next(remaining)
                     response = SimpleNamespace(status=200 if status == "malformed" else status,
                                                read=lambda maximum: b"{}" if status == "malformed" else b"[]")
                     return SimpleNamespace(request=lambda *args, **kwargs: requests.append(kwargs["headers"]),
                                            getresponse=lambda: response, close=lambda: closes.append(True))
+                # ruff: enable[B023]
 
                 kwargs = dict(service=(os.geteuid(), os.getegid()), connection_factory=factory,
-                              clock=lambda: now[0], sleep=lambda delay: now.__setitem__(0, now[0] + delay))
+                              clock=lambda: now[0], sleep=lambda delay: now.__setitem__(0, now[0] + delay))  # noqa: B023 (called in this iteration)
                 if succeeds:
                     deployment.upstream(config, expected, **kwargs)
                     self.assertEqual(now[0], 2)

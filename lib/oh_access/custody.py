@@ -144,10 +144,10 @@ def apply(plan):
     with contextlib.ExitStack() as stack:
         opened = [(tree, stack.enter_context(_root_descriptor(path))) for path, tree in trees]
         mounts = [_mount_id(descriptor) for _, descriptor in opened]
-        for (tree, descriptor), mount in zip(opened, mounts):
+        for (tree, descriptor), mount in zip(opened, mounts, strict=True):
             for _ in _walk(tree, descriptor, mount, owners):
                 pass
-        for (tree, descriptor), mount in zip(opened, mounts):
+        for (tree, descriptor), mount in zip(opened, mounts, strict=True):
             for child, entry, info in _walk(tree, descriptor, mount, owners):
                 if entry["mode"] is not None and stat.S_IMODE(info.st_mode) != entry["mode"]:
                     os.fchmod(child, entry["mode"])

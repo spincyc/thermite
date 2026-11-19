@@ -2,6 +2,7 @@
 predicate, the native preparation's scope and recorded unit ownership."""
 from __future__ import annotations
 
+import argparse
 import contextlib
 import http.server
 import io
@@ -200,7 +201,7 @@ class NativeDeadlinePolicy(unittest.TestCase):
     def test_operator_override_bounds(self):
         self.assertEqual(steps.native_timeout_argument("1800"), 1800)
         for text in ("299", "7201", "ten"):
-            with self.subTest(text=text), self.assertRaises(Exception):
+            with self.subTest(text=text), self.assertRaises(argparse.ArgumentTypeError):
                 steps.native_timeout_argument(text)
         self.assertEqual(steps.NativeDeadline.of(context(native_timeout=1800)).budget, 1800)
         self.assertEqual(steps.NativeDeadline.of(SimpleNamespace()).budget, steps.WAIT)
@@ -223,7 +224,7 @@ class NativeDeadlinePolicy(unittest.TestCase):
         from oh_install import changeover
         for sequence in (changeover.switching(context(), "20261105T101500Z-3f9a2c"),):
             types = [type(step) for step in sequence]
-            settle, gateway = sequence[types.index(steps.NativeSettle)], sequence[types.index(Gateway)]
+            gateway = sequence[types.index(Gateway)]
             self.assertEqual(types.index(steps.Token) + 1, types.index(steps.NativeSettle))
             self.assertEqual(types.index(steps.NativeSettle) + 1, types.index(Gateway))
             self.assertIsInstance(gateway.boundary, steps.Commissioning)
@@ -344,10 +345,11 @@ class ThingReadiness(unittest.TestCase):
         for item_type, restarts in ((None, 1), ("Switch", 0)):
             step, system, now = self.fixture([], wait=300)
             rows, generation = [http("UNKNOWN", item_type)], [1]
-            system.unit.side_effect = lambda name, **kwargs: Unit("active", "enabled", 0, generation[0])
+            system.unit.side_effect = lambda name, **kwargs: Unit("active", "enabled", 0, generation[0])  # noqa: B023 (called in this iteration)
             system.interactive.return_value = True
             system.ask.return_value = "y"
 
+            # ruff: disable[B023] (called in this iteration)
             def probe(url, token, path, deadline, **kwargs):
                 if path == step.addons_path:
                     return NativeProbe(200, [{"uid": "binding-sonos", "installed": True}])
@@ -364,6 +366,7 @@ class ThingReadiness(unittest.TestCase):
                 generation[0] += 1
                 rows[:] = [http("ONLINE", "Switch")]
                 return 0
+            # ruff: enable[B023]
 
             system.native_probe.side_effect = probe
             system.run.side_effect = restart

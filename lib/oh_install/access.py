@@ -400,7 +400,7 @@ class Gateway(Step):
     def _replace_leaf(self, system, hosts, authority):
         """Issue a leaf for `hosts` and put it in access/inputs, key first."""
         fresh = self._issue(system, self.directory / ("tls-" + secrets.token_hex(6)), hosts, authority)
-        for source, name in zip(reversed(fresh), ("tls-key.pem", "tls-cert.pem")):
+        for source, name in zip(reversed(fresh), ("tls-key.pem", "tls-cert.pem"), strict=True):
             os.replace(source, self.inputs / name)
 
     def _certificate(self, system, metadata):
@@ -518,7 +518,7 @@ class Gateway(Step):
                 raise AccessError("cannot determine whether every gateway writer is stopped")
             if origin.load_state != "not-found" and origin.active not in {"inactive", "failed"}:
                 self._run(system, "sudo", "systemctl", "stop", name)
-        for name, origin in system.unit_origins(staging.ACCESS_UNITS).items():
+        for origin in system.unit_origins(staging.ACCESS_UNITS).values():
             if not origin.known or origin.load_state != "not-found" and origin.active not in {"inactive", "failed"}:
                 raise AccessError("gateway and worker must both be stopped before migrating identity state")
 
@@ -617,7 +617,8 @@ class Gateway(Step):
             return []
         networks = [ipaddress.ip_network(value) for value in settings["clients"]]
         report = []
-        for address, url in zip(settings["listen"], guest.origins(settings)):
+        # The origins of its addresses come first; those of its names are not asked here.
+        for address, url in zip(settings["listen"], guest.origins(settings), strict=False):
             if not guest.admitted((address, 0), networks):
                 report.append(f"   Guest HTTP {url}/ not checked: this host's address is outside guest_http.clients")
                 continue

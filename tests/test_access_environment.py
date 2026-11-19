@@ -13,7 +13,6 @@ from unittest import mock
 
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
-import oh_deploy as deploy  # noqa: E402
 import oh_public  # noqa: E402
 from oh_access import AccessError, environment, staging  # noqa: E402
 from oh_install import changeover, manifest, steps  # noqa: E402

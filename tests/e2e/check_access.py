@@ -17,7 +17,6 @@ import re
 import socket
 import ssl
 import stat
-import sys
 import time
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
@@ -241,7 +240,7 @@ def run(args):
                                   method="POST", data={"action": "source", "value": source})
             require(accepted.get("accepted") is True, "guest dummy room source command was refused")
             poll(args.timeout, "native route " + source,
-                 lambda: float(gateway.state(FIELD)) == number and gateway.state("loc_" + ROOM + "_source") == source)
+                 lambda: float(gateway.state(FIELD)) == number and gateway.state("loc_" + ROOM + "_source") == source)  # noqa: B023 (called in this iteration)
         proof["guest_commands_and_native_readback"] = True
         current = policy(gateway)
         denied = guest_json("/api/v1/rooms/" + ROOM + "/lock", status=401, method="PUT",

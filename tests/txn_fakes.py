@@ -691,14 +691,14 @@ def install(disk, host, old: Version, *, release=OLD, apparmor=True):
 def switch(disk, host, new: Version, id=ID):
     """The new version's install while Thermite is stopped: plain writes that
     nothing syncs, its live state, then the start of the target."""
-    for path, (cls, data, fields) in new.files.items():
+    for path, (_, data, _) in new.files.items():
         disk.tick("switch", path)
         disk.put(path, data=data)
     for path, target in new.links.items():
         disk.tick("switch", path)
         if path not in disk.nodes:
             disk.put(path, "link", target=target)
-    for path, (cls, content, fields) in new.trees.items():
+    for path, (cls, content, _) in new.trees.items():
         if cls == "shared":
             continue
         disk.tick("switch", path)
