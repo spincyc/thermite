@@ -16,8 +16,57 @@ from types import SimpleNamespace
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
-from oh_access import AccessError, custody, staging
+from oh_access import AccessError, custody, files, staging
 from oh_access.files import private_directory
+
+
+class ServiceAccountGuard(unittest.TestCase):
+    """The account an access service runs as: looked up on a host, stated by
+    the unit in a container, and in both the process's own."""
+
+    def guard(self, stated=None, *, account=None):
+        lookup = patch.object(files, "service_identity", side_effect=account or AssertionError("looked up"))
+        with patch.dict(os.environ), lookup as looked:
+            os.environ.pop(files.STATED_IDENTITY, None)
+            if stated is not None:
+                os.environ[files.STATED_IDENTITY] = stated
+            try:
+                return files.require_service_account()
+            finally:
+                self.looked = looked.called
+
+    def test_stated_numbers_pass_only_for_a_process_that_runs_as_them_and_no_account_is_looked_up(self):
+        uid, gid = os.geteuid(), os.getegid()
+        if not uid or not gid:
+            self.skipTest("the guard refuses root before it compares")
+        self.assertEqual(self.guard(f"{uid}:{gid}"), (uid, gid))
+        self.assertFalse(self.looked)
+        for stated in (f"{uid + 1}:{gid}", f"{uid}:{gid + 1}", f"{gid + 1}:{uid + 1}"):
+            with self.subTest(stated=stated), self.assertRaisesRegex(AccessError, "as user thermite and group thermite"):
+                self.guard(stated)
+            self.assertFalse(self.looked)
+
+    def test_a_malformed_or_root_statement_is_refused_and_never_falls_back_to_the_lookup(self):
+        for stated in ("", "0:0", "0:9001", "9001:0", "9001", "9001:", ":9001", "thermite:thermite", "9001:9001:1",
+                       " 9001:9001", "9001:9001\n", "-1:9001", "09001:9001", "+9001:9001", "1" * 11 + ":9001"):
+            with self.subTest(stated=stated), self.assertRaisesRegex(AccessError, "UID:GID"):
+                self.guard(stated)
+            self.assertFalse(self.looked)
+
+    def test_without_a_statement_the_named_account_is_required_as_before(self):
+        mine = (os.geteuid(), os.getegid())
+        self.assertEqual(self.guard(account=lambda *, required: mine), mine)
+        self.assertTrue(self.looked)
+        with self.assertRaisesRegex(AccessError, "as user thermite and group thermite"):
+            self.guard(account=lambda *, required: (mine[0] + 1, mine[1]))
+        with self.assertRaisesRegex(AccessError, "Create the thermite service account"):
+            self.guard(account=AccessError("Create the thermite service account and matching primary group"))
+
+    def test_a_stage_plan_never_reads_the_statement(self):
+        with patch.dict(os.environ, {files.STATED_IDENTITY: "1:1"}), \
+                patch.object(files.pwd, "getpwnam", side_effect=KeyError), \
+                patch.object(files.grp, "getgrnam", side_effect=KeyError):
+            self.assertEqual(files.service_identity(), (files.UID, files.GID))
 
 
 class Custody(unittest.TestCase):

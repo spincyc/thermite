@@ -32,8 +32,37 @@ def service_identity(*, required=False):
     return account.pw_uid, group.gr_gid
 
 
+#: Set only by a unit that runs an access service in a container: the
+#: account's numbers as UID:GID, where no account database names them.
+STATED_IDENTITY = "THERMITE_SERVICE_IDENTITY"
+
+
+def stated_identity():
+    """The service account's numbers as the unit states them, or None."""
+    value = os.environ.get(STATED_IDENTITY)
+    if value is None:
+        return None
+    match = re.fullmatch(r"([1-9][0-9]{0,9}):([1-9][0-9]{0,9})", value)
+    if not match:
+        raise AccessError(f"{STATED_IDENTITY} must be the service account's UID:GID, neither of them 0")
+    return int(match[1]), int(match[2])
+
+
 def require_service_account():
-    uid, gid = service_identity(required=True)
+    """Refuse to run an access service as any account but the service's.
+
+    This is a guard against a mistake (a service verb typed as the operator
+    or as root would otherwise create state the service cannot use), not a
+    boundary: what keeps another account out of the secrets is their owner
+    and modes, which read_private and private_directory check on every use
+    against the account this process really runs as.
+
+    The account is the host's `thermite`, looked up by name. A container
+    has no such name, so its unit states the numbers instead
+    (STATED_IDENTITY), and they are honoured only when this process runs
+    as exactly them: the variable can say which account is meant, never
+    make another one pass."""
+    uid, gid = stated_identity() or service_identity(required=True)
     if os.geteuid() != uid or os.getegid() != gid:
         raise AccessError("Run this access service as user thermite and group thermite after the ownership handoff")
     return uid, gid
