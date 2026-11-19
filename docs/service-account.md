@@ -117,6 +117,15 @@ its record, the release to read-only and the container's root file system
 to read-only. The records also show what is still wide: every unit is on
 the host's network, and the gateway reads the host as its user does.
 
+The runtime token the gateway and the worker hold is an administrator's,
+the role the CLI, the installer and the Item exporter need. openHAB's `user`
+role would be enough for those two services: it reads Item states, commands
+Items and follows the event stream, and is refused Things, add-ons and
+service configuration. A second account with that role is deliberately not
+used. It would keep a compromised gateway from reconfiguring openHAB but not
+from commanding every device, and it would add an account and a secret to
+install, upgrade, rollback and recovery.
+
 ### The node_exporter account
 
 node_exporter measures the host, so it has all of `/` mounted read-only and
