@@ -295,8 +295,15 @@ Log out and back in after the installer adds you to the service group.
 For newly initialized native userdata, preparation builds the OSGi cache
 with empty add-on configuration and waits for that temporary JVM to exit
 before starting the real runtime. This avoids the upstream first-start
-cache race. Existing userdata without a cache uses normal startup, so
-offline preparation does not run its managed rules or Things.
+cache race. Existing userdata without a cache is what openHAB's own update
+leaves when an upgrade changes the openHAB pin. Preparation does not prime
+it, so that nothing offline runs its managed rules or Things. The
+installation gives it an empty cache directory
+(`userdata/cache/org.eclipse.osgi`) before the first start instead: the
+runtime's start script then starts one server, which installs everything.
+Without the directory that script first builds the cache with a second
+server of its own and loses the same race, which can leave every add-on
+installed and never started, so that the upgrade fails and rolls back.
 
 After validating the API token, installation waits for the required add-ons,
 Thing handlers and authenticated native metrics. Unchanged known first-start

@@ -143,7 +143,9 @@ it, and nobody installs it by hand. It is part of the install transaction
    5.2.3 can leave add-ons installed and never started, whatever is
    restarted afterwards. Nothing else under userdata is touched: Things,
    pairings, keystores and the JSON database stay. A cache that already
-   holds this bundle stays as it is.
+   holds this bundle stays as it is. Userdata that has no cache at all, as
+   after openHAB's own update, gets the same empty directory, for the same
+   reason.
 4. **After the start**, once the add-ons are installed, the transaction reads
    the cache again and commits only when the binding it holds is this bundle
    with this content. Otherwise it says which bundle runs and rolls back.
@@ -184,6 +186,20 @@ without any), and the one restart tried did not start them; two more showed
 one bundle not Active 45 seconds after its add-on was reported installed.
 All ten starts on the emptied cache came up whole. That is why the cache's
 directory stays.
+
+Userdata that has state and no cache at all was counted next: it is what
+openHAB's own update leaves when an upgrade changes the openHAB pin. Each
+start began from userdata that had run, with `cache`, `tmp` and
+`marketplace` removed as that update removes them, then this step, then
+the start script alone: ten starts each way for this house and ten each
+way for the example house, which has neither binding. With the empty
+directory the step makes, all twenty starts came up whole. With that
+directory removed again, eleven of twenty (seven of ten here, four of ten
+without a repair) ended with every add-on bundle but one installed and
+never started, start level 20 and every Thing `HANDLER_MISSING_ERROR`. So
+the step gives userdata that has no cache the empty directory whether or
+not the house has a repaired binding. Six starts of userdata that had
+never run, given the directory the same way, came up whole too.
 
 These are synthetic local-runtime proofs. On production, existing paired
 Things must recover without a new pairing and shared dispatch must stay

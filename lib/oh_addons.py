@@ -363,16 +363,17 @@ def _installed(top: int, wanted: set[str]) -> list[tuple[str, str, str | None, s
 
 
 def _stale(found, wanted: list[Repair]) -> str | None:
-    """Why the OSGi cache cannot stay: it holds a build of a binding that is
-    not the one this version installs."""
+    """Why the OSGi cache cannot stay: each build of a binding it holds that
+    is not the one this version installs."""
     by_bundle = {repair.bundle: repair for repair in wanted}
-    for bundle, version, marker, content in found:
+    reasons = []
+    for bundle, version, marker, content in sorted(found):
         repair = by_bundle.get(bundle)
         if repair is None:
-            return f"it holds a repaired {bundle} {version} that this version does not install"
-        if (version, marker, content) != (repair.patched, repair.marker, repair.content):
-            return f"it holds {bundle} {version}, not the {repair.title} ({repair.patched})"
-    return None
+            reasons.append(f"it holds a repaired {bundle} {version} that this version does not install")
+        elif (version, marker, content) != (repair.patched, repair.marker, repair.content):
+            reasons.append(f"it holds {bundle} {version}, not the {repair.title} ({repair.patched})")
+    return "; ".join(reasons) or None
 
 
 def verify(userdata: Path, wanted: list[Repair], *, anchored: bool = False) -> list[str]:
@@ -623,9 +624,32 @@ def _cached(store: Path, path: str, pin: dict) -> bytes:
     return data
 
 
+def _hold_cache(top: int, owner: tuple[int, int] | None) -> bool:
+    """Give userdata an empty OSGi cache directory if it has none; whether
+    it had none. Where the directory is missing, the distribution's start
+    script first builds the cache with a server of its own, on the house's
+    conf, and stops that server while it installs the add-ons. On 5.2.3
+    that left add-ons installed and never started in eleven of twenty
+    starts of userdata that had run, and the restart tried did not recover
+    it; with the directory there one server installs everything, and twenty
+    of twenty came up whole (lib/oh_androidtv_patch/README.md has the
+    counts). A link in its place is refused."""
+    cache = _child(top, BUNDLES[0], owner)
+    try:
+        try:
+            os.stat(BUNDLES[1], dir_fd=cache, follow_symlinks=False)
+        except FileNotFoundError:
+            os.close(_child(cache, BUNDLES[1], owner))
+            return True
+        os.close(os.open(BUNDLES[1], _DIRECTORY, dir_fd=cache))
+        return False
+    finally:
+        os.close(cache)
+
+
 def provision(userdata: Path, files: dict[str, dict], store: Path, *, wanted=(),
               mounted: PurePosixPath | Path | None = None, owner: tuple[int, int] | None = None,
-              anchored: bool = False) -> list[str]:
+              anchored: bool = False, hold_cache: bool = False) -> list[str]:
     """Make userdata's repository hold exactly `files`, each copied from the
     cache `store` and refused unless it is what its pin says, and the
     rebuilt bundle of each repair in `wanted`; point Karaf's resolver at the
@@ -633,7 +657,11 @@ def provision(userdata: Path, files: dict[str, dict], store: Path, *, wanted=(),
     cache that holds another build of a repaired binding. `mounted` is
     where the runtime sees userdata when that is not `userdata` itself (a
     container). With `owner` (root, in production) what is written becomes
-    the service account's. Returns what changed, for the log."""
+    the service account's. With `hold_cache`, userdata that has no OSGi
+    cache at all gets the empty directory too (_hold_cache): an installation
+    asks for it, whose runtime the distribution's start script starts; the
+    test runtime builds its own cache first and does not. Returns what
+    changed, for the log."""
     userdata = Path(os.path.abspath(userdata))
     changed = []
     for repair in wanted:
@@ -694,19 +722,14 @@ def provision(userdata: Path, files: dict[str, dict], store: Path, *, wanted=(),
             os.close(etc)
         stale = _stale(_installed(top, {repair.bundle for repair in wanted}), list(wanted))
         if stale:
-            # Karaf applies an override only when it provisions a feature. The
-            # emptied cache keeps its directory: where that is missing the
-            # distribution's start script first builds it with a server of
-            # its own, on the house's conf, and stops that server while it
-            # installs the add-ons. On 5.2.3 that left add-ons installed and
-            # never started in half of ten starts, and no restart recovers it.
+            # Karaf applies an override only when it provisions a feature.
+            # The emptied cache keeps its directory (_hold_cache).
             shutil.rmtree(BUNDLES[0], dir_fd=top)
-            cache = _child(top, BUNDLES[0], owner)
-            try:
-                os.close(_child(cache, BUNDLES[1], owner))
-            finally:
-                os.close(cache)
+            _hold_cache(top, owner)
             changed.append(f"cache (cleared, so that the next start installs every bundle anew: {stale})")
+        elif hold_cache and _hold_cache(top, owner):
+            changed.append("cache (made empty: userdata had none, and openHAB's start script must not build it "
+                           "with a server of its own)")
     finally:
         os.close(top)
     return changed
@@ -742,7 +765,7 @@ def main(argv=None) -> int:
                                          or "none needed"))
             return 0
         changed = provision(args.userdata, pinned(versions, args.addons), args.store, wanted=wanted, mounted=MOUNTED,
-                            owner=(args.uid, args.gid), anchored=True)
+                            owner=(args.uid, args.gid), anchored=True, hold_cache=True)
     except (OSError, ValueError) as exc:
         parser.exit(2, f"could not install the pinned add-on files: {exc}\n")
     for line in changed:

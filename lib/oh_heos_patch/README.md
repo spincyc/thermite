@@ -216,7 +216,9 @@ it, and nobody installs it by hand. It is part of the install transaction
    5.2.3 can leave add-ons installed and never started, whatever is
    restarted afterwards. Nothing else under userdata is touched: Things,
    pairings, keystores and the JSON database stay. A cache that already
-   holds this bundle stays as it is.
+   holds this bundle stays as it is. Userdata that has no cache at all, as
+   after openHAB's own update, gets the same empty directory, for the same
+   reason.
 4. **After the start**, once the add-ons are installed, the transaction reads
    the cache again and commits only when the binding it holds is this bundle
    with this content. Otherwise it says which bundle runs and rolls back.

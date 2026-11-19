@@ -7,6 +7,16 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- An upgrade that changes the openHAB pin no longer fails at random.
+  openHAB's own update removes its bundle cache, and the first start
+  after it could leave the add-ons installed and never started (eleven of
+  twenty such starts when counted), so the upgrade failed its readiness
+  wait and rolled back. The installation now gives userdata that has no
+  cache an empty cache directory before the first start, and openHAB then
+  installs everything with one server. A fresh install and an upgrade
+  that keeps its cache are unchanged. When the add-on repository step
+  empties the cache for a repaired binding, its line now names every
+  bundle that could not stay.
 - The docs site has a page of every key the house file may have:
   what it holds, what it is for and what reads it, `routing` included
   (house-file.html, linked from Get started). It is made from the

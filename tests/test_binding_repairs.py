@@ -159,6 +159,38 @@ class Fixture(unittest.TestCase):
         return jar(entries, zipfile.ZIP_DEFLATED)
 
 
+    def assertEmptied(self):
+        """Nothing of the old cache, and the directory whose absence makes
+        the distribution's start script run its own priming server."""
+        cache = self.userdata / "cache"
+        self.assertEqual([path.name for path in cache.iterdir()], ["org.eclipse.osgi"])
+        holder = cache / "org.eclipse.osgi"
+        self.assertTrue(holder.is_dir() and not holder.is_symlink())
+        self.assertEqual(list(holder.iterdir()), [])
+        for directory in (cache, holder):
+            self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
+
+    def helper(self, *arguments: str) -> tuple[int, str, str]:
+        versions = self.root / "versions.json"
+        versions.write_text(json.dumps({"openhab": VERSIONS["openhab"], "addons": {
+            "repository": "https://repository.example/release", "requires": {"binding-heos": [self.repair.source]},
+            "files": self.files}}))
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            try:
+                code = oh_addons.main([str(self.userdata), "--versions", str(versions), "--store", str(self.store),
+                                       "--uid", str(os.getuid()), "--gid", str(os.getgid()), *arguments])
+            except SystemExit as stopped:
+                code = stopped.code
+        return code, out.getvalue(), err.getvalue()
+
+    def tree(self, top: Path) -> dict:
+        """Every entry below `top`: its mode, and a file's bytes."""
+        return {str(path.relative_to(top)): (stat.S_IMODE(path.lstat().st_mode),
+                                             path.read_bytes() if path.is_file() else None)
+                for path in sorted(top.rglob("*"))}
+
+
 class Installed(Fixture):
     def test_the_repaired_bundle_and_its_override_are_installed_with_the_addon_files(self):
         changed = self.provision()
@@ -240,17 +272,6 @@ class Overrides(unittest.TestCase):
 class OsgiCache(Fixture):
     """Karaf applies an override only when it provisions a feature."""
 
-    def assertEmptied(self):
-        """Nothing of the old cache, and the directory whose absence makes
-        the distribution's start script run its own priming server."""
-        cache = self.userdata / "cache"
-        self.assertEqual([path.name for path in cache.iterdir()], ["org.eclipse.osgi"])
-        holder = cache / "org.eclipse.osgi"
-        self.assertTrue(holder.is_dir() and not holder.is_symlink())
-        self.assertEqual(list(holder.iterdir()), [])
-        for directory in (cache, holder):
-            self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
-
     def test_a_cache_that_holds_the_upstream_binding_is_cleared(self):
         self.cache(self.upstream)
         (self.userdata / "cache/org.eclipse.osgi/framework.info.7").write_bytes(b"the framework's bundle database")
@@ -269,6 +290,17 @@ class OsgiCache(Fixture):
                         b"singleton:=true\r\nBundle-Version: 1.0\r\n\r\n"}), bundle=7)
         self.assertNotIn("cache", " ".join(self.provision()))
         self.assertTrue(cached.is_file())
+
+    def test_each_bundle_that_cannot_stay_is_named(self):
+        self.cache(self.upstream)
+        self.cache(jar({"META-INF/MANIFEST.MF": b"Manifest-Version: 1.0\r\nBundle-SymbolicName: org.openhab.binding."
+                        b"androidtv\r\nBundle-Version: 5.2.3.thermite1\r\nThermite-Patch: googletv-lifecycle-v1\r\n"
+                        b"X: y\r\n\r\n"}), bundle=213)
+        self.assertIn("cache (cleared, so that the next start installs every bundle anew: it holds a repaired "
+                      "org.openhab.binding.androidtv 5.2.3.thermite1 that this version does not install; it holds "
+                      "org.openhab.binding.heos 5.2.3, not the HEOS reconnect repair (5.2.3.thermite1))",
+                      self.provision())
+        self.assertEmptied()
 
     def test_the_newest_generation_of_a_bundle_is_the_one_that_counts(self):
         self.cache(self.upstream, generation=0)
@@ -312,6 +344,75 @@ class OsgiCache(Fixture):
         self.assertEqual((outside / "kept").read_bytes(), self.upstream)
 
 
+class Unprimed(Fixture):
+    """An installation never starts the runtime on userdata that has no
+    OSGi cache: openHAB's start script would first build one with a server
+    of its own, which can leave add-ons installed and never started. Its
+    step runs the helper while openHAB is stopped, after openHAB's update,
+    which removes the cache."""
+
+    def install(self) -> str:
+        with mock.patch.object(oh_addons, "MOUNTED", self.userdata):
+            code, out, err = self.helper("binding-heos")
+        self.assertEqual((code, err), (0, ""))
+        return out
+
+    def test_userdata_with_state_and_no_cache_gets_an_empty_one(self):
+        self.assertIn("add-on repository: cache (made empty: userdata had none, and openHAB's start script must "
+                      "not build it with a server of its own)\n", self.install())
+        self.assertEmptied()
+        self.assertEqual((self.userdata / "jsondb/things.json").read_text(), "{}")
+        self.assertNotIn("cache", self.install())
+        self.assertEmptied()
+
+    def test_a_cache_directory_without_its_bundles_is_completed(self):
+        (self.userdata / "cache").mkdir()
+        (self.userdata / "cache/kept").write_text("another tenant of the directory")
+        self.assertIn("cache (made empty", self.install())
+        self.assertEqual(sorted(path.name for path in (self.userdata / "cache").iterdir()), ["kept", "org.eclipse.osgi"])
+        self.assertEqual(list((self.userdata / "cache/org.eclipse.osgi").iterdir()), [])
+
+    def test_a_fresh_install_that_preparation_primed_keeps_its_cache(self):
+        # Primed without add-ons: the framework's own bundles and database, no binding.
+        self.cache(jar({"META-INF/MANIFEST.MF": b"Manifest-Version: 1.0\r\nBundle-SymbolicName: org.apache.karaf."
+                        b"features.core\r\nBundle-Version: 4.4.8\r\n\r\n"}), bundle=19)
+        (self.userdata / "cache/org.eclipse.osgi/framework.info.3").write_bytes(b"the framework's bundle database")
+        before = self.tree(self.userdata / "cache")
+        self.assertNotIn("cache", self.install())
+        self.assertEqual(self.tree(self.userdata / "cache"), before)
+
+    def test_an_ordinary_upgrade_keeps_its_cache(self):
+        self.install()
+        (self.userdata / "cache/org.eclipse.osgi").rmdir()
+        self.cache(self.as_pax_caches_it())
+        (self.userdata / "cache/org.eclipse.osgi/framework.info.7").write_bytes(b"the framework's bundle database")
+        before = self.tree(self.userdata / "cache")
+        self.assertEqual(self.install(), "add-on repository: as pinned\n")
+        self.assertEqual(self.tree(self.userdata / "cache"), before)
+
+    def test_a_test_runtime_builds_its_own_cache_and_gets_none(self):
+        self.assertNotIn("cache", " ".join(self.provision()))
+        self.assertFalse((self.userdata / "cache").exists())
+
+    def test_a_cache_that_is_not_userdatas_own_directory_is_refused(self):
+        outside = self.root / "outside"
+        outside.mkdir()
+        for planted in ("cache", "cache/org.eclipse.osgi"):
+            with self.subTest(planted=planted):
+                link = self.userdata / planted
+                link.parent.mkdir(exist_ok=True)
+                link.symlink_to(outside, target_is_directory=True)
+                try:
+                    with mock.patch.object(oh_addons, "MOUNTED", self.userdata):
+                        code, _, err = self.helper("binding-heos")
+                finally:
+                    link.unlink()
+                self.assertEqual(code, 2)
+                self.assertIn("could not install the pinned add-on files: ", err)
+                self.assertIn(repr(planted.rsplit("/", 1)[-1]), err)
+                self.assertEqual(list(outside.iterdir()), [])
+
+
 class Verified(Fixture):
     def test_a_runtime_that_installed_the_repaired_binding_passes(self):
         self.cache(self.as_pax_caches_it())
@@ -332,20 +433,6 @@ class Verified(Fixture):
         self.assertEqual(oh_addons.verify(self.userdata, [self.repair]),
                          ["openHAB runs a org.openhab.binding.heos 5.2.3.thermite1 whose content is not the reviewed "
                           "HEOS reconnect repair"])
-
-    def helper(self, *arguments: str) -> tuple[int, str, str]:
-        versions = self.root / "versions.json"
-        versions.write_text(json.dumps({"openhab": VERSIONS["openhab"], "addons": {
-            "repository": "https://repository.example/release", "requires": {"binding-heos": [self.repair.source]},
-            "files": self.files}}))
-        out, err = io.StringIO(), io.StringIO()
-        with redirect_stdout(out), redirect_stderr(err):
-            try:
-                code = oh_addons.main([str(self.userdata), "--versions", str(versions), "--store", str(self.store),
-                                       "--uid", str(os.getuid()), "--gid", str(os.getgid()), *arguments])
-            except SystemExit as stopped:
-                code = stopped.code
-        return code, out.getvalue(), err.getvalue()
 
     def test_the_helper_installs_then_fails_verification_with_what_it_means(self):
         with mock.patch.object(oh_addons, "MOUNTED", self.userdata):

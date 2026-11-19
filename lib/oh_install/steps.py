@@ -1399,12 +1399,15 @@ class AddonFiles(Step):
 class AddonRepository(Step):
     """The pinned add-on files and the repaired bundles of the bindings
     that need one, in userdata's own repository; Karaf's resolver pointed
-    at it alone and its overrides at those bundles; and an OSGi cache that
-    holds another build of a repaired binding cleared (lib/oh_addons.py).
-    After openHAB's offline preparation, whose update replaces the
-    resolver's settings and the overrides with the distribution's, and
-    before anything starts. All of it is inside userdata, so it is set
-    aside and put back with it."""
+    at it alone and its overrides at those bundles; an OSGi cache that
+    holds another build of a repaired binding emptied; and userdata that
+    has no OSGi cache given an empty one, so that the runtime is never
+    started where openHAB's start script would first build the cache with
+    a server of its own (lib/oh_addons.py). After openHAB's offline
+    preparation, whose update replaces the resolver's settings and the
+    overrides with the distribution's and removes the cache, and before
+    anything starts. All of it is inside userdata, so it is set aside and
+    put back with it."""
     title = "Add-on repository"
     always = True
 
