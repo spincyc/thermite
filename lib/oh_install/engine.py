@@ -641,7 +641,8 @@ class Disk:
         raise NotImplementedError
 
     def sync_fs(self, path) -> None:
-        """`sync -f`: everything written to the path's filesystem is durable."""
+        """`sync -f`: everything written to the path's filesystem is durable,
+        the filesystem the path itself is on, never one a symlink points to."""
         raise NotImplementedError
 
     def fsync_dir(self, path) -> None:
@@ -1839,6 +1840,13 @@ class OsDisk(Disk):
                 _remove(parent, path.name, _device(parent))
 
     def sync_fs(self, path):
+        # sync opens what it is given, and so follows a symlink: to a unit
+        # that may be on another filesystem, or that is gone, as when a
+        # dropped unit is set aside before the link that enables it. The
+        # link's own directory is on the link's filesystem.
+        path = Path(path)
+        if os.path.islink(path):
+            path = path.parent
         self._tool("sync", "--file-system", "--", path)
 
     def fsync_dir(self, path):

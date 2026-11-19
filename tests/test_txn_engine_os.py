@@ -81,6 +81,21 @@ class RealDisk(unittest.TestCase):
         with self.assertRaisesRegex(engine.EngineError, "cp -a --reflink=auto --no-target-directory"):
             self.disk.copy(self.base / "missing", self.base / "elsewhere")
 
+    def test_a_link_whose_unit_is_already_set_aside_is_copied_and_synced(self):
+        """Collect moves a dropped unit before the .wants link that enables
+        it (paths in sorted order). Across filesystems the link's move is a
+        copy then a sync, and sync must not follow the now dangling link."""
+        wants = self.base / "etc/systemd/system/thermite.target.wants"
+        wants.mkdir(parents=True)
+        link = wants / "thermite-old.service"
+        link.symlink_to(self.base / "etc/systemd/system/thermite-old.service")
+        links = self.base / "transaction/links"
+        links.mkdir(parents=True)
+        building = engine.partial(links / "37")
+        self.disk.copy(link, building)
+        self.disk.sync_fs(building)
+        self.assertEqual(os.readlink(building), str(self.base / "etc/systemd/system/thermite-old.service"))
+
     def test_write_atomic_syncs_the_file_then_renames_then_syncs_the_directory(self):
         calls = []
         real_fsync, real_replace = os.fsync, os.replace
@@ -109,6 +124,11 @@ class RealDisk(unittest.TestCase):
             disk = engine.OsDisk({"sync": engine.trusted_tool("sync", tool)})
         disk.sync_fs(self.base / "files/.3.partial")
         self.assertEqual(record.read_text(), f"/ --file-system -- {self.base}/files/.3.partial\n")
+        # A symlink: its own directory, never what it points to.
+        (self.base / "links").mkdir()
+        (self.base / "links/.4.partial").symlink_to("/etc/systemd/system/thermite-old.service")
+        disk.sync_fs(self.base / "links/.4.partial")
+        self.assertEqual(record.read_text().splitlines()[-1], f"/ --file-system -- {self.base}/links")
 
     def test_tools_run_from_the_root_directory(self):
         """A tool never finds a program or file in the caller's directory."""

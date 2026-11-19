@@ -7,6 +7,10 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- An upgrade that drops a unit it had enabled (as the next one does for the
+  policy worker and the callback relay) no longer fails while setting the
+  installed version aside with "sync: error opening '.../links/...partial': No
+  such file or directory". The upgrade rolled back cleanly; run it again.
 - Site schema 1 is retired. A site whose `thermite-site.json` says version 1
   (the older layout, which committed its generated `conf/`, `metrics/` and
   `deploy/`) is refused by name by `thermite check`, `install`, `upgrade`,
