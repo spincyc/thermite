@@ -23,6 +23,7 @@ sys.path.insert(0, str(AREA))
 sys.path.insert(0, str(AREA / "lib"))
 
 import oh_inventory as inventory  # noqa: E402
+import oh_paths  # noqa: E402
 import oh_render as render  # noqa: E402
 from oh_conf import Conf, House  # noqa: E402
 from oh_integrations import sony_ip_control as sony  # noqa: E402
@@ -169,6 +170,21 @@ class Site(unittest.TestCase):
         for name in ("conf/automation/js/thermite_entry.js", "conf/automation/js/node_modules/thermite-entry/filter.jar"):
             self.assertIn(f"thermite generate: {name}: nothing generates it now; an earlier generate wrote it; "
                           "thermite generate --prune removes it", named.stderr.splitlines())
+        self.assertEqual(self.files(), before)
+
+    def test_a_schema_1_site_is_refused_by_name_and_nothing_of_it_is_read(self):
+        (self.site / "thermite-site.json").write_text(
+            json.dumps({"version": 1, "application": "0.1.0.dev0", "release": "a" * 64}), encoding="utf-8")
+        (self.site / "instance/devices.yaml").write_text("not a house\n", encoding="utf-8")
+        before = self.files()
+        done = self.thermite("check")
+        self.assertEqual((done.returncode, done.stdout), (2, ""))
+        self.assertEqual(done.stderr, (
+            f"thermite: {self.site} is a schema-1 site (thermite-site.json says version 1): the retired layout, whose "
+            f"generated conf/ was committed. This thermite reads only version 2. Commit {oh_paths.SCHEMA_1_READER[:12]} "
+            "of thermite is the last that reads version 1, and its upgrade rewrites the descriptor as version 2: run "
+            f"`thermite upgrade --config {self.site} --revision {oh_paths.SCHEMA_1_READER}`, then upgrade again "
+            "(`thermite --help` lists the verbs)\n"))
         self.assertEqual(self.files(), before)
 
     def test_a_host_file_it_cannot_use_stops_it_before_the_lint(self):

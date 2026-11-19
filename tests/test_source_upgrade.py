@@ -16,6 +16,7 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 import oh_cli
 import oh_init
+import oh_paths
 import oh_release
 import oh_source_upgrade as update
 import oh_application_update as application
@@ -152,6 +153,22 @@ class SourceUpgrade(ApplicationFixture):
         self.assertEqual([args[1] for args in self.calls if args[0].endswith("/bin/thermite")],
                          ["init", "check", "upgrade"])
         self.assertEqual(self.approvals, [True])
+
+    def test_a_schema_1_site_is_refused_at_the_site_step_before_any_commit_or_host_phase(self):
+        pin = self.site / "thermite-site.json"
+        pin.write_text(json.dumps({**json.loads(pin.read_text()), "version": 1}))
+        update.git(self.repo, "commit", "-am", "A site still at schema 1")
+        before = update.git(self.repo, "rev-parse", "HEAD")
+        for operation in (application.install, application.upgrade):
+            self.calls.clear()
+            with self.subTest(operation=operation.__name__), self.simulated(), \
+                    self.assertRaisesRegex(ValueError, "is a schema-1 site .* --revision " + oh_paths.SCHEMA_1_READER):
+                operation(self.site, source=self.source, home=self.home, approve=lambda: True)
+            # The candidate's init --upgrade is the first thing asked of it, and the last.
+            self.assertEqual([args[1] for args in self.calls if args[0].endswith("/bin/thermite")], ["init"])
+            self.assertEqual(update.clean(self.repo), before)
+            self.assertEqual(json.loads(pin.read_text())["version"], 1)
+            self.assertEqual(self.launcher.resolve(), self.old / "bin/thermite")
 
     def test_the_work_before_the_host_phase_runs_in_three_stages(self):
         seen = []

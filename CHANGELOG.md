@@ -7,6 +7,19 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Site schema 1 is retired. A site whose `thermite-site.json` says version 1
+  (the older layout, which committed its generated `conf/`, `metrics/` and
+  `deploy/`) is refused by name by `thermite check`, `install`, `upgrade`,
+  `init --upgrade` and every other command that reads the site, before anything
+  is stopped or changed. Commit 8557d79cffa6 is the last that reads it:
+  `thermite upgrade --config DIR --revision
+  8557d79cffa6859daa499843aa824b404fc37c25` rewrites the manifest as version 2,
+  and a plain `thermite upgrade` continues from there. `thermite rollback` to a
+  site commit from before the version-2 manifest is refused by name as well (it
+  was refused before, as pinning another release); to run that commit's house
+  again, commit its `instance/` and `versions.json` on top of HEAD. A site at
+  schema 2 sees no change: the same install steps and commands, and the same
+  generated files. See docs/packaging.md, "Retired site schema".
 - For contributors: `make check-static` runs a linter (ruff) and a
   type checker (mypy) over the Python, with the tools pinned by hash
   in requirements-static.txt; the Check workflow requires it. A

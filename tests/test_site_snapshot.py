@@ -15,6 +15,8 @@ import oh_deploy as deploy
 import oh_init
 import oh_release
 import oh_site_snapshot
+from oh_cli import rollback
+from oh_install import steps
 
 
 def git(site, *args):
@@ -146,20 +148,50 @@ for name, value in outputs.items():
             deploy.prepared_files(self.site, git(self.site, "rev-parse", "HEAD"), self.var)
         self.assertFalse(list(self.var.glob(".site-render-*")))
 
-    def test_schema1_keeps_committed_generated_outputs_and_full_checkout_keeps_legacy_export(self):
-        release, _ = self.release("legacy")
+    def checkout_commit(self):
+        """A commit that carries no descriptor, with generated conf/ committed."""
         (self.site / "conf").mkdir()
-        (self.site / "conf/legacy.js").write_text("committed legacy configuration")
+        (self.site / "conf/committed.js").write_text("committed generated configuration")
         git(self.site, "add", "-f", "conf")
-        commit = self.revision(release, "legacy", schema=1)
-        files, application = deploy.deployment_files(self.site, commit, self.var)
-        self.assertEqual(files["conf/legacy.js"].data, b"committed legacy configuration")
-        self.assertEqual(application["digest"], release["digest"])
-        git(self.site, "rm", "thermite-site.json")
-        git(self.site, "commit", "-qm", "complete checkout")
-        files, application = deploy.deployment_files(self.site, git(self.site, "rev-parse", "HEAD"), self.var)
-        self.assertEqual(files["conf/legacy.js"].data, b"committed legacy configuration")
+        git(self.site, "add", ".")
+        git(self.site, "commit", "-qm", "no descriptor")
+        return git(self.site, "rev-parse", "HEAD")
+
+    def test_a_checkouts_commit_is_its_committed_trees(self):
+        files, application = deploy.deployment_files(self.site, self.checkout_commit(), self.var)
+        self.assertEqual(files["conf/committed.js"].data, b"committed generated configuration")
         self.assertIsNone(application)
+
+    def test_a_commit_without_the_version_2_descriptor_is_refused_by_name_before_anything_renders(self):
+        release, _ = self.release("retired")
+        bare = self.checkout_commit()
+        first = self.revision(release, "schema one", schema=1)
+        self.revision(release, "current")
+        said = (f"^{first[:12]} is a schema-1 site commit \\(thermite-site.json says version 1: the retired layout, "
+                "whose generated conf/ was committed\\), and this thermite installs only a site commit whose "
+                "thermite-site.json says version 2. To run that commit's house again, commit its instance/ and "
+                "versions.json on top of HEAD, then thermite check and thermite install$")
+        system = mock.Mock()
+        with mock.patch.object(oh_site_snapshot, "render") as render:
+            for read in (lambda: deploy.prepared_files(self.site, first, self.var),
+                         lambda: deploy.committed_inputs(self.site, first),
+                         lambda: deploy.selection(self.site, first),
+                         lambda: deploy.unit_differences(self.site, first),
+                         lambda: deploy.installed_units(self.site, rev=first),
+                         # thermite rollback COMMIT plans the commit as an install plans HEAD.
+                         lambda: steps.committed_context(self.site, system, revision=first)):
+                with self.assertRaisesRegex(deploy.DeployError, said):
+                    read()
+            with self.assertRaisesRegex(deploy.DeployError, (
+                    f"^{bare[:12]} holds no thermite-site.json for this site \\(it is from before the site had "
+                    "one\\), and this thermite installs only a site commit whose thermite-site.json says version 2. ")):
+                steps.committed_context(self.site, system, revision=bare)
+            render.assert_not_called()
+        self.assertEqual(system.mock_calls, [])
+        # The verb plans HEAD, which renders, then refuses the commit it was given.
+        with mock.patch.object(rollback, "AREA", self.site), self.assertRaisesRegex(deploy.DeployError, said):
+            rollback.roll_back(mock.Mock(), first, True)
+        self.assertFalse(list(self.var.glob(".site-render-*")))
 
     def test_failed_render_redacts_child_output_and_cleans_temporary_files(self):
         release, cache = self.release("failure")
@@ -177,7 +209,7 @@ for name, value in outputs.items():
         self.assertEqual(log.stat().st_mode & 0o777, 0o600)
         self.assertIn(b"private fixture input", log.read_bytes())
 
-    def test_upgrade_preserves_private_state_and_ignore_rules(self):
+    def test_upgrade_refuses_schema_1_and_preserves_private_state_and_ignore_rules(self):
         _, cached = self.release("launcher")
         program = self.root / "program"
         shutil.copytree(cached, program)
@@ -190,14 +222,19 @@ for name, value in outputs.items():
         (program / oh_release.FILE).write_bytes(oh_release.encoded(oh_release.create(files)))
         target = self.root / "initialized-site"
         oh_init.initialize(target, program=program)
-        descriptor = json.loads((target / "thermite-site.json").read_text())
-        descriptor["version"] = 1
-        (target / "thermite-site.json").write_text(json.dumps(descriptor))
+        pinned = json.loads((target / "thermite-site.json").read_text())
         (target / ".gitignore").write_text("# owner rule\n/private-notes/\n")
         (target / "var/operator-state").write_bytes(b"retain private state")
+        # A site at schema 1 is refused by name, and left as it was.
+        (target / "thermite-site.json").write_text(json.dumps({**pinned, "version": 1}))
+        before = {path.name: path.read_bytes() for path in target.iterdir() if path.is_file()}
+        with self.assertRaisesRegex(ValueError, f"^{target} is a schema-1 site .* then upgrade again$"):
+            oh_init.initialize(target, program=program, upgrade=True)
+        self.assertEqual({path.name: path.read_bytes() for path in target.iterdir() if path.is_file()}, before)
+        (target / "thermite-site.json").write_text(json.dumps(pinned))
         report = oh_init.initialize(target, program=program, upgrade=True)
-        self.assertEqual(report["previous"]["version"], 1)
-        self.assertEqual(json.loads((target / "thermite-site.json").read_text())["version"], 2)
+        self.assertEqual(report["previous"], pinned)
+        self.assertEqual(json.loads((target / "thermite-site.json").read_text()), pinned)
         self.assertEqual((target / "var/operator-state").read_bytes(), b"retain private state")
         self.assertTrue((target / ".gitignore").read_text().startswith("# owner rule\n/private-notes/\n"))
         self.assertTrue({"/conf/", "/metrics/", "/deploy/"} <= set((target / ".gitignore").read_text().splitlines()))

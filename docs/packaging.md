@@ -88,7 +88,8 @@ Keep private backups of `var/` for other state and historical releases. Restore
 `var/gateway/authority/` into the clone before installing: without it, the run
 creates a new certificate authority and every client must trust it again.
 
-New sites use manifest schema 2. Deployment exports the selected Git revision's
+A site's manifest says schema 2, the only one the application reads.
+Deployment exports the selected Git revision's
 inputs and renders them with that revision's exact verified application from
 `var/application-releases/`, or the matching installed release when the cache
 is absent. It uses a temporary private directory and an
@@ -231,12 +232,30 @@ with that release and copies its finite helper files. A missing cache can use
 the exact installed release; unavailable or modified artifacts fail before
 deployment writes. Rollback does not download a substitute automatically.
 
-### Legacy sites
+### Retired site schema
 
-Historical schema-1 site revisions retain their committed generated trees and
-exact cached helper application. Historical complete-checkout revisions retain
-their committed source and generated configuration. Their rollback format is
-not silently reinterpreted as schema 2.
+Schema 1, the site layout that committed its generated `conf/`, `metrics/`
+and `deploy/`, is retired. A site whose `thermite-site.json` says version 1
+is refused by name, before anything is stopped or changed, by `thermite
+check`, `install`, `upgrade`, `rollback`, `init --upgrade` and every other
+command that reads the site's configuration. Commit `8557d79cffa6` of the
+application is the last that reads it, and its upgrade rewrites the manifest
+as version 2:
+
+```sh
+thermite upgrade --config "$HOME/thermite-site" --revision 8557d79cffa6859daa499843aa824b404fc37c25
+thermite upgrade --config "$HOME/thermite-site"
+```
+
+`thermite rollback` refuses a site commit from before the version-2 manifest
+in the same way: one whose manifest says version 1, or that holds none. It
+is not reinterpreted as schema 2. To run that commit's house again, commit
+its `instance/` and `versions.json` on top of HEAD, then `thermite check`
+and `thermite install`.
+
+The application's own source checkout carries no manifest. Used as its own
+site, by the example house, the sandbox and the tests, it keeps its
+generated trees beside its source, as before.
 
 The unified install and upgrade commands require a private site manifest.
 They refuse a nonempty mixed source/configuration checkout without converting

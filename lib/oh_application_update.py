@@ -477,14 +477,14 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
     if revision is not None and (not revision or revision.startswith("-") or "\0" in revision):
         raise ValueError("select a Git branch, tag or commit as --revision")
     site = Path(site).expanduser().absolute()
-    if not (site / SITE_FILE).is_file():
+    import oh_paths
+    if not oh_paths.private(site):
         raise ValueError("--config must name an existing private Thermite site; create a separate site "
                          "with thermite init DIR, commit its configuration, then pass --config DIR")
     site_root = Path(transaction.git(site, "rev-parse", "--show-toplevel"))
     site_head = transaction.clean(site_root)
     if program is None:
-        from oh_paths import PROGRAM
-        program = PROGRAM
+        program = oh_paths.PROGRAM
     program = Path(program).expanduser().absolute()
     # An installed application's first deployment uses its exact release. A
     # source launch uses its clean current checkout. Only upgrade fetches latest.

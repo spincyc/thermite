@@ -31,10 +31,10 @@ def report(timeout: float) -> dict:
     from oh_release import manifest
     installed = (oh_paths.PROGRAM / oh_paths.RELEASE_FILE).is_file()
     application = manifest(oh_paths.PROGRAM) if installed else None
-    found = oh_cli.commit() if not installed or oh_paths.descriptor() is not None else None
+    found = oh_cli.commit() if not installed or oh_paths.private(oh_paths.SITE) else None
     pinned = json.loads((AREA / "versions.json").read_text(encoding="utf-8"))["openhab"]["version"]
     url = running = None
-    if installed and oh_paths.descriptor() is None:
+    if installed and not oh_paths.private(oh_paths.SITE):
         return {"thermite": oh_cli.VERSION, "commit": None, "modified": None,
                 "application_release": application["digest"], "openhab": {"pinned": pinned, "production": None, "url": None}}
     try:

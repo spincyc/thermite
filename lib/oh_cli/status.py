@@ -265,8 +265,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="the runtime state (default: runtime/ in instance/host.yaml's root, /srv/thermite)")
     args = parser.parse_args(argv)
     try:
-        from oh_paths import SITE_FILE
-        if args.revision is not None or (AREA / SITE_FILE).is_file():
+        from oh_paths import private
+        if args.revision is not None or private(AREA):
             commit, host, requirement = deploy.selection(AREA, args.revision or "HEAD")
             if requirement is not None or args.revision is not None:
                 args.revision = commit

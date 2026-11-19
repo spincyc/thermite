@@ -15,6 +15,11 @@ PROGRAM = Path(__file__).resolve().parents[1]
 SITE_FILE = "thermite-site.json"
 RELEASE_FILE = "thermite-release.json"
 RELEASES = "var/application-releases"
+#: The last commit of this application that reads a schema-1 site, the
+#: layout whose generated conf/ was committed; the one after it retired
+#: the schema. The site step of its upgrade (init --upgrade) rewrites
+#: such a site's descriptor as version 2: the way forward retired() names.
+SCHEMA_1_READER = "8557d79cffa6859daa499843aa824b404fc37c25"
 #: Set to the release digest this process re-executed into; stops a loop.
 REEXEC = "THERMITE_PINNED_RELEASE"
 #: The launcher's own arguments, when it handed select_args all of sys.argv.
@@ -67,20 +72,40 @@ def select_args(argv: list[str]) -> list[str]:
     return out
 
 
+def private(root: Path) -> bool:
+    """Whether `root` is a private site rather than this program's own
+    checkout used as its site. A private site carries SITE_FILE and commits
+    only its inputs: every install derives the rest from the commit. The
+    checkout (the example house, the sandbox, a test's area) carries none
+    and keeps what `thermite generate` writes beside it. This is the one
+    test of which an area is; descriptor() reads the file."""
+    return (Path(root) / SITE_FILE).is_file()
+
+
 def site_root() -> Path:
     explicit = os.environ.get("THERMITE_SITE")
     if explicit: return Path(explicit).expanduser().absolute()
     if not (PROGRAM / RELEASE_FILE).is_file(): return PROGRAM
     current = Path.cwd().absolute()
     for candidate in (current, *current.parents):
-        if (candidate / SITE_FILE).is_file(): return candidate
+        if private(candidate): return candidate
     return PROGRAM
 
 
 SITE = site_root()
 
 
+def retired(root: Path) -> str:
+    """Why a site whose descriptor says version 1 is refused, and its way forward."""
+    import shlex
+    return (f"{root} is a schema-1 site ({SITE_FILE} says version 1): the retired layout, whose generated conf/ "
+            f"was committed. This thermite reads only version 2. Commit {SCHEMA_1_READER[:12]} of thermite is the "
+            "last that reads version 1, and its upgrade rewrites the descriptor as version 2: run `thermite upgrade "
+            f"--config {shlex.quote(str(root))} --revision {SCHEMA_1_READER}`, then upgrade again")
+
+
 def descriptor(root: Path | None = None) -> dict | None:
+    """A private site's descriptor; None for an area that is not one (private)."""
     root = SITE if root is None else Path(root)
     path = root / SITE_FILE
     if not path.exists(): return None
@@ -92,6 +117,8 @@ def descriptor(root: Path | None = None) -> dict | None:
         raise SiteError("unknown site manifest; expected version, application and release")
     if not isinstance(data["application"], str) or not isinstance(data["release"], str):
         raise SiteError("invalid application requirement")
+    if data["version"] == 1:
+        raise SiteError(retired(root))
     return data
 
 
@@ -102,7 +129,7 @@ def require_compatible() -> dict | None:
     if data is None:
         if installed:
             raise SiteError("select a private site with --config DIR, or run thermite init DIR first")
-        return None  # Original complete-checkout behavior.
+        return None  # This program's own checkout is its site (private).
     current = manifest(PROGRAM)["digest"] if installed else None
     if data["application"] != VERSION or current != data["release"]:
         pinned(data, current)

@@ -1102,7 +1102,8 @@ deploy history records a rollback. The site's branch does not move, so the
 next install or upgrade installs HEAD again; to keep the earlier
 configuration, revert the site to it in a new commit. The commit must pin
 the application release that runs the command; one pinned by another
-release is refused with exit status 2.
+release is refused with exit status 2, and so is one from before the site's
+version-2 manifest ([retired site schema](packaging.md#retired-site-schema)).
 
 `thermite revert` puts back the version the last install or upgrade set
 aside, with its state as it was then. That means its files, units, filter

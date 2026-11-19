@@ -23,6 +23,7 @@ import oh_init
 import oh_package
 import oh_paths
 import oh_release
+import oh_site_snapshot
 
 
 def hashes(root):
@@ -411,20 +412,13 @@ class Packaging(unittest.TestCase):
     def test_two_private_git_revisions_use_exact_release_and_rollback_old_helpers(self):
         site = self.root / "git-site"
         old = oh_init.initialize(site, program=self.program)
-        # Version-one private sites historically committed their generated trees.
-        # Keep this rollback fixture explicit even though new sites use schema two.
-        descriptor = json.loads((site / oh_paths.SITE_FILE).read_text())
-        descriptor["version"] = 1
-        (site / oh_paths.SITE_FILE).write_text(json.dumps(descriptor))
-        (site / "conf/services").mkdir(parents=True)
-        (site / "conf/services/addons.cfg").write_text("package=minimal\n")
         def git(*args):
             return subprocess.run(["git", "-C", str(site), *args], check=True, text=True, capture_output=True).stdout.strip()
         git("init", "--initial-branch=fixture")
         git("config", "user.name", "Fixture")
         git("config", "user.email", "fixture@example.invalid")
         git("config", "commit.gpgsign", "false")
-        git("add", "."); git("add", "-f", "conf"); git("commit", "-m", "first private site")
+        git("add", "."); git("commit", "-m", "first private site")
         first_commit = git("rev-parse", "HEAD")
         newer_program = self.root / "rollback-next"
         shutil.copytree(self.program, newer_program)
@@ -433,12 +427,13 @@ class Packaging(unittest.TestCase):
         newer = oh_release.create({name: (newer_program / name).read_bytes() for name in self.release["files"]}, "0.1.1.dev0")
         (newer_program / oh_release.FILE).write_bytes(oh_release.encoded(newer))
         oh_init.initialize(site, program=newer_program, upgrade=True)
-        descriptor = json.loads((site / oh_paths.SITE_FILE).read_text())
-        descriptor["version"] = 1
-        (site / oh_paths.SITE_FILE).write_text(json.dumps(descriptor))
         git("add", "."); git("commit", "-m", "second private site")
         second_commit = git("rev-parse", "HEAD")
         var = site / "var"
+        # What a release renders from a commit is tests/test_site_snapshot.py's
+        # to hold; here it is which release each commit takes its helpers from.
+        rendered = patch.object(oh_site_snapshot, "render", return_value={"conf/services/addons.cfg": b"package=minimal\n"})
+        rendered.start(); self.addCleanup(rendered.stop)
         old_files, old_app = oh_deploy.deployment_files(site, first_commit, var)
         new_files, new_app = oh_deploy.deployment_files(site, second_commit, var)
         self.assertEqual(old_app["digest"], old["release"])

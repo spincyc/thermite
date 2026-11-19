@@ -11,6 +11,8 @@ import io
 import json
 import os
 from pathlib import Path
+import shlex
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -71,11 +73,20 @@ class SplitInstaller(unittest.TestCase):
         with patch.object(deploy, "resolve", return_value=self.context.head), patch.object(deploy, "uncommitted", return_value=[]):
             return steps.DerivedConfiguration(self.context).prepare(self.system)
 
-    def test_descriptor_accepts_both_schemas_and_rejects_unknown_or_boolean_versions(self):
-        for version in (1, 2):
-            data = {**self.requirement, "version": version}
-            (self.site / oh_paths.SITE_FILE).write_text(json.dumps(data))
-            self.assertEqual(oh_paths.descriptor(self.site), data)
+    def test_descriptor_reads_version_2_names_a_schema_1_site_and_rejects_unknown_or_boolean_versions(self):
+        self.assertEqual(oh_paths.descriptor(self.site), self.requirement)
+        (self.site / oh_paths.SITE_FILE).write_text(json.dumps({**self.requirement, "version": 1}))
+        with self.assertRaises(oh_paths.SiteError) as refused:
+            oh_paths.descriptor(self.site)
+        self.assertEqual(str(refused.exception), (
+            f"{self.site} is a schema-1 site (thermite-site.json says version 1): the retired layout, whose generated "
+            f"conf/ was committed. This thermite reads only version 2. Commit {oh_paths.SCHEMA_1_READER[:12]} of "
+            "thermite is the last that reads version 1, and its upgrade rewrites the descriptor as version 2: run "
+            f"`thermite upgrade --config {shlex.quote(str(self.site))} --revision {oh_paths.SCHEMA_1_READER}`, then "
+            "upgrade again"))
+        # Which a site is, is the file's presence; what it says is the descriptor's to refuse.
+        self.assertTrue(oh_paths.private(self.site))
+        self.assertFalse(oh_paths.private(self.site / "installation"))
         for version in (0, 3, True, "2", 2.0):
             (self.site / oh_paths.SITE_FILE).write_text(json.dumps({**self.requirement, "version": version}))
             with self.subTest(version=version), self.assertRaises(oh_paths.SiteError):
@@ -234,15 +245,31 @@ class SplitInstaller(unittest.TestCase):
         pins.assert_called_once_with(args.versions)
         self.assertEqual(receipt.call_args.args[1], self.context.conf_digest)
 
-    def test_schema_one_and_source_checkouts_keep_their_previous_installer_commands(self):
-        legacy = dataclasses.replace(self.context, prepared=None, application=None)
-        (self.site / "conf").mkdir()  # theirs is the working tree's, which the checks compare with the commit
+    def test_the_commit_a_schema_1_site_is_sent_to_is_this_ones_ancestor(self):
+        """The refusal names a commit to upgrade through: it has to exist, before
+        this one, and the packaging guide has to name the same."""
+        guide = (AREA / "docs/packaging.md").read_text(encoding="utf-8")
+        self.assertIn(f"Commit `{oh_paths.SCHEMA_1_READER[:12]}` of the\napplication", guide)
+        self.assertIn(f"--revision {oh_paths.SCHEMA_1_READER}\n", guide)
+        def git(*args):
+            return subprocess.run(["git", "-C", str(AREA), *args], capture_output=True, text=True)
+        if (git("rev-parse", "--show-toplevel").stdout.strip() != str(AREA)
+                or git("rev-parse", "--is-shallow-repository").stdout.strip() != "false"):
+            self.skipTest("needs this application's whole Git history")
+        found = git("merge-base", "--is-ancestor", oh_paths.SCHEMA_1_READER, "HEAD")
+        self.assertEqual(found.returncode, 0, f"{oh_paths.SCHEMA_1_READER} is not a commit before HEAD: {found.stderr}")
+
+    def test_a_checkout_keeps_its_installer_commands(self):
+        checkout = dataclasses.replace(self.context, prepared=None, application=None)
+        (self.site / oh_paths.SITE_FILE).unlink()  # a checkout carries none
+        (self.site / "conf").mkdir()  # its conf/ is the working tree's, which the checks compare with the commit
         with patch.object(oh_paths, "PROGRAM", self.site / "installed app"):
-            self.assertEqual(steps.BootTest(legacy).actions(self.system)[0].argv[-2:], ("test", "boot"))
-            *checks, write, handoff = steps.Deploy(legacy).actions(self.system)
+            self.assertEqual(steps.application(checkout, "lint"), ("bin/thermite", "lint"))
+            self.assertEqual(steps.BootTest(checkout).actions(self.system)[0].argv[-2:], ("test", "boot"))
+            *checks, write, handoff = steps.Deploy(checkout).actions(self.system)
             self.assertEqual([check.argv[-1] for check in checks], ["--check", "validate", "lint"])
-            self.assertEqual(write.argv[-3:], ("deploy", legacy.head, "install"))
-        self.assertEqual(steps.configuration_steps(legacy), [])
+            self.assertEqual(write.argv[-3:], ("deploy", checkout.head, "install"))
+        self.assertEqual(steps.configuration_steps(checkout), [])
 
     def test_a_deploys_destination_uses_the_selected_committed_host(self):
         with patch.object(deploy, "resolve", return_value=self.context.head), \

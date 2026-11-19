@@ -101,8 +101,8 @@ def site_inputs(root):
 def source(area):
     """The application a release is staged from: the running one for a
     site, the checkout itself otherwise."""
-    from oh_paths import PROGRAM, SITE_FILE
-    return PROGRAM if (Path(area) / SITE_FILE).is_file() else Path(area)
+    from oh_paths import PROGRAM, private
+    return PROGRAM if private(area) else Path(area)
 
 
 def python_image(context):

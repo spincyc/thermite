@@ -284,16 +284,15 @@ def cached_model(content: bytes, directory: Path) -> Path:
 
 
 def model_file(arguments) -> Path | None:
-    """Use committed schema-two input; legacy sites keep their generated model."""
+    """Use a private site's committed input; a checkout keeps its generated model."""
     generated = AREA / MODEL
     if arguments.mock:
         return generated if generated.is_file() else None
-    from oh_paths import descriptor
+    from oh_paths import private
     import oh_deploy as deploy
 
     try:
-        selected = descriptor(AREA)
-        if selected is None or selected["version"] != 2:
+        if not private(AREA):
             if not generated.is_file():
                 raise RemoteModelError("no generated remote model for this site; run thermite generate")
             return generated

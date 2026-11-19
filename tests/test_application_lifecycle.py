@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shlex
 import signal
 import subprocess
 import sys
@@ -21,6 +22,7 @@ AREA = fixtures.AREA
 import oh_application_update as application  # noqa: E402
 import oh_cli  # noqa: E402
 import oh_package  # noqa: E402
+import oh_paths  # noqa: E402
 import oh_release  # noqa: E402
 import oh_source_upgrade as transaction  # noqa: E402
 from oh_cli import install as install_cli, upgrade as upgrade_cli  # noqa: E402
@@ -358,6 +360,22 @@ class Commands(unittest.TestCase):
                     self.assertRaises(SystemExit):
                 module.main(["--native-timeout", "10", "--dry-run"])
 
+    def test_the_host_phase_refuses_a_schema_1_site_before_it_plans_anything(self):
+        for module, operation in ((install_cli, "install"), (upgrade_cli, "upgrade")):
+            with self.subTest(operation=operation), tempfile.TemporaryDirectory() as site, \
+                    patch.object(install_cli, "AREA", Path(site)), patch.object(oh_paths, "SITE", Path(site)), \
+                    patch.object(module.os, "geteuid", return_value=1000), \
+                    patch.object(install_cli, "install") as host, patch("sys.stderr", new=io.StringIO()) as said:
+                (Path(site) / oh_paths.SITE_FILE).write_text(
+                    json.dumps({"version": 1, "application": "0.1.0.dev0", "release": "a" * 64}))
+                self.assertEqual(module.main(["--_host-phase", "--_run-approved"]), 2)
+                host.assert_not_called()
+                self.assertTrue(said.getvalue().startswith(
+                    f"thermite {operation}: {site} is a schema-1 site (thermite-site.json says version 1)"), said.getvalue())
+                self.assertTrue(said.getvalue().endswith(
+                    f"`thermite upgrade --config {shlex.quote(site)} --revision {oh_paths.SCHEMA_1_READER}`, then "
+                    "upgrade again\n"), said.getvalue())
+
     def test_host_phase_threads_native_timeout_into_its_context(self):
         context = steps.Context(AREA, {"openhab": {"version": "5.2.3"}},
                                 {"root": "/srv/fictional", "uid": 9001, "gid": 9001},
@@ -423,7 +441,10 @@ code = application.apply("upgrade", Path(site), home=Path(home), approve=lambda:
 Path(report).write_text(json.dumps({"code": code, "host": host}))
 """
 
-    def test_installed_release_launcher_upgrades_to_this_release(self):
+    def drive(self, schema: int = 2):
+        """Upgrade a site the installed release made, its descriptor at
+        `schema`, to this release with the installed launcher's code: the
+        driver's result and report, the site, the home, and the two releases."""
         import yaml
         root = self.root / "installed-upgrade"
         manifest = json.loads(subprocess.run(["git", "-C", str(AREA), "show", f"{INSTALLED}:.thermite-export.json"],
@@ -452,6 +473,9 @@ Path(report).write_text(json.dumps({"code": code, "host": host}))
         self.assertEqual((host["http_port"], host["https_port"]), (13601, 13602))
         host.update(http_port=13602, https_port=13603)
         host_file.write_text(json.dumps(host, indent=2) + "\n")
+        if schema != 2:
+            pin = site / "thermite-site.json"
+            pin.write_text(json.dumps({**json.loads(pin.read_text()), "version": schema}))
         self.initialize_git(site)
         official = root / "official"
         official.mkdir()
@@ -463,6 +487,10 @@ Path(report).write_text(json.dumps({"code": code, "host": host}))
         result = subprocess.run([sys.executable, "-B", str(driver), str(installed / "lib"), str(official), str(site),
                                  str(home), str(runtime), str(bootstrap), str(Path(yaml.__file__).parent.parent),
                                  str(report)], capture_output=True, text=True, env=environment, timeout=300)
+        return result, report, site, home, release, installed_release
+
+    def test_installed_release_launcher_upgrades_to_this_release(self):
+        result, report, site, home, release, installed_release = self.drive()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         outcome = json.loads(report.read_text())
         self.assertEqual(outcome["code"], 0)
@@ -488,6 +516,18 @@ Path(report).write_text(json.dumps({"code": code, "host": host}))
         self.assertIsNone(application.older(store, site, site, "c" * 64, None))
         self.assertIn("pinned it before",
                       application.older(store, site, site, installed_release["digest"], None))
+
+    def test_installed_release_launcher_is_refused_a_schema_1_site_at_its_site_step(self):
+        result, report, site, home, _, _ = self.drive(schema=1)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(f"thermite init: {site} is a schema-1 site (thermite-site.json says version 1)", result.stderr)
+        self.assertIn(f"`thermite upgrade --config {shlex.quote(str(site))} --revision {oh_paths.SCHEMA_1_READER}`, "
+                      "then upgrade again", result.stderr)
+        self.assertFalse(report.exists(), "the host phase never began")
+        self.assertEqual(transaction.git(site, "log", "-1", "--format=%s"), "Fixture baseline")
+        self.assertEqual(transaction.git(site, "status", "--porcelain", "--untracked-files=all"), "")
+        self.assertEqual(json.loads((site / "thermite-site.json").read_text())["version"], 1)
+        self.assertFalse((home / ".local/bin/thermite").exists())
 
 
 class Retention(unittest.TestCase):

@@ -1095,10 +1095,10 @@ def unit_differences(area: Path, commit: str, installed: dict[str, Path] | None 
     from oh_paths import SITE_FILE
     locked = export(area, commit, (SITE_FILE,)).get(SITE_FILE)
     try:
-        derived = locked is not None and _site_requirement(locked.data)["version"] == 2
+        requirement = _site_requirement(locked.data, commit) if locked is not None else None
     except (TypeError, ValueError) as exc:
         raise DeployError("invalid committed application requirement") from exc
-    files = (prepared_files(area, commit, Path(area) / "var")[0] if derived
+    files = (prepared_files(area, commit, Path(area) / "var")[0] if requirement is not None
              else export(area, commit, tuple(installed or INSTALLED)))
     differ = []
     for name, target in (installed or INSTALLED).items():
@@ -1117,11 +1117,11 @@ def unit_differences(area: Path, commit: str, installed: dict[str, Path] | None 
 def installed_units(area: Path, installed: dict[str, Path] | None = None, *, rev: str = "HEAD") -> list[tuple[str, Path, str]]:
     """(area path, installed path, "current" | "differs" | "missing" |
     "unreadable" | "unwanted") for each unit: whether the owner has
-    installed the one the selected committed schema-2 site derives. Legacy
-    checkouts retain comparison with their local generated units. One of
+    installed the one the selected commit of a private site derives. A
+    checkout is compared with its local generated units. One of
     OPTIONAL_UNITS the site does not derive is left out, or "unwanted" while
     it is still installed. Share mounts are reported as services."""
-    from oh_paths import SITE_FILE
+    from oh_paths import SITE_FILE, private
     files = None
     try:
         commit = resolve(area, rev)
@@ -1129,16 +1129,15 @@ def installed_units(area: Path, installed: dict[str, Path] | None = None, *, rev
     except DeployError:
         # Older callers also inspect generated directories outside Git.
         # A private site must still have a verifiable committed requirement.
-        if (Path(area) / SITE_FILE).exists():
+        if private(area):
             raise
     else:
         if locked is not None:
             try:
-                derived = _site_requirement(locked.data)["version"] == 2
+                _site_requirement(locked.data, commit)
             except (TypeError, ValueError) as exc:
                 raise DeployError("invalid committed application requirement") from exc
-            if derived:
-                files = prepared_files(area, commit, Path(area) / "var")[0]
+            files = prepared_files(area, commit, Path(area) / "var")[0]
     out = []
     for name, target in (installed or INSTALLED).items():
         if name in OPTIONAL_UNITS and (name not in files if files is not None else not (Path(area) / name).exists()):
@@ -1552,10 +1551,7 @@ def deploy(area: Path, layout: State, var: Path, rev: str = "HEAD", *, force: bo
                               f"and make check has tested the working tree. Commit them first:{listed}")
     files, application = deployment_files(area, commit, var)
     if application is not None:
-        from oh_paths import SITE_FILE
-        locked = export(area, commit, (SITE_FILE,)).get(SITE_FILE)
-        if locked is not None and _site_requirement(locked.data)["version"] == 2:
-            host = committed_inputs(area, commit)[1]
+        host = committed_inputs(area, commit)[1]
     return install(files, commit, subject(area, commit), layout, var, force=force, dry_run=dry_run,
                    how=how, host=host, application=application)
 
@@ -1565,7 +1561,19 @@ def deployment_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob
     return prepared_files(area, commit, var)
 
 
-def _site_requirement(data: bytes) -> dict:
+def retired(commit: str, found: str) -> DeployError:
+    """The refusal of a site commit that carries no version-2 descriptor;
+    `found` says what it carries instead."""
+    from oh_paths import SITE_FILE
+    return DeployError(
+        f"{commit[:12]} {found}, and this thermite installs only a site commit whose {SITE_FILE} says version 2. "
+        "To run that commit's house again, commit its instance/ and versions.json on top of HEAD, then thermite "
+        "check and thermite install")
+
+
+def _site_requirement(data: bytes, commit: str) -> dict:
+    """`commit`'s application requirement, from its site descriptor."""
+    from oh_paths import SITE_FILE
     import oh_release
     requirement = json.loads(data)
     if (not isinstance(requirement, dict) or set(requirement) != {"version", "application", "release"}
@@ -1573,6 +1581,9 @@ def _site_requirement(data: bytes) -> dict:
             or not isinstance(requirement["application"], str)
             or not oh_release.HEX.fullmatch(str(requirement.get("release")))):
         raise ValueError("invalid site application requirement")
+    if requirement["version"] == 1:
+        raise retired(commit, f"is a schema-1 site commit ({SITE_FILE} says version 1: the retired layout, whose "
+                              "generated conf/ was committed)")
     return requirement
 
 
@@ -1581,11 +1592,12 @@ def committed_inputs(area: Path, commit: str) -> tuple[dict, dict, dict | None]:
     from oh_paths import SITE_FILE
     files = export(area, commit, ("versions.json", "instance/host.yaml", SITE_FILE))
     try:
+        # The descriptor first: a schema-1 commit is refused as one, whatever else it lacks.
+        requirement = _site_requirement(files[SITE_FILE].data, commit) if SITE_FILE in files else None
         versions = json.loads(files["versions.json"].data)
         data = files["instance/host.yaml"].data
         if not isinstance(versions, dict):
             raise ValueError("invalid committed site inputs")
-        requirement = _site_requirement(files[SITE_FILE].data) if SITE_FILE in files else None
     except (KeyError, TypeError, ValueError) as exc:
         raise DeployError("the committed site has invalid host, version or application inputs") from exc
     return versions, oh_host.load(data, f"instance/host.yaml at {commit[:12]}"), requirement
@@ -1594,23 +1606,23 @@ def committed_inputs(area: Path, commit: str) -> tuple[dict, dict, dict | None]:
 def selection(area: Path, rev: str) -> tuple[str, dict, dict | None]:
     """(`rev`'s commit, its host facts, its application requirement):
     resolved once, so host facts and derived output share one revision. A
-    schema-2 site's host facts are the committed ones; any other area's are
-    its working tree's, and its requirement is None."""
+    private site's host facts are the committed ones; a checkout's are its
+    working tree's, and its requirement is None."""
     from oh_paths import SITE_FILE
     commit = resolve(area, rev)
     if export(area, commit, (SITE_FILE,)):
         _, host, requirement = committed_inputs(area, commit)
-        if requirement and requirement["version"] == 2:
-            return commit, host, requirement
+        return commit, host, requirement
     return commit, load(area)[1], None
 
 
 def prepared_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob], dict | None]:
     """Resolve all generated trees and helper code for one immutable site revision.
 
-    Schema 2 renders only committed data with its exact verified release. A
-    missing cache may use the same installed release without writing a cache.
-    Schema 1 and full source checkouts retain their committed-tree behavior.
+    A private site renders only committed data with its exact verified
+    release. A missing cache may use the same installed release without
+    writing a cache. A checkout's commit, which carries no descriptor, is
+    its committed trees.
     Rendering uses a cleaned temporary workspace, including during dry-run.
     """
     from oh_paths import SITE_FILE
@@ -1621,7 +1633,7 @@ def prepared_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob],
     if locked is None:
         return {name: blob for name, blob in files.items() if not name.startswith("instance/") and name != "versions.json"}, None
     try:
-        requirement = _site_requirement(locked.data)
+        requirement = _site_requirement(locked.data, commit)
         root = oh_release.resolve(Path(var) / "application-releases", requirement["release"],
                                   requirement["application"])
         release = oh_release.manifest(root, requirement["release"])
@@ -1631,31 +1643,27 @@ def prepared_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob],
         raise DeployError("the committed site's exact application release is unavailable or failed verification; "
                           "restore that release cache or install its exact reviewed wheel; "
                           "a different release requires an explicit site upgrade") from exc
-    if requirement["version"] == 2:
-        import oh_site_snapshot
-        # A config-only site's launcher is inert scaffolding. Application
-        # directories are not inputs and cannot be used as an alternate codebase.
-        if export(area, commit, ("lib", "web", "tui", "iso", "site", "pyproject.toml")):
-            raise DeployError("a schema-2 private site must not contain application source directories")
-        inputs = {name: blob.data for name, blob in files.items() if name.startswith("instance/") or name == "versions.json"}
-        inputs[SITE_FILE] = locked.data
-        try:
-            # A fresh clone has no ignored var/. Use the existing private site
-            # for the temporary render rather than creating persistent state
-            # during planning. Existing unsafe var paths remain errors.
-            work = Path(var)
-            if not work.exists() and not work.is_symlink():
-                work = Path(area)
-            rendered = oh_site_snapshot.render(inputs, root, work, requirement["release"])
-        except (OSError, ValueError) as exc:
-            raise DeployError("could not derive committed site configuration from its pinned application") from exc
-        files = {name: Blob(data) for name, data in rendered.items()}
-        # The gateway compiles its own contract from the very same committed
-        # inventory, including provider data. Never consult the working tree.
-        files.update({name: Blob(data) for name, data in inputs.items() if name.startswith("instance/")})
-    else:
-        # Never take a schema-1 site's arbitrary lib/ as application authority.
-        files = {name: blob for name, blob in files.items() if name.startswith(("conf/", "metrics/", "deploy/"))}
+    import oh_site_snapshot
+    # A config-only site's launcher is inert scaffolding. Application
+    # directories are not inputs and cannot be used as an alternate codebase.
+    if export(area, commit, ("lib", "web", "tui", "iso", "site", "pyproject.toml")):
+        raise DeployError("a schema-2 private site must not contain application source directories")
+    inputs = {name: blob.data for name, blob in files.items() if name.startswith("instance/") or name == "versions.json"}
+    inputs[SITE_FILE] = locked.data
+    try:
+        # A fresh clone has no ignored var/. Use the existing private site
+        # for the temporary render rather than creating persistent state
+        # during planning. Existing unsafe var paths remain errors.
+        work = Path(var)
+        if not work.exists() and not work.is_symlink():
+            work = Path(area)
+        rendered = oh_site_snapshot.render(inputs, root, work, requirement["release"])
+    except (OSError, ValueError) as exc:
+        raise DeployError("could not derive committed site configuration from its pinned application") from exc
+    files = {name: Blob(data) for name, data in rendered.items()}
+    # The gateway compiles its own contract from the very same committed
+    # inventory, including provider data. Never consult the working tree.
+    files.update({name: Blob(data) for name, data in inputs.items() if name.startswith("instance/")})
     files.update({name: Blob(data, name.startswith("bin/")) for name, data in application.items()})
     return files, {"version": release["application"], "digest": release["digest"]}
 

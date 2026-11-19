@@ -336,10 +336,10 @@ def print_human(report: dict) -> None:
 
 def production(args) -> None:
     """Point args at production on this host and the token the install saved."""
-    from oh_paths import SITE_FILE
+    from oh_paths import private
     revision = getattr(args, "revision", None)
     requirement = None
-    if revision is not None or (AREA / SITE_FILE).is_file():
+    if revision is not None or private(AREA):
         revision, args.host, requirement = deploy.selection(AREA, revision or "HEAD")
     else:
         args.host = deploy.load(AREA)[1]

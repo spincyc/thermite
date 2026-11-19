@@ -54,7 +54,7 @@ def secret_scan() -> int:
 def doc_targets() -> int:
     # Configuration-only sites have no Makefile or application command wrappers.
     import oh_paths
-    if not (AREA / "Makefile").exists() and oh_paths.descriptor(AREA) is not None:
+    if not (AREA / "Makefile").exists() and oh_paths.private(AREA):
         return 0
     documents = [AREA / "README.md", AREA / "FAQ.md", *sorted((AREA / "docs").glob("*.md")),
                  *sorted((AREA / "site/pages").glob("*.md"))]

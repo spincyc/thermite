@@ -170,8 +170,10 @@ class Context:
     hostname: str
     address: str | None
     runtime_token_file: Path | None = None
-    # Schema-2 sites render only committed inputs with their exact cached
+    # A private site renders only committed inputs with its exact cached
     # application. Keep these reviewed bytes authoritative throughout the run.
+    # None for this program's own checkout used as its site (oh_paths.private),
+    # which installs what `thermite generate` wrote beside it.
     prepared: dict[str, deploy.Blob] | None = None
     application: dict | None = None
     restart_runtime: bool = False
@@ -259,19 +261,22 @@ class Context:
 
 def committed_context(area: Path, system: System, runtime_token_file: Path | None = None, *,
                       revision: str | None = None) -> Context:
-    """Plan schema-2 installs from committed inputs, never working output:
+    """Plan a private site's install from committed inputs, never working output:
     HEAD's, or `revision`'s (thermite rollback), which must pin the same
     application release.
 
     Rendering may use a cleaned temporary directory; planning does not
     materialize a site build, fetch anything or change production state.
-    Complete checkouts and schema-1 sites retain their existing behavior.
+    This program's own checkout (oh_paths.private) keeps its working tree's
+    inputs and generated conf/.
     """
-    from oh_paths import descriptor
+    from oh_paths import SITE_FILE, descriptor
     head = deploy.resolve(area, revision or "HEAD")
     selected = descriptor(area)
     files = application_ = None
-    if selected and selected["version"] == 2:
+    if selected is not None:
+        if revision is not None and not deploy.export(area, head, (SITE_FILE,)):
+            raise deploy.retired(head, f"holds no {SITE_FILE} for this site (it is from before the site had one)")
         versions, host, committed = deploy.committed_inputs(area, head)
         if committed != selected and revision is not None:
             raise deploy.DeployError(f"{head[:12]} pins another application release than the site's HEAD; "
@@ -397,8 +402,8 @@ def application(context: Context, *args: str) -> tuple[str, ...]:
     python and a relative source Makefile cannot substitute for that release.
     Original source checkouts retain their established commands.
     """
-    from oh_paths import SITE_FILE
-    if (context.area / SITE_FILE).is_file():
+    from oh_paths import private
+    if private(context.area):
         return (sys.executable, str(context.program / "bin/thermite"), "--config", str(context.area), *args)
     return ("bin/thermite", *args)
 
@@ -2471,11 +2476,8 @@ class Committed(Step):
     def check(self, system: System) -> Check:
         area = self.context.area
         problems = []
-        from oh_paths import SITE_FILE
         if self.context.prepared is None:
-            argv = (application(self.context, "generate", "--check") if (area / SITE_FILE).is_file()
-                    else (sys.executable, str(area / "bin/thermite"), "generate", "--check"))
-            code, _ = system.capture(argv)
+            code, _ = system.capture((sys.executable, str(area / "bin/thermite"), "generate", "--check"))
             if code:
                 problems.append("conf/ or deploy/ is not what the house file and versions.json generate: "
                                 "run thermite generate, then commit")

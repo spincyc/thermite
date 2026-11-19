@@ -92,12 +92,9 @@ class SiteModel(unittest.TestCase):
                 remote.model_file(self.arguments)
             self.assertFalse((self.site / "var").exists())
 
-    def test_source_and_schema_one_need_generation_without_demo_fallback(self):
-        for descriptor in (None, {"version": 1, "application": "0.1.0.dev0", "release": "a" * 64}):
-            if descriptor:
-                (self.site / "thermite-site.json").write_text(json.dumps(descriptor))
-            with self.subTest(descriptor=descriptor), self.assertRaisesRegex(remote.RemoteModelError, "thermite generate"):
-                remote.model_file(self.arguments)
+    def test_a_checkout_needs_generation_without_demo_fallback(self):
+        with self.assertRaisesRegex(remote.RemoteModelError, "thermite generate"):
+            remote.model_file(self.arguments)
         path = self.site / remote.MODEL
         path.parent.mkdir(parents=True)
         path.write_bytes(CONTENT)
