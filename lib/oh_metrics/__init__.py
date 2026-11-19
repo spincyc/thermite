@@ -72,7 +72,7 @@ DEVICE_JOB = "device_tcp"
 DEVICE_PROBE_INTERVAL = "2m"
 
 #: Below the runtime state (oh_deploy.State): the deployed copy of
-#: metrics/ (written by bin/thermite deploy through the group, like conf/),
+#: metrics/ (written by an install's Deploy step through the group, like conf/),
 #: and the monitoring directory with the stores and secrets.
 STATE_CONFIG = "metrics"
 STATE_DATA = "monitoring"
@@ -246,13 +246,13 @@ def services(host: dict) -> list[Service]:
              f"--storage.tsdb.retention.time={keep}",
              f"--storage.tsdb.retention.size={size}",
              f"--web.listen-address={LOOPBACK}:{port['prometheus']}",
-             # bin/thermite deploy reloads the configuration with POST /-/reload.
+             # An install reloads the configuration with POST /-/reload.
              "--web.enable-lifecycle"),
             (Volume(f"{STATE_CONFIG}/prometheus", PROMETHEUS_CONFIG_DIR, "ro"),
              Volume(STATE_PROMETHEUS, PROMETHEUS_DATA_DIR, "rw"),
              secrets),
             bounds=oh_units.Bounds(oh_units.STATE_USER, "1536M", "2560M", oh_units.HOST_NETWORK, (STATE_SECRETS,)),
-            notes=(f"Keeps {keep} of samples, at most {size}. bin/thermite deploy reloads",
+            notes=(f"Keeps {keep} of samples, at most {size}. An install reloads",
                    "its configuration with POST /-/reload (--web.enable-lifecycle)."),
         ),
         Service(
@@ -292,7 +292,7 @@ def services(host: dict) -> list[Service]:
              f"--web.listen-address={LOOPBACK}:{port['blackbox']}"),
             (Volume(f"{STATE_CONFIG}/blackbox", BLACKBOX_CONFIG_DIR, "ro"),),
             bounds=oh_units.Bounds(oh_units.STATE_USER, "128M", "256M", oh_units.HOST_NETWORK, ()),
-            notes=("bin/thermite deploy reloads its modules with POST /-/reload.",),
+            notes=("An install reloads its modules with POST /-/reload.",),
         ),
         Service(
             oh_units.EXPORTER, oh_units.CONTAINERS[oh_units.EXPORTER], "atv_helper",

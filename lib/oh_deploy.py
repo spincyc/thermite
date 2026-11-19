@@ -674,7 +674,7 @@ def render_atv_quadlet(versions: dict, host: dict) -> str:
     oh_service.validate_identity(host["uid"], host["gid"])
     layout = state(host)
     lines = [
-        "# The Apple TV helper for openHAB (bin/thermite apple-tv, docs/deploy.md).",
+        "# The Apple TV helper for openHAB (bin/thermite apple-tv, docs/installation.md).",
         *HEADER,
         "[Unit]",
         "Description=Apple TV helper for openHAB",
@@ -810,7 +810,7 @@ def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service)
     where = ("only this host reaches it" if address.startswith(f"{metrics.LOOPBACK}:") else
              "phones and computers on the LAN reach it")
     lines = [
-        f"# {service.description}: metrics and dashboards (lib/oh_metrics, docs/deploy.md).",
+        f"# {service.description}: metrics and dashboards (lib/oh_metrics, docs/installation.md).",
         *HEADER,
         "[Unit]",
         f"Description={service.description}",
@@ -1668,7 +1668,7 @@ def deploy_metrics(layout: State, how: str, clock=time.time) -> bool:
     """Tell node_exporter's textfile collector when the last deploy or
     rollback finished; a metrics failure never fails a deploy."""
     directory = layout.textfile
-    text = ("# HELP thermite_deploy_timestamp_seconds When the last thermite deploy or rollback finished.\n"
+    text = ("# HELP thermite_deploy_timestamp_seconds When the last thermite install or rollback finished.\n"
             "# TYPE thermite_deploy_timestamp_seconds gauge\n"
             f'thermite_deploy_timestamp_seconds{{how="{"rollback" if how == "rollback" else "deploy"}"}} '
             f"{clock():.3f}\n")
