@@ -478,6 +478,7 @@
     "tests/test_entry.py",
     "tests/test_export_manifest.py",
     "tests/test_generated_output.py",
+    "tests/test_generator_inputs.py",
     "tests/test_guest_http.py",
     "tests/test_handheld.py",
     "tests/test_handheld_qemu.py",

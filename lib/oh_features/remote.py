@@ -14,9 +14,10 @@ have changed under it.
 
 THEMED, the page's colors and icons, are not copied but drawn by oh_brand
 from the house's theme: `theme` in devices.yaml, a built-in theme's name or
-a theme file relative to instance/, and thermite's own without one. The
-copies in web/remote/ are the default theme's, for a preview from disk;
-tests/test_remote_samples.py keeps them so.
+a theme file relative to the house file's directory (a site's instance/),
+and thermite's own without one. The copies in web/remote/ are the default
+theme's, for a preview from disk; tests/test_remote_samples.py keeps them
+so.
 """
 
 from __future__ import annotations
@@ -28,14 +29,12 @@ import re
 import oh_access_mode
 import oh_brand as brand
 import oh_routes
-from oh_conf import LIB, Conf, House
+from oh_conf import LIB, Conf, House, instance
 
-from . import remote_activity, remote_cameras, remote_diagnostics, remote_topology, remote_model, remote_system
+from . import remote_activity, remote_cameras, remote_diagnostics, remote_topology, remote_model
 
 NAME = "remote"
 SOURCE = LIB.parent / "web/remote"
-from oh_paths import SITE
-INSTANCE = SITE / "instance"
 TARGET = "html/remote"
 #: Every file the page loads; README.md stays behind.
 FILES = ("index.html", "theme.css", "remote.css", "house.js", "remotes.js", "activity.js", "activity.json", "diagnostics.js", "diagnostics.json", "backend.js", "session.js", "log.js", "remote.js",
@@ -113,7 +112,10 @@ def palette(data: dict) -> brand.Palette:
     spec = data.get("theme")
     if spec is None:
         return brand.load()
-    return brand.load(spec if spec in brand.builtin() else INSTANCE / spec, root=INSTANCE)
+    files = instance()
+    if files is None and spec not in brand.builtin():
+        raise brand.PaletteError(spec, ["a theme file is read from beside the house file, and this house was read from none"])
+    return brand.load(spec if spec in brand.builtin() else files / spec, root=files)
 
 
 def themed(chosen: brand.Palette) -> dict[str, bytes]:
@@ -150,8 +152,7 @@ def render(house: House, conf: Conf) -> None:
         elif name == "access-config.js":
             conf.files[f"{TARGET}/{name}"] = oh_access_mode.script()
         elif name == "system.json":
-            metadata = conf.system_metadata if conf.system_metadata is not None else remote_system.selected()
-            conf.files[f"{TARGET}/{name}"] = json.dumps(metadata, separators=(",", ":")) + "\n"
+            conf.files[f"{TARGET}/{name}"] = json.dumps(conf.system_metadata, separators=(",", ":")) + "\n"
         elif name == "activity.json":
             conf.files[f"{TARGET}/{name}"] = json.dumps(remote_activity.manifest(house, conf), separators=(",", ":")) + "\n"
         elif name == "diagnostics.json":

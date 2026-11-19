@@ -20,7 +20,6 @@ import urllib.parse
 
 import oh_cli
 import oh_deploy as deploy
-import oh_render as render
 import oh_sandbox as sandbox
 from oh_conf import House, uses
 from oh_integrations import _pairing
@@ -116,8 +115,8 @@ def openhab(use_sandbox: bool) -> sandbox.Http:
         url, token_file = inst.url, inst.token_file
         hint = "start the sandbox without --no-token"
     else:
-        host = deploy.load(render.AREA)[1]
-        url, token_file = deploy.production_url(host), render.AREA / deploy.token_file(deploy.hostname())
+        host = deploy.load(oh_cli.AREA)[1]
+        url, token_file = deploy.production_url(host), oh_cli.AREA / deploy.token_file(deploy.hostname())
         hint = "bin/thermite install saves production's API token there (docs/installation.md)"
     if not token_file.is_file():
         raise OpenHABError(f"no API token in {token_file}: {hint}")
@@ -359,7 +358,7 @@ def main(argv: list[str] | None = None) -> int:
         "production": "production thermite on this host, with the API token bin/thermite install saved",
         "sandbox": "the sandbox, and its Android TV pairings",
     })
-    oh_cli.add_house(parser, render.INVENTORY)
+    oh_cli.add_house(parser)
     oh_cli.add_timeout(parser, ONLINE_TIMEOUT, "an Android TV to come ONLINE after its code")
     args = parser.parse_args(argv)
 

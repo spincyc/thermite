@@ -126,7 +126,7 @@ SANDBOX_CONF = lib.VAR / "sandbox" / "conf"
 
 def mirror(source: Path | None, live: bool) -> Path:
     guard = render.unrelayed if live else read_only
-    return lib.mirror_conf(source or render.CONF, SANDBOX_CONF, lambda files: guard(render.direct(files)))
+    return lib.mirror_conf(source or AREA / "conf", SANDBOX_CONF, lambda files: guard(render.direct(files)))
 
 
 def read_only(files: dict[str, str | bytes]) -> dict[str, str | bytes]:
@@ -159,7 +159,7 @@ def cmd_start(args) -> int:
 def cmd_reload(args) -> int:
     mode = lib.read_mode(lib.sandbox_instance())
     conf = mirror(args.conf, mode == lib.LIVE)
-    print(f"reloaded {conf} from {args.conf or render.CONF} ({describe(mode)})")
+    print(f"reloaded {conf} from {args.conf or AREA / 'conf'} ({describe(mode)})")
     return 0
 
 

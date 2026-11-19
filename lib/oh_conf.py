@@ -8,6 +8,7 @@ lib/oh_render.py runs them and writes the result. Things and Items are data
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import json
 import re
@@ -277,6 +278,33 @@ def fill(source: str, constants: dict[str, object], origin: Path | str, *, part:
 
 # ---------------------------------------------------------------- the house
 
+#: Where the files a house names by a path are (its theme, an IR profile):
+#: the directory its house file is in, a site's instance/. House.load() says
+#: so for the file it reads and instance_at() for a block; None before
+#: either, and a house that names such a file is then refused. It is the
+#: process's and no argument because the hooks that read a profile are
+#: given one device (oh_integrations.globalcache_ir.commissioned()).
+_instance: Path | None = None
+
+
+def instance() -> Path | None:
+    """The directory the house's own files are in; None when no house file
+    has been read."""
+    return _instance
+
+
+@contextlib.contextmanager
+def instance_at(directory: Path | None):
+    """For a block, the house's own files are in `directory`: for a house that
+    is a mapping (House(data)), or one whose files are a copy elsewhere."""
+    global _instance
+    previous, _instance = _instance, directory
+    try:
+        yield
+    finally:
+        _instance = previous
+
+
 class House:
     """The validated inventory, with the names and lookups every renderer
     shares. It holds the one mapping the house file parsed to (`data`, for
@@ -322,8 +350,11 @@ class House:
     def load(cls, path: Path) -> House:
         """The house file at `path`, validated: the one reader of a house
         file. ConfigError when it cannot be read or parsed, or naming every
-        problem oh_render.validate finds in it."""
+        problem oh_render.validate finds in it. The files it names are read
+        from its own directory from here on (instance())."""
+        global _instance
         data = inventory.load(path)
+        _instance = Path(path).parent
         try:
             return cls(data)
         except inventory.ConfigError as error:
@@ -521,8 +552,8 @@ class Conf:
         # binding links discard them. This server-side authority is never
         # inferred from browser metadata or a transform profile alone.
         self.executor_controls: set[str] = set()
-        # Optional explicit deployment facts for the System catalogue. Public
-        # export supplies its fictional host instead of reading the active site.
+        # The System catalogue's facts of the host and the runtime, from the
+        # build's own inputs (oh_render.build).
         self.system_metadata = system_metadata
         self._derived: dict[str, object] = {}
 

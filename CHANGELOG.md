@@ -7,6 +7,8 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- With `--house FILE`, a theme file or IR profile the house names is
+  read from beside FILE, not from the selected site's `instance/`.
 - An upgrade that changes the openHAB pin no longer fails at random.
   openHAB's own update removes its bundle cache, and the first start
   after it could leave the add-ons installed and never started (eleven of

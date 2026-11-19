@@ -387,7 +387,7 @@ class Allowlist(SimpleTestCase):
         # the allowlist: the route's bare name does, and the listener admits it.
         import oh_render
         files = oh_render.render(House({"version": 1, "rooms": {}, "devices": []}),
-                                 system_metadata={"version": 1, "runtime": {"version": "test"}, "tools": []})
+                                 versions={"openhab": {"version": "0.0.0"}})
 
         def content(name):
             value = files["html/remote/" + name]

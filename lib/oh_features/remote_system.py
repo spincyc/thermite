@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import re
 
 import oh_ports
+from oh_conf import LIB
 
+#: The application's own pins: its versions.json, beside lib/.
+PINS = LIB.parent / "versions.json"
 ADMIN_ASSETS = frozenset({"system.html", "system.json"})
 _TOOLS = (
     ("openhab", "openHAB", "Advanced runtime settings and add-ons.", "http", "/settings/", True),
@@ -28,19 +30,15 @@ def manifest(host: dict, runtime_version: str) -> dict:
         for ident, label, description, port, path, local in _TOOLS]}
 
 
-def selected(*, site: Path | None = None, program: Path | None = None) -> dict:
-    """Read only the selected host settings and the application's runtime pin.
-    The host file is checked by oh_host.load, the one host loader."""
-    import oh_host
-    from oh_paths import PROGRAM, SITE
-
-    try:
-        host = oh_host.load(Path(site or SITE) / "instance/host.yaml")
-    except oh_host.HostError as exc:
-        raise ValueError(f"System metadata requires a valid host file: {exc}") from None
-    versions = json.loads((Path(program or PROGRAM) / "versions.json").read_text(encoding="utf-8"))
+def described(host: dict | None = None, versions: dict | None = None) -> dict:
+    """manifest() of a build's inputs. `host` is instance/host.yaml as
+    oh_host read it; without one the tools are at the product's default
+    ports. `versions` is versions.json; without it the application's own
+    pins (PINS) name the runtime. No site is looked for."""
+    if versions is None:
+        versions = json.loads(PINS.read_text(encoding="utf-8"))
     try:
         runtime = versions["openhab"]["version"]
     except (KeyError, TypeError):
         raise ValueError("System metadata requires the pinned runtime version") from None
-    return manifest(host, runtime)
+    return manifest({} if host is None else host, runtime)

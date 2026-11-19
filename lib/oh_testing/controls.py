@@ -917,7 +917,7 @@ def run_check(args, rt: lib.Runtime, log) -> int:
 
 def add_arguments(parser) -> None:
     oh_cli.add_timeout(parser, 300, "the boot")
-    oh_cli.add_house(parser, render.INVENTORY)
+    oh_cli.add_house(parser)
 
 
 def run(args) -> int:

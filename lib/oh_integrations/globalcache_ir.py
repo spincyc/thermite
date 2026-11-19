@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 import re
 
-from oh_conf import Addon, House, LIB, YamlFile, point, retarget, uses
+from oh_conf import Addon, House, LIB, YamlFile, instance, point, retarget, uses
 from oh_shape import MAPPING, NUMBER, TEXT, Key
 from . import _commands, _script
 
@@ -31,8 +31,6 @@ DEVICE_KEYS = {"ir": Key(MAPPING, "the IR emitter that drives the device", keys=
     "profile": Key(TEXT, "the file of verified IR commands, as ir/<name>.json under instance/", required=True)})}
 #: The iTach's TCP API.
 DISCOVER_PORTS = (4998,)
-from oh_paths import SITE
-INSTANCE = SITE / "instance"
 RULE = "automation/js/globalcache_ir.js"
 SOURCE = Path(__file__).with_suffix(".js")
 KEYS = frozenset({"power", "eject", "back", "home", "up", "down", "left", "right", "ok", "top_menu",
@@ -125,7 +123,10 @@ def commissioned(device: dict) -> dict | None:
     name = config["profile"]
     if not isinstance(name, str) or not re.fullmatch(r"ir/[A-Za-z0-9_-]+\.json", name):
         raise ProfileError("IR profile must name an ir/<profile>.json file under instance/")
-    root = INSTANCE.resolve()
+    files = instance()
+    if files is None:
+        raise ProfileError("an IR profile is read from beside the house file, and this house was read from none")
+    root = files.resolve()
     path = (root / name).resolve()
     if not path.is_relative_to(root):
         raise ProfileError("IR profile must remain under instance/")

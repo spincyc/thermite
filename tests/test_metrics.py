@@ -1131,7 +1131,10 @@ class Alerting(unittest.TestCase):
         node = next(service for service in oh_metrics.services(HOST) if service.unit == oh_units.NODE_EXPORTER)
         # Mounted for it by name: below /host its own account does not enter the runtime state.
         self.assertIn("--collector.textfile.directory=/textfile", node.args)
-        self.assertIn(oh_metrics.Volume(str(oh_deploy.state(HOST).textfile), "/textfile", "ro"), node.volumes)
+        # Below the runtime state as its other mounts are, and never relabelled:
+        # the access services write it.
+        self.assertIn(oh_metrics.Volume(oh_metrics.STATE_TEXTFILE, "/textfile", "ro", relabel=False), node.volumes)
+        self.assertEqual(oh_deploy.state(HOST).textfile, oh_deploy.state(HOST).root / oh_metrics.STATE_TEXTFILE)
 
 
 class Dashboards(unittest.TestCase):

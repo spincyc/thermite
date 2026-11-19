@@ -173,13 +173,6 @@ def node_exporter_id(host: dict) -> int:
     return (host.get("metrics") or {}).get("node_exporter_uid", host["uid"] - 1)
 
 
-def textfile_directory(host: dict) -> str:
-    """The host path of the access services' metrics textfiles."""
-    import oh_deploy  # Here: oh_deploy imports this package.
-
-    return str(oh_deploy.state(host).textfile)
-
-
 def openhab_address(host: dict) -> str:
     return f"{LOOPBACK}:{host['http_port']}"
 
@@ -203,6 +196,9 @@ class Volume:
     source: str
     target: str
     options: str = "ro"
+    #: Under SELinux a source below the runtime state takes a label for its
+    #: containers. False for what host services write, which keeps its own.
+    relabel: bool = True
 
 
 @dataclasses.dataclass(frozen=True)
@@ -270,10 +266,10 @@ def services(host: dict) -> list[Service]:
              "--collector.systemd.enable-restarts-metrics",
              "--collector.systemd.enable-start-time-metrics"),
             # No relabelling option on / : relabelling the whole host would be ruinous.
-            # Nor on the textfile directory, an absolute source: host services write it.
+            # Nor on the textfile directory: host services write it.
             (Volume("/", "/host", "ro,rslave"),
              Volume(DBUS_SOCKET, DBUS_SOCKET, "ro"),
-             Volume(textfile_directory(host), TEXTFILE_MOUNT, "ro")),
+             Volume(STATE_TEXTFILE, TEXTFILE_MOUNT, "ro", relabel=False)),
             environment=(("DBUS_SYSTEM_BUS_ADDRESS", f"unix:path={DBUS_SOCKET}"),),
             podman_args=("--pid=host",),
             # All of / and the host's processes, so never the state's user: no secret store.

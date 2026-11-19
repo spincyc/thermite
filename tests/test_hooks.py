@@ -38,7 +38,6 @@ BY_NAME = {
     "lib/oh_cli/pair.py": ({"androidtv_googletv", "pyatv_http", "sony_ip_control"},
                            "thermite pair runs each of these integrations' own pairing"),
     "lib/oh_features/remote_cameras.py": ({"unifi_protect"}, "the camera catalogue is Protect's"),
-    "lib/oh_install/access.py": ({"globalcache_ir"}, "the gateway's install reads the commissioned IR profiles"),
     "lib/oh_testing/routing.py": ({"vrroom_telnet"}, "the routing check waits out the VRROOM rule's poll"),
 }
 

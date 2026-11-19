@@ -53,8 +53,7 @@ class CleanRoutes(unittest.TestCase):
 
     def test_generated_page_versions_match_the_served_assets(self):
         import oh_render
-        files = oh_render.render(House({"version": 1, "rooms": {}, "devices": []}),
-                                 system_metadata={"version": 1, "runtime": {"version": "test"}, "tools": []})
+        files = oh_render.render(House({"version": 1, "rooms": {}, "devices": []}), versions={"openhab": {"version": "0.0.0"}})
         for _, _, asset in oh_routes.PAGES:
             addresses = Addresses()
             addresses.feed(files[f"html/remote/{asset}"].decode())

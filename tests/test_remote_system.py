@@ -56,30 +56,29 @@ class SystemMetadata(unittest.TestCase):
             with self.subTest(version=version), self.assertRaises(ValueError):
                 remote_system.manifest({}, version)
 
-    def test_selected_reads_host_from_site_and_version_from_program_only(self):
-        scratch = Path(os.environ.get("TMPDIR", AREA.parents[1] / ".scratch/thermite_system_metadata"))
-        scratch.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
-            root = Path(temporary)
-            site, program = root / "site", root / "program"
-            (site / "instance").mkdir(parents=True)
-            (program / "instance").mkdir(parents=True)
-            host = ("root: /srv/thermite\ntimezone: Etc/UTC\nhttps_port: 13603\nuid: 9001\ngid: 9001\n")
-            (site / "instance/host.yaml").write_text(host + "http_port: 14001\nmetrics:\n  grafana_port: 14002\n")
-            (program / "instance/host.yaml").write_text(host + "http_port: 15001\n")
-            (site / "versions.json").write_text(json.dumps({"openhab": {"version": "0.0.0"}}))
-            (program / "versions.json").write_text(json.dumps({"openhab": {"version": "5.2.3"}}))
-            result = remote_system.selected(site=site, program=program)
-            self.assertEqual(result["runtime"]["version"], "5.2.3")
-            self.assertEqual([tool["port"] for tool in result["tools"][:2]], [14001, 14002])
-            (program / "versions.json").write_text("{}")
-            with self.assertRaises(ValueError):
-                remote_system.selected(site=site, program=program)
-            (program / "versions.json").write_text(json.dumps({"openhab": {"version": "5.2.3"}}))
-            # The site's host file is validated by the one host loader.
+    def test_described_is_of_the_host_and_versions_it_is_given_and_reads_no_file(self):
+        host = {"http_port": 14001, "metrics": {"grafana_port": 14002}}
+        with mock.patch.object(Path, "read_text", side_effect=AssertionError("a file was read")), \
+                mock.patch.object(Path, "read_bytes", side_effect=AssertionError("a file was read")):
+            result = remote_system.described(host, {"openhab": {"version": "0.0.0"}})
+        self.assertEqual(result, remote_system.manifest(host, "0.0.0"))
+        self.assertEqual([tool["port"] for tool in result["tools"][:2]], [14001, 14002])
+        for versions in ({}, {"openhab": None}, []):
+            with self.subTest(versions=versions), self.assertRaisesRegex(ValueError, "pinned runtime version"):
+                remote_system.described(host, versions)
+
+    def test_without_them_the_ports_are_the_products_and_the_runtime_the_applications_own_pin(self):
+        self.assertEqual(remote_system.PINS, AREA / "versions.json")
+        pinned = json.loads(remote_system.PINS.read_text(encoding="utf-8"))["openhab"]["version"]
+        self.assertEqual(remote_system.described(), remote_system.manifest({}, pinned))
+        # Not the site's: one whose files say otherwise changes nothing.
+        with tempfile.TemporaryDirectory() as temporary:
+            site = Path(temporary)
+            (site / "instance").mkdir()
             (site / "instance/host.yaml").write_text("http_port: 14001\n")
-            with self.assertRaisesRegex(ValueError, "valid host file.*missing timezone"):
-                remote_system.selected(site=site, program=program)
+            (site / "versions.json").write_text(json.dumps({"openhab": {"version": "0.0.0"}}))
+            with mock.patch.dict(os.environ, {"THERMITE_SITE": str(site)}):
+                self.assertEqual(remote_system.described(), remote_system.manifest({}, pinned))
 
 
 if __name__ == "__main__":

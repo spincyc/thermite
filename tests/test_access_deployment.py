@@ -648,6 +648,7 @@ class Lifecycle(GatewayFixture):
         self.assertEqual(set(profile), {"version", "url", "ca_file", "release", "state", "versions", "journal"})
 
     def test_contract_inputs_ignore_poisoned_working_provider_and_theme(self):
+        import oh_conf
         import oh_paths
         from oh_features import remote
         from oh_integrations import globalcache_ir
@@ -663,15 +664,14 @@ class Lifecycle(GatewayFixture):
         (dirty / "instance/ir/disc.json").write_text("invalid dirty provider")
         device = {"kind": "disc_player", "model": "UBP-X800M2",
                   "ir": {"model": "iTach IP2IR", "ip": "192.0.2.25", "connector": 1, "profile": "ir/disc.json"}}
-        with patch.object(remote, "INSTANCE", dirty / "instance"), patch.object(globalcache_ir, "INSTANCE", dirty / "instance"):
+        with oh_conf.instance_at(dirty / "instance"):
             before = oh_paths.SITE
             with site_inputs(frozen):
                 self.assertEqual(remote.palette({"theme": "theme.json"}).name, "committed")
                 self.assertEqual(globalcache_ir.commissioned(device)["commands"], {"play": "38000,1,1,24,24"})
                 self.assertEqual(oh_paths.SITE, frozen)
             self.assertEqual(oh_paths.SITE, before)
-            self.assertEqual(remote.INSTANCE, dirty / "instance")
-            self.assertEqual(globalcache_ir.INSTANCE, dirty / "instance")
+            self.assertEqual(oh_conf.instance(), dirty / "instance")
 
 
 class CertificateProfile(GatewayFixture):

@@ -3,12 +3,12 @@ from pathlib import Path
 import json
 import tempfile
 import unittest
-from unittest.mock import patch
 import sys
 
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / 'lib'))
 import oh_brand
+import oh_conf
 from oh_features import remote
 
 
@@ -25,7 +25,7 @@ class ThemeInputs(unittest.TestCase):
             nested = instance / 'themes'; nested.mkdir()
             child = nested / 'child.json'
             child.write_text(json.dumps({'name': 'child', 'extends': '../inside.json'}))
-            with patch.object(remote, 'INSTANCE', instance):
+            with oh_conf.instance_at(instance):
                 self.assertEqual(remote.palette({'theme': 'themes/child.json'}).name, 'child')
                 self.assertEqual(remote.palette({'theme': 'thermite'}).name, 'thermite')
                 for path in (str(outside), '../outside.json'):

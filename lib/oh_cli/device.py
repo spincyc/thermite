@@ -765,7 +765,7 @@ def text(found: dict) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = oh_cli.command("device", DESCRIPTION, EXAMPLES, NOTES)
     parser.add_argument("device", metavar="ID", help="the device's id in the house file")
-    oh_cli.add_house(parser, render.INVENTORY)
+    oh_cli.add_house(parser)
     oh_cli.add_timeout(parser, 5, "each answer of Prometheus")
     oh_cli.add_json(parser)
     args = parser.parse_args(argv)

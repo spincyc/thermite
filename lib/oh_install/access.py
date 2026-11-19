@@ -81,16 +81,16 @@ def openssl_config(hosts) -> str:
 
 @contextmanager
 def site_inputs(root):
-    """Bind legacy renderer modules to the same immutable input snapshot."""
+    """Bind the stager, and the files a house names (oh_conf.instance()), to
+    the same immutable input snapshot."""
+    import oh_conf
     import oh_paths
-    from oh_features import remote
-    from oh_integrations import globalcache_ir
-    previous = oh_paths.SITE, remote.INSTANCE, globalcache_ir.INSTANCE
-    oh_paths.SITE, remote.INSTANCE, globalcache_ir.INSTANCE = root, root / "instance", root / "instance"
+    previous, oh_paths.SITE = oh_paths.SITE, root
     try:
-        yield
+        with oh_conf.instance_at(root / "instance"):
+            yield
     finally:
-        oh_paths.SITE, remote.INSTANCE, globalcache_ir.INSTANCE = previous
+        oh_paths.SITE = previous
 
 
 #: The thermite-access.service directives that identify its release.

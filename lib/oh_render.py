@@ -19,15 +19,13 @@ import oh_inventory as inventory
 import oh_ports
 from oh_conf import (ADDONS_CFG, COMMAND_SCRIPTS, GUARD_ADDON_WHY, GUARD_PROFILE, RULE_SENDS, RULE_SILENT, Addon, Conf,
                      House, dump, guard, linked, uses)
+from oh_features import remote_system
 
 #: openHAB's own metrics, which Prometheus scrapes (lib/oh_metrics); every
 #: house has them, whatever its devices.
 METRICS_ADDON = Addon("misc", "metrics", "openHAB's own metrics at /rest/metrics/prometheus, which Prometheus "
                                          "scrapes (lib/oh_metrics)")
 
-from oh_paths import SITE as AREA
-INVENTORY = AREA / "instance/devices.yaml"
-CONF = AREA / "conf"
 #: jUPnP's settings. openHAB's ConfigDispatcher applies each `pid:key=value`
 #: line as a string as it starts, and updates a PID only when a value differs:
 #: https://github.com/openhab/openhab-core/blob/5.2.3/bundles/org.openhab.core.config.dispatch/src/main/java/org/openhab/core/config/dispatch/internal/ConfigDispatcher.java
@@ -65,10 +63,15 @@ def validate(data: object) -> list[str]:
     return problems
 
 
-def build(house: House, *, system_metadata: dict | None = None, host: dict | None = None) -> Conf:
-    """The whole conf/ of a house; `host` (instance/host.yaml) allocates its
-    listener ports."""
-    conf = Conf(system_metadata=system_metadata)
+def build(house: House, *, host: dict | None = None, versions: dict | None = None) -> Conf:
+    """The whole conf/ of a house, from what it is given and the
+    application's own files: it looks for no site. `host` is
+    instance/host.yaml as oh_host read it, which allocates the listener
+    ports (the product's default ones without it), and `versions` is
+    versions.json, which names the runtime (the application's own pins
+    without it). The files the house names are read from beside its house
+    file (oh_conf.instance())."""
+    conf = Conf(system_metadata=remote_system.described(host, versions))
     for module in integrations.REGISTRY:
         devices = [d for d in house.devices if uses(d, module.PHASE, module.NAME)]
         if not devices:
@@ -103,10 +106,10 @@ def build(house: House, *, system_metadata: dict | None = None, host: dict | Non
     return conf
 
 
-def render(house: House, *, system_metadata: dict | None = None) -> dict[str, str | bytes]:
+def render(house: House, *, host: dict | None = None, versions: dict | None = None) -> dict[str, str | bytes]:
     """Path under conf/ -> content, for every file conf/ must hold (bytes for
-    a file copied byte for byte)."""
-    return build(house, system_metadata=system_metadata).render()
+    a file copied byte for byte); build()'s inputs."""
+    return build(house, host=host, versions=versions).render()
 
 
 READ_ONLY_HEADER = (

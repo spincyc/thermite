@@ -767,7 +767,7 @@ def exec_word(word: str) -> str:
 
 def _volume(service: metrics.Service, volume: metrics.Volume, root: Path, shared: set[str]) -> str:
     options = [option for option in volume.options.split(",") if option and option != "rw"]
-    if not volume.source.startswith("/"):
+    if volume.relabel and not volume.source.startswith("/"):
         # Under SELinux: a private label for a directory one container
         # mounts, a shared one for the secrets several mount, and for
         # the one file of them that Grafana mounts.

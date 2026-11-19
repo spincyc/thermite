@@ -14,7 +14,6 @@ import sys
 import time
 
 import oh_cli
-import oh_render as render
 from oh_cli import pair
 from oh_conf import House
 from oh_features import reboots
@@ -114,7 +113,7 @@ def restart(house: House, ident: str, http, timeout: float, log=print, clock=tim
 def main(argv: list[str] | None = None) -> int:
     parser = oh_cli.command("reboot", DESCRIPTION, EXAMPLES, NOTES)
     parser.add_argument("device", nargs="?", metavar="DEVICE", help="the device's id in the house file")
-    oh_cli.add_house(parser, render.INVENTORY)
+    oh_cli.add_house(parser)
     oh_cli.add_timeout(parser, TIMEOUT, "the device to answer again")
     args = parser.parse_args(argv)
 

@@ -547,6 +547,8 @@ class MetricsUnits(unittest.TestCase):
         node = self.unit("node-exporter")
         self.assertIn("Volume=/:/host:ro,rslave\n", node)
         self.assertIn("Volume=/run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro\n", node)
+        # Below the state like the labelled ones, and unlabelled: host services write it.
+        self.assertIn("Volume=/srv/thermite/runtime/textfile:/textfile:ro\n", node)
         self.assertIn("PodmanArgs=--pid=host\n", node)
 
     def test_retention_and_reload(self):

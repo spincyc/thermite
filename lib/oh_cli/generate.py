@@ -107,8 +107,8 @@ def main(argv: list[str] | None = None) -> int:
                       help="also remove files under conf/, metrics/ and deploy/ with the generated header, or in "
                            "conf/html/remote/ or conf/automation/js/node_modules/thermite-entry/, that nothing "
                            "generates now")
-    oh_cli.add_house(parser, render.INVENTORY)
-    oh_cli.add_conf(parser, render.CONF)
+    oh_cli.add_house(parser)
+    oh_cli.add_conf(parser)
     # deploy/'s and metrics/'s parent, so that the tests can write them somewhere else.
     parser.add_argument("--root", type=Path, default=AREA, help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
@@ -119,9 +119,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError) as exc:
         print(f"thermite generate: {exc}; nothing generated", file=sys.stderr)
         return 2
-    from oh_features import remote_system
-    built = render.build(house, system_metadata=remote_system.manifest(host, versions["openhab"]["version"]),
-                         host=host)
+    built = render.build(house, host=host, versions=versions)
     files = built.render()
     units = deploy.render_units(versions, host)
     root = arguments.root

@@ -8,7 +8,6 @@ from types import ModuleType
 
 import oh_integrations as integrations
 import oh_cli
-import oh_render as render
 from oh_conf import House, uses
 from oh_integrations import _instr as instr
 
@@ -113,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--device", metavar="ID", help="only this device id")
     parser.add_argument("--address", metavar="HOST[:PORT]",
                         help="talk to this address instead of the device's ip (a simulator); needs --device")
-    oh_cli.add_house(parser, render.INVENTORY)
+    oh_cli.add_house(parser)
     args = parser.parse_args(argv)
     if args.address and not args.device:
         parser.error("--address needs --device")
