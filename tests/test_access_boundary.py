@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
+from oh_conf import House
 import oh_ports
 import oh_render
 from oh_access import native_boundary as boundary
@@ -379,25 +380,25 @@ class RenderedProxyPort(unittest.TestCase):
         for name, (data, relayed) in cases.items():
             with self.subTest(name):
                 self.assertEqual(oh_render.validate(data), [])
-                files = oh_render.render(data)
+                files = oh_render.render(House(data))
                 routes = boundary.discover_callbacks(data, ORIGIN, "192.0.2.10", request=Native().request)
                 self.assertEqual(routes is not None, relayed)
                 self.assertEqual(oh_render.UPNP_CFG in files, relayed)
 
     def test_port_is_the_effective_allocation_as_a_decimal_string(self):
         data = house({"observe": ["sonos"]})
-        line = oh_render.build(data, host={"gateway": {"port": 14601}}).render()[oh_render.UPNP_CFG].splitlines()[-1]
+        line = oh_render.build(House(data), host={"gateway": {"port": 14601}}).render()[oh_render.UPNP_CFG].splitlines()[-1]
         # ConfigDispatcher passes the text after "=" on as a String, which
         # jUPnP's Integer.parseInt takes; "13615.0" would be rejected.
         self.assertEqual(line, f"org.jupnp:httpProxyPort={oh_ports.CALLBACK_PORT}")
         host = {"http_port": 14602}
         moved = {**oh_ports.effective(host), "callbacks": 14615}
         with mock.patch.object(oh_ports, "effective", return_value=moved) as effective:
-            files = oh_render.build(data, host=host).render()
+            files = oh_render.build(House(data), host=host).render()
         effective.assert_called_with(host)
         self.assertIn("org.jupnp:httpProxyPort=14615\n", files[oh_render.UPNP_CFG])
         with self.assertRaisesRegex(ValueError, "collides"):
-            oh_render.build(data, host={"guest_http": {"port": oh_ports.CALLBACK_PORT}})
+            oh_render.build(House(data), host={"guest_http": {"port": oh_ports.CALLBACK_PORT}})
 
     def test_generate_allocates_from_the_host_file(self):
         scratch = AREA / ".scratch/upnp-proxy-generate"
@@ -418,7 +419,7 @@ class RenderedProxyPort(unittest.TestCase):
                              f"org.jupnp:httpProxyPort={oh_ports.CALLBACK_PORT}")
 
     def test_runtimes_without_the_relay_never_get_its_port(self):
-        files = oh_render.render(house({"observe": ["sonos"]}))
+        files = oh_render.render(House(house({"observe": ["sonos"]})))
         # The boot check and the read-only sandbox: jUPnP has no network.
         for paths in (None, oh_render.SESSION_FILES):
             self.assertEqual(oh_render.unaddressed(oh_render.read_only(files), paths)[oh_render.UPNP_CFG], oh_render.NO_UPNP)

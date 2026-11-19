@@ -44,12 +44,12 @@ def _settle(module, item: str, settle: dict, allowed: list) -> dict:
     return dict(settle)
 
 
-def capabilities(data: dict) -> dict:
-    """Each executor field, by Item, from its integration's fields(). The
+def capabilities(devices) -> dict:
+    """Each executor field of `devices`, by Item, from its integration's fields(). The
     field the actor receives is the declaration with its `values` as
     `allowed`; `manual` stays here (configure())."""
     result = {}
-    for device in data.get("devices", []):
+    for device in devices:
         module = _provider(device)
         if module is None:
             continue
@@ -79,7 +79,7 @@ def _guard(item):
 def configure(house: House, conf, descriptor: dict) -> dict:
     if not descriptor:
         return descriptor
-    caps = capabilities(house.data)
+    caps = capabilities(house.devices)
     resources = descriptor.get("resources", {})
     selected = set(resources)
     unknown = selected - set(caps)
@@ -95,7 +95,7 @@ def configure(house: House, conf, descriptor: dict) -> dict:
     # Every control of an opted-in device uses its actor, including explicit
     # commands to unmanaged ports. Merely listing a field grants no automatic
     # cleanup or route claim: `resources` is the coordinator's narrower scope.
-    devices = {device["id"]: device for device in house.data.get("devices", [])}
+    devices = house.by_id
     for key, row in actors.items():
         row["fields"].update({item: cap["field"] for item, cap in caps.items() if cap["key"] == key})
         # Only declared fields join the actor. A device's other Items (its

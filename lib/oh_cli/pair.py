@@ -92,9 +92,9 @@ class OpenHABError(Exception):
     """thermite could not be reached, or refused a request, with the reason."""
 
 
-def tvs(data: dict) -> dict[str, dict]:
+def tvs(house: House) -> dict[str, dict]:
     """Device id -> device, for every TV under sony_ip_control control."""
-    return {d["id"]: d for d in data["devices"] if uses(d, sony_ip_control.PHASE, sony_ip_control.NAME)}
+    return {d["id"]: d for d in house.devices if uses(d, sony_ip_control.PHASE, sony_ip_control.NAME)}
 
 
 def name(device: dict) -> str:
@@ -364,7 +364,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     house = House.load(args.house)
-    known = tvs(house.data)
+    known = tvs(house)
     if args.check:
         if args.code is not None:
             parser.error("--check takes one DEVICE at most")

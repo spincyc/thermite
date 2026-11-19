@@ -63,10 +63,10 @@ def manifest(house: House, conf: Conf) -> dict:
 
     rooms = []
     for ident in sorted(set(house.rooms) | set(routed_rooms)):
-        location = routing.home(house.data, ident) if ident in routed_rooms else ident
+        location = routing.home(house, ident) if ident in routed_rooms else ident
         rooms.append({
             "id": ident,
-            "label": routing.room_label(house.data, ident) if ident in routed_rooms else house.room_label(ident),
+            "label": routing.room_label(house, ident) if ident in routed_rooms else house.room_label(ident),
             "location": location,
             "devices": [node["id"] for node in nodes if node["room"] == location],
         })

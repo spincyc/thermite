@@ -90,7 +90,7 @@ def compiled():
     if problems:
         raise AssertionError(problems)
     house = House(data)
-    conf = oh_render.build(data)
+    conf = oh_render.build(House(data))
     return data, conf, remote_model.build(house), oh_site_contract.compile(house, conf), \
         remote_activity.manifest(house, conf)
 

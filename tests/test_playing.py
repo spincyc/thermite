@@ -86,7 +86,7 @@ class Reads(unittest.TestCase):
 
 class Render(unittest.TestCase):
     def test_two_free_text_items_per_device_and_one_rule_that_reads_only_items_that_exist(self):
-        conf = render.build(house())
+        conf = render.build(House(house()))
         files = conf.render()
         items = {name: item for file in conf.yaml.values() for name, item in file.items.items()}
         self.assertEqual(items["example_shield_playing_app"], {"type": "String", "label": "Playing App",
@@ -109,7 +109,7 @@ class Render(unittest.TestCase):
         self.assertIn("jsscripting", conf.addons.get("automation", set()))
 
     def test_a_house_where_nothing_tells_what_plays_has_no_rule(self):
-        files = render.render(house(devices=[PC]))
+        files = render.render(House(house(devices=[PC])))
         self.assertNotIn(playing.RULE, files)
         self.assertNotIn(playing.ITEMS, files)
 
@@ -119,14 +119,14 @@ class Render(unittest.TestCase):
         self.assertEqual(model["devices"]["example_shield"]["playing"],
                          {"app": "example_shield_playing_app", "title": "example_shield_playing_title"})
         self.assertNotIn("playing", model["devices"]["example_pc"])
-        contract = oh_site_contract.compile(House(data), render.build(data))
+        contract = oh_site_contract.compile(House(data), render.build(House(data)))
         for name in ("example_shield_playing_app", "example_shield_playing_title"):
             self.assertTrue(contract["states"][name].get("free_text"), name)
             self.assertLessEqual(playing.MAX_TEXT, contract["states"][name]["max_length"])
             self.assertIn(name, contract["views"]["remote"]["statechanged"])
             self.assertNotIn("commands", contract["states"][name])
         # The activity feed reports the readings they join, not them again.
-        feed = remote_activity.manifest(House(data), render.build(data))["items"]
+        feed = remote_activity.manifest(House(data), render.build(House(data)))["items"]
         self.assertIn("example_shield_cast_title", feed)
         self.assertFalse({"example_shield_playing_app", "example_shield_playing_title"} & set(feed))
 

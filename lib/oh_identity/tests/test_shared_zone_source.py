@@ -8,6 +8,7 @@ from django.conf import settings
 from django.test import TestCase
 from django.utils import timezone
 
+from oh_conf import House
 import oh_room_policy
 from oh_identity.auth import Guest
 from oh_identity.models import RoomPolicy
@@ -49,7 +50,7 @@ class SharedZoneSource(TestCase):
         self.commands = []
         transport = type("Transport", (), {"command": lambda _, item, value, source=None: self.commands.append((item, value)),
                                             "read": lambda _, item: "off"})()
-        self.adapter = RuntimeAdapter(RuntimeContract(**oh_site_contract.compile(House(data), oh_render.build(data))),
+        self.adapter = RuntimeAdapter(RuntimeContract(**oh_site_contract.compile(House(data), oh_render.build(House(data)))),
                                       transport, policy=oh_room_policy)
         install_adapter(self.adapter)
 

@@ -11,11 +11,15 @@ import difflib
 import ipaddress
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 
 import oh_control4
 from oh_semantic import KINDS, LOCATION_TAGS
+
+if TYPE_CHECKING:
+    from oh_conf import House
 
 ID = re.compile(r"^[a-z][a-z0-9_]*$")
 MAC = re.compile(r"^[0-9a-f]{2}(?::[0-9a-f]{2}){5}$")
@@ -384,17 +388,17 @@ def validate(data: object) -> list[str]:
     return problems
 
 
-def reservations(data: dict) -> list[tuple[str, str, str]]:
+def reservations(house: House) -> list[tuple[str, str, str]]:
     """(UniFi alias, MAC, IP) for every device that has its own address and a MAC."""
     rows = [(d["id"].replace("_", "-"), d["mac"], d["ip"])
-            for d in data.get("devices") or [] if d.get("ip") and d.get("mac")]
+            for d in house.devices if d.get("ip") and d.get("mac")]
     return sorted(rows, key=lambda row: tuple(int(part) for part in row[2].split(".")))
 
 
-def without_mac(data: dict) -> list[str]:
+def without_mac(house: House) -> list[str]:
     """Ids of devices with their own address but no mac: no reservation, and
     discover cannot match them."""
-    return sorted(d["id"] for d in data.get("devices") or [] if d.get("ip") and not d.get("mac"))
+    return sorted(d["id"] for d in house.devices if d.get("ip") and not d.get("mac"))
 
 
 def conf_objects(conf: Path) -> tuple[dict, dict, list[str]]:
@@ -462,16 +466,16 @@ def addresses(value: object) -> set[str]:
 HOUSE_ITEMS = frozenset({"house_all_off", "house_routing_io_events", "house_routing_io_status"})
 
 
-def cross_check(data: dict, things: dict, items: dict) -> list[str]:
-    """Problems where conf/ disagrees with the inventory."""
+def cross_check(house: House, things: dict, items: dict) -> list[str]:
+    """Problems where conf/ disagrees with the house."""
     # Runtime-only: providers import inventory through oh_conf.
     import oh_features
     from oh_integrations import REGISTRY, declared, defining
 
-    devices = {d["id"]: d for d in data.get("devices") or [] if d.get("id")}
+    devices = house.by_id
     house_items = HOUSE_ITEMS | frozenset(declared("HOUSE_ITEMS", (*REGISTRY, *oh_features.REGISTRY)))
-    services = set(data.get("services") or [])
-    rooms = set(data.get("rooms") or {})
+    services = set(house.data.get("services") or [])
+    rooms = set(house.rooms)
     problems: list[str] = []
     with_things: set[str] = set()
     for uid, thing in sorted(things.items()):

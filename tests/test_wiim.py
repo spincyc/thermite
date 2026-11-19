@@ -36,7 +36,7 @@ def house(**changes):
 
 
 def built(data):
-    conf = render.build(data)
+    conf = render.build(House(data))
     return conf.yaml[wiim_http.FILE]
 
 
@@ -171,26 +171,26 @@ class Render(unittest.TestCase):
         self.assertEqual(out.items["example_amp_play_mode"]["tags"], ["Status", "Mode"])
 
     def test_both_things_are_aimed_at_a_stand_in(self):
-        files = render.render(house())
+        files = render.render(House(house()))
         aimed = wiim_http.aim(files, AMP, "127.0.0.1:18080")[wiim_http.FILE]
         self.assertEqual(aimed.count("baseURL: http://127.0.0.1:18080/httpapi.asp?"), 2)
         self.assertNotIn("192.0.2.32", aimed)
 
     def test_each_thing_is_filed_under_the_player(self):
         data = house()
-        conf = render.build(data)
-        self.assertEqual(oh_inventory.cross_check(data, *conf_things_items(conf)), [])
-        self.assertEqual(oh_metrics.exporter_map(data, conf)["devices"]["example_amp"]["things"],
+        conf = render.build(House(data))
+        self.assertEqual(oh_inventory.cross_check(House(data), *conf_things_items(conf)), [])
+        self.assertEqual(oh_metrics.exporter_map(House(data), conf)["devices"]["example_amp"]["things"],
                          ["http:url:device:example_amp", "http:url:example_amp"])
 
     def test_temperatures_and_the_remotes_battery_are_kept_as_their_own_points(self):
-        kept = {spec["point"] for name, spec in oh_metrics.exporter_map(house())["items"].items()
+        kept = {spec["point"] for name, spec in oh_metrics.exporter_map(House(house()))["items"].items()
                 if name.startswith("example_amp_")}
         self.assertEqual(kept, {"volume", "mute", "input", "temperature", "battery", "playing"})
 
     def test_the_feed_leaves_out_what_drifts_with_every_poll(self):
         data = house()
-        feed = remote_activity.manifest(House(data), render.build(data))["items"]
+        feed = remote_activity.manifest(House(data), render.build(House(data)))["items"]
         self.assertLessEqual({"example_amp_firmware", "example_amp_internet", "example_amp_eq_preset"}, set(feed))
         self.assertFalse({"example_amp_cpu_temperature", "example_amp_remote_battery", "example_amp_sample_rate"}
                          & set(feed))

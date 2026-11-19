@@ -381,13 +381,13 @@ def control_items(control: dict) -> dict[str, str]:
 
 
 class Check:
-    def __init__(self, data: dict, log=print) -> None:
-        self.data = data
+    def __init__(self, house: House, log=print) -> None:
+        self.house = house
         self.log = log
-        self.devices = {d["id"]: d for d in data["devices"]}
+        self.devices = house.by_id
         #: device id -> (its controlling module, its remote and routing controls)
         self.controls: dict[str, tuple] = {}
-        for device in data["devices"]:
+        for device in house.devices:
             for module in integrations.defining("remote"):
                 offered = module.remote(device)
                 if offered:
@@ -418,8 +418,8 @@ class Check:
 
     def conf(self) -> dict[str, str | bytes]:
         """The control modules' rendered files, every controlled device at its stand-in."""
-        files = render.render(self.data)
-        house = House(self.data)
+        house = self.house
+        files = render.render(house)
         modules = {m.NAME: m for m, _ in self.controls.values()}
         # Production's thread pools (threadpools): presses are timed on the
         # pools a house runs with, not openHAB's defaults.
@@ -456,13 +456,13 @@ class Check:
                         needed.render(self.devices[ident], house, part)
                 out[needed.FILE] = part.text()
                 selected_conf.yaml[needed.FILE] = part
-        contract = routing.table(self.data) if self.data.get("routing") else {}
+        contract = routing.table(house) if house.data.get("routing") else {}
         if "lifecycle" in contract:
             from oh_features.routing import lifecycle_io
             resources = {name for name, row in contract["lifecycle"]["resources"].items() if row["key"] in self.controls}
             contract = simulated_lifecycle(contract, resources, endpoints=False)
             lifecycle_io.configure(house, selected_conf, contract["lifecycle"])
-            selected_conf.files[routing.RULE] = routing.rule(self.data, contract)
+            selected_conf.files[routing.RULE] = routing.rule(house, contract)
             planner = "automation/js/node_modules/thermite-routing-lifecycle/index.js"
             selected_conf.files[planner] = files[planner]
             generated = selected_conf.render()
@@ -471,13 +471,13 @@ class Check:
         for ident, (module, _) in self.controls.items():
             out = module.aim(out, self.devices[ident], self.stand_ins[ident].server.address)
         leaks = sorted({f"{path}: {device['id']} ({device['ip']})" for path, text in out.items()
-                        if isinstance(text, str) for device in self.data["devices"]
+                        if isinstance(text, str) for device in house.devices
                         if device.get("ip") and re.search(rf"(?<![\d.]){re.escape(device['ip'])}(?![\d.])", text)})
         leaks += sorted({f"{path}: {device['id']} (real Sonos UDN)" for path, text in out.items()
-                         if isinstance(text, str) for device in self.data["devices"]
+                         if isinstance(text, str) for device in house.devices
                          if device.get("sonos_udn") and device["sonos_udn"] in text})
         leaks += sorted({f"{path}: {device['id']} (real IR emitter)" for path, text in out.items()
-                         if isinstance(text, str) for device in self.data["devices"]
+                         if isinstance(text, str) for device in house.devices
                          if isinstance(device.get("ir"), dict) and device["ir"].get("ip")
                          and re.search(rf"(?<![\d.]){re.escape(device['ir']['ip'])}(?![\d.])", text)})
         if leaks:
@@ -859,7 +859,7 @@ class Check:
 
 
 def run_check(args, rt: lib.Runtime, log) -> int:
-    check = Check(House.load(args.house).data, log=log)
+    check = Check(House.load(args.house), log=log)
     conf = STATE / "conf"
     inst = lib.boot_check_instance(conf)
     started = time.monotonic()

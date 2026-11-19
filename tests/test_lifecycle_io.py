@@ -30,7 +30,7 @@ class Rendering(unittest.TestCase):
     def test_actor_uses_native_thing_configuration_not_duplicate_addresses(self):
         data=self.inventory();house=House(data);conf=Conf();out=conf.yaml_file(ukm404_http.FILE,())
         ukm404_http.render(data['devices'][0],house,out)
-        cap=lifecycle_io.capabilities(data)
+        cap=lifecycle_io.capabilities(data["devices"])
         self.assertTrue(cap['desk_usb_device1_host']['terminal'])
         descriptor={'version':1,'resources':{name:{} for name in cap}}
         lifecycle_io.configure(house,conf,descriptor)
@@ -58,11 +58,11 @@ class Rendering(unittest.TestCase):
         data['devices'].append(device('example_projector',LOUNGE,'projector',29,make='Sony',model='Example Projector',
                                       controls={'observe':[sony_adcp.NAME],'control':[sony_adcp.NAME]}))
         data['routing']['rooms'][LOUNGE]['display']={'device':'example_projector','input':'hdmi1'}
-        cap=lifecycle_io.capabilities(data)
+        cap=lifecycle_io.capabilities(data["devices"])
         self.assertEqual(cap['example_projector_power']['field']['settle'],{'ON':60000,'OFF':30000})
         self.assertNotIn('settle',cap['example_projector_input']['field'])
         from oh_features import routing
-        resources=routing.table(data)['lifecycle']['resources']
+        resources=routing.table(House(data))['lifecycle']['resources']
         self.assertEqual(resources['example_projector_power']['settleMs'],{'ON':60000,'OFF':30000})
         # Only the fields that declare one: the projector's, and the Sony TV's boot.
         self.assertEqual(sorted(name for name,row in resources.items() if 'settleMs' in row),['example_projector_power','example_screen_power'])
@@ -73,13 +73,13 @@ class Rendering(unittest.TestCase):
                 out=declared(device);out[device['id']+'_power']['settle']=bad;return out
             with self.subTest(settle=bad),mock.patch.object(sony_adcp,'fields',fields):
                 with self.assertRaisesRegex(ValueError,'sony_adcp declares an invalid settle for example_projector_power'):
-                    lifecycle_io.capabilities(data)
+                    lifecycle_io.capabilities(data["devices"])
 
     def test_matrix_outputs_are_independent_from_field_to_planner_resource(self):
         from tests.test_zone_sync import house
         from oh_integrations import bk808_http
         data=house()
-        cap=lifecycle_io.capabilities(data)
+        cap=lifecycle_io.capabilities(data["devices"])
         matrices={'example_matrix','example_usb'}
         for item,row in cap.items():
             with self.subTest(item=item):
@@ -88,7 +88,7 @@ class Rendering(unittest.TestCase):
         avpro={'id':'example_avpro','kind':'hdmi_matrix'}
         self.assertTrue(all(field['independent'] is True for field in avpro_telnet.fields(avpro).values()))
         from oh_features import routing
-        resources=routing.table(data)['lifecycle']['resources']
+        resources=routing.table(House(data))['lifecycle']['resources']
         independent=sorted(name for name,row in resources.items() if 'independent' in row)
         self.assertTrue(independent)
         self.assertEqual(independent,sorted(name for name,row in resources.items() if row['key'] in matrices))
@@ -101,7 +101,7 @@ class Rendering(unittest.TestCase):
                 return out
             with self.subTest(independent=bad),mock.patch.object(bk808_http,'fields',fields):
                 with self.assertRaisesRegex(ValueError,'bk808_http declares an invalid independent for example_matrix_'):
-                    lifecycle_io.capabilities(data)
+                    lifecycle_io.capabilities(data["devices"])
 
     def test_unsupported_resources_are_rejected_before_rendering(self):
         with self.assertRaisesRegex(ValueError,'no ordered executor'):
@@ -113,7 +113,7 @@ class Rendering(unittest.TestCase):
         lifecycle_io.configure(house,conf,descriptor)
         actor=descriptor['io']['actors']['desk_usb']
         self.assertEqual(actor['resources'],[item])
-        self.assertEqual(set(actor['fields']),set(lifecycle_io.capabilities(data)))
+        self.assertEqual(set(actor['fields']),set(lifecycle_io.capabilities(data["devices"])))
         self.assertEqual(conf.executor_controls,set(actor['fields']))
         self.assertEqual(descriptor['io']['status'],lifecycle_io.STATUS_ITEM)
         module=conf.files[lifecycle_io.MODULE]
@@ -129,7 +129,7 @@ class Rendering(unittest.TestCase):
                 if module is sony_ip_control:
                     sony_rest.render(device,house,conf.yaml_file(sony_rest.FILE,()))
                 conf.files.update(module.files([device],house))
-                capabilities=lifecycle_io.capabilities(data)
+                capabilities=lifecycle_io.capabilities(data["devices"])
                 self.assertTrue(capabilities)
                 self.assertTrue(all(cap['terminal'] for cap in capabilities.values()))
                 lifecycle_io.configure(house,conf,{'resources':{item:{} for item in capabilities}})
@@ -201,7 +201,7 @@ class Declarations(unittest.TestCase):
         module = fictional()
         data = self.inventory()
         with mock.patch.object(integrations, 'REGISTRY', (*integrations.REGISTRY, module)):
-            caps = lifecycle_io.capabilities(data)
+            caps = lifecycle_io.capabilities(data["devices"])
             self.assertEqual(caps, {'desk_relay_relay': {
                 'key': 'desk_relay', 'provider': 'example_relay_http', 'terminal': True, 'probe': True, 'manual': 4,
                 'field': {'kind': 'http', 'thing': 'http:url:desk_relay', 'channel': 'relay', 'allowed': ['ON', 'OFF'],
@@ -257,7 +257,7 @@ class Denon(unittest.TestCase):
     def test_the_lifecycle_fills_its_rule_with_each_zone(self):
         import oh_render
         from tests.test_zone_sync import house
-        files = oh_render.render(house())
+        files = oh_render.render(House(house()))
         text = files[denonmarantz_http.rule_path({'id': 'example_avr'})]
         self.assertNotIn('automation/js/thermite_routing_io_example_avr.js', files)
         config = json.loads(next(line for line in text.splitlines() if line.startswith('const ROUTING_EXECUTOR = '))[len('const ROUTING_EXECUTOR = '):-1])

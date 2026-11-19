@@ -8,6 +8,7 @@ import unittest
 from html.parser import HTMLParser
 from urllib.parse import urlsplit, parse_qs
 
+from oh_conf import House
 import oh_routes
 from oh_features import remote
 
@@ -52,7 +53,7 @@ class CleanRoutes(unittest.TestCase):
 
     def test_generated_page_versions_match_the_served_assets(self):
         import oh_render
-        files = oh_render.render({"version": 1, "rooms": {}, "devices": []},
+        files = oh_render.render(House({"version": 1, "rooms": {}, "devices": []}),
                                  system_metadata={"version": 1, "runtime": {"version": "test"}, "tools": []})
         for _, _, asset in oh_routes.PAGES:
             addresses = Addresses()

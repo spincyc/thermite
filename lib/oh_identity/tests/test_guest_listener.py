@@ -22,6 +22,7 @@ from django.urls import resolve
 
 from oh_access import service
 from oh_access.guest import SCOPE, Listener
+from oh_conf import House
 from oh_features.remote import FILES
 from oh_features.remote_system import ADMIN_ASSETS
 from oh_identity import guest, streams
@@ -385,7 +386,7 @@ class Allowlist(SimpleTestCase):
         # /static/remote/<name>?v=<hash of its bytes>. The query never reaches
         # the allowlist: the route's bare name does, and the listener admits it.
         import oh_render
-        files = oh_render.render({"version": 1, "rooms": {}, "devices": []},
+        files = oh_render.render(House({"version": 1, "rooms": {}, "devices": []}),
                                  system_metadata={"version": 1, "runtime": {"version": "test"}, "tools": []})
 
         def content(name):

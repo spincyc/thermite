@@ -22,6 +22,7 @@ import oh_inventory
 import oh_paths
 import oh_render
 from oh_cli import dhcp_reservations, discover, generate, ir_profile, status, validate
+from oh_conf import House
 
 EXAMPLE = json.loads((AREA / "instance/devices.yaml").read_text())
 DOCUMENTS = [AREA / "README.md", AREA / "FAQ.md", *sorted((AREA / "docs").glob("*.md")),
@@ -128,9 +129,10 @@ class Closed(unittest.TestCase):
         data = copy.deepcopy(EXAMPLE)
         del data["devices"][0]["mac"]
         self.assertEqual(oh_render.validate(data), [])
-        self.assertEqual(oh_inventory.without_mac(data), ["example_tv"])
-        self.assertNotIn("example-tv", [row[0] for row in oh_inventory.reservations(data)])
-        self.assertEqual(oh_discover.compare(data, {})["no_mac"], ["example_tv"])
+        house = House(data)
+        self.assertEqual(oh_inventory.without_mac(house), ["example_tv"])
+        self.assertNotIn("example-tv", [row[0] for row in oh_inventory.reservations(house)])
+        self.assertEqual(oh_discover.compare(house, {})["no_mac"], ["example_tv"])
         sonos = {"id": "den_speaker", "room": "example_west", "kind": "speaker", "ip": "192.0.2.30",
                  "model": "Arc", "controls": {"observe": ["sonos"]}}
         data["devices"].append(sonos)

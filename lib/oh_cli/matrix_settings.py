@@ -47,10 +47,10 @@ def settings_module(device: dict) -> ModuleType | None:
     return next((m for m in integrations.defining("plan") if uses(device, m.PHASE, m.NAME)), None)
 
 
-def targets(data: dict, only: str | None = None) -> list[tuple[dict, ModuleType]]:
+def targets(house: House, only: str | None = None) -> list[tuple[dict, ModuleType]]:
     """(device, integration) for every device with settings to apply."""
     out = []
-    for device in data["devices"]:
+    for device in house.devices:
         module = settings_module(device)
         if device.get("settings") and module and only in (None, device["id"]):
             out.append((device, module))
@@ -117,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.address and not args.device:
         parser.error("--address needs --device")
-    chosen = targets(House.load(args.house).data, args.device)
+    chosen = targets(House.load(args.house), args.device)
     if not chosen:
         print(f"thermite matrix-settings: no device{' ' + args.device if args.device else ''} has settings "
               "to apply", file=sys.stderr)

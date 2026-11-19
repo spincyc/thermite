@@ -73,6 +73,7 @@ def main() -> None:
     (work / "terminal-state.json").unlink(missing_ok=True)
     import oh_brand
     from oh_cli.remote import look
+    from oh_conf import House
     import oh_public
     import oh_render
     import oh_routes
@@ -80,7 +81,7 @@ def main() -> None:
     inventory = oh_public.demo()
     inventory_bytes = (json.dumps(inventory, sort_keys=True, separators=(",", ":")) + "\n").encode()
     (work / "demo-house.json").write_bytes(inventory_bytes)
-    for name, content in oh_render.render(inventory).items():
+    for name, content in oh_render.render(House(inventory)).items():
         if not name.startswith("html/remote/"):
             continue
         target = work / "web" / name.removeprefix("html/remote/")

@@ -14,6 +14,7 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
 import oh_atv
+from oh_conf import House
 import oh_deploy
 import oh_metrics
 import oh_logging
@@ -509,7 +510,7 @@ class Consumers(unittest.TestCase):
         for service, name in zip(services, ("prometheus", "node_exporter", "blackbox", "exporter", "grafana")):
             expected_host = "0.0.0.0" if name == "grafana" else "127.0.0.1"
             self.assertEqual(service.listen, f"{expected_host}:{oh_ports.DEFAULTS[name]}")
-        generated = oh_render.render(oh_public.demo())
+        generated = oh_render.render(House(oh_public.demo()))
         self.assertIn(f"org.openhab.lsp:port={oh_ports.LSP_PORT}", generated["services/runtime.cfg"])
         self.assertEqual(oh_atv.LISTEN, "127.0.0.1:13606")
         self.assertEqual(exporter.OPENHAB, oh_ports.NATIVE_URL)

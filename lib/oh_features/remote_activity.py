@@ -103,7 +103,7 @@ def manifest(house: House, conf: Conf) -> dict:
 
     # These actions can be configured before their integration is implemented.
     # Their exact Items/choices remain useful if another automation commands them.
-    devices = {device["id"]: device for device in house.devices}
+    devices = house.by_id
     for room, entry in ((house.data.get("routing") or {}).get("rooms") or {}).items():
         for field in ("on_actions", "off_actions"):
             for ident, value in (entry.get(field) or {}).items():

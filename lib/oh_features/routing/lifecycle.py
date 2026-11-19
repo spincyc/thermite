@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from oh_conf import House
 
-def active_requirements(data: dict, room: str, choice: str) -> dict[str, str]:
+
+def active_requirements(house: House, room: str, choice: str) -> dict[str, str]:
     """The selected path, excluding command-scoped parking and bypassed stages.
 
     Kept independent of executor support so policy verification and lifecycle
@@ -20,15 +22,15 @@ def active_requirements(data: dict, room: str, choice: str) -> dict[str, str]:
 
     if choice == OFF:
         return {}
-    routing = data["routing"]
+    routing = house.data["routing"]
     entry = routing["rooms"][room]
-    devices = {device["id"]: device for device in data["devices"]}
+    devices = house.by_id
     source = routing["sources"][choice]
-    chosen_inputs = inputs(data, room, choice)
+    chosen_inputs = inputs(house, room, choice)
     input_items = {item for item, _ in chosen_inputs}
     # A stage the choice does not pass through stays as it is.
-    bypassed_power = ({stage["power"] for _, stage in stages(data, room) if stage["input"] not in input_items}
-                      - {item for item, _ in wake(data, choice)})
+    bypassed_power = ({stage["power"] for _, stage in stages(house, room) if stage["input"] not in input_items}
+                      - {item for item, _ in wake(house, choice)})
     local_stage = any(choice in (entry.get(key, {}).get("sources") or {}) for key in STAGES)
     local_switch = choice in (entry.get("hdmi_switch", {}).get("inputs") or {})
     usb_items = set()
@@ -43,7 +45,7 @@ def active_requirements(data: dict, room: str, choice: str) -> dict[str, str]:
                     for key in ("hdmi_output", "hdmi_audio_output") if key in entry}
     switch_device = entry.get("hdmi_switch", {}).get("device")
     result = {}
-    for item, value in power(data, room, choice) + commands(data, room, choice) + chosen_inputs:
+    for item, value in power(house, room, choice) + commands(house, room, choice) + chosen_inputs:
         if item in usb_items and item not in participating:
             continue
         if item in master_items and (local_stage or local_switch):
@@ -56,15 +58,15 @@ def active_requirements(data: dict, room: str, choice: str) -> dict[str, str]:
     return result
 
 
-def compile_descriptor(data: dict, base_table: dict, caps: dict) -> dict:
+def compile_descriptor(house: House, base_table: dict, caps: dict) -> dict:
     """Return a finite lifecycle descriptor without rendering or mutations."""
     from . import (OFF, stages, usb_host, wake, switcher,
                    _port_item, _switch_item)
 
-    routing = data.get("routing")
+    routing = house.data.get("routing")
     if not routing:
         return {"version": 1, "resources": {}, "endpoints": {}, "sources": {}, "consumers": [], "coverage": {}}
-    devices = {device["id"]: device for device in data["devices"]}
+    devices = house.by_id
     sources = routing["sources"]
     resources = {}
     endpoints = {}
@@ -74,8 +76,8 @@ def compile_descriptor(data: dict, base_table: dict, caps: dict) -> dict:
     resource_uses = defaultdict(lambda: defaultdict(set))
     release_values = {}
     exclusive = set()
-    stage_power = {stage["power"] for room in routing["rooms"] for _, stage in stages(data, room)}
-    source_wakes = {source: wake(data, source) for source in sources}
+    stage_power = {stage["power"] for room in routing["rooms"] for _, stage in stages(house, room)}
+    source_wakes = {source: wake(house, source) for source in sources}
     # Every power Item a route switches: its stages' and its sources'.
     power_items = stage_power | {item for steps in source_wakes.values() for item, _ in steps}
     # A USB cleanup policy must not replace ordinary source wake controls
@@ -175,7 +177,7 @@ def compile_descriptor(data: dict, base_table: dict, caps: dict) -> dict:
     # the one command path. Video and receiver audio are separate legs.
     for room, entry in routing["rooms"].items():
         raw = base_table["rooms"][room]
-        stage_rows = {(spec["device"], spec.get("zone")): stage for spec, stage in stages(data, room)}
+        stage_rows = {(spec["device"], spec.get("zone")): stage for spec, stage in stages(house, room)}
         for (device, zone), stage in stage_rows.items():
             device_stages[device][zone] = stage
 
@@ -266,7 +268,7 @@ def compile_descriptor(data: dict, base_table: dict, caps: dict) -> dict:
 
         choices = {}
         for choice, boundary_commands in raw["choices"].items():
-            active = active_requirements(data, room, choice)
+            active = active_requirements(house, room, choice)
             deactivation = {}
             release = {}
             preserve = []
@@ -276,7 +278,7 @@ def compile_descriptor(data: dict, base_table: dict, caps: dict) -> dict:
                 if item not in active:
                     release[item] = value
             if choice == OFF:
-                for _, stage in stages(data, room):
+                for _, stage in stages(house, room):
                     deactivation[stage["power"]] = "OFF"
                 if not deactivation:
                     deactivation = {item: value for item, value in release.items() if item not in all_usb}
@@ -308,7 +310,7 @@ def compile_descriptor(data: dict, base_table: dict, caps: dict) -> dict:
                                "unmanagedDeactivation": deactivate_unknown}
             for item, value in raw["choices"][OFF]:
                 release_values.setdefault(item, str(value))
-            for _, stage in stages(data, room):
+            for _, stage in stages(house, room):
                 release_values[stage["power"]] = "OFF"
         # A follower's synced route is its own with its zone on the leader's
         # input, and leases the leader's matrix output at the source: the
@@ -354,7 +356,7 @@ def compile_descriptor(data: dict, base_table: dict, caps: dict) -> dict:
         # selection can proceed while a source wakes; only a stage input
         # query/write needs that stage's own power first.
     for room in routing["rooms"]:
-        for _, stage in stages(data, room):
+        for _, stage in stages(house, room):
             if stage["input"] not in resources or stage["power"] not in resources:
                 continue
             for value in resources[stage["input"]]["values"]:

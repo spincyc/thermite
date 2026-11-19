@@ -124,8 +124,8 @@ def installation(inventory: dict, *, things: dict | None = None, states: dict | 
     with a value (`things` and `states` say otherwise for some), a probe of
     each control port, and every check the real rules record, OK and needed
     now."""
-    conf = oh_render.build(copy.deepcopy(inventory))
-    mapping = oh_metrics.exporter_map(copy.deepcopy(inventory), conf)
+    conf = oh_render.build(House(copy.deepcopy(inventory)))
+    mapping = oh_metrics.exporter_map(House(copy.deepcopy(inventory)), conf)
     held = Prometheus()
     status = {uid: "ONLINE" for entry in mapping["devices"].values() for uid in entry["things"]} | (things or {})
     values = {}
@@ -142,7 +142,7 @@ def installation(inventory: dict, *, things: dict | None = None, states: dict | 
                exporter.ITEMS_PATH: [{"name": name, "state": state} for name, state in values.items()]}
     for name, labels, value in exporter.collect(mapping, lambda path, _timeout: answers[path]):
         held.add(name, labels, value)
-    scrape = yaml.safe_load(oh_metrics.prometheus_yml(copy.deepcopy(inventory), HOST, conf))
+    scrape = yaml.safe_load(oh_metrics.prometheus_yml(House(copy.deepcopy(inventory)), HOST, conf))
     job = next(job for job in scrape["scrape_configs"] if job["job_name"] == oh_metrics.DEVICE_JOB)
     for target in job["static_configs"]:
         labels = {key: value for key, value in target["labels"].items() if not key.startswith("__")}
@@ -498,11 +498,11 @@ class ClosedWorld(Guarded):
     def test_what_the_house_says_of_each_fixture_device_is_what_its_owner_says(self):
         for name, inventory in houses().items():
             house = House(copy.deepcopy(inventory))
-            conf = oh_render.build(copy.deepcopy(inventory))
-            mapping = oh_metrics.exporter_map(copy.deepcopy(inventory), conf)
-            probes, _ = oh_metrics.probes(inventory, conf)
+            conf = oh_render.build(House(copy.deepcopy(inventory)))
+            mapping = oh_metrics.exporter_map(House(copy.deepcopy(inventory)), conf)
+            probes, _ = oh_metrics.probes(House(inventory), conf)
             manifest = remote_diagnostics.manifest(House(copy.deepcopy(inventory)), conf)
-            unread = oh_metrics.unobserved(inventory, conf)
+            unread = oh_metrics.unobserved(House(inventory), conf)
             for entry in house.devices:
                 ident = entry["id"]
                 found = facts(inventory, ident)
@@ -550,8 +550,8 @@ class ClosedWorld(Guarded):
 
     def test_what_holds_now_is_each_series_value_in_its_owners_words(self):
         for name, inventory in houses().items():
-            conf = oh_render.build(copy.deepcopy(inventory))
-            probes, _ = oh_metrics.probes(inventory, conf)
+            conf = oh_render.build(House(copy.deepcopy(inventory)))
+            probes, _ = oh_metrics.probes(House(inventory), conf)
             held = installation(inventory)
             # Every other signal reads that the device does not answer.
             flipped = set()

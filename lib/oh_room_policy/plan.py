@@ -6,6 +6,7 @@ from datetime import datetime
 import re
 
 import oh_integrations as integrations
+from oh_conf import House
 from oh_features import routing
 
 from .model import PolicyError
@@ -90,14 +91,17 @@ def expected_plan(house, room: str, choice: str) -> Plan:
     if room not in config["rooms"] or choice not in ["off", *config["rooms"][room]["sources"]]:
         raise PolicyError("invalid_room_source")
     entry = config["rooms"][room]
-    devices = {device["id"]: device for device in data["devices"]}
+    # The gateway hands over the mapping its contract carries, which the
+    # contract's compiler took from a loaded house.
+    house = house if hasattr(house, "data") else House(data)
+    devices = house.by_id
     for source in entry.get("sleep_sources", []):
         if any(other != room and source in spec["sources"] for other, spec in config["rooms"].items()):
             raise PolicyError("unsafe_shared_source_sleep")
-    table = routing.table(data)
+    table = routing.table(house)
     raw = table["rooms"][room]
-    stage_list = list(routing.stages(data, room))
-    inputs = routing.inputs(data, room, choice)
+    stage_list = list(routing.stages(house, room))
+    inputs = routing.inputs(house, room, choice)
     input_items = {name for name, _ in inputs}
     relevant_power = {stage["power"] for _, stage in stage_list if choice == "off" or stage["input"] in input_items}
     native_items = set(native_power_observations(devices.values()))
@@ -105,9 +109,9 @@ def expected_plan(house, room: str, choice: str) -> Plan:
     # port any of its choices commands. Only their after-steps are verified.
     controlled = {item for _, stage in stage_list for item in (stage["power"], stage["input"])}
     for source in [choice, *entry.get("sleep_sources", [])]:
-        controlled.update(item for item, _ in routing.wake(data, source))
+        controlled.update(item for item, _ in routing.wake(house, source))
     for target in ["off", *entry["sources"]]:
-        controlled.update(item for item, _ in routing.commands(data, room, target))
+        controlled.update(item for item, _ in routing.commands(house, room, target))
 
     def owner(item):
         return next((ident for ident in sorted(devices, key=len, reverse=True) if item.startswith(ident + "_")), None)
@@ -115,12 +119,12 @@ def expected_plan(house, room: str, choice: str) -> Plan:
     # Policy verification and lifecycle ownership share one active path.
     # Boundary-scoped parking and imperative actions remain effects below.
     from oh_features.routing.lifecycle import active_requirements
-    active = active_requirements(data, room, choice) if choice != "off" else None
+    active = active_requirements(house, room, choice) if choice != "off" else None
     sync = raw.get("sync")
     synced = sync["choices"].get(choice) if sync else None
     leader_input = str(config["sources"][choice]["hdmi_input"]) if synced else None
-    steps = (routing.power(data, room, choice) + routing.commands(data, room, choice) + inputs
-             + [step for step in routing.after(data, room, choice)
+    steps = (routing.power(house, room, choice) + routing.commands(house, room, choice) + inputs
+             + [step for step in routing.after(house, room, choice)
                 if step[0] in relevant_power or step[0] in controlled])
     fields = []
     for item, value in steps:

@@ -119,10 +119,10 @@ def capabilities(device: dict) -> tuple[dict | None, str | None, str | None]:
 def build(house: House) -> dict:
     data = house.data
     route = data.get("routing") or {}
-    devices = {d["id"]: d for d in house.devices}
+    devices = house.by_id
     passive = {(room.get("display") or {}).get("device") for room in (route.get("rooms") or {}).values()
                if (room.get("display") or {}).get("passive") is True}
-    out = {"version": 1, "rooms": [], "sources": {}, "devices": {}, "initial": {}, "holdMs": routing.hold_ms(data)}
+    out = {"version": 1, "rooms": [], "sources": {}, "devices": {}, "initial": {}, "holdMs": routing.hold_ms(house)}
     for ident, device in devices.items():
         row = {"label": device.get("name") or device.get("model") or ident,
                "short": device.get("model") or device.get("name") or ident,
@@ -142,7 +142,7 @@ def build(house: House) -> dict:
         # "shared" (oh_features.routing.targets).
         if (page := audio_page(device)) and control:
             row["audio"] = {**page, "place": house.room_label(device["room"]),
-                            "rooms": routing.guard_rooms(data, ident)}
+                            "rooms": routing.guard_rooms(house, ident)}
         availability = next((entry for module in integrations.defining("remote_availability")
                              if (entry := module.remote_availability(device)) is not None), None)
         if availability is not None:
@@ -167,9 +167,9 @@ def build(house: House) -> dict:
         receiver = entry.get("receiver") or {}
         candidates = [entry.get("audio"), None if receiver.get("zone") else receiver.get("device"), display]
         audio = next((d for d in candidates if d and "volume" in out["devices"][d].get("control", {})), None)
-        covered = routing.covered_rooms(data, ident)
+        covered = routing.covered_rooms(house, ident)
         members = [d for d, spec in devices.items() if spec["room"] in covered]
-        row = {"id": ident, "label": routing.room_label(data, ident), "sources": sources,
+        row = {"id": ident, "label": routing.room_label(house, ident), "sources": sources,
                "display": display, "audio": audio, "devices": members,
                "speakers": speakers.pop(ident, []),
                "routeProblem": routing.problem_item_name(ident)}
@@ -194,7 +194,7 @@ def speaker_rooms(house: House, rows: dict) -> dict[str, list[str]]:
     for ident, row in rows.items():
         if "audio" not in row:
             continue
-        owners = [room for room, role in routing.guard_rooms(data, ident).items() if role == "own"]
+        owners = [room for room, role in routing.guard_rooms(house, ident).items() if role == "own"]
         for room in owners:
             rooms[room].append(ident)
         if not owners:

@@ -19,7 +19,6 @@ accepted and renders nothing.
 
 from __future__ import annotations
 
-import copy
 import json
 import sys
 
@@ -49,24 +48,24 @@ def main(argv: list[str] | None = None) -> int:
     oh_cli.add_json(parser)
     arguments = parser.parse_args(argv)
     try:
-        data = House.load(arguments.house).data
+        house = House.load(arguments.house)
     except inventory.ConfigError as error:
         if not arguments.json:
             raise
         oh_cli.emit({"devices": 0, "items": 0, "notes": [], "problems": error.problems or [str(error)],
                      "status": "invalid", "things": 0})
         return 2
-    devices = len(data.get("devices") or [])
+    devices = len(house.devices)
     things, items, problems = inventory.conf_objects(arguments.conf)
     if not arguments.conf.is_dir():
         problems.append(f"{arguments.conf} does not exist; run thermite generate")
-    elif not things and not items and (devices or data.get("rooms")):
+    elif not things and not items and (devices or house.rooms):
         # An empty house (thermite init --empty) rightly generates none.
         problems.append(f"{arguments.conf} defines no Things or Items; run thermite generate")
     else:
-        problems += inventory.cross_check(data, things, items)
+        problems += inventory.cross_check(house, things, items)
     # From the house file alone, as generate would render it: conf/ may be stale.
-    notes = [metrics.unobserved_text(*found) for found in metrics.unobserved(copy.deepcopy(data))]
+    notes = [metrics.unobserved_text(*found) for found in metrics.unobserved(house)]
     if arguments.json:
         oh_cli.emit({"devices": devices, "items": len(items), "notes": notes, "problems": problems,
                      "status": "ok" if not problems else "problems", "things": len(things)})

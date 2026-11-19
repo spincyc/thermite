@@ -35,11 +35,11 @@ def validate(data: dict) -> list[str]:
     return []
 
 
-def commands(data: dict) -> list[list[str]]:
+def commands(house: House) -> list[list[str]]:
     """[[Item, command], ...]: every room's Source Off, then one power Item
     of each device under control OFF, in inventory order."""
-    out = [[routing.item_name(room), routing.OFF] for room in (data.get("routing") or {}).get("rooms") or {}]
-    for device in data.get("devices") or []:
+    out = [[routing.item_name(room), routing.OFF] for room in (house.data.get("routing") or {}).get("rooms") or {}]
+    for device in house.devices:
         stager = routing.stager(device)
         staged = stager.stage(device, None) if stager else None
         if staged:
@@ -52,15 +52,15 @@ def commands(data: dict) -> list[list[str]]:
     return out
 
 
-def rule(data: dict) -> str:
-    table = {"item": ITEM, "commands": commands(data)}
+def rule(house: House) -> str:
+    table = {"item": ITEM, "commands": commands(house)}
     return fill(SOURCE.read_text(encoding="utf-8"), {"TABLE": table}, SOURCE, encode=indented)
 
 
 def render(house: House, conf: Conf) -> None:
-    if not commands(house.data):
+    if not commands(house):
         return
     out = conf.yaml_file(ITEMS, HEADER)
     out.items[ITEM] = {"type": "Switch", "label": "All off", "icon": "switch", "autoupdate": False}
-    conf.files[RULE] = rule(house.data)
+    conf.files[RULE] = rule(house)
     conf.add_addon(Addon("automation", "jsscripting", "the All off rule (all_off.js)"))

@@ -23,6 +23,7 @@ import unittest
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
+from oh_conf import House  # noqa: E402
 import oh_render  # noqa: E402
 from oh_features import routing  # noqa: E402
 from oh_testing import routing as routing_check  # noqa: E402
@@ -106,7 +107,7 @@ def den(rooms, data):
 
 def rendered_table(data):
     """The TABLE routing.js is rendered with, as the runtime receives it."""
-    text = oh_render.render(data)[routing.RULE]
+    text = oh_render.render(House(data))[routing.RULE]
     start = text.index("const TABLE = ") + len("const TABLE = ")
     return json.JSONDecoder().raw_decode(text, start)[0]
 
@@ -164,7 +165,7 @@ class Validation(unittest.TestCase):
 
 class Table(unittest.TestCase):
     def test_follower_names_its_synced_routes_and_leader_lists_it(self):
-        table = routing.table(house())
+        table = routing.table(House(house()))
         lounge, cinema = table["rooms"][LOUNGE], table["rooms"][CINEMA]
         synced = lambda value: {"plan": None, "value": value,  # noqa: E731
                                 "inputs": [["example_tv_input", "hdmi2"], [ZONE2, value]]}
@@ -182,8 +183,8 @@ class Table(unittest.TestCase):
                 self.assertFalse(any("@" in choice for choice in raw[field]))
         self.assertEqual(lounge["inputs"][COMPUTER], [["example_tv_input", "hdmi2"], [ZONE2, "AUX2"]])
         # Without sync_with nothing changes: the example's output stays byte-identical.
-        example = routing.table(json.loads((AREA / "instance/devices.yaml").read_text()))
-        plain = routing.table(house(lambda rooms, _: rooms[LOUNGE]["receiver"].pop("sync_with")))
+        example = routing.table(House(json.loads((AREA / "instance/devices.yaml").read_text())))
+        plain = routing.table(House(house(lambda rooms, _: rooms[LOUNGE]["receiver"].pop("sync_with"))))
         for rooms in (example["rooms"], plain["rooms"]):
             self.assertFalse(any({"sync", "followers"} & set(raw) for raw in rooms.values()))
 
@@ -195,7 +196,7 @@ class RoutingCheck(unittest.TestCase):
         data = house()
         self.outputs = {1: 1, 2: 1}
         check = self.check = object.__new__(routing_check.Check)
-        check.table, check.routing, check.chosen = routing.table(data)["rooms"], data["routing"], {}
+        check.table, check.routing, check.chosen = routing.table(House(data))["rooms"], data["routing"], {}
         check.ports = {OUT1: ("example_matrix", 1), OUT2: ("example_matrix", 2)}
         check.sims = {"example_matrix": types.SimpleNamespace(get=self.outputs.get)}
 
@@ -232,7 +233,7 @@ class RoutingCheck(unittest.TestCase):
 
     def test_the_hand_over_expects_no_claim_from_a_follower_synced_with_the_first_room(self):
         check = self.check
-        check.edid = routing.table(house())["edid"]
+        check.edid = routing.table(House(house()))["edid"]
         check.turn_off = check.command = lambda *_: None
         check.expect_routed = lambda what, choices: check.chosen.update(choices) or True
         expected = []
@@ -250,7 +251,7 @@ class RoutingCheck(unittest.TestCase):
 
 class Descriptor(unittest.TestCase):
     def setUp(self):
-        self.descriptor = routing.table(house())["lifecycle"]
+        self.descriptor = routing.table(House(house()))["lifecycle"]
         self.choices = self.descriptor["endpoints"][LOUNGE]["choices"]
 
     def test_a_synced_choice_is_the_own_route_on_the_leader_input_with_a_lease(self):
@@ -444,7 +445,7 @@ class SharedSource(unittest.TestCase):
         self.assertEqual(unsafe.exception.code, "unsafe_shared_source_sleep")
 
     def test_each_room_switches_and_powers_only_its_own_zone(self):
-        table = routing.table(house(shared))
+        table = routing.table(House(house(shared)))
         lounge = table["rooms"][LOUNGE]
         self.assertEqual(lounge["inputs"][PLAYER], [["example_tv_input", "hdmi2"], [ZONE2, "MPLAY"]])
         self.assertEqual(lounge["choices"][PLAYER], [[OUT2, 8], ["example_usb_device2_host", 4]])

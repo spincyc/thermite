@@ -22,6 +22,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import oh_integrations as integrations
+from oh_conf import House
 
 GROUP = "239.255.255.250"
 SSDP_PORT = 1900
@@ -301,10 +302,10 @@ def is_av(host: dict) -> bool:
     return any(marker in services for marker in MDNS_AV)
 
 
-def compare(inventory: dict, hosts: dict[str, dict]) -> dict[str, list]:
+def compare(house: House, hosts: dict[str, dict]) -> dict[str, list]:
     """How a scan differs from devices.yaml, matched by MAC address;
     no_mac names the devices with an address but no mac to match by."""
-    known = list(inventory.get("devices") or []) + list(inventory.get("later") or [])
+    known = house.devices + list(house.data.get("later") or [])
     by_mac = {d["mac"]: d for d in known if d.get("mac")}
     seen_macs = {h.get("mac"): ip for ip, h in hosts.items() if h.get("mac")}
     report: dict[str, list] = {"moved": [], "missing": [], "unknown": [], "address_reused": [],

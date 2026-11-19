@@ -86,7 +86,7 @@ def compiled(data):
     if problems:
         raise AssertionError(problems)
     house = House(data)
-    return remote_model.build(house), oh_site_contract.compile(house, oh_render.build(data))
+    return remote_model.build(house), oh_site_contract.compile(house, oh_render.build(House(data)))
 
 
 def audio(model, room):
@@ -138,8 +138,8 @@ class RoomAudio(unittest.TestCase):
         data["rooms"]["example_east"]["tag"] = "Building"
         data["rooms"]["example_east_den"] = {"label": "Example East Den", "tag": "Room", "in": "example_east"}
         next(d for d in data["devices"] if d["id"] == "fixture_amp")["room"] = "example_east_den"
-        self.assertEqual(routing.covered_rooms(data, "example_east"), {"example_east", "example_east_den"})
-        self.assertEqual(routing.covered_rooms(data, "example_west"), {"example_west"})
+        self.assertEqual(routing.covered_rooms(House(data), "example_east"), {"example_east", "example_east_den"})
+        self.assertEqual(routing.covered_rooms(House(data), "example_west"), {"example_west"})
         data["routing"]["rooms"]["example_east"]["audio"] = "fixture_amp"
         model, authority = compiled(data)
         east = next(row for row in model["rooms"] if row["id"] == "example_east")
@@ -181,9 +181,9 @@ console.info = () => {};
         until a receiver read only at its poll can have shown it."""
         model, _ = compiled(zones())
         hold = (denonmarantz_http.READ_BACK + 2) * 1000
-        self.assertEqual((model["holdMs"], routing.table(zones())["holdMs"]), (hold, hold))
+        self.assertEqual((model["holdMs"], routing.table(House(zones()))["holdMs"]), (hold, hold))
         model, _ = compiled(desk())
-        self.assertEqual((model["holdMs"], routing.table(desk())["holdMs"]), (15000, 15000))
+        self.assertEqual((model["holdMs"], routing.table(House(desk()))["holdMs"]), (15000, 15000))
         self.assertIn("const RECENT_MS = TABLE.holdMs;", (AREA / "lib/oh_features/routing/routing.js").read_text())
 
     def test_a_receiver_holds_the_volume_sent_until_its_next_poll(self):

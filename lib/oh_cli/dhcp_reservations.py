@@ -36,9 +36,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--csv", action="store_true", help="print CSV: alias, mac, ip")
     oh_cli.add_house(parser)
     arguments = parser.parse_args(argv)
-    data = House.load(arguments.house).data
-    rows = inventory.reservations(data)
-    lacking = inventory.without_mac(data)
+    house = House.load(arguments.house)
+    rows = inventory.reservations(house)
+    lacking = inventory.without_mac(house)
     for device_id in lacking:
         print(f"thermite dhcp-reservations: {device_id}: no mac in the house file, so no reservation",
               file=sys.stderr)

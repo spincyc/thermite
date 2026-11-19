@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
     oh_cli.add_house(parser)
     oh_cli.add_json(parser)
     arguments = parser.parse_args(argv)
-    data = House.load(arguments.house).data
+    house = House.load(arguments.house)
     try:
         local, network = discover.local_interface()
     except (OSError, subprocess.CalledProcessError, RuntimeError, AttributeError) as exc:
@@ -86,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     lines = discover.avahi_browse(timeout=10 if arguments.quick else 25)
     for ip, entry in discover.parse_avahi(lines).items():
         hosts.setdefault(ip, {})["mdns"] = entry
-    report = discover.compare(data, hosts)
+    report = discover.compare(house, hosts)
     out = None
     if arguments.save or arguments.output:
         stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")

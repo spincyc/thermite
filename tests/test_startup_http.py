@@ -232,8 +232,9 @@ class TemplateKey(unittest.TestCase):
     asks for, never its comments, so a reworded reason reuses it."""
 
     def setUp(self):
+        import oh_conf
         import oh_render
-        house = json.loads((AREA / "instance" / "devices.yaml").read_text(encoding="utf-8"))
+        house = oh_conf.House.load(AREA / "instance" / "devices.yaml")
         self.cfg = oh_render.render(house)["services/addons.cfg"]
         self.rt = lib.Runtime("5.2.3", Path("/nonexistent/distribution"), Path("/nonexistent/jre-21"))
         self.key = lib.template_key(self.rt, self.cfg)

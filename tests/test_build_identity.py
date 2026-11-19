@@ -37,7 +37,7 @@ class Build(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.data = oh_inventory.load(AREA / "instance/devices.yaml")
-        cls.conf = oh_render.build(cls.data)
+        cls.conf = oh_render.build(House(cls.data))
         cls.files = cls.conf.render()
         cls.build = remote.build_id(cls.files)
 
@@ -73,13 +73,13 @@ class Build(unittest.TestCase):
                    for name, value in self.files.items()}
         self.assertEqual(remote.built(stamped[path("home.html")]), OTHER)
         self.assertEqual(remote.build_id(stamped), self.build)
-        self.assertEqual(remote.build_id(oh_render.render(self.data)), self.build, "the same house builds the same")
+        self.assertEqual(remote.build_id(oh_render.render(House(self.data))), self.build, "the same house builds the same")
 
     def test_another_house_is_another_build(self):
         data = json.loads(json.dumps(self.data))
         room = next(iter(data["rooms"].values()))
         room["label"] = room.get("label", "") + " two"
-        self.assertNotEqual(remote.build_id(oh_render.render(data)), self.build)
+        self.assertNotEqual(remote.build_id(oh_render.render(House(data))), self.build)
 
     def test_the_gateway_contract_names_the_build_of_the_pages_it_serves(self):
         house = House(self.data)

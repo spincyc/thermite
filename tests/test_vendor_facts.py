@@ -117,8 +117,8 @@ def android_house():
 
 class HandlerPool(unittest.TestCase):
     def test_the_pool_follows_the_integrations_that_declare_it(self):
-        self.assertNotIn(threadpools.FILE, oh_render.render(copy.deepcopy(EXAMPLE)))
-        files = oh_render.render(android_house())
+        self.assertNotIn(threadpools.FILE, oh_render.render(oh_conf.House(copy.deepcopy(EXAMPLE))))
+        files = oh_render.render(oh_conf.House(android_house()))
         self.assertEqual(files[threadpools.FILE].splitlines()[1:], [
             "# Scheduling headroom while Google TV connections block thingHandler.",
             "# Capacity mitigation only: does not fix or bound connection-task leaks.",
@@ -127,7 +127,7 @@ class HandlerPool(unittest.TestCase):
         # Any integration may declare the need (reasons in REGISTRY order); none is named by the feature.
         with mock.patch.object(integrations.sony_ip_control, "HANDLER_POOL", 40, create=True), \
                 mock.patch.object(integrations.sony_ip_control, "HANDLER_POOL_WHY", "a TV blocks it", create=True):
-            text = oh_render.render(android_house())[threadpools.FILE]
+            text = oh_render.render(oh_conf.House(android_house()))[threadpools.FILE]
         self.assertIn("while a TV blocks it and Google TV connections block thingHandler.", text)
         self.assertIn("thingHandler=40", text)
 
@@ -150,7 +150,7 @@ class Readback(unittest.TestCase):
     def test_route_diagnosis_reports_only_inputs_its_devices_read_back(self):
         data = copy.deepcopy(EXAMPLE)
         house = oh_conf.House(data)
-        contract = oh_site_contract.compile(house, oh_render.build(copy.deepcopy(data)))
+        contract = oh_site_contract.compile(house, oh_render.build(oh_conf.House(copy.deepcopy(data))))
         reported = {name: spec["fields"]["reported"]["values"] for name, spec in contract["states"].items()
                     if spec.get("kind") == "json" and "reported" in spec.get("fields", {})}
         matrix, tv = integrations.bk808_http, integrations.sony_ip_control
@@ -159,7 +159,7 @@ class Readback(unittest.TestCase):
             self.assertEqual(values, [None, *matrix.READBACK_INPUTS, *tv.READBACK_INPUTS])
         self.assertEqual(tv.READBACK_INPUTS, ("tv", "hdmi1", "hdmi2", "hdmi3", "hdmi4"))
         # routing.js forwards exactly what the contract accepts.
-        table = routing.table(data)
+        table = routing.table(oh_conf.House(data))
         for room in data["routing"]["rooms"]:
             diagnosis = table["rooms"][room]["diagnosis"]
             self.assertEqual([None, *diagnosis["reported"]], reported[diagnosis["item"]])
@@ -175,9 +175,9 @@ class Manifests(unittest.TestCase):
         self.assertEqual(oh_render.validate(copy.deepcopy(data)), [])
         with mock.patch.object(remote_diagnostics, "_manifest", wraps=remote_diagnostics._manifest) as diagnostics, \
                 mock.patch.object(unifi_protect, "descriptor", wraps=unifi_protect.descriptor) as cameras:
-            conf = oh_render.build(copy.deepcopy(data))
+            conf = oh_render.build(oh_conf.House(copy.deepcopy(data)))
             conf.render()
-            oh_metrics.render(copy.deepcopy(data), {"http_port": 13602}, conf=conf)
+            oh_metrics.render(oh_conf.House(copy.deepcopy(data)), {"http_port": 13602}, conf=conf)
             oh_site_contract.compile(oh_conf.House(copy.deepcopy(data)), conf)
         self.assertEqual(diagnostics.call_count, 1)
         self.assertEqual(cameras.call_count, 1)

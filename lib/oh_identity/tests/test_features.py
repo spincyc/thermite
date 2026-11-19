@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from django.conf import settings
 from django.test import Client, TestCase
 
+from oh_conf import House
 from oh_identity.models import Audit, BoundaryReceipt, PersonalToken, RoomPolicy, User
 from oh_identity.runtime import RuntimeAdapter, RuntimeContract, install_adapter, project
 from oh_identity.policy_store import Store, rebase_timezone
@@ -180,7 +181,7 @@ class Features(TestCase):
         from oh_conf import House
         from oh_integrations import _commands
         data = json.loads((Path(__file__).resolve().parents[3] / "instance/devices.yaml").read_text())
-        states = oh_site_contract.compile(House(data), oh_render.build(data))["states"]
+        states = oh_site_contract.compile(House(data), oh_render.build(House(data)))["states"]
         for name in ("example_tv_problem", "example_player_problem"):
             spec = states[name]
             self.assertEqual(spec, {"kind": "enum", "values": list(_commands.CODES)})

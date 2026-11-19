@@ -21,6 +21,7 @@ import yaml
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
+from oh_conf import House  # noqa: E402
 import oh_deploy  # noqa: E402
 from oh_features import routing  # noqa: E402
 import oh_inventory  # noqa: E402
@@ -35,7 +36,7 @@ HOST = yaml.safe_load((AREA / "instance/host.yaml").read_text())
 
 
 def rendered(inventory=None):
-    return oh_metrics.render(copy.deepcopy(inventory or INVENTORY), HOST)
+    return oh_metrics.render(House(copy.deepcopy(inventory or INVENTORY)), HOST)
 
 
 FILES = rendered()
@@ -192,7 +193,7 @@ class Selections(unittest.TestCase):
         receiver's zones follow their own (powered_by()); power, problem and
         an Item of a device with no power Item follow none."""
         from tests import test_zone_sync as zones
-        mapping = oh_metrics.exporter_map(zones.house())["items"]
+        mapping = oh_metrics.exporter_map(House(zones.house()))["items"]
         power = {name: spec.get("power") for name, spec in mapping.items()}
         self.assertEqual(power["example_tv_input"], "example_tv_power")
         self.assertEqual(power["example_tv_volume"], "example_tv_power")
@@ -210,8 +211,8 @@ class Selections(unittest.TestCase):
         from oh_features import remote_activity
         from tests import test_zone_sync as zones
         data = zones.house()
-        feed = remote_activity.manifest(House(data), oh_render.build(data))["items"]
-        mapping = oh_metrics.exporter_map(data)["items"]
+        feed = remote_activity.manifest(House(data), oh_render.build(House(data)))["items"]
+        mapping = oh_metrics.exporter_map(House(data))["items"]
         self.assertEqual(feed["example_tv_input"]["power"], "example_tv_power")
         self.assertEqual(feed["example_avr_zone2_input"]["power"], "example_avr_zone2_power")
         for name, spec in feed.items():
@@ -277,7 +278,7 @@ class Selections(unittest.TestCase):
         from oh_conf import House
 
         data = copy.deepcopy(INVENTORY)
-        contract = oh_site_contract.compile(House(data), oh_render.build(data), metrics_port=15607)
+        contract = oh_site_contract.compile(House(data), oh_render.build(House(data)), metrics_port=15607)
         spec = contract["history"]
         timeline = next(panel for board in boards().values() for panel in panels(board)
                         if panel.get("title") == "Rooms through the day")
@@ -291,7 +292,7 @@ class Selections(unittest.TestCase):
         self.assertEqual({number: "Unknown" if value is None else spec["labels"][value]
                           for number, value in spec["values"].items()}, words)
         self.assertEqual(spec["port"], 15607)
-        self.assertEqual(oh_site_contract.compile(House(data), oh_render.build(data))["history"]["port"],
+        self.assertEqual(oh_site_contract.compile(House(data), oh_render.build(House(data)))["history"]["port"],
                          oh_ports.DEFAULTS["prometheus"])
 
     def test_sources_are_named_as_the_remotes_name_them(self):
@@ -358,7 +359,7 @@ class Playing(unittest.TestCase):
         inventory["devices"].append({"id": "example_shield", "room": "example_west", "kind": "streamer", "make": "NVIDIA",
                                      "model": "SHIELD TV Pro", "ip": "192.0.2.31",
                                      "controls": {"observe": ["cast"], "control": ["androidtv_googletv"]}})
-        self.assertEqual(oh_metrics.exporter_map(inventory)["playing"], {"example_shield": {
+        self.assertEqual(oh_metrics.exporter_map(House(inventory))["playing"], {"example_shield": {
             "app": "example_shield_playing_app", "title": "example_shield_playing_title"}})
 
     def test_the_usage_board_shows_what_played_where_something_can_play(self):
@@ -630,7 +631,7 @@ class RoutingSeries(unittest.TestCase):
         with a receiver read every 15 s, not the dashboards' 15 s."""
         from oh_features import routing
         from tests import test_zone_sync as zones
-        self.assertEqual(MAP["routing"]["deadline_seconds"], routing.hold_ms(INVENTORY) / 1000)
+        self.assertEqual(MAP["routing"]["deadline_seconds"], routing.hold_ms(House(INVENTORY)) / 1000)
         files = rendered(zones.house())
         mapping = json.loads(files[oh_metrics.EXPORTER_MAP])
         self.assertEqual(mapping["routing"]["deadline_seconds"], 20)
@@ -678,7 +679,7 @@ class RoutingSeries(unittest.TestCase):
         counted = re.search(r"const BUCKETS = \[([^\]]*)\]", source).group(1)
         self.assertEqual(tuple(int(value) for value in counted.split(",")), exporter.ROUTE_BUCKETS)
         for inventory in (INVENTORY, zones.house()):
-            self.assertGreater(exporter.ROUTE_BUCKETS[-1], routing.hold_ms(inventory) / 1000)
+            self.assertGreater(exporter.ROUTE_BUCKETS[-1], routing.hold_ms(House(inventory)) / 1000)
 
 
 class Checks(unittest.TestCase):
@@ -892,9 +893,9 @@ class Signals(unittest.TestCase):
         Here no match used to mean no check and no word."""
         named = {}
         for name, phase, inventory in self.one_device_houses():
-            conf = oh_metrics._build(copy.deepcopy(inventory))
-            found, _ = oh_metrics.probes(inventory, conf)
-            unread = oh_metrics.unobserved(inventory, conf)
+            conf = oh_metrics._build(House(copy.deepcopy(inventory)))
+            found, _ = oh_metrics.probes(House(inventory), conf)
+            unread = oh_metrics.unobserved(House(inventory), conf)
             for device in inventory["devices"]:
                 read = oh_metrics.signals(device, conf, found)
                 self.assertLessEqual({signal.kind for signal in read}, {"thing", "port", "reads", "online"})
@@ -913,9 +914,9 @@ class Signals(unittest.TestCase):
                   test_read_only.house("bk808_cec", "control")]
         kinds = set()
         for inventory in houses:
-            conf = oh_metrics._build(copy.deepcopy(inventory))
-            found, _ = oh_metrics.probes(inventory, conf)
-            mapping = oh_metrics.exporter_map(copy.deepcopy(inventory), conf)
+            conf = oh_metrics._build(House(copy.deepcopy(inventory)))
+            found, _ = oh_metrics.probes(House(inventory), conf)
+            mapping = oh_metrics.exporter_map(House(copy.deepcopy(inventory)), conf)
             checked = {(check["device"], check["check"], check["metric"], tuple(check["labels"].items()))
                        for check in mapping["health_checks"] if check["check"] != "power"}
             control = {(device["id"], signal.kind, signal.metric, signal.labels)
@@ -938,21 +939,21 @@ class Signals(unittest.TestCase):
         matrix's and the source had no check at all."""
         from tests import test_read_only
         inventory = test_read_only.house("bk808_cec", "control")
-        mapping = oh_metrics.exporter_map(copy.deepcopy(inventory))
+        mapping = oh_metrics.exporter_map(House(copy.deepcopy(inventory)))
         checks = [check for check in mapping["health_checks"] if check["device"] == "den_device"]
         self.assertEqual([(check["check"], check["metric"], check["labels"], check["always"]) for check in checks],
                          [("thing", "thermite_thing_online", {"thing": "http:url:den_device_cec:den_matrix"}, False)])
         self.assertEqual(checks[0]["required"], [{"item": "loc_den_source", "source": "den_device"}])
-        self.assertEqual(oh_metrics.unobserved(inventory), [])
+        self.assertEqual(oh_metrics.unobserved(House(inventory)), [])
         # Without the integration's word for it the source is named, not passed over.
         from oh_integrations import bk808_cec
         with mock.patch.object(bk808_cec, "transport", lambda device: None):
-            self.assertEqual(oh_metrics.unobserved(inventory), [("den_device", "bk808_cec")])
-            self.assertFalse([check for check in oh_metrics.exporter_map(copy.deepcopy(inventory))["health_checks"]
+            self.assertEqual(oh_metrics.unobserved(House(inventory)), [("den_device", "bk808_cec")])
+            self.assertFalse([check for check in oh_metrics.exporter_map(House(copy.deepcopy(inventory)))["health_checks"]
                               if check["device"] == "den_device"])
 
     def test_generation_names_what_nothing_watches(self):
-        self.assertEqual(oh_metrics.unobserved(copy.deepcopy(INVENTORY)), [("example_computer", "")])
+        self.assertEqual(oh_metrics.unobserved(House(copy.deepcopy(INVENTORY))), [("example_computer", "")])
         header = FILES[oh_metrics.PROMETHEUS_YML].split("global:", 1)[0]
         self.assertIn("#   example_computer: no reading at all\n", header)
         self.assertNotIn("ping them", header)
@@ -960,7 +961,7 @@ class Signals(unittest.TestCase):
         inventory = copy.deepcopy(INVENTORY)
         next(device for device in inventory["devices"]
              if device["id"] == "example_computer")["controls"]["observe"] = ["network_ping"]
-        self.assertEqual(oh_metrics.unobserved(copy.deepcopy(inventory)), [])
+        self.assertEqual(oh_metrics.unobserved(House(copy.deepcopy(inventory))), [])
         self.assertNotIn("No reading says", rendered(inventory)[oh_metrics.PROMETHEUS_YML])
         self.assertIn("nothing reads whether it answers bk808_cec", oh_metrics.unobserved_text("den_device", "bk808_cec"))
 
@@ -973,7 +974,7 @@ class Signals(unittest.TestCase):
         # A Thing generated for a device is one named after it, a ping Thing included.
         from tests import test_read_only
         pinged = test_read_only.house("network_ping", "observe")
-        conf = oh_metrics._build(copy.deepcopy(pinged))
+        conf = oh_metrics._build(House(copy.deepcopy(pinged)))
         (uid, path), = oh_metrics.device_things(conf, "den_device")
         self.assertEqual((oh_metrics.thing_device(uid), path), ("den_device", "yaml/network.yaml"))
         self.assertEqual(oh_metrics.device_things(conf, "den"), [])
@@ -1103,7 +1104,7 @@ class Alerting(unittest.TestCase):
             {"id": "example_amp", "room": "example_east", "kind": "streaming_amp", "make": "WiiM",
              "model": "Amp Pro", "ip": "192.0.2.32",
              "controls": {"observe": ["wiim_http"], "control": ["wiim_http"]}}]
-        found, unknown = oh_metrics.probes(inventory)
+        found, unknown = oh_metrics.probes(House(inventory))
         self.assertFalse({"example_avpro", "example_shield", "example_amp"} & {probe.device for probe in found})
         self.assertIn(("example_avpro", ("network_ping", "avpro_telnet")), unknown)
         self.assertIn(("example_shield", ("cast", "androidtv_googletv")), unknown)
@@ -1122,7 +1123,7 @@ class Alerting(unittest.TestCase):
         inventory["devices"].append({"id": "example_projector", "room": "example_east", "kind": "projector",
                                      "make": "Sony", "model": "VPL-VW915ES", "ip": "192.0.2.31",
                                      "controls": {"observe": ["network_ping", "sony_adcp"], "control": ["sony_adcp"]}})
-        found, unknown = oh_metrics.probes(inventory)
+        found, unknown = oh_metrics.probes(House(inventory))
         self.assertNotIn("example_projector", [probe.device for probe in found])
         self.assertIn(("example_projector", ("network_ping", "sony_adcp")), unknown)
 
@@ -1490,7 +1491,7 @@ class NoMatrix(unittest.TestCase):
             with self.subTest(idle=idle):
                 data = without_matrix(idle)
                 self.assertEqual(oh_render.validate(data), [])
-                text = oh_render.render(copy.deepcopy(data))[routing.RULE]
+                text = oh_render.render(House(copy.deepcopy(data)))[routing.RULE]
                 start = text.index("const TABLE = ") + len("const TABLE = ")
                 table = json.JSONDecoder().raw_decode(text, start)[0]
                 self.assertEqual("lifecycle" in table, idle == "standby")

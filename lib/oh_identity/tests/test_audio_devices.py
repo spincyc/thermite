@@ -11,6 +11,7 @@ from django.conf import settings
 from django.test import Client, TestCase
 from django.utils import timezone
 
+from oh_conf import House
 import oh_room_policy
 from oh_identity.auth import Guest
 from oh_identity.models import RoomPolicy
@@ -44,7 +45,7 @@ def compiled(data):
     import oh_render
     import oh_site_contract
     from oh_conf import House
-    return oh_site_contract.compile(House(data), oh_render.build(data))
+    return oh_site_contract.compile(House(data), oh_render.build(House(data)))
 
 
 class Contract(TestCase):

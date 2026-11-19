@@ -118,16 +118,16 @@ def provision(http, plan: list[dict]) -> None:
             raise CameraError(f"runtime refused bridge configuration (HTTP {code})")
 
 
-def camera_plan(data: dict, streaming: set[str]) -> list[dict]:
-    devices = [d for d in data.get("devices", []) if uses(d, protect.PHASE, protect.NAME)]
+def camera_plan(house: House, streaming: set[str]) -> list[dict]:
+    devices = [d for d in house.devices if uses(d, protect.PHASE, protect.NAME)]
     if streaming - {d["id"] for d in devices}:
         raise CameraError("stream selection includes an unknown Protect camera")
-    return [protect.native_thing(device, House(data), webrtc=device["id"] in streaming) for device in devices]
+    return [protect.native_thing(device, house, webrtc=device["id"] in streaming) for device in devices]
 
 
-def set_streams(http, data: dict, streaming: set[str]) -> None:
+def set_streams(http, house: House, streaming: set[str]) -> None:
     """Change only native media enablement, without re-reading bridge secrets."""
-    plan = camera_plan(data, streaming)
+    plan = camera_plan(house, streaming)
     for thing in plan:
         code, found = http.try_get_json("/rest/things/" + urllib.parse.quote(thing["UID"], safe=""))
         if (code != 200 or not isinstance(found, dict) or found.get("thingTypeUID") != "unifi:camera"
@@ -178,15 +178,15 @@ def runtime(arguments):
     return oh_sandbox.Http(arguments.url, token=token, allow_write=True)
 
 
-def status(http, data: dict) -> list[dict]:
+def status(http, house: House) -> list[dict]:
     code, group = http.try_get_json(f"/rest/items/{protect.STATUS_GROUP}?fields=members(name,state)")
     if code != 200 or not isinstance(group, dict) or not isinstance(group.get("members"), list):
         raise CameraError("camera status is unavailable; is the camera configuration deployed?")
-    approved = {item for camera in remote_cameras.manifest(House(data))["cameras"] for item in camera["items"].values()}
+    approved = {item for camera in remote_cameras.manifest(house)["cameras"] for item in camera["items"].values()}
     reported = {member.get("name"): member.get("state") for member in group["members"]
                 if isinstance(member, dict) and member.get("name") in approved}
     rows = []
-    for camera in remote_cameras.manifest(House(data))["cameras"]:
+    for camera in remote_cameras.manifest(house)["cameras"]:
         states = {}
         for role, item in camera["items"].items():
             raw = reported.get(item)
@@ -232,17 +232,18 @@ def main(argv: list[str] | None = None) -> int:
             selection.add_argument("--camera", action="append", default=[], metavar="ID", help="enable only this camera; repeat for several")
             oh_cli.add_dry_run(command)
     arguments = parser.parse_args(argv)
-    data = House.load(arguments.house).data
+    house = House.load(arguments.house)
+    data = house.data
     try:
         problems = remote_cameras.validate(data)
-        devices = [d for d in data.get("devices", []) if uses(d, protect.PHASE, protect.NAME)]
+        devices = [d for d in house.devices if uses(d, protect.PHASE, protect.NAME)]
         for device in devices:
             problems += protect.validate(device)
         if problems or not devices:
             raise CameraError("; ".join(problems) if problems else "the house has no configured Protect cameras")
         if arguments.command == "configure":
             selected = set(arguments.stream_camera)
-            native = camera_plan(data, selected)
+            native = camera_plan(house, selected)
             if arguments.dry_run:
                 print(f"Configure {protect.CONTROLLER_UID} at {data['protect']['host']}:{data['protect'].get('port', 443)}")
                 print(f"Configure {protect.NVR_UID}: existing API token only, autoManageToken=false")
@@ -257,12 +258,12 @@ def main(argv: list[str] | None = None) -> int:
             print("Protect bridges configured in runtime private storage; credentials were not printed or saved in Git.")
         elif arguments.command == "streams":
             selected = {d["id"] for d in devices} if arguments.all else set(arguments.camera)
-            camera_plan(data, selected)
+            camera_plan(house, selected)
             if not arguments.dry_run:
-                set_streams(runtime(arguments), data, selected)
+                set_streams(runtime(arguments), house, selected)
             print(f"Native WebRTC {'would be' if arguments.dry_run else 'is'} enabled for {len(selected)} of {len(devices)} cameras.")
         else:
-            rows = status(runtime(arguments), data)
+            rows = status(runtime(arguments), house)
             if arguments.json:
                 print(json.dumps({"cameras": rows}, indent=2))
             else:

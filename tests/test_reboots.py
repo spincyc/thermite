@@ -146,7 +146,7 @@ class UsbMatrix(unittest.TestCase):
         self.assertEqual(render.validate(data), [])
 
     def test_its_reboot_item_writes_past_the_routing_actor(self):
-        files = render.render(routed())
+        files = render.render(House(routed()))
         self.assertIn("automation/js/thermite_routing_io_example_usb.js", files)
         channel = usb_thing(files)["channels"]["reboot"]
         self.assertEqual(channel["config"]["mode"], "WRITEONLY")
@@ -156,7 +156,7 @@ class UsbMatrix(unittest.TestCase):
         self.assertIs(item["autoupdate"], False)
 
     def test_the_read_only_copy_polls_nothing_more(self):
-        files = render.read_only(render.render(routed()))
+        files = render.read_only(render.render(House(routed())))
         thing = usb_thing(files)
         modes = {channel["config"]["mode"] for channel in thing["channels"].values()}
         polls = {(channel["config"].get("stateExtension"), channel["config"].get("stateContent"))
@@ -184,7 +184,7 @@ class UsbMatrix(unittest.TestCase):
 
 class Render(unittest.TestCase):
     def test_the_rule_its_item_and_each_reboot_item(self):
-        conf = render.build(house())
+        conf = render.build(House(house()))
         files = conf.render()
         text = files[reboots.RULE]
         self.assertNotIn(unfilled("TABLE"), text)
@@ -204,12 +204,12 @@ class Render(unittest.TestCase):
                          text.replace("\nconst SEND = true;\n", "\nconst SEND = false;\n"))
 
     def test_a_house_with_nothing_to_restart_has_no_rule(self):
-        files = render.render(house(devices=[TV]))
+        files = render.render(House(house(devices=[TV])))
         self.assertNotIn(reboots.RULE, files)
         self.assertNotIn(reboots.ITEMS, files)
 
     def test_the_receivers_rule_knows_their_addresses(self):
-        text = render.render(house())["automation/js/heos.js"]
+        text = render.render(House(house()))["automation/js/heos.js"]
         line = next(line for line in text.splitlines() if line.startswith("const DEVICES = "))
         self.assertEqual([entry["host"] for entry in json.loads(line[len("const DEVICES = "):-1])],
                          ["192.0.2.50", "192.0.2.51"])

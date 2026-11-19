@@ -209,7 +209,7 @@ def compile_contract(house_file, asset_root, destination, *, metrics_port=None, 
     root = Path(asset_root).absolute()
     if not root.is_dir() or root.is_symlink():
         raise AccessError("Private asset root must be an existing directory")
-    contract = oh_site_contract.compile(house, oh_render.build(house.data), asset_root=root, metrics_port=metrics_port,
+    contract = oh_site_contract.compile(house, oh_render.build(house), asset_root=root, metrics_port=metrics_port,
                                         music_host=music_host)
     json_private(destination, contract)
     return contract

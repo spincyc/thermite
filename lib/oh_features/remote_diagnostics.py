@@ -30,7 +30,7 @@ def providers(house: House) -> dict:
 def _rooms(house: House) -> dict:
     """Configured signal paths before passive observers are inserted."""
     config = house.data.get("routing") or {}
-    devices = {device["id"]: device for device in house.devices}
+    devices = house.by_id
     rooms = {}
     sources = config.get("sources") or {}
     for room_id, room in (config.get("rooms") or {}).items():
@@ -79,7 +79,7 @@ def _rooms(house: House) -> dict:
                                       *[copy.deepcopy(node) for node in nodes if node["role"] == "receiver"]]
                 path["nodes"] = [node for node in nodes if node["role"] != "receiver"]
             paths[source_id] = path
-        rooms[room_id] = {"label": routing.room_label(house.data, room_id), "sources": paths}
+        rooms[room_id] = {"label": routing.room_label(house, room_id), "sources": paths}
     return rooms
 
 
@@ -143,7 +143,7 @@ def manifest(house: House, conf: Conf) -> dict:
 
 def _manifest(house: House, conf: Conf) -> dict:
     descriptions = providers(house)
-    devices = {device["id"]: device for device in house.devices}
+    devices = house.by_id
     # A descriptor cannot create an arbitrary REST read or refer to an Item
     # its integration did not render.
     for ident, description in descriptions.items():

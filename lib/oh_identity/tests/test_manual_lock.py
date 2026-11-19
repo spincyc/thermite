@@ -11,6 +11,7 @@ from django.db import connection, transaction
 from django.test import Client, TestCase, TransactionTestCase
 from django.utils import timezone
 
+from oh_conf import House
 import oh_room_policy
 from oh_identity.auth import Guest
 from oh_identity.models import Audit, PersonalToken, RoomPolicy, User
@@ -271,7 +272,7 @@ class SharedDevices(TestCase):
         self.commands = []
         transport = type("Transport", (), {"command": lambda _, item, value, source=None: self.commands.append((item, value)),
                                             "read": lambda _, item: "off"})()
-        self.adapter = RuntimeAdapter(RuntimeContract(**oh_site_contract.compile(House(data), oh_render.build(data))),
+        self.adapter = RuntimeAdapter(RuntimeContract(**oh_site_contract.compile(House(data), oh_render.build(House(data)))),
                                       transport, policy=oh_room_policy)
         install_adapter(self.adapter)
 

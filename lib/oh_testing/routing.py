@@ -189,15 +189,15 @@ def simulated_lifecycle(contract: dict, resources: set[str], *, endpoints: bool 
 
 
 class Check:
-    def __init__(self, data: dict, log=print) -> None:
-        self.data = data
+    def __init__(self, house: oh_conf.House, log=print) -> None:
+        self.house = house
         self.log = log
-        self.routing = data["routing"]
-        full = routing.table(data)
+        self.routing = house.data["routing"]
+        full = routing.table(house)
         self.executor_enabled = "lifecycle" in full
         self.table = full["rooms"]
         self.edid = full["edid"]
-        self.devices = {d["id"]: d for d in data["devices"]}
+        self.devices = house.by_id
         ids = [self.routing["hdmi_matrix"]]
         ids += [m for e in self.routing["rooms"].values() for m in e.get("usb") or {} if m not in ids]
         #: HDMI switch id (an HDMI switch, or a matrix a room's switch is an
@@ -229,7 +229,7 @@ class Check:
                                                                   entry["hdmi_switch"].get("output", 0))
         #: a receiver's or display's input Item -> the inputs it takes
         self.inputs = {stage["input"]: stage["inputs"] for room in self.table
-                       for _, stage in routing.stages(data, room)}
+                       for _, stage in routing.stages(house, room)}
         #: stand-in Item -> its type
         self.stand_in_items: dict[str, str] = {}
         for room in self.table.values():
@@ -254,30 +254,29 @@ class Check:
     def conf(self) -> dict[str, str | bytes]:
         """The generated routing files and the remote page, with the matrices
         at their simulators."""
-        built = render.build(self.data)
-        contract = simulated_lifecycle(routing.table(self.data), set(self.ports))
+        house = self.house
+        built = render.build(house)
+        contract = simulated_lifecycle(routing.table(house), set(self.ports))
         if "lifecycle" in contract:
             from oh_features.routing import lifecycle_io
             # Regenerate custom matrix actor adapters with the projected epoch;
             # never leave an original full-house adapter beside the projection.
-            house = oh_conf.House(self.data)
             for module in {m.NAME: m for m in self.modules.values()}.values():
                 if module.files:
                     devices = [self.devices[ident] for ident, owner in self.modules.items() if owner is module]
                     built.files.update(module.files(devices, house))
             built.yaml[lifecycle_io.ITEMS].items.clear()
             lifecycle_io.configure(house, built, contract["lifecycle"])
-            built.files[routing.RULE] = routing.rule(self.data, contract)
+            built.files[routing.RULE] = routing.rule(house, contract)
         files = built.render()
         # threadpools: production's thread pools, as the controls check runs with.
         keep = {"services/addons.cfg", "yaml/model.yaml", routing.ITEMS, routing.RULE, all_off.ITEMS, all_off.RULE,
                 threadpools.FILE, *(m.FILE for m in self.modules.values()), *(m.RULE for m in self.modules.values() if self.ruled(m)),
                 *(f"{remote.TARGET}/{name}" for name in remote.FILES)}
-        house = oh_conf.House(self.data)
         for module in {m.NAME: m for m in self.modules.values()}.values():
             keep |= set(module.ASSETS)
             if module.files:
-                devices = [device for device in self.data["devices"] if oh_conf.uses(device, module.PHASE, module.NAME)]
+                devices = [device for device in house.devices if oh_conf.uses(device, module.PHASE, module.NAME)]
                 keep |= set(module.files(devices, house))
         if "lifecycle" in contract:
             keep |= {lifecycle_io.ITEMS, lifecycle_io.MODULE,
@@ -294,7 +293,7 @@ class Check:
             out[module.FILE] = out[module.FILE].replace(real, module.url(self.servers[ident].address))
         out[STAND_INS] = self.stand_ins()
         leaks = sorted({f"{path}: {device['id']} ({device['ip']})" for path, text in out.items()
-                        if isinstance(text, str) for device in self.data["devices"]
+                        if isinstance(text, str) for device in house.devices
                         if device.get("ip") and re.search(rf"(?<![\d.]){re.escape(device['ip'])}(?![\d.])", text)})
         if leaks:
             raise lib.SandboxError("the conf would reach a real device: " + "; ".join(leaks))
@@ -894,10 +893,10 @@ class Check:
 
 
 def run_check(args, rt: lib.Runtime, log) -> int:
-    data = oh_conf.House.load(args.house).data
-    if data.get("routing") is None:
+    house = oh_conf.House.load(args.house)
+    if house.data.get("routing") is None:
         raise lib.SandboxError("instance/devices.yaml has no routing")
-    check = Check(data, log=log)
+    check = Check(house, log=log)
     conf = STATE / "conf"
     inst = lib.boot_check_instance(conf)
     started = time.monotonic()

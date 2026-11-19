@@ -13,7 +13,6 @@ reading is said as unknown.
 
 from __future__ import annotations
 
-import copy
 import dataclasses
 import datetime
 import json
@@ -178,13 +177,12 @@ class Known:
 
 
 def known(house: House, ident: str) -> Known:
-    data = house.data
-    conf = render.build(copy.deepcopy(data))
-    mapping = metrics.exporter_map(copy.deepcopy(data), conf)
-    found, _ = metrics.probes(data, conf)
+    conf = render.build(house)
+    mapping = metrics.exporter_map(house, conf)
+    found, _ = metrics.probes(house, conf)
     device = house.by_id[ident]
     return Known(house, device, conf, mapping, metrics.signals(device, conf, found),
-                 remote_diagnostics.manifest(House(copy.deepcopy(data)), conf))
+                 remote_diagnostics.manifest(house, conf))
 
 
 def series(metric: str, labels) -> dict:
@@ -269,7 +267,7 @@ def what_watches_it(facts: Known) -> dict:
                      "series": series(signal.metric, signal.labels)} for signal in facts.signals],
         "checks": checks,
         "notes": [metrics.unobserved_text(*found)
-                  for found in metrics.unobserved(facts.house.data, facts.conf) if found[0] == ident],
+                  for found in metrics.unobserved(facts.house, facts.conf) if found[0] == ident],
         "problem_item": problem if (mapping["items"].get(problem) or {}).get("point") == "problem" else None,
         "tallies": sorted(entry["integration"] for entry in (mapping.get("commands") or {}).values()
                           if entry["device"] == ident),

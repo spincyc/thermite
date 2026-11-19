@@ -16,6 +16,7 @@ from pathlib import Path
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
+from oh_conf import House  # noqa: E402
 import oh_integrations as integrations  # noqa: E402
 import oh_inventory  # noqa: E402
 import oh_metrics  # noqa: E402
@@ -76,7 +77,7 @@ class Seam(unittest.TestCase):
             self.assertEqual(text.count("record: thermiteDevice.recorder("), actors, name)
             made += actors
         self.assertEqual(made, 6)
-        conf = oh_render.build(zones.house())
+        conf = oh_render.build(House(zones.house()))
         generic = {path: text for path, text in conf.files.items() if "/thermite_routing_io_" in path}
         self.assertEqual(set(generic), {"automation/js/thermite_routing_io_example_matrix.js",
                                         "automation/js/thermite_routing_io_example_usb.js"})
@@ -152,7 +153,7 @@ class Items(unittest.TestCase):
         self.assertNotIn("tags", tally)
 
     def test_the_example_house_has_them_for_each_device_a_script_commands_and_no_other(self):
-        conf = oh_render.build(EXAMPLE)
+        conf = oh_render.build(House(EXAMPLE))
         items = {name: item for file in conf.yaml.values() for name, item in file.items.items()}
         problems = {name for name in items if name.endswith("_problem") and not name.startswith("loc_")}
         self.assertEqual(problems, {"example_tv_problem", "example_display_problem", "example_player_problem"})
@@ -180,7 +181,7 @@ class Items(unittest.TestCase):
         self.assertIsNone(_commands.problem({"id": "example_matrix", "controls": {"control": ["bk808_http"]}}))
 
     def test_a_device_only_its_routing_actor_commands_gets_them_from_the_routing_renderer(self):
-        conf = oh_render.build(zones.house())
+        conf = oh_render.build(House(zones.house()))
         made = conf.yaml[lifecycle_io.ITEMS].items
         self.assertEqual({name for name in made if name.endswith(("_problem", "_commands"))},
                          {"example_avr_problem", "example_avr_denonmarantz_http_commands",
@@ -190,7 +191,7 @@ class Items(unittest.TestCase):
         # A device whose own script has an actor keeps the ones its integration renders.
         self.assertIn("example_tv_problem", conf.yaml["yaml/sony_ip_control.yaml"].items)
         # Without the routing lifecycle its commands go to its binding, which reports nothing.
-        plain = {name for file in oh_render.build(EXAMPLE).yaml.values() for name in file.items}
+        plain = {name for file in oh_render.build(House(EXAMPLE)).yaml.values() for name in file.items}
         self.assertNotIn("example_matrix_problem", plain)
 
     def test_the_remote_model_names_the_problem_item_of_whichever_script_commands_the_device(self):
@@ -270,15 +271,15 @@ class Tally(unittest.TestCase):
                    and concludes.search(Path(module.SOURCE).read_text(encoding="utf-8"))}
         self.assertEqual(polling, {"avpro_telnet", "pyatv_http", "sony_adcp", "sony_ip_control", "vrroom_telnet"})
         self.assertEqual({module.NAME for module in integrations.REGISTRY if module.READS}, polling)
-        for device, check in ((check["device"], check) for check in oh_metrics.exporter_map(EXAMPLE)["health_checks"]):
+        for device, check in ((check["device"], check) for check in oh_metrics.exporter_map(House(EXAMPLE))["health_checks"]):
             if check["check"] == "reads":
                 self.assertEqual(check["metric"], "thermite_device_read_ok")
                 self.assertIn(check["labels"]["integration"], polling)
                 self.assertIn(_commands.tally_item(device, check["labels"]["integration"]),
-                              oh_metrics.exporter_map(EXAMPLE)["commands"])
+                              oh_metrics.exporter_map(House(EXAMPLE))["commands"])
 
     def test_the_map_names_each_tally_with_its_device_and_integration(self):
-        mapping = oh_metrics.exporter_map(EXAMPLE)
+        mapping = oh_metrics.exporter_map(House(EXAMPLE))
         self.assertEqual(mapping["commands"], {
             "example_display_sony_ip_control_commands": {"device": "example_display", "integration": "sony_ip_control"},
             "example_player_pyatv_http_commands": {"device": "example_player", "integration": "pyatv_http"},
@@ -288,7 +289,7 @@ class Tally(unittest.TestCase):
         problems = {name: spec for name, spec in mapping["items"].items() if spec["point"] == "problem"}
         self.assertEqual(set(problems), {"example_tv_problem", "example_display_problem", "example_player_problem"})
         self.assertEqual({spec.get("clear_state") for spec in problems.values()}, {_commands.CLEAR})
-        actors = oh_metrics.exporter_map(zones.house())["commands"]
+        actors = oh_metrics.exporter_map(House(zones.house()))["commands"]
         self.assertEqual(actors["example_avr_denonmarantz_http_commands"],
                          {"device": "example_avr", "integration": "denonmarantz_http"})
         self.assertEqual(actors["example_matrix_bk808_http_commands"],

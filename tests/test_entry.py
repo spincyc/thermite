@@ -15,6 +15,7 @@ import zipfile
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 import oh_access_mode
+from oh_conf import House
 import oh_entry
 import oh_inventory
 import oh_render
@@ -129,7 +130,7 @@ class SandboxOnly(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.house = oh_inventory.load(AREA / "instance/devices.yaml")
-        cls.files = oh_render.render(cls.house)
+        cls.files = oh_render.render(House(cls.house))
 
     def test_generated_conf_has_neither_the_entry_nor_the_direct_transport(self):
         self.assertFalse(set(oh_entry.files()) & set(self.files))
@@ -158,7 +159,7 @@ class SandboxOnly(unittest.TestCase):
         # The example's own rules already ask: its list is left as generated.
         self.assertIn("jsscripting", asked(self.files)["automation"])
         self.assertEqual(oh_render.direct(self.files)[oh_render.ADDONS_CFG], self.files[oh_render.ADDONS_CFG])
-        bare = oh_render.render({"version": 1, "devices": []})
+        bare = oh_render.render(House({"version": 1, "devices": []}))
         self.assertNotIn("automation", asked(bare))
         copied = oh_render.direct(bare)
         self.assertEqual(asked(copied), {**asked(bare), "automation": ["jsscripting"]})

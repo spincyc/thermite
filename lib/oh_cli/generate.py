@@ -112,20 +112,20 @@ def main(argv: list[str] | None = None) -> int:
     # deploy/'s and metrics/'s parent, so that the tests can write them somewhere else.
     parser.add_argument("--root", type=Path, default=AREA, help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
-    data = House.load(arguments.house).data
-    devices = len(data.get("devices") or [])
+    house = House.load(arguments.house)
+    devices = len(house.devices)
     try:
         versions, host = deploy.load(AREA)
     except (OSError, ValueError) as exc:
         print(f"thermite generate: {exc}; nothing generated", file=sys.stderr)
         return 2
     from oh_features import remote_system
-    built = render.build(data, system_metadata=remote_system.manifest(host, versions["openhab"]["version"]),
+    built = render.build(house, system_metadata=remote_system.manifest(host, versions["openhab"]["version"]),
                          host=host)
     files = built.render()
     units = deploy.render_units(versions, host)
     root = arguments.root
-    trees = [(arguments.conf, arguments.conf.name, files), (root / "metrics", "metrics", metrics.render(data, host, versions, conf=built))]
+    trees = [(arguments.conf, arguments.conf.name, files), (root / "metrics", "metrics", metrics.render(house, host, versions, conf=built))]
     stale: list[str] = []
     missing: list[str] = []
     stray: list[tuple[str, str]] = []
@@ -187,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"thermite generate: {path}: nothing generates it now; {why}", file=sys.stderr)
     # Valid, and rendered as nothing: said here, or a device would look set up.
     notes = [integrations.planned_text(device["id"], phase, name)
-             for device in data.get("devices") or [] for phase, name in integrations.planned(device)]
+             for device in house.devices for phase, name in integrations.planned(device)]
     for note in notes:
         print(f"thermite generate: note: {note}", file=sys.stderr)
     count = len(files) + len(trees[1][2])

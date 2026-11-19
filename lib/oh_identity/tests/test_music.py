@@ -22,6 +22,7 @@ from django.conf import settings
 from django.test import Client, SimpleTestCase, TestCase, TransactionTestCase
 from django.utils import timezone
 
+from oh_conf import House
 import oh_music_sim
 import oh_room_policy
 from oh_identity import music, music_hub, streams, topics
@@ -68,7 +69,7 @@ def compiled(data, port=13627, libraries=("flac",)):
     import oh_site_contract
     from oh_conf import House
     host = None if port is None else {"port": port, "libraries": list(libraries)}
-    return oh_site_contract.compile(House(data), oh_render.build(data), music_host=host)
+    return oh_site_contract.compile(House(data), oh_render.build(House(data)), music_host=host)
 
 
 class Contract(SimpleTestCase):
@@ -229,7 +230,7 @@ class Stand_in:
 
     def start_music(self, data=None, libraries=("flac",)):
         self.data = data or house()
-        self.sim = oh_music_sim.Sim(oh_music_sim.speakers_from_house(self.data))
+        self.sim = oh_music_sim.Sim(oh_music_sim.speakers_from_house(House(self.data)))
         self.server = oh_music_sim.Server(self.sim).start()
         self.addCleanup(self.server.stop)
         self.authority = compiled(self.data, port=self.server.port, libraries=libraries)

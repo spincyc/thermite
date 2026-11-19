@@ -136,33 +136,33 @@ def problem_item_name(room: str) -> str:
     return f"loc_{room}_source_problem"
 
 
-def home(data: dict, room: str) -> str:
+def home(house: House, room: str) -> str:
     """The inventory room a routed room is in: its `room`, else its id."""
-    return data["routing"]["rooms"][room].get("room", room)
+    return house.data["routing"]["rooms"][room].get("room", room)
 
 
-def covered_rooms(data: dict, room: str) -> set:
+def covered_rooms(house: House, room: str) -> set:
     """The inventory rooms a routed room covers: its own (`home`), its
     display's and, when its own is a Building, every room nested in those
     (rooms.<id>.in), however deep. This is inventory containment, not an
     inference from names: the site contract lets the routed room command
     their devices, and the remote lists them as the room's."""
-    rooms = data.get("rooms") or {}
-    devices = {d.get("id"): d for d in data.get("devices") or [] if isinstance(d, dict)}
-    entry = data["routing"]["rooms"][room]
-    covered = {home(data, room)}
+    rooms = house.rooms
+    devices = house.by_id
+    entry = house.data["routing"]["rooms"][room]
+    covered = {home(house, room)}
     display = entry.get("display") if isinstance(entry.get("display"), dict) else {}
     shown = _known(devices, display.get("device"))
     if shown is not None:
         covered.add(shown.get("room"))
-    if (rooms.get(home(data, room)) or {}).get("tag") == "Building":
+    if (rooms.get(home(house, room)) or {}).get("tag") == "Building":
         while additions := {ident for ident, spec in rooms.items()
                             if isinstance(spec, dict) and spec.get("in") in covered} - covered:
             covered |= additions
     return covered
 
 
-def targets(data: dict, room: str) -> dict[str, str]:
+def targets(house: House, room: str) -> dict[str, str]:
     """The devices a routed room's remote commands, each with its role:
     "own" for the room's own sound: its `audio`, a soundbar in its home
     room (a streaming amp or audio streamer too, unless the routed room
@@ -174,23 +174,23 @@ def targets(data: dict, room: str) -> dict[str, str]:
     refuses every command to what it owns, from anywhere; a command to what
     it shares only when the command would disturb its route
     (oh_identity.runtime)."""
-    routed = data["routing"]["rooms"]
+    routed = house.data["routing"]["rooms"]
     entry = routed[room]
-    devices = [d for d in data.get("devices") or [] if isinstance(d, dict) and d.get("id")]
+    devices = house.devices
     shown_by: dict = {}
     for other, spec in routed.items():
         shown_by.setdefault((spec.get("display") or {}).get("device"), set()).add(other)
-    covered = covered_rooms(data, room)
+    covered = covered_rooms(house, room)
     shared = set(entry["sources"])
     shared.update(spec.get("device") for stage in STAGES if (spec := entry.get(stage)) and not spec.get("passive"))
     # Only endpoint audio devices join the explicit roles: an aliased TV
     # screen does not gain the desk amplifier beside it.
     sound = {d["id"]: d["room"] for d in devices if d.get("room") in covered
              and (d.get("kind") == "soundbar" or d.get("kind") in PLAYERS and "room" not in entry)}
-    shared.update(ident for ident, place in sound.items() if place != home(data, room))
-    own = {entry.get("audio")} | {ident for ident, place in sound.items() if place == home(data, room)}
+    shared.update(ident for ident, place in sound.items() if place != home(house, room))
+    own = {entry.get("audio")} | {ident for ident, place in sound.items() if place == home(house, room)}
     # An inventory can have a controlled TV in a room whose route is audio only.
-    own.update(d["id"] for d in devices if d.get("room") == home(data, room) and d.get("kind") in {"tv", "projector"}
+    own.update(d["id"] for d in devices if d.get("room") == home(house, room) and d.get("kind") in {"tv", "projector"}
                and not shown_by.get(d["id"], {room}) - {room})
     roles = {**{ident: "shared" for ident in shared}, **{ident: "own" for ident in own}}
     roles.pop(None, None)
@@ -199,17 +199,17 @@ def targets(data: dict, room: str) -> dict[str, str]:
     return roles
 
 
-def guard_rooms(data: dict, device_id: str) -> dict[str, str]:
+def guard_rooms(house: House, device_id: str) -> dict[str, str]:
     """The routed rooms whose remotes command a device, each with the
     device's role there (targets())."""
-    rooms = (data.get("routing") or {}).get("rooms") or {}
-    return {room: role for room in rooms if (role := targets(data, room).get(device_id))}
+    rooms = (house.data.get("routing") or {}).get("rooms") or {}
+    return {room: role for room in rooms if (role := targets(house, room).get(device_id))}
 
 
-def room_label(data: dict, room: str) -> str:
+def room_label(house: House, room: str) -> str:
     """A routed room's name on its Source selector and the remote: its own
     label where its screen is not the whole room, else the room's."""
-    return data["routing"]["rooms"][room].get("label") or inventory.room_label(data, room)
+    return house.data["routing"]["rooms"][room].get("label") or inventory.room_label(house.data, room)
 
 
 def _number(value: object) -> bool:
@@ -386,7 +386,7 @@ def validate(data: object) -> list[str]:
                 from .lifecycle_io import capabilities
                 device = devices.get(source)
                 module = waker(device) if device is not None else None
-                cap = capabilities(data).get(module.wake_item(device)) if module else None
+                cap = capabilities(devices.values()).get(module.wake_item(device)) if module else None
                 if not cap or not cap.get("terminal") or not cap.get("probe"):
                     problems.append(f"{where}.idle: standby requires controlled absolute power, ordered execution and fresh readback")
                 if any(source in (room.get("sleep_sources") or []) for room in rooms_section.values()
@@ -525,7 +525,7 @@ def validate(data: object) -> list[str]:
                                       "rooms"}):
         problems.append(f"routing: unknown key '{key}'")
     if not problems and any(source.get("idle") == "standby" for source in sources.values()):
-        contract = table(data)["lifecycle"]
+        contract = table(House(data))["lifecycle"]
         for source, coverage in contract.get("coverage", {}).items():
             if sources[source].get("idle") == "standby" and not coverage["complete"]:
                 problems.append(f"routing.sources.{source}.idle: standby requires complete observable consumer coverage; "
@@ -553,7 +553,7 @@ def _audio_problems(where: str, data: dict, room: str, devices: dict) -> list[st
     if ident in stages and stages[ident].get("zone") is not None:
         return [f"{where}.audio: {ident} is this room's receiver on zone {stages[ident]['zone']}, and its volume is "
                 "the main zone's"]
-    if ident not in stages and device.get("room") not in covered_rooms(data, room):
+    if ident not in stages and device.get("room") not in covered_rooms(House(data), room):
         return [f"{where}.audio: {ident} is in {device.get('room')}, not in a room {room} covers"]
     return []
 
@@ -966,7 +966,7 @@ def _switch_item(devices: dict, switch: dict) -> str:
     return module.switch_item(device, switch["output"]) if "output" in switch else module.input_item(device)
 
 
-def commands(data: dict, room: str, choice: str) -> list[list]:
+def commands(house: House, room: str, choice: str) -> list[list]:
     """[[Item, value], ...] that put `choice` (a source id or OFF) on in
     `room`'s matrices: its HDMI output first (a room without one has
     none), then its HDMI switch if it has one, then each of its USB device
@@ -976,8 +976,8 @@ def commands(data: dict, room: str, choice: str) -> list[list]:
     (no matrix_input) as it is. A source with no host on a room's USB
     matrix parks those ports, and a source under the room's usb_only moves
     only the ports listed there: the room's others stay where they are."""
-    routing = data["routing"]
-    devices = {d["id"]: d for d in data["devices"]}
+    routing = house.data["routing"]
+    devices = house.by_id
     entry = routing["rooms"][room]
     source = routing["sources"].get(choice, {}) if choice != OFF else {}
     switch = entry.get("hdmi_switch")
@@ -1001,13 +1001,13 @@ def commands(data: dict, room: str, choice: str) -> list[list]:
     return out
 
 
-def stages(data: dict, room: str) -> list[tuple[dict, dict]]:
+def stages(house: House, room: str) -> list[tuple[dict, dict]]:
     """(spec, stage()) of the room's receiver, then its display; one whose
     device lists no integration that powers it (validate() reports it) is
     left out. A passive display is always skipped, including when a device
     gains a provider later; enabling routing requires removing passive."""
-    devices = {d["id"]: d for d in data["devices"]}
-    entry = data["routing"]["rooms"][room]
+    devices = house.by_id
+    entry = house.data["routing"]["rooms"][room]
     out = []
     for key in STAGES:
         if key in entry and entry[key].get("passive") is True:
@@ -1018,25 +1018,25 @@ def stages(data: dict, room: str) -> list[tuple[dict, dict]]:
     return out
 
 
-def wake(data: dict, choice: str) -> list[list]:
+def wake(house: House, choice: str) -> list[list]:
     """[[Item, "ON"]] that wakes the chosen source, when its integration
     can (an Apple TV, a SHIELD); none for Off. Dedicated-source standby is
     explicitly configured with sleep_sources and sent by after()."""
-    device = next((d for d in data["devices"] if d["id"] == choice), None) if choice != OFF else None
+    device = house.by_id.get(choice) if choice != OFF else None
     module = waker(device) if device is not None else None
     return [[module.wake_item(device), "ON"]] if module is not None else []
 
 
-def power(data: dict, room: str, choice: str) -> list[list]:
+def power(house: House, room: str, choice: str) -> list[list]:
     """[[Item, "ON"], ...] a choice sends before it routes: the display's
     power, then the receiver's, which take longest, then the source's own
     (wake()); none for Off."""
     if choice == OFF:
         return []
-    return [[stage["power"], "ON"] for _, stage in reversed(stages(data, room))] + wake(data, choice)
+    return [[stage["power"], "ON"] for _, stage in reversed(stages(house, room))] + wake(house, choice)
 
 
-def inputs(data: dict, room: str, choice: str) -> list[list]:
+def inputs(house: House, room: str, choice: str) -> list[list]:
     """[[Item, input], ...] that put a choice on the room's screen once it
     is routed: the display's input, then the receiver's, as far as the
     choice passes through each. A source cabled to the display leaves the
@@ -1044,7 +1044,7 @@ def inputs(data: dict, room: str, choice: str) -> list[list]:
     if choice == OFF:
         return []
     out = []
-    for spec, stage in reversed(stages(data, room)):
+    for spec, stage in reversed(stages(house, room)):
         cabled = spec.get("sources") or {}
         if choice in cabled:
             out.append([stage["input"], cabled[choice]])
@@ -1053,13 +1053,13 @@ def inputs(data: dict, room: str, choice: str) -> list[list]:
     return out
 
 
-def sync_sources(data: dict, room: str) -> dict[str, str]:
+def sync_sources(house: House, room: str) -> dict[str, str]:
     """{source: the input of the room's receiver zone that shows it from
     its leader's matrix output} for a room whose receiver has sync_with:
     each source both rooms take from the HDMI matrix. Empty without one."""
-    rooms = data["routing"]["rooms"]
+    rooms = house.data["routing"]["rooms"]
     leader = (rooms[room].get("receiver") or {}).get("sync_with")
-    return {} if leader is None else _synced(rooms[room], rooms[leader], data["routing"]["sources"])
+    return {} if leader is None else _synced(rooms[room], rooms[leader], house.data["routing"]["sources"])
 
 
 def sync_plan(source: str, leader: str) -> str:
@@ -1068,36 +1068,36 @@ def sync_plan(source: str, leader: str) -> str:
     return f"{source}@{leader}"
 
 
-def synced_inputs(data: dict, room: str, source: str) -> list[list]:
+def synced_inputs(house: House, room: str, source: str) -> list[list]:
     """inputs() of a follower's synced route: its receiver zone on the
     leader's input for the source, its display as on its own route."""
-    receiver = data["routing"]["rooms"][room]["receiver"]
-    item = next(stage["input"] for spec, stage in stages(data, room) if spec is receiver)
-    value = sync_sources(data, room)[source]
-    return [[name, value if name == item else target] for name, target in inputs(data, room, source)]
+    receiver = house.data["routing"]["rooms"][room]["receiver"]
+    item = next(stage["input"] for spec, stage in stages(house, room) if spec is receiver)
+    value = sync_sources(house, room)[source]
+    return [[name, value if name == item else target] for name, target in inputs(house, room, source)]
 
 
-def after(data: dict, room: str, choice: str) -> list[list]:
+def after(house: House, room: str, choice: str) -> list[list]:
     """[[Item, value], ...] sent last: for Off, explicitly selected dedicated
     sources sleep before the receiver and display; then the room's actions."""
-    devices = {d["id"]: d for d in data["devices"]}
-    entry = data["routing"]["rooms"][room]
-    out = ([[item, "OFF"] for source in entry.get("sleep_sources", []) for item, _ in wake(data, source)]
-           + [[stage["power"], "OFF"] for _, stage in stages(data, room)]) if choice == OFF else []
+    devices = house.by_id
+    entry = house.data["routing"]["rooms"][room]
+    out = ([[item, "OFF"] for source in entry.get("sleep_sources", []) for item, _ in wake(house, source)]
+           + [[stage["power"], "OFF"] for _, stage in stages(house, room)]) if choice == OFF else []
     actions = entry.get(ACTIONS[1] if choice == OFF else ACTIONS[0]) or {}
     return out + [[action_item(devices, device_id), action] for device_id, action in actions.items()]
 
 
-def edid_table(data: dict) -> dict | None:
+def edid_table(house: House) -> dict | None:
     """What routing.js needs to follow the displays' EDIDs, or None without
     routing.edid: the EDID Item of each source's input, the EDID code each
     room's HDMI output gives its sources (a copy of its display unless the
     room names one), and the code of an input no room shows (None: left)."""
-    routing = data["routing"]
+    routing = house.data["routing"]
     edid = routing.get("edid")
     if edid is None:
         return None
-    device = next(d for d in data["devices"] if d["id"] == routing["hdmi_matrix"])
+    device = house.by_id[routing["hdmi_matrix"]]
     module = switcher(device)
     rooms = routing["rooms"].values()
     return {
@@ -1116,23 +1116,23 @@ def edid_table(data: dict) -> dict | None:
 HOLD = 15
 
 
-def hold_ms(data: dict) -> int:
+def hold_ms(house: House) -> int:
     """routing.js's RECENT_MS: HOLD, or the slowest read-back (READ_BACK)
     of a room's receiver or display and 2 s, if longer."""
-    devices = {d["id"]: d for d in data.get("devices") or []}
-    rooms = ((data.get("routing") or {}).get("rooms") or {}).values()
+    devices = house.by_id
+    rooms = ((house.data.get("routing") or {}).get("rooms") or {}).values()
     staged = {(entry.get(role) or {}).get("device") for entry in rooms for role in ("receiver", "display")}
     slowest = max((module.READ_BACK for ident in staged if ident in devices
                    for module in [stager(devices[ident])] if module), default=0)
     return 1000 * max(HOLD, slowest + 2)
 
 
-def table(data: dict) -> dict:
+def table(house: House) -> dict:
     """What routing.js needs: by room id, the EDID table, and the Source
     state of a room that is off. A room's stages are its display, then its
     receiver: the order the Source is read back in."""
-    routing = data["routing"]
-    devices = {d["id"]: d for d in data["devices"]}
+    routing = house.data["routing"]
+    devices = house.by_id
     rooms = {}
     for room, entry in routing["rooms"].items():
         offered = list(entry["sources"])
@@ -1144,12 +1144,12 @@ def table(data: dict) -> dict:
         choices = [OFF, *offered]
         rooms[room] = {
             "item": item_name(room),
-            "label": room_label(data, room),
+            "label": room_label(house, room),
             "hdmi": _port_item(devices, routing["hdmi_matrix"], entry["hdmi_output"]) if fed else None,
-            "choices": {choice: commands(data, room, choice) for choice in choices},
-            "power": {choice: power(data, room, choice) for choice in choices},
-            "inputs": {choice: inputs(data, room, choice) for choice in choices},
-            "after": {choice: after(data, room, choice) for choice in choices},
+            "choices": {choice: commands(house, room, choice) for choice in choices},
+            "power": {choice: power(house, room, choice) for choice in choices},
+            "inputs": {choice: inputs(house, room, choice) for choice in choices},
+            "after": {choice: after(house, room, choice) for choice in choices},
             "readback": readback,
             "switch": None if switch is None else {
                 "item": _switch_item(devices, switch),
@@ -1158,22 +1158,22 @@ def table(data: dict) -> dict:
             },
             "stages": [{"power": stage["power"], "input": stage["input"], "feed": spec.get("input"),
                         "readback": {value: source for source, value in (spec.get("sources") or {}).items()}}
-                       for spec, stage in reversed(stages(data, room))],
+                       for spec, stage in reversed(stages(house, room))],
         }
         if "hdmi_audio_output" in entry:
             rooms[room]["audioHdmi"] = _port_item(devices, routing["hdmi_matrix"], entry["hdmi_audio_output"])
-        for raw_stage, (spec, _) in zip(rooms[room]["stages"], reversed(stages(data, room))):
+        for raw_stage, (spec, _) in zip(rooms[room]["stages"], reversed(stages(house, room))):
             if spec.get("input_by_source"):
                 raw_stage["bySource"] = dict(spec["input_by_source"])
-        sync = sync_sources(data, room)
+        sync = sync_sources(house, room)
         if sync:
             leader = entry["receiver"]["sync_with"]
             rooms[room]["sync"] = {
                 "leader": leader,
                 "hdmi": _port_item(devices, routing["hdmi_matrix"], routing["rooms"][leader]["hdmi_output"]),
-                "input": next(stage["input"] for spec, stage in stages(data, room) if spec is entry["receiver"]),
+                "input": next(stage["input"] for spec, stage in stages(house, room) if spec is entry["receiver"]),
                 "choices": {source: {"plan": sync_plan(source, leader), "value": value,
-                                     "inputs": synced_inputs(data, room, source)} for source, value in sync.items()},
+                                     "inputs": synced_inputs(house, room, source)} for source, value in sync.items()},
             }
         checks = {}
         raw = rooms[room]
@@ -1192,35 +1192,35 @@ def table(data: dict) -> dict:
     for room, raw in rooms.items():
         if "sync" in raw:
             rooms[raw["sync"]["leader"]].setdefault("followers", []).append(room)
-    result = {"rooms": rooms, "edid": edid_table(data), "off": OFF, "holdMs": hold_ms(data)}
-    if lifecycle_enabled(data):
+    result = {"rooms": rooms, "edid": edid_table(house), "off": OFF, "holdMs": hold_ms(house)}
+    if lifecycle_enabled(house):
         from .lifecycle import compile_descriptor
         from .lifecycle_io import capabilities
-        result["lifecycle"] = compile_descriptor(data, result, capabilities(data))
+        result["lifecycle"] = compile_descriptor(house, result, capabilities(house.devices))
     return result
 
 
-def lifecycle_enabled(data: dict) -> bool:
-    routing = data.get("routing") or {}
+def lifecycle_enabled(house: House) -> bool:
+    routing = house.data.get("routing") or {}
     return (any(room.get("usb_unused") == "park" for room in routing.get("rooms", {}).values())
             or any(source.get("idle") == "standby" for source in routing.get("sources", {}).values()))
 
 
-def options(data: dict, room: str) -> str:
-    sources = data["routing"]["sources"]
-    offered = data["routing"]["rooms"][room]["sources"]
+def options(house: House, room: str) -> str:
+    sources = house.data["routing"]["sources"]
+    offered = house.data["routing"]["rooms"][room]["sources"]
     return options_text([(OFF, "Off")] + [(s, sources[s]["label"]) for s in offered])
 
 
-def source_item(data: dict, room: str) -> dict:
-    choices = options(data, room)
+def source_item(house: House, room: str) -> dict:
+    choices = options(house, room)
     # A Location with two screens (the Office's desk and TV) names each.
-    shared = sum(home(data, other) == home(data, room) for other in data["routing"]["rooms"]) > 1
+    shared = sum(home(house, other) == home(house, room) for other in house.data["routing"]["rooms"]) > 1
     return {
         "type": "String",
-        "label": f"{room_label(data, room)} source" if shared else "Source",
+        "label": f"{room_label(house, room)} source" if shared else "Source",
         "icon": "video",
-        "groups": [f"loc_{home(data, room)}"],
+        "groups": [f"loc_{home(house, room)}"],
         "tags": ["Control"],
         "autoupdate": False,
         "metadata": {
@@ -1245,22 +1245,21 @@ def _label_ports(conf: Conf, device: dict, labels: dict[int, str]) -> None:
         _label(conf, module.switch_item(device, port), labels)
 
 
-def rule(data: dict, contract: dict | None = None) -> str:
-    return fill(SOURCE.read_text(encoding="utf-8"), {"TABLE": table(data) if contract is None else contract}, SOURCE,
+def rule(house: House, contract: dict | None = None) -> str:
+    return fill(SOURCE.read_text(encoding="utf-8"), {"TABLE": table(house) if contract is None else contract}, SOURCE,
                 part="the routing in", encode=indented)
 
 
 def render(house: House, conf: Conf) -> None:
-    data = house.data
-    if data.get("routing") is None:
+    routing = house.data.get("routing")
+    if routing is None:
         return
-    routing = data["routing"]
-    devices = {d["id"]: d for d in house.devices}
+    devices = house.by_id
     out = conf.yaml_file(ITEMS, HEADER)
     for room in routing["rooms"]:
-        out.items[item_name(room)] = source_item(data, room)
+        out.items[item_name(room)] = source_item(house, room)
         out.items[problem_item_name(room)] = {
-            "type": "String", "label": "Source readback problem", "groups": [f"loc_{home(data, room)}"],
+            "type": "String", "label": "Source readback problem", "groups": [f"loc_{home(house, room)}"],
             "tags": ["Status"], "autoupdate": False,
             "metadata": {"stateDescription": {"config": {"readOnly": True}}},
         }
@@ -1283,7 +1282,7 @@ def render(house: House, conf: Conf) -> None:
         labels.update({usb_host(s, matrix_id, off_host): s["label"] for s in sources
                        if usb_host(s, matrix_id, off_host) != off_host})
         _label_ports(conf, devices[matrix_id], labels)
-    contract = table(data)
+    contract = table(house)
     if "lifecycle" in contract:
         from .lifecycle_io import configure
         configure(house, conf, contract["lifecycle"])
@@ -1294,5 +1293,5 @@ def render(house: House, conf: Conf) -> None:
                 "type": "String", "label": "Route lifecycle", "autoupdate": False,
                 "metadata": {"stateDescription": {"config": {"readOnly": True}}},
             }
-    conf.files[RULE] = rule(data, contract)
+    conf.files[RULE] = rule(house, contract)
     conf.add_addon(Addon("automation", "jsscripting", "the room Source rule (routing.js)"))

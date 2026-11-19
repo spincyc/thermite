@@ -26,6 +26,7 @@ import yaml
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
+from oh_conf import House  # noqa: E402
 import oh_deploy  # noqa: E402
 from oh_features import routing  # noqa: E402
 import oh_inventory  # noqa: E402
@@ -57,7 +58,7 @@ def house(variant: str = "") -> tuple[str, dict]:
         inventory["devices"].append({**copy.deepcopy(test_playing.SPEAKER), "room": PATIO})
         assert oh_inventory.validate(inventory) == []
     host = yaml.safe_load((AREA / "instance/host.yaml").read_text())
-    files = oh_metrics.render(copy.deepcopy(inventory), host)
+    files = oh_metrics.render(House(copy.deepcopy(inventory)), host)
     return files["prometheus/alerts.yml"], json.loads(files[oh_metrics.EXPORTER_MAP])
 
 

@@ -111,7 +111,7 @@ class Filling(unittest.TestCase):
 
     def test_no_rendered_script_of_the_example_keeps_an_unfilled_constant(self):
         unfilled_line = re.compile(r"^\s*const ([A-Z_]+) = null;$", re.MULTILINE)
-        for path, text in oh_render.build(json.loads((AREA / "instance/devices.yaml").read_text())).render().items():
+        for path, text in oh_render.build(House(json.loads((AREA / "instance/devices.yaml").read_text()))).render().items():
             if path.endswith(".js") and isinstance(text, str):
                 # A device the routing gives no actor keeps this one: its rule runs without.
                 self.assertLessEqual(set(unfilled_line.findall(text)), {lifecycle_io.CUSTOM}, path)
@@ -124,7 +124,7 @@ class Filling(unittest.TestCase):
         seen = set()
         for name, house in test_generated_output.houses().items():
             data = json.loads(house.read_text(encoding="utf-8")) if isinstance(house, Path) else copy.deepcopy(house)
-            for path, text in oh_render.build(data).render().items():
+            for path, text in oh_render.build(House(data)).render().items():
                 rule = next((rule for rule in rules if path.startswith(rule) and path.endswith(".js")), None)
                 if rule:
                     seen.add(rule)
@@ -161,7 +161,7 @@ class ScriptBase(unittest.TestCase):
 
 class DeviceContexts(unittest.TestCase):
     def test_control_fixture_excludes_observer_device_scripts(self):
-        check = controls.Check(projectors(), log=lambda _: None)
+        check = controls.Check(House(projectors()), log=lambda _: None)
         self.addCleanup(lambda: [stand_in.server.stop() for stand_in in check.stand_ins.values()])
         files = check.conf()
         self.assertIn(sony_adcp.rule_path({"id": "den_device"}), files)

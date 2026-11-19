@@ -65,10 +65,9 @@ def validate(data: object) -> list[str]:
     return problems
 
 
-def build(data: dict, *, system_metadata: dict | None = None, host: dict | None = None) -> Conf:
-    """The whole conf/ of a validated inventory; `host` (instance/host.yaml)
-    allocates its listener ports."""
-    house = House(data)
+def build(house: House, *, system_metadata: dict | None = None, host: dict | None = None) -> Conf:
+    """The whole conf/ of a house; `host` (instance/host.yaml) allocates its
+    listener ports."""
     conf = Conf(system_metadata=system_metadata)
     for module in integrations.REGISTRY:
         devices = [d for d in house.devices if uses(d, module.PHASE, module.NAME)]
@@ -104,10 +103,10 @@ def build(data: dict, *, system_metadata: dict | None = None, host: dict | None 
     return conf
 
 
-def render(data: dict, *, system_metadata: dict | None = None) -> dict[str, str | bytes]:
+def render(house: House, *, system_metadata: dict | None = None) -> dict[str, str | bytes]:
     """Path under conf/ -> content, for every file conf/ must hold (bytes for
     a file copied byte for byte)."""
-    return build(data, system_metadata=system_metadata).render()
+    return build(house, system_metadata=system_metadata).render()
 
 
 READ_ONLY_HEADER = (

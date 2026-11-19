@@ -157,12 +157,10 @@ def png(rgb, size):
             + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
 
 
-def speakers_from_house(data):
+def speakers_from_house(house):
     """The house's speakers as the stand-in builds players from them:
     oh_site_contract.music's match keys, with each device's model."""
     import oh_site_contract
-    from oh_conf import House
-    house = House(data)
     spec = oh_site_contract.music(house, {}, {"port": 1024, "libraries": []})["speakers"]
     models = {device["id"]: device.get("model") or "" for device in house.devices}
     return [{"id": ident, **speaker, "model": models[ident]} for ident, speaker in spec.items()]

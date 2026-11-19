@@ -89,7 +89,7 @@ def history(house: House, conf: Conf, rooms: dict, metrics_port: int | None = No
     import oh_ports
     from oh_metrics import dashboards
 
-    spec = dashboards.room_history(oh_metrics.exporter_map(house.data, conf))
+    spec = dashboards.room_history(oh_metrics.exporter_map(house, conf))
     by_item = {room["source_item"]: ident for ident, room in rooms.items()}
     zones = [{"room": by_item[zone["item"]], **zone} for zone in spec["zones"] if zone["item"] in by_item]
     return {"port": oh_ports.checked("prometheus", metrics_port or oh_ports.DEFAULTS["prometheus"]),
@@ -124,10 +124,10 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None, metrics
     music_host is a music host's {"port": Music Assistant's API port,
     "libraries": oh_music.settings' libraries}; the contract has music only
     with it."""
-    devices = {device["id"]: device for device in house.devices}
+    devices = house.by_id
     route = house.data.get("routing") or {}
     room_specs = route.get("rooms") or {}
-    table = routing.table(house.data) if room_specs else {"rooms": {}, "edid": None, "off": "off"}
+    table = routing.table(house) if room_specs else {"rooms": {}, "edid": None, "off": "off"}
     all_items = {name: item for file in conf.yaml.values() for name, item in file.items.items()}
 
     def commandable(name):
@@ -213,11 +213,11 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None, metrics
         states[item]["commands"] = True
         return {**spec, "item": item, "resources": ["device:" + device["id"]]}
 
-    guards = {ident: routing.guard_rooms(house.data, ident) for ident in devices} if room_specs else {}
+    guards = {ident: routing.guard_rooms(house, ident) for ident in devices} if room_specs else {}
     rooms = {}
     for room, entry in room_specs.items():
         actions = {}
-        for ident in sorted(routing.targets(house.data, room)):
+        for ident in sorted(routing.targets(house, room)):
             device = devices[ident]
             module, control = native[ident]
             if not module:

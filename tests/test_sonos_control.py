@@ -69,7 +69,7 @@ def cottage(audio=True):
 class NativeItems(unittest.TestCase):
     def test_arc_exposes_native_channels_and_its_full_volume_range(self):
         data = house()
-        conf = oh_render.build(data)
+        conf = oh_render.build(oh_conf.House(data))
         items = conf.yaml[sonos.FILE].items
         self.assertEqual(items[f"{ARC}_player"]["channel"], f"sonos:Arc:{ARC}:control")
         self.assertEqual(oh_conf.linked(items[f"{ARC}_tv"]), [f"sonos:Arc:{ARC}:playlinein"])
@@ -84,11 +84,11 @@ class NativeItems(unittest.TestCase):
         self.assertIn("tv", sonos.keys(data["devices"][0]))
 
     def test_observer_stays_display_only_and_read_only_guards_native_control(self):
-        observed = oh_render.build(house(False)).yaml[sonos.FILE].items
+        observed = oh_render.build(oh_conf.House(house(False))).yaml[sonos.FILE].items
         self.assertTrue(oh_conf.is_guarded(observed[f"{ARC}_volume"]))
         self.assertNotIn(f"{ARC}_key", observed)
         self.assertIsNone(sonos.remote(house(False)["devices"][0]))
-        files = oh_render.render(house())
+        files = oh_render.render(oh_conf.House(house()))
         quiet = oh_render.read_only(files)
         self.assertIn("const SEND = false;", quiet[sonos.RULE])
         items = yaml.safe_load(quiet[sonos.FILE])["items"]
@@ -102,7 +102,7 @@ class NativeItems(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("node"), "node needed for native link profiles")
     def test_native_volume_and_tv_profiles_reject_unrelated_commands(self):
-        conf = oh_render.build(house())
+        conf = oh_render.build(oh_conf.House(house()))
         items = conf.yaml[sonos.FILE].items
         tv = next(iter(items[f"{ARC}_tv"]["channels"].values()))["toHandlerScript"][1:]
         script = "const vm=require('vm'); const p=JSON.parse(process.argv[1]); " \
@@ -176,7 +176,7 @@ class AudioPage(unittest.TestCase):
 
     def test_the_feed_keeps_an_arcs_tv_audio_and_leaves_out_track_details(self):
         data = house()
-        feed = remote_activity.manifest(oh_conf.House(data), oh_render.build(data))["items"]
+        feed = remote_activity.manifest(oh_conf.House(data), oh_render.build(oh_conf.House(data)))["items"]
         self.assertLessEqual({f"{ARC}_line_in", f"{ARC}_codec", f"{ARC}_title"}, set(feed))
         self.assertNotIn(f"{ARC}_album", feed)
 
@@ -187,7 +187,7 @@ class AudioPage(unittest.TestCase):
                                          "silent": {"item": f"{ARC}_codec", "is": ["noSignal", "silence"]}})
         self.assertNotIn("silent", sonos.audio(self.amp())["state"])
         # The remote's stream carries it (the activity feed's Items do too).
-        contract = oh_site_contract.compile(oh_conf.House(data), oh_render.build(data))
+        contract = oh_site_contract.compile(oh_conf.House(data), oh_render.build(oh_conf.House(data)))
         self.assertIn(f"{ARC}_codec", contract["views"]["remote"]["statechanged"])
 
     def test_an_arcs_page_adds_tv_audio_and_its_bonded_speakers_levels(self):
@@ -198,7 +198,7 @@ class AudioPage(unittest.TestCase):
         self.assertEqual(shown["sub_gain"], {"item": f"{ARC}_sub_gain", "label": "Subwoofer Level", "section": "sound",
                                              "kind": "number", "min": -15, "max": 15, "step": 1})
         self.assertEqual(shown["repeat"]["options"], [["OFF", "Off"], ["ONE", "One"], ["ALL", "All"]])
-        items = oh_render.build(house()).yaml[sonos.FILE].items
+        items = oh_render.build(oh_conf.House(house())).yaml[sonos.FILE].items
         self.assertEqual(oh_conf.linked(items[f"{ARC}_height"]), [f"sonos:Arc:{ARC}:heightlevel"])
         self.assertEqual(items[f"{ARC}_bass"]["tags"], ["Setpoint", "Level"])
         self.assertEqual(items[f"{ARC}_album"]["channel"], f"sonos:Arc:{ARC}:currentalbum")
@@ -206,12 +206,12 @@ class AudioPage(unittest.TestCase):
             self.assertFalse(oh_conf.is_guarded(items[f"{ARC}_{suffix}"]), suffix)
             self.assertFalse(items[f"{ARC}_{suffix}"]["autoupdate"], suffix)
         # Observed only, none of them is rendered.
-        observed = oh_render.build(house(False)).yaml[sonos.FILE].items
+        observed = oh_render.build(oh_conf.House(house(False))).yaml[sonos.FILE].items
         self.assertFalse({f"{ARC}_{suffix}" for suffix in [*sonos.SETTINGS, *sonos.ARC_SETTINGS]} & set(observed))
 
     @unittest.skipUnless(shutil.which("node"), "node needed for native link profiles")
     def test_a_level_or_a_choice_passes_its_link_only_when_its_channel_takes_it(self):
-        items = oh_render.build(house()).yaml[sonos.FILE].items
+        items = oh_render.build(oh_conf.House(house())).yaml[sonos.FILE].items
         script = "const vm=require('vm'); const p=JSON.parse(process.argv[1]); " \
                  "process.stdout.write(JSON.stringify(p.map(([code,values])=>values.map(input=>vm.runInNewContext(code,{input})))));"
 
@@ -235,7 +235,7 @@ class RoomVolume(unittest.TestCase):
         problems = oh_render.validate(data)
         self.assertEqual(problems, [])
         house_ = oh_conf.House(data)
-        return remote_model.build(house_), oh_site_contract.compile(house_, oh_render.build(data))
+        return remote_model.build(house_), oh_site_contract.compile(house_, oh_render.build(oh_conf.House(data)))
 
     def test_building_room_lists_its_nested_arc_and_the_gateway_grants_it(self):
         model, authority = self.model(cottage())
@@ -283,7 +283,7 @@ class ContractStandIn(unittest.TestCase):
                         sonos_udn="RINCON_02000000001101400", controls={"observe": ["sonos"]})
         data["devices"].append(observer)
         self.data = data
-        self.check = controls.Check(data, log=lambda _: None)
+        self.check = controls.Check(oh_conf.House(data), log=lambda _: None)
         for stand_in in self.check.stand_ins.values():
             self.addCleanup(stand_in.server.stop)
 

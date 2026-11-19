@@ -11,6 +11,7 @@ import yaml
 
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
+from oh_conf import House  # noqa: E402
 import oh_integrations as integrations  # noqa: E402
 import oh_render as render  # noqa: E402
 from oh_conf import RULE_SENDS, RULE_SILENT, is_guarded, linked  # noqa: E402
@@ -118,7 +119,7 @@ class EveryIntegration(unittest.TestCase):
             with self.subTest(integration=name, phase=phase):
                 data = house(name, phase)
                 self.assertEqual(render.validate(data), [])
-                files = render.render(data)
+                files = render.render(House(data))
                 read_only = render.read_only(files)
                 self.assertEqual(commanding(read_only), [])
                 self.assertEqual(set(read_only), set(files))
@@ -210,7 +211,7 @@ def addresses(files: dict) -> set[str]:
 class GuardAddon(unittest.TestCase):
     def test_a_house_whose_own_rules_need_no_scripting_still_has_its_guard_run(self):
         # What thermite generate writes asks only for what an install uses.
-        files = render.render(house("network_ping", "observe"))
+        files = render.render(House(house("network_ping", "observe")))
         self.assertFalse(guards(files))
         self.assertNotIn("automation", files[render.ADDONS_CFG])
         read_only = render.read_only(files)
@@ -224,7 +225,7 @@ class Unaddressed(unittest.TestCase):
     def test_every_integration_in_every_phase_reaches_nothing_in_the_boot_check(self):
         for name, phase in sorted(HOUSES):
             with self.subTest(integration=name, phase=phase):
-                files = render.read_only(render.render(house(name, phase)))
+                files = render.read_only(render.render(House(house(name, phase))))
                 unaddressed = render.unaddressed(files)
                 self.assertLessEqual(addresses(unaddressed), {render.NOWHERE, render.NO_SONOS})
                 self.assertEqual(unaddressed[render.UPNP_CFG], render.NO_UPNP)
@@ -236,7 +237,7 @@ class Unaddressed(unittest.TestCase):
         data = house("androidtv_googletv", "control")
         data["devices"][0]["controls"]["observe"] = ["network_ping", "sony_rest", "cast"]
         self.assertEqual(render.validate(data), [])
-        files = render.unaddressed(render.read_only(render.render(data)), render.SESSION_FILES)
+        files = render.unaddressed(render.read_only(render.render(House(data))), render.SESSION_FILES)
         for path in ("yaml/cast.yaml", "yaml/googletv.yaml"):
             self.assertNotIn("192.0.2.10", files[path])
             self.assertIn(render.NOWHERE, files[path])

@@ -15,6 +15,7 @@ import yaml
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
+from oh_conf import House
 import oh_deploy
 import oh_metrics
 import oh_public
@@ -77,12 +78,12 @@ class Integration(unittest.TestCase):
     def setUpClass(cls):
         cls.inventory = oh_public.demo()
         cls.host = oh_public.demo_host()
-        cls.baseline = oh_metrics.render(cls.inventory, cls.host)
+        cls.baseline = oh_metrics.render(House(cls.inventory), cls.host)
 
     def test_default_output_is_identical_with_empty_targets(self):
         host = copy.deepcopy(self.host)
         host["metrics"]["yoke_targets"] = []
-        self.assertEqual(oh_metrics.render(self.inventory, host), self.baseline)
+        self.assertEqual(oh_metrics.render(House(self.inventory), host), self.baseline)
         self.assertNotIn("grafana/dashboards/yoke.json", self.baseline)
         jobs = yaml.safe_load(self.baseline[oh_metrics.PROMETHEUS_YML])["scrape_configs"]
         self.assertNotIn("yoke", [job["job_name"] for job in jobs])
@@ -90,7 +91,7 @@ class Integration(unittest.TestCase):
     def test_enabled_targets_add_only_the_optional_job_and_dashboard(self):
         host = copy.deepcopy(self.host)
         host["metrics"]["yoke_targets"] = ["192.0.2.20:9754", "127.0.0.1:9754"]
-        rendered = oh_metrics.render(self.inventory, host)
+        rendered = oh_metrics.render(House(self.inventory), host)
         changed = {path for path in rendered if rendered[path] != self.baseline.get(path)}
         # The Host board counts the scrape targets, the observers among them.
         self.assertEqual(changed, {oh_metrics.PROMETHEUS_YML, "grafana/dashboards/yoke.json",
@@ -105,7 +106,7 @@ class Integration(unittest.TestCase):
         self.assertEqual(document["global"]["scrape_timeout"], "10s")
         self.assertEqual(oh_metrics.services(host), oh_metrics.services(self.host))
         host["metrics"]["yoke_targets"].reverse()
-        self.assertEqual(oh_metrics.render(self.inventory, host), rendered)
+        self.assertEqual(oh_metrics.render(House(self.inventory), host), rendered)
 
     def test_dashboard_uses_the_published_observation_metrics(self):
         board = dashboards.yoke()

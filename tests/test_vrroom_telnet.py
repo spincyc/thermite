@@ -75,7 +75,7 @@ class Rendering(unittest.TestCase):
         data = house()
         self.assertEqual(render.validate(data), [])
         self.assertIs(routing.hdmi_switcher(SWITCH), vrroom_telnet)
-        self.assertEqual(routing.table(data)["rooms"][DESK]["switch"]["item"], "example_switch_input")
+        self.assertEqual(routing.table(House(data))["rooms"][DESK]["switch"]["item"], "example_switch_input")
 
     def test_control_lives_only_in_telnet(self):
         data = house()
@@ -134,7 +134,7 @@ class Rendering(unittest.TestCase):
         conf, built = Conf(), House(data)
         vrroom_telnet.render(SWITCH, built, conf.yaml_file(vrroom_telnet.FILE, ()))
         conf.files.update(vrroom_telnet.files([SWITCH], built))
-        capabilities = lifecycle_io.capabilities(data)
+        capabilities = lifecycle_io.capabilities(data["devices"])
         self.assertEqual(capabilities["example_switch_input"]["field"],
                          {"kind": "vrroom", "allowed": ["0", "1", "2", "3"]})
         self.assertEqual(capabilities["example_switch_input"]["manual"], 2)
@@ -148,7 +148,7 @@ class Rendering(unittest.TestCase):
         self.assertEqual(next(line for line in aimed.splitlines() if line.startswith("const ROUTING_EXECUTOR = ")), config)
 
     def test_the_routing_check_aims_the_rule_at_the_stand_in_and_counts_no_setup_as_a_write(self):
-        check = routing_check.Check(house(), log=lambda _: None)
+        check = routing_check.Check(House(house()), log=lambda _: None)
         self.addCleanup(lambda: [server.stop() for server in check.servers.values()])
         self.assertIsInstance(check.sims["example_switch"], sim.VRROOM)
         files = check.conf()
@@ -163,7 +163,7 @@ class Rendering(unittest.TestCase):
         self.assertLessEqual(set(matrix.comheads()), vrroom_telnet.COMHEADS)
 
     def test_the_routing_check_fails_setup_sent_twice_on_one_connection_or_when_it_changes_nothing(self):
-        check = routing_check.Check(house(), log=lambda _: None)
+        check = routing_check.Check(House(house()), log=lambda _: None)
         self.addCleanup(lambda: [server.stop() for server in check.servers.values()])
         address = check.servers["example_switch"].start().address
         # Each connection asks once, and turns the setting on only while off.

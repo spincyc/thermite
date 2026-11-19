@@ -26,7 +26,7 @@ from pathlib import Path
 
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
-import oh_inventory  # noqa: E402
+from oh_conf import House  # noqa: E402
 import oh_render  # noqa: E402
 import oh_routes  # noqa: E402
 from oh_features import remote  # noqa: E402
@@ -46,7 +46,7 @@ class BrowserSmoke(unittest.TestCase):
         node = shutil.which("node")
         if not node:
             cls.unavailable("node is not on PATH")
-        files = oh_render.build(oh_inventory.load(AREA / "instance/devices.yaml")).render()
+        files = oh_render.build(House.load(AREA / "instance/devices.yaml")).render()
         with tempfile.TemporaryDirectory() as work:
             site = Path(work) / "remote"
             site.mkdir()

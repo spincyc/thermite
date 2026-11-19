@@ -53,7 +53,7 @@ def things(data):
     problems = oh_render.validate(data)
     if problems:
         raise AssertionError(problems)
-    return oh_render.build(data).yaml[heos.FILE].things
+    return oh_render.build(House(data)).yaml[heos.FILE].things
 
 
 def bridges(found):
@@ -74,7 +74,7 @@ class OneBridgePerHouse(unittest.TestCase):
         self.assertNotIn(ADDRESS[EAST], json.dumps(found), "no HEOS connection to the other receiver")
 
     def test_each_receiver_keeps_its_own_playback_item_and_player(self):
-        conf = oh_render.build(two())
+        conf = oh_render.build(House(two()))
         items = conf.yaml[heos.FILE].items
         for ident in (WEST, EAST):
             with self.subTest(receiver=ident):
@@ -110,7 +110,7 @@ class OneBridgePerHouse(unittest.TestCase):
         self.assertEqual(out.things[f"heos:bridge:{WEST}"]["config"]["ipAddress"], ADDRESS[WEST])
 
     def test_the_rule_drives_each_receiver_through_its_player_on_the_shared_bridge(self):
-        rule = oh_render.render(two())[heos.RULE]
+        rule = oh_render.render(House(two()))[heos.RULE]
         table = json.loads(re.search(r"^const DEVICES = (.*);$", rule, re.M).group(1))
         self.assertEqual([(row["id"], row["thing"], row["receiver"]) for row in table], [
             (WEST, f"heos:player:{WEST}:{WEST}", f"denonmarantz:avr:{WEST}"),
@@ -121,15 +121,15 @@ class OneBridgePerHouse(unittest.TestCase):
 
     def test_every_thing_belongs_to_the_device_whose_address_it_uses(self):
         data = two()
-        conf = oh_render.build(data)
+        conf = oh_render.build(House(data))
         found = {uid: {"file": path, "body": body}
                  for path, file in conf.yaml.items() for uid, body in file.things.items()}
         items = {name: {"file": path, "body": body}
                  for path, file in conf.yaml.items() for name, body in file.items.items()}
-        self.assertEqual(oh_inventory.cross_check(data, found, items), [])
+        self.assertEqual(oh_inventory.cross_check(House(data), found, items), [])
 
     def test_the_sandbox_copy_addresses_the_bridge_nowhere(self):
-        files = oh_render.unaddressed(oh_render.read_only(oh_render.render(two())))
+        files = oh_render.unaddressed(oh_render.read_only(oh_render.render(House(two()))))
         for address in ADDRESS.values():
             self.assertNotIn(address, files[heos.FILE])
 
@@ -163,7 +163,7 @@ class HostSelection(unittest.TestCase):
 class Metrics(unittest.TestCase):
     def setUp(self):
         self.data = two(**{EAST: {"heos_bridge": True}})
-        self.map = oh_metrics.exporter_map(self.data)
+        self.map = oh_metrics.exporter_map(House(self.data))
 
     def test_the_bridge_lands_on_its_host_and_each_player_on_its_receiver(self):
         heos_things = {ident: [uid for uid in self.map["devices"][ident]["things"] if uid.startswith("heos:")]
