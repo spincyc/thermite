@@ -1226,10 +1226,17 @@ examples:
                        [--timeout SECONDS] [--json]
 
 Read-only checks against the running runtime: every Thing ONLINE, Items whose
-state is NULL or UNDEF, and the installed add-ons (compared with an
-addons.cfg when --addons is given). Only GET and HEAD requests are sent.
+state is NULL or UNDEF, none of thermite&#x27;s rules disabled, and the installed
+add-ons (compared with an addons.cfg when --addons is given). Only GET and
+HEAD requests are sent.
 An online HEOS bridge without either optional account field reports its
 missing-account diagnostic as a visible warning, preserving local transport.
+
+The runtime keeps a rule&#x27;s disabled flag through restarts and installs and
+logs nothing for it, so a rule switched off in its own pages leaves a device
+quiet with no error anywhere. thermite&#x27;s rules are the ones its scripts
+define, which the runtime lists as not editable; every thermite install or
+upgrade switches any that is disabled back on.
 
 The runtime answers /rest/things and /rest/addons only with credentials; pass
 an API token file (the sandbox writes var/sandbox/api-token). --sandbox
@@ -1279,19 +1286,22 @@ switches every verb takes:
   --no-color                   no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
-  0  every Thing ONLINE (or allowed) and no requested add-on missing
-  1  a Thing not ONLINE and not allowed, a requested add-on missing, or
-     (--production) the metrics services installed but not answering, a
-     scrape target down, or Music Assistant installed but not running with
-     its API on loopback alone
+  0  every Thing ONLINE (or allowed), none of thermite&#x27;s rules disabled and
+     no requested add-on missing
+  1  a Thing not ONLINE and not allowed, one of thermite&#x27;s rules disabled, a
+     requested add-on missing, or (--production) the metrics services
+     installed but not answering, a scrape target down, or Music Assistant
+     installed but not running with its API on loopback alone
   2  runtime could not be queried (unreachable, the token refused, or 401/403
      without a token)
 
 Items in NULL/UNDEF are reported but do not fail the check; Group Items
 without an aggregation function are skipped, since they never carry state.
 With --installation, exit 0 means installation is ready, possibly with
-device warnings or Things still initializing after the settle window; only
-configuration errors, missing add-ons, monitoring or music failures exit 1.
+device warnings, Things still initializing after the settle window, or a
+rule that loaded disabled after the install switched thermite&#x27;s rules on,
+which a rollback would not change; only configuration errors, missing
+add-ons, monitoring or music failures exit 1.
 Compact output omits individual undefined Item states.
 
 examples:

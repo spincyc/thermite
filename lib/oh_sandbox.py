@@ -623,6 +623,36 @@ def summarize_things(things: list[dict], require_online: bool = False, allow: fr
             **({"pending": pending} if installation else {})}
 
 
+#: The runtime's rules, each with its status and whether it is editable.
+RULES_PATH = "/rest/rules?summary=true"
+
+
+def valid_rules(rules) -> bool:
+    """Whether a rules listing has the fields the disabled check reads."""
+    return isinstance(rules, list) and all(
+        isinstance(row, dict) and isinstance(row.get("uid"), str) and bool(row["uid"])
+        and type(row.get("editable")) is bool
+        and (row.get("name") is None or isinstance(row["name"], str))
+        and isinstance(row.get("status"), dict)
+        and isinstance(row["status"].get("status"), str) and bool(row["status"]["status"])
+        and (row["status"].get("statusDetail") is None or isinstance(row["status"]["statusDetail"], str))
+        for row in rules)
+
+
+def disabled_rules(rules: list[dict]) -> list[dict]:
+    """thermite's rules that are disabled in the runtime, by uid.
+
+    openHAB keeps a rule's disabled flag in its own userdata, through
+    restarts and installs, and logs nothing for it: a rule switched off
+    there stays off, and the device it reads or drives goes quiet with no
+    error anywhere. thermite's rules are those its deployed scripts define,
+    which the runtime lists as not editable; a rule made in the runtime's
+    own pages is editable, and someone else's to switch."""
+    return [{"uid": row["uid"], "name": row.get("name")}
+            for row in sorted(rules, key=lambda row: row["uid"])
+            if row["editable"] is False and row["status"].get("statusDetail") == "DISABLED"]
+
+
 # --------------------------------------------------------------------------
 # openhab.log parsing
 

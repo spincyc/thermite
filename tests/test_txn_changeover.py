@@ -26,7 +26,7 @@ import oh_source_upgrade  # noqa: E402
 import oh_units  # noqa: E402
 from oh_install import changeover, engine, manifest, runner, steps  # noqa: E402
 from oh_install.model import Check, Command, Step, Task  # noqa: E402
-from oh_install.system import Stat, System, Unit, UnitOrigin  # noqa: E402
+from oh_install.system import NativeProbe, Stat, System, Unit, UnitOrigin  # noqa: E402
 from tests import txn_fakes  # noqa: E402
 
 BEFORE, AFTER = "1" * 40, "2" * 40
@@ -81,6 +81,10 @@ class Host:
         self.system.unit.side_effect = lambda name: Unit("inactive", "disabled", None)
         self.system.run.side_effect = self.run
         self.system.capture.side_effect = self.capture
+        # The started runtime, as the step that switches thermite's rules on reads it: none disabled.
+        self.system.read_private.return_value = "fixture-runtime-token"
+        self.system.clock.return_value = 0.0
+        self.system.native_probe.return_value = NativeProbe(200, [])
 
     def verb(self, argv):
         """The engine verb of a root command, checked to run the transaction's copy."""
@@ -133,7 +137,8 @@ class Fixture(unittest.TestCase):
         self.scope = txn_fakes.in_scope(self, self.site)
         self.context = steps.Context(
             self.site, {"openhab": {"version": "5.2.3"}},
-            {"uid": 9001, "gid": 9001, "root": "/srv/thermite-fixture"}, AFTER, "c" * 64, "fixture-host",
+            {"uid": 9001, "gid": 9001, "root": "/srv/thermite-fixture", "http_port": 13602}, AFTER, "c" * 64,
+            "fixture-host",
             "192.0.2.10", application={"version": "1.0", "digest": "d" * 64})
         self.log = []
         self.unpinned = []
@@ -451,9 +456,10 @@ class Gate(Fixture):
         self.assertNotIn("commit", self.log)
         self.assertEqual(self.log[-5:], ["health", "sudo -v", "rollback", f"history {txn_fakes.ID}", "old health"])
         # images 3, room 4, begin 5, guard 6, stop 7, collect 8, switch 9,
-        # authorize 10, monitoring 11.
-        self.assertIn("[ FAIL ] 12. Health of the new version", self.said())
-        self.assertIn("[ OK ] 13. Authorize the rollback", self.said())
+        # authorize 10, monitoring 11, thermite's rules 12.
+        self.assertIn("[ OK ] 12. Thermite's rules enabled", self.said())
+        self.assertIn("[ FAIL ] 13. Health of the new version", self.said())
+        self.assertIn("[ OK ] 14. Authorize the rollback", self.said())
         self.assertNotIn("Commit", self.said())
         self.assertEqual(self.record()["phase"], "rolled-back")
         self.assertEqual(self.unpinned, [txn_fakes.ID])
@@ -469,7 +475,7 @@ class Gate(Fixture):
         self.assertEqual(self.verified(0), changeover.COMMITTED)
         self.assertEqual(self.log[-4:], ["switch", "sudo -v", "health", "commit"])
         self.assertEqual(self.log.count("commit"), 1)
-        self.assertIn("[ OK ] 13. Commit", self.said())
+        self.assertIn("[ OK ] 14. Commit", self.said())
         self.assertEqual(self.record()["phase"], "committed")
         self.assertEqual(self.unpinned, [])
 

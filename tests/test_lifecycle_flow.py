@@ -523,7 +523,7 @@ class Health(unittest.TestCase):
 
     def report(self, rows, failures=()):
         summary = sandbox.summarize_things(rows, installation=True)
-        return {"things": summary, "failures": list(failures)}
+        return {"things": summary, "rules": {"count": 0, "disabled": []}, "failures": list(failures)}
 
     def test_pending_things_are_polled_then_reported_as_warnings(self):
         clock = [0.0]

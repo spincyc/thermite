@@ -7,6 +7,14 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A rule of Thermite's that was switched off in the runtime's own pages
+  stayed off through every restart and install, and nothing reported it:
+  the device it reads or drives just went quiet (a room showing "Source
+  unknown", for one). `thermite health` now fails on a disabled Thermite
+  rule and names it, and every install, upgrade and rollback switches
+  Thermite's rules back on just before its final health check, as does a
+  rerun with nothing to change. Rules made in the runtime's own pages are
+  left as they are.
 - The gateway runs in the pinned Python image too
   (`thermite-access.service` is now a quadlet), so nothing of an
   installed release depends on the host's Python. Commands run from a

@@ -145,6 +145,14 @@ pairing and connectivity problems stay visible warnings. A failed or
 crash-looping `thermite-openhab.service` ends the wait early with a
 `journalctl` hint.
 
+Just before that check, the run switches back on any of Thermite's own
+rules that the runtime has disabled. The runtime keeps a rule's disabled
+flag through restarts and installs and logs nothing for it, so a rule
+switched off from the runtime's own pages would otherwise leave its device
+quiet, with no error anywhere. Rules made in those pages are left as they
+are. Between installs, `thermite health --production` fails on a disabled
+Thermite rule and names it.
+
 The run ends with a read-only check, `thermite health --production
 --installation --settle 120`, and commits only when it passes: a failing
 check rolls the install back. The check gives what the start has not finished
@@ -976,7 +984,8 @@ engine runs as root from the copy pinned at begin,
    firewall, deployment, services, runtime access, HTTPS gateway (a new
    release, `access/releases/<id>`) and monitoring; then `thermite.target`
    starts.
-6. **Verify**: monitoring answers and `thermite health --production
+6. **Verify**: monitoring answers, any of Thermite's rules the runtime has
+   disabled is switched back on, and `thermite health --production
    --installation` passes. Device warnings are reported and never fail it;
    when it fails, nothing is committed and the upgrade rolls back.
 7. **Commit**: the engine records the new version in
@@ -987,8 +996,8 @@ engine runs as root from the copy pinned at begin,
 Only after the commit does `~/.local/bin/thermite` switch to the new
 application. Thermite is down from the stop until the target starts again:
 for the copy of its state, which grows with `runtime/userdata`, and for the
-runtime's native startup. A rerun with nothing to change only checks health
-and stops nothing.
+runtime's native startup. A rerun with nothing to change only switches on
+any of Thermite's rules found disabled and checks health; it stops nothing.
 
 Every unit Thermite installs is part of `thermite.target`, runs in
 `thermite.slice` and is wanted by the target alone. The native-port boundary

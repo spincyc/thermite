@@ -1552,6 +1552,79 @@ class BindingRepairs(Step):
         return [Command(AddonRepository(self.context).helper("--verify"), root=True, show_output=True)]
 
 
+class RuleSwitches(Step):
+    """thermite's rules enabled in the started runtime, just before its
+    health check. The runtime keeps a rule's disabled flag in its userdata,
+    through restarts, installs and rollbacks, and logs nothing for it: a rule
+    switched off from its own pages stays off, and the device it reads or
+    drives goes quiet. thermite owns the rules its scripts define
+    (oh_sandbox.disabled_rules); a rule made in the runtime's own pages is
+    left as it is."""
+
+    title = "Thermite's rules enabled"
+    #: Seconds a listing, or the switches together, may take; a listing the
+    #: runtime is not ready to answer is asked again within them.
+    timeout = 30
+    poll = 2
+
+    def __init__(self, context: Context):
+        self.context = context
+
+    def disabled(self, system: System) -> tuple[list[dict], int, str | None]:
+        """thermite's disabled rules, how many rules the runtime has, and
+        what kept them from being read."""
+        from oh_sandbox import RULES_PATH, disabled_rules, valid_rules
+        try:
+            token = Token(self.context).saved(system)
+        except ValueError as exc:
+            return [], 0, str(exc)
+        if not token:
+            return [], 0, "reading the runtime's rules requires the saved, validated API token"
+        deadline = system.clock() + self.timeout
+        while True:
+            found = system.native_probe(self.context.url, token, RULES_PATH, deadline)
+            if found.status == 200 or not oh_http.retryable("GET", found.status) or system.clock() >= deadline:
+                break
+            system.sleep(max(0, min(self.poll, deadline - system.clock())))
+        if found.status != 200:
+            answer = found.problem or (f"HTTP {found.status}" if found.status else "no connection")
+            return [], 0, f"the runtime's rules could not be read ({RULES_PATH}: {answer})"
+        if not valid_rules(found.value):
+            return [], 0, f"{RULES_PATH} returned malformed rule data"
+        return disabled_rules(found.value), len(found.value), None
+
+    def check(self, system: System) -> Check:
+        off, count, problem = self.disabled(system)
+        if problem:
+            return Check(False, "", problem)
+        if not off:
+            return Check(True, f"none of the runtime's {count} rules that thermite defines is disabled")
+        return Check(False, f"{len(off)} disabled in the runtime: " + ", ".join(rule["uid"] for rule in off))
+
+    def actions(self, system: System) -> list[Action]:
+        return [Task("switch each disabled rule that thermite defines back on", self.enable)]
+
+    def enable(self, system: System) -> int:
+        import urllib.parse
+        off, _, problem = self.disabled(system)
+        if problem:
+            system.say(f"   {problem}")
+            return 1
+        token = Token(self.context).saved(system)
+        deadline = system.clock() + self.timeout
+        for rule in off:
+            path = f"/rest/rules/{urllib.parse.quote(rule['uid'], safe='')}/enable"
+            sent = system.native_post(self.context.url, token, path, "true", deadline)
+            if sent.status == 404:
+                continue  # Gone since the listing: nothing is left to switch on.
+            if sent.status != 200:
+                answer = sent.problem or (f"HTTP {sent.status}" if sent.status else "no connection")
+                system.say(f"   switching {rule['uid']} on was refused ({answer})")
+                return 1
+            system.say(f"   switched {rule['uid']} back on")
+        return 0
+
+
 def _secret_wrong(system: System, context: Context, path: Path) -> str | None:
     """Why a file in the metrics secrets is not right, or None when it is."""
     host, found = context.host, system.stat(path)

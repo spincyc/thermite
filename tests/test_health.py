@@ -25,12 +25,22 @@ HOST = {"root": "/srv/fixture", "http_port": 13602, "https_port": 13603,
 THINGS = "/rest/things?summary=false"
 ITEMS = "/rest/items?recursive=false&fields=name,type,state,groupType"
 ADDONS = "/rest/addons?serviceId=all"
+RULES = "/rest/rules?summary=true"
 
 
 def thing(uid, status="ONLINE", detail="NONE", description=None, *, kind="http:url", configuration=None):
     return {"UID": uid, "thingTypeUID": kind, "label": uid,
             "configuration": {"fixture": PRIVATE} if configuration is None else configuration,
             "statusInfo": {"status": status, "statusDetail": detail, "description": description}}
+
+
+def rule(uid, detail="NONE", *, editable=False, status=None):
+    """A rule as the runtime lists it: thermite's scripts define the ones it
+    lists as not editable."""
+    return {"uid": uid, "templateUID": None, "name": f"{uid} rule", "visibility": "VISIBLE", "description": None,
+            "tags": [], "configuration": {"fixture": PRIVATE}, "editable": editable,
+            "status": {"status": status or ("UNINITIALIZED" if detail == "DISABLED" else "IDLE"),
+                       "statusDetail": detail}}
 
 
 def heos(uid):
@@ -116,6 +126,7 @@ class Health(unittest.TestCase):
             "/rest/": (200, {"runtimeInfo": {"version": "5.2.3"}}),
             THINGS: (200, [thing("http:url:fixture")]),
             ITEMS: (200, [{"name": "fixture_power", "type": "Switch", "state": "ON"}]),
+            RULES: (200, [rule("fixture_switch_poll"), rule("fixture_switch_command")]),
             ADDONS: (200, [{"uid": uid, "installed": True}
                            for uid in ("binding-http", "binding-androidtv", "misc-metrics")]),
         }
@@ -146,7 +157,7 @@ class Health(unittest.TestCase):
             result = health.run(self.args(installation=installation))
         client.assert_called_once_with("http://127.0.0.1:13602", token=TOKEN, timeout=1)
         self.assertEqual([call.args[0] for call in http.try_get_json.call_args_list],
-                         ["/rest/", THINGS, ITEMS, ADDONS])
+                         ["/rest/", THINGS, ITEMS, RULES, ADDONS])
         return result
 
     def test_seven_device_problems_are_visible_warnings_only_for_installation(self):
@@ -210,7 +221,7 @@ class Health(unittest.TestCase):
                 self.assertTrue(self.report()["failures"])
 
     def test_http_authentication_and_service_failures_are_never_device_warnings(self):
-        for path in ("/rest/", THINGS, ITEMS, ADDONS):
+        for path in ("/rest/", THINGS, ITEMS, RULES, ADDONS):
             original = self.responses[path]
             for status in (0, 401, 403, 500, 503):
                 with self.subTest(path=path, status=status):
@@ -239,6 +250,10 @@ class Health(unittest.TestCase):
                     [{"name": "fixture", "type": "Group", "state": "NULL", "groupType": []}]),
             ADDONS: (None, {}, [None], [PRIVATE], [{"uid": "binding-http", "installed": "yes"}],
                      [{"installed": True}]),
+            RULES: (None, {}, [None], [PRIVATE], [{**rule("fixture"), "uid": ""}],
+                    [{**rule("fixture"), "editable": "false"}], [{**rule("fixture"), "editable": None}],
+                    [{**rule("fixture"), "status": None}], [{**rule("fixture"), "status": {"status": ""}}],
+                    [rule("fixture", ["DISABLED"])], [{**rule("fixture"), "name": [PRIVATE]}]),
         }
         for path, values in malformed.items():
             original = self.responses[path]
@@ -249,6 +264,37 @@ class Health(unittest.TestCase):
                         health.run(self.args())
                     self.assertNotIn(PRIVATE, str(error.exception))
             self.responses[path] = original
+
+    def test_a_disabled_thermite_rule_fails_ordinary_health_and_warns_at_installation(self):
+        self.responses[RULES] = 200, [rule("fixture_switch_poll", "DISABLED"), rule("fixture_switch_command"),
+                                      rule("fixture_running", status="RUNNING")]
+        strict = self.report(installation=False)
+        self.assertEqual(strict["rules"], {"count": 3, "disabled": [
+            {"uid": "fixture_switch_poll", "name": "fixture_switch_poll rule"}]})
+        self.assertEqual(strict["failures"], [
+            "1 of thermite's rules disabled in the runtime: fixture_switch_poll; "
+            "the next thermite install or upgrade switches them back on"])
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            health.print_human(strict)
+        self.assertIn("thermite's disabled: 1", output.getvalue())
+        self.assertIn("FAIL    fixture_switch_poll", output.getvalue())
+        # At an install the step before health switched them on; one still
+        # off loaded since, and a rollback would leave it off too.
+        installation = self.report()
+        self.assertEqual(installation["failures"], [])
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            health.print_human(installation)
+        self.assertIn("WARN rule fixture_switch_poll: disabled", output.getvalue())
+        self.assertIn("RESULT: installation ready; warning: 1 rule(s) disabled", output.getvalue())
+        self.assertNotIn(PRIVATE, output.getvalue() + json.dumps(installation))
+
+    def test_rules_made_in_the_runtimes_own_pages_are_not_thermites(self):
+        self.responses[RULES] = 200, [rule("fixture_owner_scene", "DISABLED", editable=True),
+                                      rule("fixture_broken", "HANDLER_INITIALIZING_ERROR")]
+        for installation in (True, False):
+            with self.subTest(installation=installation):
+                report = self.report(installation=installation)
+                self.assertEqual((report["failures"], report["rules"]["disabled"]), ([], []))
 
     def test_missing_required_addons_remain_fatal(self):
         self.responses[ADDONS] = 200, [{"uid": "binding-http", "installed": True}]

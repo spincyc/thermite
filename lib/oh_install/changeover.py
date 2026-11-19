@@ -624,7 +624,7 @@ def verification(context: steps.Context) -> list[Step]:
     except steps.oh_addons.AddonError:
         repaired = False
     return [Authorize(), steps.MetricsAnswer(context),
-            *([steps.MusicAnswer(context)] if music.enabled(context.host) else []),
+            *([steps.MusicAnswer(context)] if music.enabled(context.host) else []), steps.RuleSwitches(context),
             *([steps.BindingRepairs(context)] if repaired else []), steps.Health(context)]
 
 

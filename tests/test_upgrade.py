@@ -159,7 +159,8 @@ class HostPhase(unittest.TestCase):
         self.unchanged.return_value = True
         self.assertEqual(self.upgrade()[0], 0)
         self.transaction.assert_not_called()
-        self.assertIsInstance(self.run.call_args.args[0][0], steps.Health)
+        self.assertEqual([type(step) for step in self.run.call_args.args[0]], [steps.RuleSwitches, steps.Health],
+                         "it still switches thermite's rules back on")
 
     def test_an_open_transaction_is_resolved_first_and_nothing_else_runs(self):
         for outcome, code in ((changeover.ROLLED_BACK, changeover.ROLLED_BACK), (changeover.STUCK, changeover.STUCK),
@@ -262,7 +263,8 @@ class InstallHostPhase(unittest.TestCase):
         self.unchanged.return_value = True
         self.assertEqual(self.install(), 0)
         self.transaction.assert_not_called()
-        self.assertIsInstance(self.run.call_args.args[0][0], steps.Health)
+        self.assertEqual([type(step) for step in self.run.call_args.args[0]], [steps.RuleSwitches, steps.Health],
+                         "it still switches thermite's rules back on")
         self.assertEqual(self.install(clean=True), 0)
         self.assertEqual(self.install(restart_runtime=True), 0)
         self.assertEqual(self.transaction.call_count, 2)

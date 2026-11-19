@@ -403,6 +403,30 @@ class System:
             return NativeProbe(0, problem="startup deadline expired")
         return NativeProbe(status, value)
 
+    def native_post(self, url: str, token: str, path: str, body: str, deadline: float) -> NativeProbe:
+        """One authenticated POST of a text/plain body, bounded by the deadline;
+        only its status is kept."""
+        if not isinstance(token, str) or any(ord(c) < 33 or ord(c) > 126 for c in token):
+            return NativeProbe(0, problem="invalid runtime credential")
+        def remaining():
+            value = deadline - self.clock()
+            if value <= 0:
+                raise oh_http.DeadlineExpired("deadline expired")
+            return value
+        try:
+            request = urllib.request.Request(url.rstrip("/") + path, data=body.encode("utf-8"), method="POST",
+                                             headers={"Content-Type": "text/plain", "Authorization": f"Bearer {token}"})
+            oh_trace.http("POST", url.rstrip("/") + path)
+            status, _ = oh_http.request(request, timeout=min(5, remaining()), remaining=remaining)
+        except urllib.error.HTTPError as exc:
+            status = exc.code
+            exc.close()
+        except (OSError, urllib.error.URLError, http.client.HTTPException):
+            return NativeProbe(0)
+        except oh_http.DeadlineExpired:
+            return NativeProbe(0, problem="deadline expired")
+        return NativeProbe(status)
+
     def metrics_health(self, host: dict, address: str | None) -> deploy.MetricsHealth:
         return deploy.metrics_health(host, address)
 

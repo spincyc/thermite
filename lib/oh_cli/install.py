@@ -265,8 +265,9 @@ def install(system: System, dry_run: bool, *, verb: str = "install", clean: bool
         return code
     if not clean and not restart_runtime and changeover.unchanged(context, system, installed):
         system.say(f"Nothing differs from the installed version (transaction {installed['transaction']}); "
-                   "checking its health.")
-        return runner.run([steps.Health(context)], system, AREA, first=len(preflight) + 1, rerun=again)
+                   "switching on any of its rules found disabled and checking its health.")
+        return runner.run([steps.RuleSwitches(context), steps.Health(context)], system, AREA,
+                          first=len(preflight) + 1, rerun=again)
     if not run_approved and not (runner.confirm_run(system, verb, again) if upgrade
                                  else approve(system, context, clean)):
         return 1

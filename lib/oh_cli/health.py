@@ -22,10 +22,17 @@ SANDBOX_TOKEN = AREA / "var/sandbox/api-token"
 
 DESCRIPTION = f"""\
 Read-only checks against the running runtime: every Thing ONLINE, Items whose
-state is NULL or UNDEF, and the installed add-ons (compared with an
-addons.cfg when --addons is given). Only GET and HEAD requests are sent.
+state is NULL or UNDEF, none of thermite's rules disabled, and the installed
+add-ons (compared with an addons.cfg when --addons is given). Only GET and
+HEAD requests are sent.
 An online HEOS bridge without either optional account field reports its
 missing-account diagnostic as a visible warning, preserving local transport.
+
+The runtime keeps a rule's disabled flag through restarts and installs and
+logs nothing for it, so a rule switched off in its own pages leaves a device
+quiet with no error anywhere. thermite's rules are the ones its scripts
+define, which the runtime lists as not editable; every thermite install or
+upgrade switches any that is disabled back on.
 
 The runtime answers /rest/things and /rest/addons only with credentials; pass
 an API token file (the sandbox writes var/sandbox/api-token). --sandbox
@@ -63,19 +70,22 @@ EXAMPLES = (
 
 NOTES = """\
 exit status:
-  0  every Thing ONLINE (or allowed) and no requested add-on missing
-  1  a Thing not ONLINE and not allowed, a requested add-on missing, or
-     (--production) the metrics services installed but not answering, a
-     scrape target down, or Music Assistant installed but not running with
-     its API on loopback alone
+  0  every Thing ONLINE (or allowed), none of thermite's rules disabled and
+     no requested add-on missing
+  1  a Thing not ONLINE and not allowed, one of thermite's rules disabled, a
+     requested add-on missing, or (--production) the metrics services
+     installed but not answering, a scrape target down, or Music Assistant
+     installed but not running with its API on loopback alone
   2  runtime could not be queried (unreachable, the token refused, or 401/403
      without a token)
 
 Items in NULL/UNDEF are reported but do not fail the check; Group Items
 without an aggregation function are skipped, since they never carry state.
 With --installation, exit 0 means installation is ready, possibly with
-device warnings or Things still initializing after the settle window; only
-configuration errors, missing add-ons, monitoring or music failures exit 1.
+device warnings, Things still initializing after the settle window, or a
+rule that loaded disabled after the install switched thermite's rules on,
+which a rollback would not change; only configuration errors, missing
+add-ons, monitoring or music failures exit 1.
 Compact output omits individual undefined Item states.
 """
 
@@ -161,6 +171,14 @@ def run(args) -> dict:
             and isinstance(row.get("state"), str)
             and (row.get("groupType") is None or isinstance(row["groupType"], str)) for row in items):
         raise lib.SandboxError("/rest/items returned malformed Item data")
+    code, rules = http.try_get_json(lib.RULES_PATH)
+    if code in (401, 403):
+        raise lib.SandboxError(f"/rest/rules answered {code}: pass --token-file with an API token")
+    if code != 200:
+        raise unavailable(code)(f"/rest/rules answered HTTP {code or 'connection failed'}")
+    if not lib.valid_rules(rules):
+        raise lib.SandboxError("/rest/rules returned malformed rule data")
+    disabled = lib.disabled_rules(rules)
     acode, addons = http.try_get_json("/rest/addons?serviceId=all")
 
     allow = frozenset(args.allow_offline or ())
@@ -198,6 +216,12 @@ def run(args) -> dict:
     if summary["failed"]:
         failures.append(f"{len(summary['failed'])} Thing(s) " +
                         ("have configuration errors" if installation else "not ONLINE"))
+    # The install switches them back on just before its own health check; one
+    # still off then loaded late, and a rollback would not switch it on.
+    if disabled and not installation:
+        failures.append(f"{len(disabled)} of thermite's rules disabled in the runtime: "
+                        + ", ".join(rule["uid"] for rule in disabled)
+                        + "; the next thermite install or upgrade switches them back on")
     if addon_report.get("missing"):
         failures.append("add-ons not installed: " + ", ".join(addon_report["missing"]))
     if metrics and metrics["installed"] and not metrics["ok"]:
@@ -219,6 +243,7 @@ def run(args) -> dict:
         "things": summary,
         "allowed_but_absent": unknown_allowed,
         "items": {"count": len(items or []), "null_or_undef": undefined},
+        "rules": {"count": len(rules), "disabled": disabled},
         "addons": addon_report,
         **({"metrics": metrics} if metrics is not None else {}),
         **({"music": music} if music is not None else {}),
@@ -292,6 +317,9 @@ def print_human(report: dict) -> None:
                     description = f"{row['uid']} {row['status']}/{row['detail']}, still initializing"
                 mark = {"pending": "WAIT"}.get(row["verdict"], row["verdict"].upper())
                 print(f"  {mark:4s} {row.get('label') or row['uid']}: {description}")
+        disabled = report["rules"]["disabled"]
+        for rule in disabled:
+            print(f"  WARN rule {rule['uid']}: disabled in the runtime; the next install switches it back on")
         if any(row["status"] == "OFFLINE" and str(row["uid"]).startswith("androidtv:googletv:")
                and row.get("description") == "GoogleTV: PIN Process Incomplete" for row in rows):
             print("Pair devices from Thermite's Pairing screen (thermite remote --pair).")
@@ -301,6 +329,7 @@ def print_human(report: dict) -> None:
             warnings = sum(row["verdict"] == "warn" for row in rows)
             pending = sum(row["verdict"] == "pending" for row in rows)
             print("RESULT: installation ready" + (f"; {warnings} device warning(s)" if warnings else "")
+                  + (f"; warning: {len(disabled)} rule(s) disabled" if disabled else "")
                   + (f"; warning: {pending} Thing(s) still initializing; recheck with "
                      "thermite health --production" if pending else ""))
         return
@@ -318,6 +347,10 @@ def print_human(report: dict) -> None:
     print(f"Items: {it['count']}, NULL/UNDEF: {len(it['null_or_undef'])}")
     for item in it["null_or_undef"]:
         print(f"  {item['state']:5s} {item['name']} ({item['type']})")
+    ru = report["rules"]
+    print(f"Rules: {ru['count']}, thermite's disabled: {len(ru['disabled'])}")
+    for rule in ru["disabled"]:
+        print(f"  FAIL    {rule['uid']}" + (f"  {rule['name']}" if rule.get("name") else ""))
     ad = report["addons"]
     if ad["http"] == 200:
         print(f"Add-ons installed ({len(ad['installed'])}): {', '.join(ad['installed']) or '-'}")
