@@ -1011,11 +1011,11 @@ class InstanceLock:
         self.fh = open(self.path, "a+")
         try:
             fcntl.flock(self.fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+        except BlockingIOError as error:
             self.fh.seek(0)
             holder = self.fh.read().strip() or "?"
             self.fh.close()
-            raise SandboxError(f"{self.path} is held by another run (pid {holder})")
+            raise SandboxError(f"{self.path} is held by another run (pid {holder})") from error
         self.fh.seek(0)
         self.fh.truncate()
         self.fh.write(f"{os.getpid()}\n")
@@ -1304,7 +1304,7 @@ def karaf_command(rt: Runtime, inst: Instance, command: str, retries: int = 30, 
     # The client closes the session without running the command when its stdin
     # is at EOF, so it gets a pipe that stays open until it exits.
     read_end, write_end = os.pipe()
-    traced = [("***" if before == "-p" else part) for before, part in zip(["", *argv], argv)]
+    traced = [("***" if before == "-p" else part) for before, part in zip(["", *argv], argv, strict=False)]
     traced[-1] = verb
     oh_trace.run(traced)
     try:
@@ -1315,10 +1315,10 @@ def karaf_command(rt: Runtime, inst: Instance, command: str, retries: int = 30, 
         read_end = -1
         try:
             output, _ = proc.communicate(timeout=_startup_remaining(inst, deadline, f"Karaf '{verb}'"))
-        except (subprocess.TimeoutExpired, SandboxError):
+        except (subprocess.TimeoutExpired, SandboxError) as error:
             proc.kill()
             proc.communicate()
-            raise SandboxError(f"karaf client timed out running '{verb}'; see {inst.console_log}")
+            raise SandboxError(f"karaf client timed out running '{verb}'; see {inst.console_log}") from error
     finally:
         if read_end >= 0:
             os.close(read_end)

@@ -190,7 +190,7 @@ class Loader(unittest.TestCase):
         house = House.load(HOUSE)
         self.assertEqual(house.data, EXAMPLE)
         self.assertEqual(list(house.by_id), [device["id"] for device in EXAMPLE["devices"]])
-        for listed, device in zip(house.data["devices"], house.devices):
+        for listed, device in zip(house.data["devices"], house.devices, strict=True):
             self.assertIs(device, listed)
             self.assertIs(house.by_id[device["id"]], listed)
         self.assertIs(house.rooms, house.data["rooms"])

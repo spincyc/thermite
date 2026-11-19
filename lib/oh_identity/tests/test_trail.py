@@ -429,7 +429,7 @@ class RequestLog(SimpleTestCase):
             trail.LOG.info("marker")
             try:
                 asyncio.run(trail.RequestLog(app)(request, None, send))
-            except type(raises) if raises else ():
+            except type(raises) if raises else ():  # noqa: B030 (the class of the error the app was told to raise, or none)
                 pass
         return seen, sent, [record.getMessage() for record in logs.records][1:]
 

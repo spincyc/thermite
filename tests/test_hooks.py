@@ -108,7 +108,7 @@ def naming(nodes):
     for node in nodes:
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
             target, value = node.targets[0], node.value
-            pairs = (zip(target.elts, value.elts) if isinstance(target, ast.Tuple) and isinstance(value, ast.Tuple)
+            pairs = (zip(target.elts, value.elts, strict=True) if isinstance(target, ast.Tuple) and isinstance(value, ast.Tuple)
                      and len(target.elts) == len(value.elts) else [(target, value)])
             local.update({name.id: found for name, expression in pairs
                           if isinstance(name, ast.Name) and (found := module(expression))})
@@ -260,7 +260,7 @@ class Absent(unittest.TestCase):
         module.__getattr__ = _hooks.absent
         self.assertEqual((module.remote, module.PROBED), (None, True))
         with self.assertRaisesRegex(AttributeError, "an integration must define NAME"):
-            module.NAME
+            module.NAME  # noqa: B018 (read for the error it raises)
 
 
 class Readers(unittest.TestCase):

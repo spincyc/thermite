@@ -492,7 +492,7 @@ def cmd_list(arguments) -> int:
                       battery, row["room"] or ""))
     widths = [max(len(str(line[column])) for line in table) for column in range(len(table[0]))]
     for line in table:
-        print("  ".join(str(value).ljust(width) for value, width in zip(line, widths)).rstrip())
+        print("  ".join(str(value).ljust(width) for value, width in zip(line, widths, strict=True)).rstrip())
     return 0
 
 

@@ -278,7 +278,7 @@ class FirstBoot(Scratch):
             first_boot.prepare(self.system, run=ok)
             disabled = []
             first_boot.finish(self.system, status=status, code=code,
-                              run=lambda argv, **options: disabled.append(argv))
+                              run=lambda argv, **options: disabled.append(argv))  # noqa: B023 (called in this iteration)
             self.assertFalse(rule.exists())
             self.assertEqual(disabled, [["systemctl", "disable", first_boot.UNIT]])
             self.assertEqual((self.system / first_boot.PENDING).exists(), kept)

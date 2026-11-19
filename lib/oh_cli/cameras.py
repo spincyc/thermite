@@ -107,7 +107,7 @@ def provision(http, plan: list[dict]) -> None:
                     "host" in expected and config.get("host") != expected["host"]):
                 raise CameraError("a native Thing ID belongs to a different console or camera; no changes made")
         existing.append(code == 200)
-    for thing, update in zip(plan, existing):
+    for thing, update in zip(plan, existing, strict=True):
         path = "/rest/things/" + urllib.parse.quote(thing["UID"], safe="") if update else "/rest/things"
         try:
             code, _ = http.request("PUT" if update else "POST", path, json.dumps(thing).encode(),

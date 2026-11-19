@@ -7,7 +7,7 @@ from django.test import Client, TestCase
 from django.test.utils import CaptureQueriesContext
 
 import oh_room_policy
-from oh_identity.models import RoomPolicy, SecurityState, User
+from oh_identity.models import RoomPolicy, User
 from oh_identity.runtime import install_adapter
 from oh_identity.services import bootstrap, issue_token
 from oh_identity.tests.test_core import PASSPHRASE, adapter

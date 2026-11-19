@@ -895,7 +895,7 @@ class MetricsHealth(unittest.TestCase):
                                       "http://127.0.0.1:13607/api/v1/targets": (200, json.dumps(self.TARGETS).encode()),
                                       "http://127.0.0.1:13607/api/v1/query": answer,
                                       "http://192.0.2.5:13611/api/health": (200, b"{}")})
-                health = deploy.metrics_health(HOST, "192.0.2.5", lambda url: asked.append(url) or table(url))
+                health = deploy.metrics_health(HOST, "192.0.2.5", lambda url: asked.append(url) or table(url))  # noqa: B023 (called in this iteration)
                 self.assertIs(health.systemd, expected)
                 self.assertEqual("systemd collector fails" in health.describe(), expected is False)
                 report = health_cli.metrics_report(HOST, installed=True, health=health)
@@ -1027,7 +1027,7 @@ class Sync(unittest.TestCase):
             obsolete = set(before) - set(after)
 
             def checked_replace(destination, data, mode):
-                self.assertTrue(all(not (self.target / path).exists() for path in obsolete))
+                self.assertTrue(all(not (self.target / path).exists() for path in obsolete))  # noqa: B023 (called in this iteration)
                 return replace(destination, data, mode)
 
             with mock.patch.object(deploy, "_replace", side_effect=checked_replace):

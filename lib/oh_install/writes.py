@@ -41,7 +41,7 @@ if __name__ == "__main__":
         _ARGUMENTS = oh_paths.select_args(sys.argv[1:])
     except oh_paths.SiteError as exc:
         sys.stderr.write(f"thermite: {exc}\n")
-        raise SystemExit(2)
+        raise SystemExit(2) from None
 
 import oh_deploy as deploy  # noqa: E402
 from oh_cli import AREA  # noqa: E402

@@ -353,6 +353,20 @@ class Rooms(unittest.TestCase):
                 self.assertEqual(other["templating"]["list"], [], name)
                 self.assertNotIn("$room", json.dumps(other), name)
 
+    def test_a_row_of_sources_is_kept_to_its_own_zones_room(self):
+        """A source Item with no options has no row. The rows after it are
+        still shown with their own rooms, not each with the room of the zone
+        before it."""
+        from oh_conf import House
+        from tests import test_zone_sync
+        mapping = oh_metrics.exporter_map(House(test_zone_sync.house()))
+        (first, _, _), (_, room, label) = dashboards._zones(mapping)
+        mapping["items"][first]["options"] = []
+        sources = next(panel for panel in test_metrics.panels(dashboards.devices(mapping, []))
+                       if panel["title"] == "Sources")
+        self.assertEqual([(query["legendFormat"], query["expr"].count(f'thermite_room_info{{room="{room}",'))
+                          for query in sources["targets"]], [(label, 1)])
+
     def test_devices_has_a_device_variable_for_what_is_a_devices_own(self):
         """`thermite device` opens the board on one device: its row, its
         Things and its commands, with its room's sources, power and
@@ -534,7 +548,7 @@ class OnSeries(unittest.TestCase):
         installation whose exporter names no code, and a player that holds
         none. With the TV chosen at the top, its row alone."""
         from oh_integrations import _commands
-        number = dict(zip(_commands.CODES, range(dashboards.FIRST_CODE, 99)))
+        number = dict(zip(_commands.CODES, range(dashboards.FIRST_CODE, 99), strict=False))
 
         def device(ident, held, code=""):
             labels = f'device="{ident}",room="example_west",kind="tv"'

@@ -241,6 +241,7 @@ def guard(files: dict[str, bytes], area: Path = oh_cli.AREA, *, facts: set[str] 
                     if all(isinstance(choice, ast.Constant) and choice.value in layout_ids for choice in choices):
                         layout_returns += [(offsets[choice.lineno - 1] + choice.col_offset,
                                             offsets[choice.end_lineno - 1] + choice.end_col_offset) for choice in choices]
+        # ruff: disable[B023] (called in this iteration)
         def technical(match):
             token = match.group().lower()
             line = text[text.rfind("\n", 0, match.start()) + 1:text.find("\n", match.end()) if "\n" in text[match.end():] else len(text)]
@@ -251,6 +252,7 @@ def guard(files: dict[str, bytes], area: Path = oh_cli.AREA, *, facts: set[str] 
                     or (name == "lib/oh_features/remote_model.py" and token in layout_ids
                         and re.search(r'"[a-z_]+": "' + re.escape(token) + '"', line))
                     or any(start <= match.start() and match.end() <= end for start, end in layout_returns))
+        # ruff: enable[B023]
         if pattern and any(not technical(match) for match in pattern.finditer(text)):
             problems.append(f"{name}: private identifier or person/host fact")
         # The strongest credential patterns are never bypassed by a lint comment.
@@ -311,7 +313,7 @@ def _credential_lines(name, text):
                     if literal(key, node.value.value) and not simulated_pin(node):
                         found.append((node.lineno, "literal credential"))
             if isinstance(node, ast.Dict):
-                for key, value in zip(node.keys, node.values):
+                for key, value in zip(node.keys, node.values, strict=True):
                     if isinstance(key, ast.Constant) and isinstance(value, ast.Constant) and literal(key.value, value.value):
                         found.append((value.lineno, "literal credential"))
             if (isinstance(node, ast.keyword) and isinstance(node.value, ast.Constant)

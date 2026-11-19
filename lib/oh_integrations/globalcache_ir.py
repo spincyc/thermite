@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 import re
 
-from oh_conf import Addon, House, LIB, YamlFile, instance, point, retarget, uses
+from oh_conf import Addon, House, YamlFile, instance, point, retarget, uses
 from oh_shape import MAPPING, NUMBER, TEXT, Key
 from . import _commands, _script
 

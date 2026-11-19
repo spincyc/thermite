@@ -262,7 +262,7 @@ with mock.patch.object(oh_ports.socket, 'create_connection', side_effect=Connect
         ports = (14040, oh_ports.KARAF_PORT, oh_ports.SHUTDOWN_PORT)
         for occupied in ports:
             def listener(address, **kwargs):
-                if address[1] == occupied:
+                if address[1] == occupied:  # noqa: B023 (called in this iteration)
                     return mock.MagicMock()
                 raise ConnectionRefusedError()
 
@@ -508,7 +508,7 @@ class Consumers(unittest.TestCase):
     def test_generated_services_use_the_allocation_and_preserve_addresses(self):
         host = oh_public.demo_host()
         services = oh_metrics.services(host)
-        for service, name in zip(services, ("prometheus", "node_exporter", "blackbox", "exporter", "grafana")):
+        for service, name in zip(services, ("prometheus", "node_exporter", "blackbox", "exporter", "grafana"), strict=True):
             expected_host = "0.0.0.0" if name == "grafana" else "127.0.0.1"
             self.assertEqual(service.listen, f"{expected_host}:{oh_ports.DEFAULTS[name]}")
         generated = oh_render.render(House(oh_public.demo()))

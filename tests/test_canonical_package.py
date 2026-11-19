@@ -1,6 +1,5 @@
 """The canonical source is packaged unchanged; site code never supplies it."""
 from pathlib import Path
-import json
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -10,7 +9,6 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / 'lib'))
 import oh_control4
 import oh_package
-import oh_paths
 
 
 class CanonicalPackage(unittest.TestCase):

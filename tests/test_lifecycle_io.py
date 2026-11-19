@@ -13,7 +13,7 @@ from unittest import mock
 
 AREA=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(AREA/'lib'))
-from oh_conf import House, Conf, YamlFile, unfilled  # noqa: E402
+from oh_conf import House, Conf, unfilled  # noqa: E402
 from oh_features.routing import lifecycle_io  # noqa: E402
 import oh_integrations as integrations  # noqa: E402
 from oh_integrations import ukm404_http, avpro_telnet, sony_adcp, sony_ip_control, pyatv_http, sony_rest, denonmarantz_http  # noqa: E402

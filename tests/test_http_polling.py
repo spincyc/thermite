@@ -92,7 +92,7 @@ class PollTiming(unittest.TestCase):
         self.assertEqual({module for module, _ in self.things.values()}, set(MODULES))
 
     def test_each_poll_ends_before_the_next_and_before_a_stuck_cgi_closes(self):
-        for uid, (module, thing) in self.things.items():
+        for uid, (_, thing) in self.things.items():
             with self.subTest(thing=uid):
                 config = thing["config"]
                 refresh_ms, timeout, delay = config["refresh"] * 1000, config["timeout"], config.get("delay", 0)

@@ -60,7 +60,7 @@ import re
 import oh_units
 
 from . import alerts
-from .exporter import (COMMAND_OUTCOMES, FAILURE_REASONS, HOUSE_LABEL, HOUSE_ROOM, OPERATION_OUTCOMES, ROUND_SECONDS,
+from .exporter import (FAILURE_REASONS, HOUSE_LABEL, HOUSE_ROOM, OPERATION_OUTCOMES, ROUND_SECONDS,
                        ROUTE_BUCKETS)
 
 DATASOURCE_UID = "thermite-prometheus"
@@ -894,15 +894,17 @@ def room_history(mapping: dict) -> dict:
                        for value in values.values() if value is not None}}
 
 
-def _source_timeline(mapping: dict, zones: list[tuple[str, str, str]]) -> tuple[list[tuple[str, str]], list[dict]]:
-    """The queries and the value mapping of a source timeline: each source
-    shown as the remotes name it (_source_words) in tan, Off in slate, and a
-    readback with no value it knows as Unknown in grey."""
+def _source_timeline(mapping: dict, zones: list[tuple[str, str, str]]) -> tuple[list[dict], list[dict]]:
+    """The rows (source_timeline's) and the value mapping of a source
+    timeline: each source shown as the remotes name it (_source_words) in
+    tan, Off in slate, and a readback with no value it knows as Unknown in
+    grey. A row names its own room: a zone with no options has no row, so
+    the rows are not the zones in order."""
     words = _source_words(mapping)
     rows, values = source_timeline(mapping, zones)
     names = {number: ("Unknown", UNKNOWN) if value is None else ("Off", OFF) if value == "off"
              else (words.get(value, value), IN_USE) for number, value in values.items()}
-    return [(row["query"], row["label"]) for row in rows], value_map(names)
+    return rows, value_map(names)
 
 
 def _room_words(mapping: dict) -> dict:
@@ -1370,7 +1372,7 @@ def _last_problem() -> tuple[str, list[dict]]:
     CODES). 1: it holds one and no series says which, as before an
     installation's exporter names the code: the gauge alone, as ever."""
     from oh_integrations import _commands  # here, as oh_metrics imports it: for these words alone
-    numbers = dict(zip(_commands.CODES, range(FIRST_CODE, FIRST_CODE + len(_commands.CODES))))
+    numbers = dict(zip(_commands.CODES, range(FIRST_CODE, FIRST_CODE + len(_commands.CODES)), strict=True))
     named = " or ".join(f'thermite_device_problem_info{{code="{code}",{CHOSEN}}} * {number}'
                         for code, number in numbers.items())
     words = {number: (_commands.CODES[code][:1].upper() + _commands.CODES[code][1:], WARN)
@@ -1470,8 +1472,8 @@ def devices(mapping: dict, probes: list[dict]) -> dict:
         none="No device took a command", sort=("Not taken", True)), 12, 7)
     # One timeline of every room per signal: the time axes line up, and a row is as tall in one as in another.
     zones = _zones(mapping)
-    queries, names = _source_timeline(mapping, zones)
-    sources = [(_shown(query, room), label) for (_, room, _), (query, label) in zip(zones, queries)]
+    rows, names = _source_timeline(mapping, zones)
+    sources = [(_shown(row["query"], row["room"]), row["label"]) for row in rows]
     power = sorted((_in_room(str(rooms.get(room, room)), label), _shown(f"max(thermite_item_value{{item={_q(item)}}})",
                                                                         room))
                    for room, item, label in _power_rows(mapping))
@@ -1678,7 +1680,7 @@ def host(targets: int = 0, mapping: dict | None = None) -> dict:
     board.add(timeseries("Metrics textfiles age", [
         Series(f'time() - node_textfile_mtime_seconds{{file=~".*/{unit.removesuffix(".service")}\\\\.prom"}}',
                shown, IN_USE, line=line)
-        for (unit, shown), line in zip(TEXTFILES.items(), _LINES)], "s", minimum=0,
+        for (unit, shown), line in zip(TEXTFILES.items(), _LINES, strict=True)], "s", minimum=0,
         limit=alerts.TEXTFILE_STALE, none="No access service has written its metrics",
         description="Seconds since each access service last wrote its metrics; it writes every 10 s while it "
                     f"runs. From {alerts.TEXTFILE_STALE} s (the red band) what the boards show of it is "
@@ -1759,7 +1761,8 @@ def usage(mapping: dict) -> dict:
         Series(unknown_count, "Unobserved", UNKNOWN)], stack=True, minimum=0, maximum=len(zones), decimals=0,
         description="Routing zones by observed state. Off is normal; unknown source state is shown separately. "
                     "Runtime outages remain gaps. No presence or exact session is inferred."), 24, 7)
-    queries, names = _source_timeline(mapping, zones)
+    rows, names = _source_timeline(mapping, zones)
+    queries = [(row["query"], row["label"]) for row in rows]
     board.add(state_timeline("Rooms through the day", queries, names,
                              "Each zone's confirmed source readback, sampled every 30 s; not the requested "
                              "source. Tan: a source is selected. Slate: Off. Grey: Unknown, the room's "

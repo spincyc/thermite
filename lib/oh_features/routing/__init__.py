@@ -144,7 +144,7 @@ DISPLAY = {**STAGE, "passive": Key(TRUTH, "whether thermite leaves the display a
                                           "to and reads nothing from, which then has only its device here")}
 _ACTIONS = {name: Key(MAPPING, what, by="device id", each=Key(TEXT, "the name of one of the device's actions, in quotes"))
             for name, what in zip(ACTIONS, ("what other devices are sent when the room turns to any source: a curtain "
-                                            "and lights, say", "what they are sent when it turns Off"))}
+                                            "and lights, say", "what they are sent when it turns Off"), strict=True)}
 ROOM = {
     "room": Key(TEXT, "the room it is in, for a routed room that is not a room of its own (a desk's screen in an office)"),
     "label": Key(TEXT, "its name on the remote, where that is not its room's"),
@@ -1232,7 +1232,7 @@ def table(house: House) -> dict:
         }
         if "hdmi_audio_output" in entry:
             rooms[room]["audioHdmi"] = _port_item(devices, routing["hdmi_matrix"], entry["hdmi_audio_output"])
-        for raw_stage, (spec, _) in zip(rooms[room]["stages"], reversed(stages(house, room))):
+        for raw_stage, (spec, _) in zip(rooms[room]["stages"], reversed(stages(house, room)), strict=True):
             if spec.get("input_by_source"):
                 raw_stage["bySource"] = dict(spec["input_by_source"])
         sync = sync_sources(house, room)

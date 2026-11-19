@@ -191,7 +191,7 @@ class Feed(TestCase):
         self.assertEqual(answer["alerts"], [
             {"name": "ThermiteCheckFailing", "severity": "critical", "title": title, "text": text, "since": NOW - 900},
             {"name": "ThermiteGatewayDown", "severity": "critical", "since": NOW - 900,
-             **dict(zip(("title", "text"), catalogue.CATALOG["ThermiteGatewayDown"]))}])
+             **dict(zip(("title", "text"), catalogue.CATALOG["ThermiteGatewayDown"], strict=True))}])
         # Once each, by alert and label name, however often it is read.
         self.assertEqual(sorted(line.rsplit(": ", 1)[1] for line in logged.output), sorted(
             [f"alert=ThermiteCheckFailing label={label}" for label in ("room", "zone", "device", "check")]

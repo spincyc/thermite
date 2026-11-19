@@ -34,7 +34,7 @@ def loopback_origin(value):
     if (parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "::1"} or parsed.username
             or parsed.password or parsed.path not in ("", "/") or parsed.query or parsed.fragment):
         raise ValueError("Not an explicit loopback HTTP origin")
-    parsed.port  # Raises ValueError for an out-of-range or malformed port.
+    parsed.port  # noqa: B018 (read because it raises ValueError for an out-of-range or malformed port)
     return parsed
 
 

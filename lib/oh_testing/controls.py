@@ -613,7 +613,7 @@ class Check:
         # next value of every field at once and one poll reads them all.
         fields = self.values(ident)
         for together in zip_longest(*fields.values()):
-            sent = {field: entry for field, entry in zip(fields, together) if entry}
+            sent = {field: entry for field, entry in zip(fields, together, strict=True) if entry}
             for item, value, _ in sent.values():
                 self.command(item, value)
             what = ", ".join(f"{field} {value}" for field, (_, value, _) in sent.items())
@@ -625,11 +625,13 @@ class Check:
             for button in buttons:
                 before = len(self.stand_ins[ident].writes())
                 self.command(control["key"], button)
+                # ruff: disable[B023] (called in this iteration)
                 reached = lambda: (len(self.stand_ins[ident].writes()) == before + 1 and self.stand_ins[ident].reached_key(button)
                                    if hasattr(self.stand_ins[ident], "reached_key")
                                    else self.stand_ins[ident].keys()[-1:] == [button])
                 self.wait_for(f"{ident} key {button}", lambda: {} if reached()
                               else {ident: (button, (self.stand_ins[ident].keys() or [None])[-1])})
+                # ruff: enable[B023]
 
     def values(self, ident: str) -> dict[str, list[tuple[str, str, str]]]:
         """field -> (Item, value sent, value read back) for each value a
@@ -747,7 +749,7 @@ class Check:
             sent, seen = len(stand_in.writes()), len(heard)
             began = time.monotonic()
             self.command(item, value)
-            reached = until(lambda: len(stand_in.writes()) > sent, began, REACH + STEP)
+            reached = until(lambda: len(stand_in.writes()) > sent, began, REACH + STEP)  # noqa: B023 (called in this iteration)
 
             # Only the events heard since the last look: every device waits at
             # once, and rescanning the whole stream would starve the stand-ins
@@ -756,7 +758,7 @@ class Check:
                 nonlocal seen
                 fresh = heard[seen:]
                 seen += len(fresh)
-                return any(t >= began and i == item and same(value, v) for t, i, v in fresh)
+                return any(t >= began and i == item and same(value, v) for t, i, v in fresh)  # noqa: B023 (called in this iteration)
             read = until(read_back, began, allowed + STEP)
             shown = [f"{ident} {field} {value}:",
                      "never reached it" if reached is None else f"at the device in {reached * 1000:.0f} ms,",
@@ -801,9 +803,11 @@ class Check:
                 button = next(iter(module.keys(self.devices[ident]) if module.keys else module.KEYS))
                 before = len(self.stand_ins[ident].writes())
                 self.command(control["key"], button, anonymous)
+                # ruff: disable[B023] (called in this iteration)
                 self.wait_for(f"{ident} anonymous key transport", lambda: {} if
                               len(self.stand_ins[ident].writes()) == before + 1 and self.stand_ins[ident].reached_key(button)
                               else {ident: ("one verified transport request", "not received")})
+                # ruff: enable[B023]
             return
         ident, (_, control) = powered
         opened, heard = threading.Event(), {}

@@ -21,7 +21,7 @@ import oh_docs
 import oh_inventory
 import oh_paths
 import oh_render
-from oh_cli import dhcp_reservations, discover, generate, ir_profile, status, validate
+from oh_cli import discover, status
 from oh_conf import House
 
 EXAMPLE = json.loads((AREA / "instance/devices.yaml").read_text())

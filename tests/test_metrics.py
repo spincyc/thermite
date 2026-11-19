@@ -5,7 +5,6 @@ and deploy annotations."""
 
 import copy
 import json
-import os
 from pathlib import Path
 import re
 import stat
@@ -1228,7 +1227,7 @@ class Dashboards(unittest.TestCase):
         timeouts = f'kind=~"{dashboards.TIMEOUTS}"'
         self.assertIn(timeouts, alert["expr"])
         found = []
-        for name, board in boards().items():
+        for board in boards().values():
             for panel in panels(board):
                 for query in panel.get("targets", []):
                     if re.search(r"thermite_client_(events_total|wait_seconds)", query["expr"]):
@@ -1625,7 +1624,7 @@ class Textfiles(unittest.TestCase):
         for _ in range(20):
             writes = []
             textfile = self.metrics.Textfile(self.metrics.CALLBACKS, "example", self.directory, every=60,
-                                             refresh=lambda: writes.append(threading.current_thread().name)).start()
+                                             refresh=lambda: writes.append(threading.current_thread().name)).start()  # noqa: B023 (called in this iteration)
             textfile.stop(timeout=0)
             self.assertEqual(writes, ["MainThread", "MainThread"])
         # No timeout: as long as a write in progress takes.

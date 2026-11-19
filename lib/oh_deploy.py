@@ -2283,4 +2283,5 @@ def service_states(services: Iterable[str] = SERVICES) -> dict[str, str]:
     services = list(services)
     oh_trace.run(["systemctl", "is-active", *services])
     out = subprocess.run(["systemctl", "is-active", *services], capture_output=True, text=True, check=False)
-    return dict(zip(services, out.stdout.split()))
+    # One line a unit, in the order asked; a systemctl that says less leaves the rest unknown.
+    return dict(zip(services, out.stdout.split(), strict=False))

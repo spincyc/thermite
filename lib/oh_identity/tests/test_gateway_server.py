@@ -466,6 +466,7 @@ class GatewayServer(SimpleTestCase):
                 self.addCleanup(unit.kill)
                 wait_listening(port)
 
+                # ruff: disable[B023] (called in this iteration)
                 async def hold():
                     async with httpx.AsyncClient(http2=True, verify=trusting(self.cert), trust_env=False,
                                                  timeout=30) as client, \
@@ -475,6 +476,7 @@ class GatewayServer(SimpleTestCase):
                         unit.send_signal(signum)
                         async for _ in chunks:
                             pass
+                # ruff: enable[B023]
 
                 started = time.monotonic()
                 try:

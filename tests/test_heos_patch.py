@@ -164,7 +164,7 @@ class Packaging(unittest.TestCase):
 
                 def execute(args, **kwargs):
                     if patch.TEST_MAIN in args:
-                        return next(results)
+                        return next(results)  # noqa: B023 (called in this iteration)
                     compile_or_test(args)
                     return subprocess.CompletedProcess(args, 0, "", "")
 

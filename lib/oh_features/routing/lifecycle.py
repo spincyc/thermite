@@ -181,6 +181,7 @@ def compile_descriptor(house: House, base_table: dict, caps: dict) -> dict:
         for (device, zone), stage in stage_rows.items():
             device_stages[device][zone] = stage
 
+        # ruff: disable[B023] (called in this iteration)
         def stage_fields(kind, value):
             spec = entry.get(kind, {})
             stage = stage_rows.get((spec.get("device"), spec.get("zone")))
@@ -219,6 +220,7 @@ def compile_descriptor(house: House, base_table: dict, caps: dict) -> dict:
                 matrix_feed[_port_item(devices, routing["hdmi_matrix"], output)] = str(choice["hdmi_input"])
                 paths.append(matrix_feed)
             return paths
+        # ruff: enable[B023]
 
         for source in sources:
             receiver_spec = entry.get("receiver", {})
@@ -285,7 +287,7 @@ def compile_descriptor(house: House, base_table: dict, caps: dict) -> dict:
                 for item, value in raw["after"][choice]:
                     if supported(item) and item in power_items:
                         release[item] = str(value)
-            for item, value in active.items():
+            for item in active:
                 include(item)
             # usb_only omissions preserve by default. The park policy is
             # explicit even with an older caller-supplied base table.

@@ -147,7 +147,7 @@ class Contract(TestCase):
                        {**HISTORY, "zones": [{**HISTORY["zones"][0], "room": "attic"}]},
                        {**HISTORY, "zones": [{**HISTORY["zones"][0], "item": "loc_desk_source"}]},
                        {**HISTORY, "zones": [HISTORY["zones"][0], HISTORY["zones"][0]]},
-                       {**HISTORY, "zones": [{**HISTORY["zones"][0], "label": "Den‮"}]},
+                       {**HISTORY, "zones": [{**HISTORY["zones"][0], "label": "Den\u202e"}]},
                        {**HISTORY, "values": {**HISTORY["values"], "2": "attic"}},
                        {**HISTORY, "values": {"one": "off"}},
                        {**HISTORY, "labels": {**HISTORY["labels"], "bad value": "Bad"}},

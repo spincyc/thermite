@@ -98,6 +98,7 @@ class BootReadiness(unittest.TestCase):
                 with self.subTest(route=route, status=status):
                     self.reset()
                     state = {"collecting": False, "failed": False}
+                    # ruff: disable[B023] (called in this iteration)
                     def unavailable(path):
                         if path == ROOT:
                             state["collecting"] = True
@@ -118,6 +119,7 @@ class BootReadiness(unittest.TestCase):
                             if path in stale:
                                 data = json.dumps(stale[path]).encode()
                         return code, data
+                    # ruff: enable[B023]
                     self.handler = unavailable
                     report = self.run_check()
                     self.assertTrue(state["failed"])
@@ -157,7 +159,7 @@ class BootReadiness(unittest.TestCase):
             with self.subTest(status=status):
                 self.reset()
                 def refused(path):
-                    raise urllib.error.HTTPError("http://private.invalid/secret", status, "private body sentinel", {}, None)
+                    raise urllib.error.HTTPError("http://private.invalid/secret", status, "private body sentinel", {}, None)  # noqa: B023 (called in this iteration)
                 self.handler = refused
                 with self.assertRaises(boot.ReportError) as failed:
                     self.run_check()
@@ -318,6 +320,7 @@ class ReportTransport(unittest.TestCase):
     def test_absolute_deadline_interrupts_headers_and_body_that_keep_arriving(self):
         for phase in ("headers", "body"):
             with self.subTest(phase=phase):
+                # ruff: disable[B023] (called in this iteration)
                 def respond(connection, stopping):
                     prefix = (b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nX-Slow: " if phase == "headers" else
                               b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
@@ -327,6 +330,7 @@ class ReportTransport(unittest.TestCase):
                         if stopping.wait(0.04):
                             return
                     connection.sendall(b"\r\n\r\n" if phase == "headers" else b"")
+                # ruff: enable[B023]
 
                 with self.server(respond) as url:
                     started = time.monotonic()

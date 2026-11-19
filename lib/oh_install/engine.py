@@ -313,7 +313,7 @@ def check_items(items, root, system=SYSTEM, *, recorded) -> list[dict]:
         raise EngineError("items must be a list")
     checked = sorted((check_item(item, root, system, recorded=recorded) for item in items),
                      key=lambda item: item["path"])
-    for first, second in zip(checked, checked[1:]):
+    for first, second in zip(checked, checked[1:], strict=False):
         if first["path"] == second["path"]:
             raise EngineError(f"{first['path']} is declared twice")
     trees = [item["path"] for item in checked if item["class"] in TREES]

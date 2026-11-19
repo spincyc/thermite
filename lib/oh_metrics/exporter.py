@@ -465,7 +465,7 @@ def _routing_metrics(spec: dict, data: object) -> list[Sample]:
             counts, total, count = parsed
             labels = {"room": str(zones[zone].get("room", "")), "zone": zone, "outcome": outcome}
             samples += [("thermite_route_seconds_bucket", {**labels, "le": format_value(le)}, bucket)
-                        for le, bucket in zip(ROUTE_BUCKETS, counts)]
+                        for le, bucket in zip(ROUTE_BUCKETS, counts, strict=True)]
             samples += [("thermite_route_seconds_bucket", {**labels, "le": "+Inf"}, count),
                         ("thermite_route_seconds_sum", labels, total),
                         ("thermite_route_seconds_count", labels, count)]

@@ -171,7 +171,7 @@ def settings(host: dict | None) -> dict[str, Share]:
                              + ('"3.1.1"' if kind == "cifs" else '"4.2"'))
         found[name] = Share(name, kind, server, source, point, writable, version)
     points = sorted((share.where, name) for name, share in found.items())
-    for (outer, first), (inner, second) in zip(points, points[1:]):
+    for (outer, first), (inner, second) in zip(points, points[1:], strict=False):
         if inner == outer or inner.startswith(outer + "/"):
             raise ValueError(f"shares.{second}.where is {'shares.' + first + '.where' if inner == outer else 'inside shares.' + first}: "
                              "each share needs a mount point of its own")

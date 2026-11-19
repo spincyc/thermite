@@ -14,7 +14,6 @@ web/TUI code with an in-memory backend; no device is contacted.
 import functools
 import importlib.util
 import json
-import math
 import os
 from pathlib import Path
 import re

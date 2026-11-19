@@ -11,7 +11,6 @@ from django.conf import settings
 from django.test import Client, TestCase
 from django.utils import timezone
 
-from oh_conf import House
 import oh_room_policy
 from oh_identity.auth import Guest
 from oh_identity.models import RoomPolicy

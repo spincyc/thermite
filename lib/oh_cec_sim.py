@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import copy
-from oh_matrix_sim import BK808, Server
+from oh_matrix_sim import BK808
 
 
 class Matrix(BK808):

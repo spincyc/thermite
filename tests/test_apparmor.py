@@ -210,7 +210,7 @@ class ArtifactWrites(unittest.TestCase):
                 def fail_once(descriptor):
                     nonlocal count
                     count += 1
-                    if count == failed_call:
+                    if count == failed_call:  # noqa: B023 (called in this iteration)
                         raise OSError("injected sync failure")
                     return original_sync(descriptor)
                 with patch.object(confinement.os, "fsync", side_effect=fail_once), self.assertRaises(OSError):
@@ -506,7 +506,7 @@ class EnforcementVerification(unittest.TestCase):
                 info = original(descriptor)
                 if info.st_ino == inode:
                     values = list(info)
-                    values[field] += 1
+                    values[field] += 1  # noqa: B023 (called in this iteration)
                     return os.stat_result(values)
                 return info
             with self.subTest(field=field), patch.object(confinement.os, "fstat", side_effect=foreign), \

@@ -88,7 +88,7 @@ def manifest(house: House, conf: Conf) -> dict:
             if path.get("audioNodes"):
                 route["audioNodes"] = copy.deepcopy(path["audioNodes"])
             for kind, chain in (("video", path["nodes"]), ("audio", path.get("audioNodes", []))):
-                for before, after in zip(chain, chain[1:]):
+                for before, after in zip(chain, chain[1:], strict=False):
                     ports = {}
                     if before.get("output") is not None:
                         ports["fromPort"] = before["output"]
@@ -103,6 +103,6 @@ def manifest(house: House, conf: Conf) -> dict:
             routes[room_id][source_id] = route
 
     result = []
-    for ident, value in sorted(edges.items()):
+    for _, value in sorted(edges.items()):
         result.append({**value, "rooms": sorted(value["rooms"]), "sources": sorted(value["sources"])})
     return {"version": 1, "nodes": nodes, "rooms": rooms, "routes": routes, "edges": result}

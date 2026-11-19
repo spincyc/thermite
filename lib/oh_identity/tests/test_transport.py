@@ -13,7 +13,7 @@ import httpx
 
 from asgiref.sync import async_to_sync
 from django.conf import settings
-from django.test import SimpleTestCase, override_settings
+from django.test import SimpleTestCase
 
 from oh_identity.runtime import project
 from oh_identity.transport import CommandRefused, LoopbackTransport, native_query

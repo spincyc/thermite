@@ -12,7 +12,7 @@ try:
     arguments = oh_paths.select_args(sys.argv[1:])
 except oh_paths.SiteError as exc:
     sys.stderr.write(f"thermite: {exc}\n")
-    raise SystemExit(2)
+    raise SystemExit(2) from None
 
 from oh_cli import run  # noqa: E402
 

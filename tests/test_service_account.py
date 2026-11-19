@@ -184,6 +184,7 @@ class Permissions(unittest.TestCase):
         for path in checked:
             inode = path.stat().st_ino
             for field in (4, 5):
+                # ruff: disable[B023] (called in this iteration)
                 def wrong_identity(descriptor):
                     info = original(descriptor)
                     if info.st_ino == inode:
@@ -191,6 +192,7 @@ class Permissions(unittest.TestCase):
                         values[field] += 1
                         return os.stat_result(values)
                     return info
+                # ruff: enable[B023]
                 with self.subTest(path=path.relative_to(self.root), identity=field), \
                         mock.patch.object(service.os, "fstat", side_effect=wrong_identity):
                     issues = service.audit_state(self.root, self.uid, self.gid)

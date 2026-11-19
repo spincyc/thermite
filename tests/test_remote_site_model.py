@@ -188,7 +188,7 @@ class Examples(unittest.TestCase):
         # launch_environment() asks oh_access for the URL's credential file, which refuses all but an HTTPS origin.
         from oh_access import client
         urls = [word for command, _ in remote.EXAMPLES
-                for flag, word in zip(command.split(), command.split()[1:]) if flag == "--url"]
+                for flag, word in zip(command.split(), command.split()[1:], strict=False) if flag == "--url"]
         self.assertTrue(urls, "thermite remote's examples show no --url")
         for url in urls:
             with self.subTest(url=url):

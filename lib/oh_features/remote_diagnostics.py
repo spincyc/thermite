@@ -41,7 +41,7 @@ def _rooms(house: House) -> dict:
             nodes = []
 
             def node(ident, role, **ports):
-                nodes.append({"device": ident, "label": house.label(devices[ident]), "role": role, **ports})
+                nodes.append({"device": ident, "label": house.label(devices[ident]), "role": role, **ports})  # noqa: B023 (called in this iteration)
 
             node(source_id, "source")
             # A local connection joins the chain at that stage. Everything
@@ -99,7 +99,7 @@ def validate(data: dict) -> list[str]:
     try:
         rooms = _rooms(house)
         edges = {(a["device"], b["device"]) for room in rooms.values() for path in room["sources"].values()
-                 for chain in (path["nodes"], path.get("audioNodes", [])) for a, b in zip(chain, chain[1:])}
+                 for chain in (path["nodes"], path.get("audioNodes", [])) for a, b in zip(chain, chain[1:], strict=False)}
         routed = {node["device"] for room in rooms.values() for path in room["sources"].values()
                   for node in path["nodes"] + path.get("audioNodes", [])}
         described = providers(house)

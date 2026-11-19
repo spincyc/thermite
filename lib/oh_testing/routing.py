@@ -870,7 +870,8 @@ class Check:
             heard = sorted(set(matrix.comheads()) - allowed)
             if heard:
                 self.failures.append(f"{ident} heard {', '.join(heard)}")
-            refused = [r for r, a in zip(matrix.requests, matrix.replies) if a and a.get("result") == 0]
+            # A request the stand-in is answering at this moment has no reply yet.
+            refused = [r for r, a in zip(matrix.requests, matrix.replies, strict=False) if a and a.get("result") == 0]
             if refused:
                 self.failures.append(f"{ident} refused {len(refused)} request(s), first {refused[0]}")
             if matrix.unknown:

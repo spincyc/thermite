@@ -92,7 +92,7 @@ class StartupHttp(unittest.TestCase):
         before = self.inst.token_file.stat()
         for phase in ("headers", "body"):
             with self.subTest(phase=phase), self.server(
-                    lambda route, connection, stopping: self.trickle(connection, stopping, phase)) as requests, \
+                    lambda route, connection, stopping, phase=phase: self.trickle(connection, stopping, phase)) as requests, \
                     mock.patch.object(lib, "_wait_karaf"), mock.patch.object(lib, "karaf_command") as command:
                 self.bounded_failure(lambda deadline: lib.provision_token(self.rt, self.inst, deadline=deadline))
                 self.assertEqual(requests, ["/rest/addons?serviceId=karaf"])
@@ -104,7 +104,7 @@ class StartupHttp(unittest.TestCase):
     def test_rest_registration_uses_the_original_deadline_for_headers_and_body(self):
         for phase in ("headers", "body"):
             with self.subTest(phase=phase), self.server(
-                    lambda route, connection, stopping: self.trickle(connection, stopping, phase)) as requests, \
+                    lambda route, connection, stopping, phase=phase: self.trickle(connection, stopping, phase)) as requests, \
                     mock.patch.object(lib, "group_members", return_value=[123]):
                 self.bounded_failure(lambda deadline: lib.wait_rest(self.inst, 123, 60, deadline=deadline))
                 self.assertEqual(requests, ["/rest/"])
@@ -119,11 +119,13 @@ class StartupHttp(unittest.TestCase):
         things = "/rest/things?summary=true"
         for slow_route in (addons, things):
             for phase in ("headers", "body"):
+                # ruff: disable[B023] (called in this iteration)
                 def respond(route, connection, stopping):
                     if route == slow_route:
                         self.trickle(connection, stopping, phase)
                     else:
                         self.reply(connection, [{"uid": "binding-http", "installed": True}])
+                # ruff: enable[B023]
 
                 with self.subTest(route=slow_route, phase=phase), self.server(respond) as requests, \
                         mock.patch.object(lib, "warm_template", return_value=(self.root / "template", False)), \
@@ -141,7 +143,7 @@ class StartupHttp(unittest.TestCase):
     def test_native_probe_uses_shared_transport_for_slow_headers_and_body(self):
         for phase in ("headers", "body"):
             with self.subTest(phase=phase), self.server(
-                    lambda route, connection, stopping: self.trickle(connection, stopping, phase)):
+                    lambda route, connection, stopping, phase=phase: self.trickle(connection, stopping, phase)):
                 started = time.monotonic()
                 result = System().native_probe(self.inst.url, "fixture-token", "/rest/", started + .2)
                 self.assertEqual(result, NativeProbe(0, problem="startup deadline expired"))
@@ -157,7 +159,7 @@ class StartupHttp(unittest.TestCase):
             return self.inst.token_file
         for phase in ("headers", "body"):
             with self.subTest(phase=phase), self.server(
-                    lambda route, connection, stopping: self.trickle(connection, stopping, phase)) as requests, \
+                    lambda route, connection, stopping, phase=phase: self.trickle(connection, stopping, phase)) as requests, \
                     mock.patch.object(lib, "wipe_dir", side_effect=lambda path, **kwargs: wipe(path, root=self.root)), \
                     mock.patch.object(lib, "start_instance", return_value=123), mock.patch.object(lib, "wait_rest"), \
                     mock.patch.object(lib, "provision_token", side_effect=provision), \

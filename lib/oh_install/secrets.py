@@ -149,13 +149,13 @@ def install(runtime, *, name, source=None, uid, gid, preserve_existing=False, ge
                     raise
                 info_parent = os.fstat(parent)
                 if info_parent.st_uid != source_uid or info_parent.st_mode & 0o022:
-                    raise SecretError("new credential copies require a non-writable administrator-owned parent")
+                    raise SecretError("new credential copies require a non-writable administrator-owned parent") from None
                 try:
                     source_gid = int(os.environ.get("SUDO_GID", str(os.getgid())))
                 except ValueError:
                     raise SecretError("invalid invoking administrator group") from None
                 if source_gid < 0:
-                    raise SecretError("invalid invoking administrator group")
+                    raise SecretError("invalid invoking administrator group") from None
                 content = os.urandom(24).hex().encode()
                 _owner_copy(parent, source_path.name, content, source_uid, source_gid)
             else:

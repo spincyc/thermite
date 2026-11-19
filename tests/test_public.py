@@ -13,7 +13,6 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_cli
 import oh_brand
 import oh_inventory
-import oh_render
 from oh_features import remote_model
 
 def command(argv):

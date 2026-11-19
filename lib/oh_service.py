@@ -384,7 +384,7 @@ def normalize_state(root: Path, uid: int = UID, gid: int = GID, *, deployment: b
         if not deployment and not runtime:
             _remove_receipt(root)
         with _selected_entries(root, deployment, runtime) as entries:
-            for relative, descriptor, info, wanted in _policy_entries(entries, uid, gid):
+            for _, descriptor, info, wanted in _policy_entries(entries, uid, gid):
                 if (info.st_uid, info.st_gid) != (uid, gid):
                     if stat.S_ISLNK(info.st_mode):
                         _chown_link(descriptor, uid, gid)

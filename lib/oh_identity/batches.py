@@ -89,7 +89,7 @@ class CommandBatches:
                     results[index] = error
             if failures:
                 raise failures[0]
-            return list(zip(items, results))
+            return list(zip(items, results, strict=True))
         finally:
             # A response, including an authorization error, must never leave
             # admitted effects running after the request has returned.

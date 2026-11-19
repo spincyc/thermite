@@ -642,7 +642,7 @@ def markdown(source: Path, result: dict, inventory: dict) -> str:
         e.get("id") for e in inventory.get("later") or []}
     physical = [d for d in result["devices"] if not d["virtual"]]
     software = [d for d in result["devices"] if d["virtual"]]
-    out = [f"# Control4 project summary", "", f"Source: `{source.name}`. "
+    out = ["# Control4 project summary", "", f"Source: `{source.name}`. "
            f"{len(physical)} devices and {len(software)} software drivers in {len(result['rooms'])} rooms."]
     if not result.get("has_details"):
         out += ["", "This export has no network details, so devices match by name and model only. "

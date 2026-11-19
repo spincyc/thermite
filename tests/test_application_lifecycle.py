@@ -205,7 +205,7 @@ class Lifecycle(fixtures.ApplicationFixture):
     def test_successful_run_warns_when_path_selects_another_thermite(self):
         for found, warned in ((lambda: str(self.launcher), False), (lambda: "/usr/bin/thermite", True),
                               (lambda: None, True)):
-            with self.subTest(warned=warned), patch.object(application.shutil, "which", side_effect=lambda _: found()):
+            with self.subTest(warned=warned), patch.object(application.shutil, "which", side_effect=lambda _: found()):  # noqa: B023 (called in this iteration)
                 self.assertEqual(self.apply(source=self.source), 0)
                 warning = [line for line in self.said if line.startswith("Warning: `thermite` on PATH")]
                 self.assertEqual(bool(warning), warned)

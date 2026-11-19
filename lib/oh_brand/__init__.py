@@ -315,7 +315,7 @@ def stroke_shapes(path: str, width: float, steps: int = 16) -> tuple[tuple[tuple
     points = polygon(path, steps)
     radius = width / 2
     shapes = []
-    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+    for (x0, y0), (x1, y1) in zip(points, points[1:], strict=False):
         length = math.hypot(x1 - x0, y1 - y0)
         if not length:
             continue
@@ -445,7 +445,7 @@ def _cell(block: list[str | None], order: list[str], glow: int) -> tuple[str, st
         shape = sum(1 << k for k, role in enumerate(quads) if role)
         return QUADRANTS[mask], fg, bg, QUADRANTS[shape]
     fg = _most(lit, order)
-    glyph = chr(0x2800 + sum(bit for bit, role in zip(DOTS, block) if role))
+    glyph = chr(0x2800 + sum(bit for bit, role in zip(DOTS, block, strict=True) if role))
     bg = f"{fg}%{glow}" if glow and len(lit) == 8 and fg in FLAMES else None
     return glyph, fg, bg, glyph
 
@@ -494,7 +494,7 @@ def xterm256(color: str) -> int:
     gray_rgb = [8 + 10 * gray] * 3
 
     def distance(other):
-        return sum((a - b) ** 2 for a, b in zip((r, g, b), other))
+        return sum((a - b) ** 2 for a, b in zip((r, g, b), other, strict=True))
     if distance(gray_rgb) < distance(cube_rgb):
         return 232 + gray
     return 16 + 36 * cube[0] + 6 * cube[1] + cube[2]
@@ -510,7 +510,7 @@ def _sgr(color: str, depth: int, background: bool) -> str:
 def mix(a: str, b: str, share: float) -> str:
     """share of the way from color a to color b. A half goes up, as
     Math.round() has it in theme.js."""
-    return "#" + "".join(f"{int(x + (y - x) * share + 0.5):02x}" for x, y in zip(rgb(a), rgb(b)))
+    return "#" + "".join(f"{int(x + (y - x) * share + 0.5):02x}" for x, y in zip(rgb(a), rgb(b), strict=True))
 
 
 def ground(colors: dict, spec: str) -> str:
@@ -553,7 +553,7 @@ def _spans(points: list[tuple[float, float]], y: float, left: float, step: float
             xs.append(xi + (y - yi) * (xj - xi) / (yj - yi))
         j = i
     xs.sort()
-    for x0, x1 in zip(xs[0::2], xs[1::2]):
+    for x0, x1 in zip(xs[0::2], xs[1::2], strict=True):
         first = max(0, math.ceil((x0 - left) / step - 0.5))
         end = min(count, math.ceil((x1 - left) / step - 0.5))
         if end > first:
@@ -595,7 +595,7 @@ def _painted(surface: str, layers: tuple[tuple[str, str, float], ...], size: int
                 for first, end in _spans(points, y, left, step, count):
                     line[3 * first:3 * end] = color * (end - first)
             for k in range(3):
-                sums[k::3] = map(sum, zip(sums[k::3], *(line[3 * j + k::stride] for j in range(samples))))
+                sums[k::3] = map(sum, zip(sums[k::3], *(line[3 * j + k::stride] for j in range(samples)), strict=True))
         rows.append(bytes((value + total // 2) // total for value in sums))
     return _png(rows, size, size)
 
@@ -607,7 +607,7 @@ def _png(rows: list[bytes], width: int, height: int) -> bytes:
     previous = bytes(width * 3)
     for row in rows:
         sub = bytes((row[i] - (row[i - 3] if i >= 3 else 0)) & 255 for i in range(len(row)))
-        up = bytes((a - b) & 255 for a, b in zip(row, previous))
+        up = bytes((a - b) & 255 for a, b in zip(row, previous, strict=True))
         kind, data = max(((0, row), (1, sub), (2, up)), key=lambda choice: choice[1].count(0))
         raw.append(kind)
         raw += data

@@ -8,7 +8,6 @@ from contextlib import contextmanager
 from django.conf import settings
 from django.test import Client, TestCase
 
-from oh_conf import House
 from oh_identity.models import Audit, BoundaryReceipt, PersonalToken, RoomPolicy, User
 from oh_identity.runtime import RuntimeAdapter, RuntimeContract, install_adapter, project
 from oh_identity.policy_store import Store, rebase_timezone
@@ -216,7 +215,7 @@ class Features(TestCase):
         self.assertEqual(contract.command("den", "source", "shared")[2], ("den", "desk"))
 
     def test_historical_receipt_finishes_after_revision_change_and_timezone_rebases(self):
-        policy = RoomPolicy.objects.create(room_id="den", config={"room": "den", "timezone": "UTC", "revision": 1})
+        RoomPolicy.objects.create(room_id="den", config={"room": "den", "timezone": "UTC", "revision": 1})
         store = Store()
         self.assertTrue(store.claim_boundary("den", 1, "one-boundary", None))
         self.assertEqual(rebase_timezone("America/Chicago"), 1)

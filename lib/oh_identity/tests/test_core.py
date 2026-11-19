@@ -7,7 +7,7 @@ from django.conf import settings
 from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 
-from oh_identity.models import Audit, PersonalToken, RoomPolicy, User
+from oh_identity.models import Audit, RoomPolicy, User
 from oh_identity.runtime import RuntimeAdapter, RuntimeContract, install_adapter, project
 from oh_identity.services import Problem, bootstrap, issue_token, save_user
 
