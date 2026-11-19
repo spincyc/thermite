@@ -283,7 +283,10 @@ def fill(source: str, constants: dict[str, object], origin: Path | str, *, part:
 #: so for the file it reads and instance_at() for a block; None before
 #: either, and a house that names such a file is then refused. It is the
 #: process's and no argument because the hooks that read a profile are
-#: given one device (oh_integrations.globalcache_ir.commissioned()).
+#: given one device (oh_integrations.globalcache_ir.commissioned()). A
+#: House remembers its own (House.directory), and a build binds that for
+#: as long as it runs (oh_render.build), so it reads its own house's files
+#: whichever house file the process read last.
 _instance: Path | None = None
 
 
@@ -341,6 +344,9 @@ class House:
         self.devices: list[dict] = list(data.get("devices") or [])
         #: Device id -> device.
         self.by_id: dict[str, dict] = {device["id"]: device for device in self.devices}
+        #: Where the files this house names are, as of when it was made
+        #: (instance()); None for one made of a mapping outside any block.
+        self.directory: Path | None = _instance
         self._counts: dict[str, int] = {}
         for device in self.devices:
             text = self._base_label(device)

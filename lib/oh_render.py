@@ -18,7 +18,7 @@ import oh_integrations as integrations
 import oh_inventory as inventory
 import oh_ports
 from oh_conf import (ADDONS_CFG, COMMAND_SCRIPTS, GUARD_ADDON_WHY, GUARD_PROFILE, RULE_SENDS, RULE_SILENT, Addon, Conf,
-                     House, dump, guard, linked, uses)
+                     House, dump, guard, instance, instance_at, linked, uses)
 from oh_features import remote_system
 
 #: openHAB's own metrics, which Prometheus scrapes (lib/oh_metrics); every
@@ -104,8 +104,15 @@ def build(house: House, *, host: dict | None = None, versions: dict | None = Non
     ports (the product's default ones without it), and `versions` is
     versions.json, which names the runtime (the application's own pins
     without it). The files the house names are read from beside its house
-    file (oh_conf.instance()). What it returns agrees with the house
-    (inventory.cross_check), or it raises Disagreement."""
+    file: the house's own directory (House.directory) for as long as the
+    build runs, whichever house file the process read last. What it
+    returns agrees with the house (inventory.cross_check), or it raises
+    Disagreement."""
+    with instance_at(house.directory if house.directory is not None else instance()):
+        return _build(house, host, versions)
+
+
+def _build(house: House, host: dict | None, versions: dict | None) -> Conf:
     conf = Conf(system_metadata=remote_system.described(host, versions))
     for module in integrations.REGISTRY:
         devices = [d for d in house.devices if uses(d, module.PHASE, module.NAME)]

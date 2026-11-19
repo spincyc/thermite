@@ -158,6 +158,18 @@ class OwnFiles(unittest.TestCase):
                          oh_brand.css(oh_brand.load(self.instance / "mine.json")).encode("utf-8"))
         self.assertEqual(globalcache_ir.commissioned(self.player)["commands"], {"play": "38000,1,1,24,24"})
 
+    def test_a_build_reads_its_own_houses_files_whichever_house_was_read_last(self):
+        house = oh_conf.House.load(self.house(theme="mine.json"))
+        with tempfile.TemporaryDirectory() as other:
+            elsewhere = Path(other) / "instance"
+            elsewhere.mkdir()
+            (elsewhere / "devices.yaml").write_text(json.dumps(mapping()), encoding="utf-8")
+            oh_conf.House.load(elsewhere / "devices.yaml")
+            self.assertEqual((oh_conf.instance(), house.directory), (elsewhere, self.instance))
+            self.assertEqual(oh_render.render(house)["html/remote/theme.css"],
+                             oh_brand.css(oh_brand.load(self.instance / "mine.json")).encode("utf-8"))
+            self.assertEqual(oh_conf.instance(), elsewhere)
+
     def test_a_block_binds_them_for_a_house_that_is_a_mapping_and_gives_them_back(self):
         with oh_conf.instance_at(self.instance):
             self.assertEqual(oh_render.validate({**mapping(), "theme": "mine.json"}), [])
