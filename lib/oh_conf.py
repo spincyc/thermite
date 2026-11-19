@@ -15,7 +15,7 @@ import re
 import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
 import yaml
 
@@ -320,13 +320,14 @@ class House:
     one. House.unchecked(data) checks nothing, and says so where it is used.
     """
 
-    def __init__(self, data: dict) -> None:
+    def __init__(self, data: object) -> None:
         # Imported here: oh_render imports this module.
         import oh_render
         problems = oh_render.validate(data)
         if problems:
             raise inventory.ConfigError(None, "not a valid house: " + "; ".join(problems), problems=problems)
-        self._hold(data)
+        # Valid, so the shape the house file's types (oh_inventory) give it.
+        self._hold(cast(inventory.HouseFile, data))
 
     @classmethod
     def unchecked(cls, data: dict) -> House:
@@ -335,15 +336,15 @@ class House:
         the checks before it passed, and for the gateway, whose contract
         carries the mapping of a house that was loaded when it was compiled."""
         house = cls.__new__(cls)
-        house._hold(data)
+        house._hold(cast(inventory.HouseFile, data))
         return house
 
-    def _hold(self, data: dict) -> None:
+    def _hold(self, data: inventory.HouseFile) -> None:
         self.data = data
-        self.rooms: dict[str, dict] = data.get("rooms") or {}
-        self.devices: list[dict] = list(data.get("devices") or [])
+        self.rooms: dict[str, inventory.Room] = data.get("rooms") or {}
+        self.devices: list[inventory.Device] = list(data.get("devices") or [])
         #: Device id -> device.
-        self.by_id: dict[str, dict] = {device["id"]: device for device in self.devices}
+        self.by_id: dict[str, inventory.Device] = {device["id"]: device for device in self.devices}
         #: Where the files this house names are, as of when it was made
         #: (instance()); None for one made of a mapping outside any block.
         self.directory: Path | None = _instance
@@ -369,7 +370,7 @@ class House:
                                         problems=error.problems) from None
 
     @staticmethod
-    def _base_label(device: dict) -> str:
+    def _base_label(device: inventory.Device) -> str:
         name, make, model = device.get("name"), device.get("make") or "", device.get("model") or ""
         what = model if not make or model.lower().startswith(make.lower()) else f"{make} {model}"
         if not name:
@@ -378,7 +379,7 @@ class House:
             return name
         return f"{name} ({what})"
 
-    def label(self, device: dict) -> str:
+    def label(self, device: inventory.Device) -> str:
         """The device's display name; ` (<id>)` is added when two would share one."""
         text = self._base_label(device)
         return f"{text} ({device['id']})" if self._counts.get(text, 0) > 1 else text
@@ -619,7 +620,7 @@ class Conf:
 
     def render(self) -> dict[str, str | bytes]:
         """Path under conf/ -> content (bytes for a file copied byte for byte), for every file."""
-        out = {path: file.text() for path, file in self.yaml.items()}
+        out: dict[str, str | bytes] = {path: file.text() for path, file in self.yaml.items()}
         if self.addons:
             out[ADDONS_CFG] = self.addons_cfg()
         out.update(self.files)

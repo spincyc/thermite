@@ -20,6 +20,10 @@ underscore are helpers shared by integrations, not integrations.
 
 from __future__ import annotations
 
+from typing import Any, Literal, overload
+
+from oh_shape import Key
+
 from . import _hooks
 from . import (androidtv_googletv, avpro_telnet, bk808_cec, bk808_http, cast, denonmarantz_http, drhdmi_http, globalcache_ir, heos, network_ping, pyatv_http, sonos,
                sony_adcp, sony_ip_control, sony_rest, ukm404_http, unifi_protect, vrroom_http, vrroom_telnet, wiim_http)
@@ -30,7 +34,7 @@ from . import (androidtv_googletv, avpro_telnet, bk808_cec, bk808_http, cast, de
 REGISTRY = (network_ping, sony_rest, sony_ip_control, cast, androidtv_googletv, pyatv_http, sonos, denonmarantz_http, heos,
             wiim_http, sony_adcp, bk808_http, ukm404_http, vrroom_http, vrroom_telnet, avpro_telnet, unifi_protect, drhdmi_http, globalcache_ir, bk808_cec)
 for _module in REGISTRY:
-    _module.__getattr__ = _hooks.absent
+    _module.__getattr__ = _hooks.absent  # type: ignore[method-assign]  # a module's own __getattr__ (PEP 562)
 
 PHASES = ("observe", "control")
 
@@ -106,17 +110,21 @@ def powered(device: dict, items: dict[str, dict]) -> dict[str, str]:
     return needs
 
 
-def declared(hook: str, modules=REGISTRY) -> tuple | dict:
+@overload
+def declared(hook: Literal["DEVICE_KEYS", "HOUSE_KEYS"], modules=REGISTRY) -> dict[str, Key]: ...
+@overload
+def declared(hook: str, modules=REGISTRY) -> tuple | dict[str, Key]: ...
+def declared(hook: str, modules=REGISTRY) -> tuple | dict[str, Key]:
     """Every value of the tuple `hook` across `modules`, in their order,
     without repeats; for a declaration of keys (DEVICE_KEYS, HOUSE_KEYS),
     {key: its oh_shape.Key}, and a key two of them declare is an error.
     The modules may be more than the integrations: a feature declares its
     house keys and Items under the same names, and answers nothing for a
     name it lacks."""
-    default = _hooks.HOOKS[hook].default
+    default: Any = _hooks.HOOKS[hook].default  # of the hook's own kind: a tuple, or keys
     if _hooks.HOOKS[hook].kind != _hooks.KEYS:
         return tuple(dict.fromkeys(value for module in modules for value in getattr(module, hook, default)))
-    keys: dict = {}
+    keys: dict[str, Key] = {}
     for module in modules:
         for name, key in dict(getattr(module, hook, default)).items():
             if keys.setdefault(name, key) is not key:

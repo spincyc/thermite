@@ -12,7 +12,7 @@ import difflib
 import ipaddress
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict
 
 import yaml
 
@@ -36,6 +36,9 @@ ROOM = {
     "tag": Key(TEXT, "its openHAB Location tag (Room, Kitchen, Building and so on), which places it in the semantic model"),
     "in": Key(TEXT, "the room id of the room or building it is part of"),
 }
+#: What a device's controls list under a phase.
+INTEGRATION_NAMES = Key(LIST, "integration names", each=Key(TEXT, "the name of an integration"),
+                        must="a list of integration names", empty=True)
 #: The keys any device may have: its identity, address and controls, how
 #: closely monitoring watches it (monitor), and owner documentation no
 #: program reads: notes, and the Control4 driver name `thermite control4
@@ -55,9 +58,7 @@ DEVICE = {
     "via": Key(TEXT, "the device id of the gateway that reaches it (IR, serial, a relay), for a device with no "
                      "address of its own"),
     "controls": Key(MAPPING, "the integrations that read it (observe) and command it (control)", by="phase",
-                    must="a mapping of phase to integration names",
-                    each=Key(LIST, "integration names", each=Key(TEXT, "the name of an integration"),
-                             must="a list of integration names", empty=True)),
+                    must="a mapping of phase to integration names", each=INTEGRATION_NAMES),
     "notes": Key(TEXT, "whatever its owner wants to remember; no program reads it"),
     "control4": Key(TEXT, "the Control4 driver name that thermite control4 summary suggested; no program reads it"),
     # required lets a device's failed control checks count against control
@@ -67,6 +68,8 @@ DEVICE = {
                          "health and its alerts, and required is the same as leaving it out",
                    choices=("required", "optional")),
 }
+#: A device, with the core's keys; shape() gives it every integration's too.
+A_DEVICE = Key(MAPPING, "a device", keys=DEVICE)
 #: The top-level keys this module and the house-wide remote read.
 #: Integrations, features and Control4 (oh_control4) declare theirs
 #: (HOUSE_KEYS: routing is the routing feature's); the module that reads
@@ -75,8 +78,7 @@ TOP = {
     "version": Key(NUMBER, "the format of the file: 1", required=True, choices=(1,)),
     "rooms": Key(MAPPING, "the rooms of the house", by="room id", each=Key(MAPPING, "a room", keys=ROOM),
                  must="a mapping of room ids", empty=True),
-    "devices": Key(LIST, "the devices of the house", each=Key(MAPPING, "a device", keys=DEVICE),
-                   must="a list of devices"),
+    "devices": Key(LIST, "the devices of the house", each=A_DEVICE, must="a list of devices"),
     "later": Key(LIST, "devices not set up yet: their ids are kept for them and discover knows them, and nothing "
                        "is generated for them", each=Key(MAPPING, "a device to be: an id, and whatever is known of it"),
                  must="a list of devices", empty=True),
@@ -92,13 +94,114 @@ TOP = {
 }
 
 
+#: The same shape as the type checker reads it: the house file, a room and
+#: a device as mappings with named keys, so that a reader in a checked
+#: module (pyproject.toml, [tool.mypy]) that misspells a key, or takes a
+#: number for text, is told before a test runs. A type cannot be derived
+#: from declarations that are gathered as the program runs, so this is a
+#: second writing of them, and tests/test_house_types.py holds it to the
+#: first: every key the declarations name, this module's and each
+#: integration's, with its kind, and no other. A key that may stand empty
+#: (Key.empty) may be None here. What House (oh_conf) hands out is these.
+Room = TypedDict("Room", {"label": str, "tag": NotRequired[str], "in": NotRequired[str]})  # `in` is a Python word
+
+
+class MatrixSettings(TypedDict, total=False):
+    edid: dict[str, str]
+    scaler: Literal["bypass", "8k-to-4k", "to-1080p", "auto", "audio-only"]
+    hdr: Literal["bypass", "hdr-to-sdr", "auto"]
+    hdcp: Literal["1.4", "2.2", "follow-sink", "follow-source"]
+
+
+class Camera(TypedDict):
+    device_id: str
+    package_camera: NotRequired[bool]
+
+
+class Infrared(TypedDict):
+    model: str
+    ip: str
+    connector: int
+    profile: str
+
+
+class Cec(TypedDict):
+    matrix: str
+    input: int
+
+
+class Device(TypedDict):
+    id: str
+    room: str
+    kind: str
+    name: NotRequired[str]
+    make: NotRequired[str]
+    model: NotRequired[str]
+    ip: NotRequired[str]
+    mac: NotRequired[str]
+    via: NotRequired[str]
+    controls: NotRequired[dict[str, list[str] | None]]
+    notes: NotRequired[str]
+    control4: NotRequired[str]
+    monitor: NotRequired[Literal["required", "optional"]]
+    # What the integrations, the features and Control4 declare (DEVICE_KEYS).
+    sony_speaker_audio: NotRequired[bool]
+    sonos_udn: NotRequired[str]
+    zones: NotRequired[int]
+    heos_pid: NotRequired[int | str]
+    heos_bridge: NotRequired[bool]
+    settings: NotRequired[MatrixSettings]
+    protect: NotRequired[Camera]
+    ir: NotRequired[Infrared]
+    cec: NotRequired[Cec]
+    reboot: NotRequired[Literal["nightly"]]
+    c4_item: NotRequired[int | list[int]]
+
+
+class Observer(TypedDict):
+    device: str
+    after: str
+    before: str
+
+
+class Diagnostics(TypedDict, total=False):
+    observers: list[Observer]
+
+
+class Protect(TypedDict):
+    host: str
+    port: NotRequired[int]
+
+
+class Reboots(TypedDict, total=False):
+    time: str
+
+
+class HouseFile(TypedDict):
+    version: Literal[1]
+    rooms: NotRequired[dict[str, Room] | None]
+    devices: NotRequired[list[Device]]
+    later: NotRequired[list[dict[str, Any]] | None]
+    services: NotRequired[list[str] | None]
+    theme: NotRequired[str]
+    diagnostics: NotRequired[Diagnostics]
+    # What the integrations, the features and Control4 declare (HOUSE_KEYS).
+    # routing's own keys are the routing feature's to type.
+    protect: NotRequired[Protect]
+    routing: NotRequired[dict[str, Any] | None]
+    reboots: NotRequired[Reboots]
+    control4_rooms: NotRequired[dict[str, str]]
+    control4_stale: NotRequired[list[int]]
+    control4_director: NotRequired[str]
+
+
 class ConfigError(ValueError):
     """A configuration file thermite cannot use: missing, unreadable, not
     YAML, or with problems. str() is `FILE[:LINE:COLUMN]: message`; the
     dispatcher (oh_cli) prints each of `lines()` and exits 2."""
 
     def __init__(self, path: Path | str | None, message: str, line: int | None = None,
-                 column: int | None = None, problems: list[str] = ()) -> None:
+                 column: int | None = None, problems: list[str] | tuple[str, ...] = ()) -> None:
         self.path, self.message, self.line, self.column = path, message, line, column
         self.problems = list(problems)
         where = ":".join(str(part) for part in (path, line, column) if part is not None)
@@ -167,7 +270,10 @@ class StrictLoader(yaml.SafeLoader):
         #: (line, column, kind, sentence) of each refusal.
         self.refused: list[tuple[int, int, str, str]] = []
 
-    def refuse(self, mark: yaml.Mark, kind: str, sentence: str) -> None:
+    def refuse(self, mark: object, kind: str, sentence: str) -> None:
+        # PyYAML's annotations allow an event or a node no mark; this
+        # reader, the one written in Python, gives each its own.
+        assert isinstance(mark, yaml.Mark)
         self.refused.append((mark.line + 1, mark.column + 1, kind, sentence))
 
     def compose_node(self, parent, index):
@@ -181,7 +287,7 @@ class StrictLoader(yaml.SafeLoader):
                                                  "and put text in quotes")
         elif isinstance(event, yaml.ScalarEvent):
             # Only a plain scalar is resolved: a quoted one is text.
-            found = unclear(event.value, node.tag) if event.implicit[0] else None
+            found = unclear(event.value, node.tag) if event.implicit[0] and node is not None else None
             if found:
                 self.refuse(event.start_mark, *found)
             elif any("\ud800" <= character <= "\udfff" for character in event.value):
@@ -254,7 +360,7 @@ def hint(word: object, choices) -> str:
     return f"; did you mean {close[0]}?" if close else ""
 
 
-def room_label(data: dict, room: str) -> str:
+def room_label(data: HouseFile | dict, room: str) -> str:
     """A room's display label (its id if it has none)."""
     entry = (data.get("rooms") or {}).get(room)
     return str(entry.get("label") or room) if isinstance(entry, dict) else room
@@ -328,7 +434,7 @@ def keys() -> tuple[frozenset, frozenset]:
 def shape() -> Key:
     """The whole house file, as one declaration."""
     top, device, _ = declarations()
-    devices = dataclasses.replace(top["devices"], each=dataclasses.replace(top["devices"].each, keys=device))
+    devices = dataclasses.replace(top["devices"], each=dataclasses.replace(A_DEVICE, keys=device))
     return Key(MAPPING, "the house file", keys={**top, "devices": devices})
 
 
@@ -357,7 +463,8 @@ def validate(data: object) -> list[str]:
     if problems:
         return problems
     problems = validate_rooms(data.get("rooms") or {})
-    rooms = data.get("rooms") if isinstance(data.get("rooms"), dict) else {}
+    rooms = data.get("rooms")
+    rooms = rooms if isinstance(rooms, dict) else {}
     allowed = oh_integrations.allowed()
     needs_mac = {module.NAME for module in oh_integrations.REGISTRY if module.NEEDS_MAC}
     seen: dict[str, dict[str, str]] = {"id": {}, "ip": {}, "mac": {}}
@@ -422,8 +529,8 @@ def validate(data: object) -> list[str]:
             if phase not in allowed:
                 problems.append(f"{where}: unknown controls phase '{phase}'{hint(phase, allowed)}")
                 continue
-            if names is not None and not of_kind(DEVICE["controls"].each, names):
-                problems.append(f"{where}: controls.{phase} must be {DEVICE['controls'].each.must}")
+            if names is not None and not of_kind(INTEGRATION_NAMES, names):
+                problems.append(f"{where}: controls.{phase} must be {INTEGRATION_NAMES.must}")
                 continue
             for name in names or []:
                 if not isinstance(name, str) or name not in allowed[phase]:
@@ -507,15 +614,17 @@ def cross_check(house: House, things: dict, items: dict) -> list[str]:
                 "instance/devices.yaml")
             continue
         with_things.add(last)
-        home = device.get("ip") or devices.get(device.get("via"), {}).get("ip")
-        allowed = {home}
+        via = device.get("via")
+        home = device.get("ip") or (devices[via].get("ip") if via in devices else None)
+        own = {home} if home else set()
+        allowed = set(own)
         owners = 0
         for module in defining("transport_addresses"):
             try:
-                declared = module.transport_addresses(device)
-                if uid not in declared:
+                stated = module.transport_addresses(device)
+                if uid not in stated:
                     continue
-                values = declared[uid]
+                values = stated[uid]
                 if (not isinstance(values, (list, tuple, set, frozenset)) or not values
                         or any(not isinstance(value, str) or str(ipaddress.IPv4Address(value)) != value for value in values)):
                     raise ValueError("invalid transport addresses")
@@ -525,7 +634,7 @@ def cross_check(house: House, things: dict, items: dict) -> list[str]:
                 problems.append(f"{thing['file']}: Thing {uid}: invalid {module.NAME} transport-address declaration")
         if owners > 1:
             problems.append(f"{thing['file']}: Thing {uid}: conflicting transport-address declarations")
-            allowed = {home}
+            allowed = set(own)
         for address in sorted(addresses(thing["body"]) - allowed):
             problems.append(
                 f"{thing['file']}: Thing {uid} uses {address}, but "
