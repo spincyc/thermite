@@ -9,10 +9,23 @@ ones back.
 Staging (`oh_access.staging.stage`) copies the program and every remote asset
 into a new persistent private release, compiles authority from the validated
 house and native providers, installs the hash-pinned site environment, and
-writes two systemd units. All access units use `User=thermite`,
-`Group=thermite` and `UMask=0077`; arbitrary service account overrides are
-refused. Staging never installs or starts those units. No service path points
-back into the source checkout.
+writes the services' units. The gateway's is a systemd unit with
+`User=thermite`, `Group=thermite` and `UMask=0077`; arbitrary service account
+overrides are refused. The worker's and the callback relay's are quadlets of
+the pinned Python image: a read-only root, no capability, the service
+account's UID and GID, and of the release only the program, its environment
+and what each reads, mounted read-only at the release's own paths. A
+container has no account named `thermite`, so its quadlet states the numbers
+in `THERMITE_SERVICE_IDENTITY`, which a service honours only when it runs as
+exactly them; what keeps another account out is the files' owner and modes.
+Staging never installs or starts those units. No service path points back
+into the source checkout.
+
+A release holds two environments. `env` is a venv of the host's Python, for
+the gateway and the commands below. `container-env` is built by the image's
+own Python (`oh_access.environment`), with no network, from the site's
+wheelhouse for these pins and this image; the install fills and checks that
+wheelhouse before its transaction begins.
 
 Releases and state live in a service-accessible root outside native runtime
 state and private operator home directories: `access/` in the installation
@@ -59,7 +72,9 @@ removes the partial release and retains only the diagnostic plan, without
 changing existing authority. Review that log locally and run the install
 again; diagnostic contents are never printed or copied into receipts.
 
-No ownership changes or privileged commands run during staging. Once handed
+No ownership changes run during staging, and one privileged command: root's
+podman, which holds the image, runs the build of `container-env`, as the
+operator inside and without a network. Once handed
 over, release and state directories belong to
 `thermite:thermite` with mode 0700, ordinary files are 0600, and release program
 and environment executables are 0700. The two staging parents retain their
@@ -330,9 +345,13 @@ live descriptions, and stops rather than enable an unverified relay.
 
 It then hands the release to `thermite`, verifies custody, stops the
 installed access services, migrates, installs the plan's protected unit
-copies, reloads systemd and enables and starts the new release. It checks
-each active MainPID's working directory against the staged release, with a
-bounded retry, then HTTPS and the boundary again; the owner then checks
+copies, reloads systemd, enables and starts the gateway and starts the
+generated services of the two quadlets. It checks each service's process
+(the gateway's MainPID, a container's first process) against the staged
+release by its working directory, with a bounded retry, then HTTPS and the
+boundary again, and after a few seconds that every process is still the one
+it saw: a container that does not start, or starts and fails, rolls the
+install back. The owner then checks
 login, controls and callbacks. An installed callback relay is never
 dropped: without its exact map the run refuses before it begins.
 

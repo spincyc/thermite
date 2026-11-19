@@ -17,8 +17,10 @@ SLICE = "thermite.slice"
 #: Waits for a network share's server name, one instance per server (oh_shares).
 SHARE_GATE = "thermite-share-gate@.service"
 
-#: The gateway, its policy worker and its callback relay: host services, not
-#: containers (oh_access.staging writes them).
+#: The gateway, its policy worker and its callback relay. oh_access.staging
+#: writes their units for each release: the gateway's a host service on the
+#: host's Python, the other two containers of the pinned Python image
+#: (ACCESS_CONTAINED).
 ACCESS = "thermite-access.service"
 ACCESS_WORKER = "thermite-access-worker.service"
 ACCESS_CALLBACKS = "thermite-access-callbacks.service"
@@ -30,6 +32,11 @@ CONTAINED = (RUNTIME, ATV, *METRICS, MUSIC)
 #: Every long-running Thermite service a host may have.
 DAEMONS = (*CONTAINED, *ACCESS_UNITS)
 CONTAINERS = {unit: unit.removesuffix(".service") for unit in CONTAINED}
+#: The access services that run in containers, and their containers. Their
+#: quadlets name a release, so a release's stage writes them and the gateway
+#: step installs them: `thermite generate` and deploy/ know nothing of them.
+ACCESS_CONTAINED = (ACCESS_WORKER, ACCESS_CALLBACKS)
+ACCESS_CONTAINERS = {unit: unit.removesuffix(".service") for unit in ACCESS_CONTAINED}
 
 #: Bounds.user: the state's uid and gid (host.yaml's uid: and gid:), which own
 #: the runtime state and so read every secret store a unit can reach.
@@ -43,9 +50,14 @@ OWN_USER = "own"
 #: reaches. Nothing narrower exists yet; a unit given one says so here.
 HOST_NETWORK = "host"
 #: Bounds.secrets of the access services, below the installation root: the
-#: gateway's state (accounts, sessions, keys) and its release (the runtime
-#: token and the TLS key), which each of them reads as the state's user.
-ACCESS_SECRETS = ("access/state", "access/release")
+#: gateway's state (accounts, sessions, keys) and its release's secrets (the
+#: runtime token and the TLS key). A host service reads both as the state's
+#: user; a container reads what its quadlet mounts.
+ACCESS_STATE = "access/state"
+ACCESS_RELEASE = "access/release/secrets"
+ACCESS_SECRETS = (ACCESS_STATE, ACCESS_RELEASE)
+#: Of a release's secrets, the runtime token alone.
+ACCESS_RUNTIME_TOKEN = ACCESS_RELEASE + "/runtime-bearer"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -68,19 +80,24 @@ class Bounds:
     network: str
     #: The secret stores it can read: those of the runtime state by their
     #: path below it, as oh_service.PRIVATE names them (a path below one
-    #: is that file alone), and ACCESS_SECRETS. Its unit reaches no other.
+    #: is that file alone), and those of ACCESS_SECRETS by theirs. Its unit
+    #: reaches no other.
     secrets: tuple[str, ...]
 
 
 #: The services outside monitoring; oh_metrics.services() carries the others'.
-#: The access services are host services that run as the state's user: their
-#: units put an empty directory in place of the runtime state, which none of
-#: them needs, with the metrics textfile directory alone inside.
+#: The access services run as the state's user. The gateway is a host
+#: service: its unit puts an empty directory in place of the runtime state,
+#: which none of them needs, with the metrics textfile directory alone
+#: inside. The worker and the relay are containers that see only what their
+#: quadlets mount: of a release, the program, its environment and the one
+#: descriptor each reads; the worker also the state and the runtime token,
+#: the relay no secret at all.
 BOUNDS = {
     RUNTIME: Bounds(STATE_USER, "2560M", "3G", HOST_NETWORK, ("secrets", "userdata")),
     ATV: Bounds(STATE_USER, "256M", "512M", HOST_NETWORK, ("atv/secrets",)),
     MUSIC: Bounds(STATE_USER, "1536M", "2560M", HOST_NETWORK, ("music",)),
     ACCESS: Bounds(STATE_USER, "256M", "512M", HOST_NETWORK, ACCESS_SECRETS),
-    ACCESS_WORKER: Bounds(STATE_USER, "256M", "512M", HOST_NETWORK, ACCESS_SECRETS),
-    ACCESS_CALLBACKS: Bounds(STATE_USER, "128M", "256M", HOST_NETWORK, ACCESS_SECRETS),
+    ACCESS_WORKER: Bounds(STATE_USER, "256M", "512M", HOST_NETWORK, (ACCESS_STATE, ACCESS_RUNTIME_TOKEN)),
+    ACCESS_CALLBACKS: Bounds(STATE_USER, "128M", "256M", HOST_NETWORK, ()),
 }

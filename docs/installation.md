@@ -198,6 +198,68 @@ A later run recognizes its own units from that record, so time zone edits and
 template changes do not block an upgrade. An unknown modification or an
 unowned drop-in stops for review; see [service ownership](service-account.md).
 
+### The gateway's services and Python
+
+The gateway runs from a release under `access/releases/<id>`, staged anew by
+every install. Two of its three services are containers of the pinned Python
+image (the `atv_helper` image of `versions.json`, which the Apple TV helper
+and the Item exporter run too): the policy worker,
+`thermite-access-worker.service`, and the callback relay,
+`thermite-access-callbacks.service`. Their quadlets are in
+`/etc/containers/systemd`, and each runs with a read-only root file system,
+no capability, the host's network and the service account's UID and GID. A
+container sees of the host only what its quadlet mounts: the release's
+program, its Python environment and the one descriptor the service reads;
+the worker also the identity state and the runtime token, the relay neither.
+
+That environment, `container-env` in the release, is built at each stage by
+the image's own Python, without a network, from wheels the install put in the
+site's `build/sandbox/downloads/wheels/` before it stopped anything. Nothing
+of the host's Python is in it, so a distribution upgrade that moves the host
+to another Python leaves the worker and the relay running: schedules,
+locks and Sonos callbacks keep working.
+
+The install fetches those wheels with the same image and checks every one
+against the hashes in `lib/requirements-site.txt`. A host without a network
+at that point is told the directory and the command that fills it on another
+x86-64 machine with podman; copy the directory back and run the install
+again. The image itself is pulled by digest, by root's podman, like every
+other pinned image.
+
+The gateway itself, `thermite-access.service`, is still a service of the
+host on an environment the host's Python built (`env` in the release), and
+the commands run from a release (`access bootstrap`, `setup`, `reset-admin`,
+`audit` and the others) use that environment too. This is a complete,
+supported installation. What it does not survive is the host's Python
+changing under an installed release: after a distribution upgrade to another
+Python minor version `thermite-access.service` no longer starts, so the
+controls and accounts are unreachable until the gateway is staged again,
+while openHAB, the worker and the relay keep running. `thermite health
+--production` then fails with `gateway: thermite-access.service is failed`.
+Stage a new release with the host's current Python:
+
+```sh
+thermite install --config /srv/site --restart-runtime
+```
+
+To see the two containers after an upgrade (read-only commands):
+
+```sh
+systemctl is-active thermite-access-worker.service thermite-access-callbacks.service
+systemctl show -P SourcePath thermite-access-worker.service
+sudo podman ps --filter name=thermite-access --format '{{.Names}} {{.Status}} {{.Image}}'
+RELEASE=$(systemctl show -P WorkingDirectory thermite-access.service)
+for name in thermite-access-worker thermite-access-callbacks; do
+  pid=$(sudo podman container inspect --format '{{.State.Pid}}' "$name") &&
+    sudo readlink "/proc/$pid/cwd"
+done; echo "$RELEASE"
+journalctl -u thermite-access-worker.service -u thermite-access-callbacks.service -b --no-pager | tail -n 20
+```
+
+Each `readlink` line is the release the gateway runs, `$RELEASE`. A house
+without Sonos callbacks has no relay: its unit is `inactive` and podman has
+no such container.
+
 ### Host layout
 
 Everything the installation keeps under `/srv` lives in one directory, the
@@ -823,7 +885,7 @@ Security events: every audit row is also an `audit` line.
 ```sh
 journalctl -u thermite-access.service -g 'audit action='
 journalctl -u thermite-access.service -g 'audit action=login outcome=denied'
-journalctl -u thermite-access.service -u thermite-access-worker.service -p warning
+journalctl -u thermite-access.service -u thermite-access-worker.service -g '^(WARNING|ERROR|CRITICAL) '
 journalctl -u thermite-openhab.service -g '^\[(WARN|ERROR)'
 RELEASE=$(systemctl show -P WorkingDirectory thermite-access.service)
 sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" \
@@ -836,8 +898,9 @@ which outlives the journal's retention: the latest 5000 events and 1000
 denied sign-ins. Requests that change something or fail have a `req` line
 (method, path, status, `ms`, `peer`); successful reads and polls have none.
 Event streams log `stream open` and `stream close` with their duration and
-the peer's and gateway's stream counts. openHAB writes everything to the
-journal at one priority, so its warnings are found by their `[WARN ]` text.
+the peer's and gateway's stream counts. A container's lines all reach the
+journal at one priority, so warnings are found by their text: the level a
+line of the gateway's services starts with, and openHAB's `[WARN ]`.
 `thermite history --details` lists what each deploy changed and reloaded
 and the gateway release it activated.
 
@@ -880,8 +943,9 @@ the upgrade below shows the whole sequence.
 While Thermite keeps running, the upgrade prepares what belongs to the host
 rather than to Thermite: the configuration checks and boot test, required
 packages, AppArmor's own service, the `thermite` account and, on a new host,
-the installation root, which the install engine works inside. It pulls every
-pinned container image before anything stops. Then it asks the install engine
+the installation root, which the install engine works inside. It fetches the
+pinned add-on files and the pinned wheels of the gateway's contained services,
+and pulls every pinned container image, before anything stops. Then it asks the install engine
 for the room it needs to set the installed version aside, and shows it when
 there is too little, or always with `-v`:
 
@@ -941,7 +1005,9 @@ Updating Thermite does not silently replace those pins. Keep the private
 repository clean and keep `var/application-releases/` and
 `var/gateway/authority/`. Application environments install their
 dependencies from the hashed `lib/requirements-app.txt` and are rebuilt
-automatically after a Python minor-version upgrade.
+automatically after a Python minor-version upgrade. The gateway's own
+environment is not; see
+[the gateway's services and Python](#the-gateway-s-services-and-python).
 
 Each commit keeps two versions and removes older ones: the current and the
 previous gateway release in `access/releases/`, the container images the two

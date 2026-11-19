@@ -1240,7 +1240,9 @@ var/&lt;this host&#x27;s name&gt;/api-token, and the metrics services beside it:
 Prometheus ready with every scrape target up, and Grafana answering; on a
 host with music:, Music Assistant running, its API on loopback alone and its
 streams answering. Before thermite upgrade has installed them it says they
-are not installed yet.
+are not installed yet. Of an installed gateway it checks that systemd has
+each of its services active: the gateway, its policy worker and, where the
+house has one, its callback relay.
 
 --production --installation checks installation readiness with the same
 Thing policy as the installer&#x27;s native readiness wait. Offline devices
@@ -1249,7 +1251,7 @@ errors, required add-ons and monitoring failures still fail. A runtime that
 has just started gets --settle seconds (default 120 with --installation) to
 finish: Things still initializing (missing or reloading handlers,
 UNINITIALIZED, INITIALIZING, UNKNOWN), transient REST outages, and add-ons,
-monitoring or music not ready yet are polled that long. Things still
+monitoring, music or a gateway service not ready yet are polled that long. Things still
 initializing then are reported as warnings; anything else still failing then
 fails. A Thing configuration error fails at once. --settle 0 takes one
 snapshot, as normal health checks do; they remain strict.

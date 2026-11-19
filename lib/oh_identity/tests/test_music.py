@@ -936,12 +936,17 @@ class Gateway(Stand_in, Requests, TestCase):
         self.assertFalse(thread.is_alive())
         self.assertEqual(requests, ["/info"])
         # Both joins fit inside the unit's stop timeout, so systemd never kills the worker.
-        unit = units("/srv/thermite/access/releases/example",
-                     state="/srv/thermite/access/state")["thermite-access-worker.service"]
-        timeout = int(next(line for line in unit.splitlines() if line.startswith("TimeoutStopSec=")).split("=")[1])
+        # The worker is a container: podman ends its stop, and systemd only after podman.
+        unit = units("/srv/thermite/access/releases/example", state="/srv/thermite/access/state",
+                     image="registry.example/python@sha256:" + "5" * 64,
+                     identity=(9001, 9001))["thermite-access-worker.service"]
+        [timeout] = [int(line.rpartition("=")[2]) for line in unit.splitlines()
+                     if line.startswith("PodmanArgs=--stop-timeout=")]
         self.assertLess(SLOW, worker.MUSIC_STOP)
         self.assertLess(worker.MUSIC_STOP, worker.STOP_SECONDS)
         self.assertLessEqual(worker.STOP_SECONDS + 3, timeout)
+        self.assertLess(timeout, int(next(line for line in unit.splitlines()
+                                          if line.startswith("TimeoutStopSec=")).split("=")[1]))
 
     def test_a_stop_during_a_step_stops_music_at_once_and_the_observer_once_the_step_ends(self):
         from oh_access import worker

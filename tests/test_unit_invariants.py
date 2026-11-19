@@ -14,8 +14,11 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import os
 from pathlib import Path
 import re
+import shlex
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -54,6 +57,12 @@ def directives(text: str) -> dict[tuple[str, str], list[str]]:
     return found
 
 
+def account(host: dict) -> dict:
+    """The pinned Python image and the state's numbers, as a stage hands
+    them to the access services' units."""
+    return {"image": deploy.image(VERSIONS, "atv_helper"), "identity": (host["uid"], host["gid"])}
+
+
 def rendered() -> dict[str, str]:
     """{unit name: text} of every unit Thermite renders and installs, on a
     host with all of them."""
@@ -66,7 +75,7 @@ def rendered() -> dict[str, str]:
         units[unit.removesuffix(".container") + ".service" if unit.endswith(".container") else unit] = text
     units.update(staging.units(Path("/srv/thermite-fixture/access/releases/fixture"),
                                state=Path("/srv/thermite-fixture/access/state"), callbacks=True,
-                               textfile=Path("/srv/thermite-fixture/runtime/textfile")))
+                               textfile=Path("/srv/thermite-fixture/runtime/textfile"), **account(MUSIC_HOST)))
     units[ingress.UNIT] = ingress.unit_text()
     return units
 
@@ -147,9 +156,47 @@ def within(path: str, other: str) -> bool:
     return path == other or path.startswith(other.rstrip("/") + "/")
 
 
-def bound_problems(text: str, record: oh_units.Bounds, host: dict) -> list[str]:
+def access_problems(found: dict, record: oh_units.Bounds, host: dict, release: Path, state: Path) -> list[str]:
+    """What a contained access service's quadlet shows its container that
+    its record does not: its mounts are all it sees of the host, so each is
+    held to the release, read-only, the identity state and the textfile
+    directory, and to the secret stores of those that the record names."""
+    problems = []
+    if "--read-only" not in found.get(("Container", "PodmanArgs"), []):
+        problems.append("its root file system is writable")
+    stated = [value for value in found.get(("Container", "Environment"), [])
+              if value.startswith("THERMITE_SERVICE_IDENTITY=")]
+    if stated != [f"THERMITE_SERVICE_IDENTITY={host['uid']}:{host['gid']}"]:
+        problems.append(f"states the account {stated}")
+    secrets = f"{release}/secrets"
+    given = [str(state) if name == oh_units.ACCESS_STATE else secrets + name.removeprefix(oh_units.ACCESS_RELEASE)
+             for name in record.secrets if name.startswith("access/")]
+    sources = []
+    for value in found.get(("Container", "Volume"), []):
+        source, target, *options = value.split(":")
+        sources.append(source)
+        if target != source:
+            problems.append(f"mounts {source} at another path")
+        if within(source, str(release)):
+            if "ro" not in ",".join(options).split(","):
+                problems.append(f"mounts {source} of its release writable")
+        elif not within(source, str(state)) and source != str(deploy.state(host).textfile):
+            problems.append(f"mounts {source}, which is neither its release, its state nor the textfile directory")
+        for store in (str(state), secrets):
+            if within(source, store) and not any(within(source, path) for path in given):
+                problems.append(f"mounts {source}, which its record does not declare")
+            elif within(store, source) and not any(within(store, path) for path in given):
+                problems.append(f"reaches {store} through {source}, which its record does not declare")
+    for path in given:
+        if not any(within(path, source) or within(source, path) for source in sources):
+            problems.append(f"declares {path}, which it does not reach")
+    return problems
+
+
+def bound_problems(text: str, record: oh_units.Bounds, host: dict, access: dict | None = None) -> list[str]:
     """What a rendered service unit says that its record does not, and what
-    its record says that is no bound at all."""
+    its record says that is no bound at all. access: for an access service,
+    its release and its identity state."""
     if not isinstance(record, oh_units.Bounds):
         return ["no record"]
     found = directives(text)
@@ -176,6 +223,8 @@ def bound_problems(text: str, record: oh_units.Bounds, host: dict) -> list[str]:
             problems.append(f"runs as {said}")
         reached = [value.split(":")[0] for value in found.get(("Container", "Volume"), [])]
         hidden = []
+        if access is not None:
+            problems += access_problems(found, record, host, **access)
     else:
         said = {key: found.get(("Service", key)) for key in ("User", "Group")}
         if record.user != oh_units.STATE_USER or said != {"User": [oh_service.ACCOUNT], "Group": [oh_service.GROUP]}:
@@ -188,7 +237,7 @@ def bound_problems(text: str, record: oh_units.Bounds, host: dict) -> list[str]:
         if not set(oh_units.ACCESS_SECRETS) <= set(record.secrets):
             problems.append("a host service reads the access secrets its record does not declare")
     root = str(deploy.state(host).root)
-    given = [f"{root}/{name}" for name in record.secrets if name not in oh_units.ACCESS_SECRETS]
+    given = [f"{root}/{name}" for name in record.secrets if not name.startswith("access/")]
     def sources(path):
         """What of `reached` leads to `path`: not / where the unit hides it,
         and for a user of the unit's own nothing from above the runtime
@@ -219,7 +268,7 @@ def fixture_houses() -> dict[str, tuple[dict, dict[str, str]]]:
     _, host = deploy.load(AREA)
     def access(host):
         return staging.units(ACCESS_UNITS["release"], state=ACCESS_UNITS["state"], callbacks=True,
-                             textfile=deploy.state(host).textfile, runtime=deploy.state(host).root)
+                             textfile=deploy.state(host).textfile, runtime=deploy.state(host).root, **account(host))
 
     houses = {name: (host, {**{Path(path).name.removesuffix(".container") + ".service": data.decode("utf-8")
                                for path, data in files.items()
@@ -245,7 +294,8 @@ class Bounds(unittest.TestCase):
                     self.assertNotIn(name, oh_units.DAEMONS)
                     continue
                 with self.subTest(house=house, unit=name):
-                    self.assertEqual(bound_problems(text, records.get(name), host), [])
+                    self.assertEqual(bound_problems(text, records.get(name), host,
+                                                    ACCESS_UNITS if name in oh_units.ACCESS_UNITS else None), [])
                     walked.add(name)
         self.assertEqual(walked, set(oh_units.DAEMONS))
         self.assertEqual(set(deploy.bounds(MUSIC_HOST)), set(oh_units.DAEMONS))
@@ -297,6 +347,108 @@ class Bounds(unittest.TestCase):
         loose = dataclasses.replace(records[grafana], memory_high="2G", memory_max="1G")
         self.assertIn("MemoryHigh 2G is not below MemoryMax 1G", strayed(grafana, "[Service]", "[Service]", loose))
         self.assertEqual(bound_problems(units[grafana], None, host), ["no record"])
+
+    def test_a_contained_access_service_sees_only_what_its_record_declares(self):
+        host, units = fixture_houses()["a host with every service"]
+        records = deploy.bounds(host)
+        release, state = ACCESS_UNITS["release"], ACCESS_UNITS["state"]
+        worker, relay = oh_units.ACCESS_WORKER, oh_units.ACCESS_CALLBACKS
+        self.assertEqual(oh_units.ACCESS_CONTAINED, (worker, relay))
+        self.assertEqual((records[worker].secrets, records[relay].secrets),
+                         (("access/state", "access/release/secrets/runtime-bearer"), ()))
+
+        def volumes(unit):
+            return directives(units[unit])[("Container", "Volume")]
+
+        def strayed(unit, old, new, record=None):
+            self.assertIn(old, units[unit])
+            return bound_problems(units[unit].replace(old, new), record or records[unit], host, ACCESS_UNITS)
+
+        textfile = str(deploy.state(host).textfile)
+        # All either sees of the host: nothing of the runtime state but the textfile directory.
+        self.assertEqual(volumes(worker), [*(f"{release / part}:{release / part}:ro,z" for part in (
+            "program", "container-env", "config.json", "contract.json", "secrets/runtime-bearer")),
+            f"{state}:{state}:z", f"{textfile}:{textfile}"])
+        self.assertEqual(volumes(relay), [*(f"{release / part}:{release / part}:ro,z" for part in (
+            "program", "container-env", "callbacks.json")), f"{textfile}:{textfile}"])
+        for unit in (worker, relay):
+            found = directives(units[unit])
+            with self.subTest(unit=unit):
+                self.assertEqual((found[("Container", "User")], found[("Container", "Group")]), (["9001"], ["9001"]))
+                self.assertEqual((found[("Container", "NoNewPrivileges")], found[("Container", "DropCapability")]),
+                                 (["true"], ["all"]))
+                self.assertIn(f"--workdir={release}", found[("Container", "PodmanArgs")])
+                # The identity the service's own guard reads is the one the container runs as.
+                self.assertEqual(strayed(unit, "Environment=THERMITE_SERVICE_IDENTITY=9001:9001\n",
+                                         "Environment=THERMITE_SERVICE_IDENTITY=9000:9001\n"),
+                                 ["states the account ['THERMITE_SERVICE_IDENTITY=9000:9001']"])
+                self.assertEqual(strayed(unit, "PodmanArgs=--read-only\n", ""), ["its root file system is writable"])
+                self.assertIn("runs as", strayed(unit, "User=9001\n", "User=0\n")[0])
+                program = f"Volume={release}/program:{release}/program:ro,z\n"
+                self.assertEqual(strayed(unit, program, program.replace(":ro,z", ":z")),
+                                 [f"mounts {release}/program of its release writable"])
+                self.assertEqual(strayed(unit, program, program.replace(f":{release}/program:", ":/program:")),
+                                 [f"mounts {release}/program at another path"])
+                self.assertEqual(strayed(unit, program, program + "Volume=/etc:/etc:ro\n"),
+                                 ["mounts /etc, which is neither its release, its state nor the textfile directory"])
+        # The relay: no state, no secret, and not the release that holds them.
+        end = "[Service]"
+        self.assertEqual(strayed(relay, end, f"Volume={state}:{state}:z\n{end}"),
+                         [f"mounts {state}, which its record does not declare"])
+        self.assertEqual(strayed(relay, end, f"Volume={release}/secrets/runtime-bearer:{release}/secrets/runtime-bearer:ro,z\n{end}"),
+                         [f"mounts {release}/secrets/runtime-bearer, which its record does not declare"])
+        whole = strayed(relay, f"Volume={release}/program:{release}/program:ro,z\n", f"Volume={release}:{release}:ro,z\n")
+        self.assertEqual(whole, [f"reaches {release}/secrets through {release}, which its record does not declare"])
+        # The worker: the runtime token, never the TLS key or the directory that holds both.
+        token = f"Volume={release}/secrets/runtime-bearer:{release}/secrets/runtime-bearer:ro,z\n"
+        self.assertEqual(strayed(worker, token, token.replace("runtime-bearer", "tls-key.pem")),
+                         [f"mounts {release}/secrets/tls-key.pem, which its record does not declare",
+                          f"declares {release}/secrets/runtime-bearer, which it does not reach"])
+        self.assertEqual(strayed(worker, token, token.replace("/runtime-bearer", "")),
+                         [f"mounts {release}/secrets, which its record does not declare"])
+        self.assertEqual(strayed(worker, f"Volume={state}:{state}:z\n", ""),
+                         [f"declares {state}, which it does not reach"])
+        # A record that names more than the quadlet mounts is found too.
+        self.assertEqual(strayed(relay, end, end, dataclasses.replace(records[relay], secrets=records[worker].secrets)),
+                         [f"declares {state}, which it does not reach",
+                          f"declares {release}/secrets/runtime-bearer, which it does not reach"])
+
+    @unittest.skipUnless(Path("/usr/lib/systemd/system-generators/podman-system-generator").is_file(),
+                         "Podman Quadlet generator absent")
+    def test_the_quadlet_generator_accepts_the_contained_access_services(self):
+        host, units = fixture_houses()["a host with every service"]
+        release = ACCESS_UNITS["release"]
+        files = staging.unit_files({name: units[name] for name in oh_units.ACCESS_UNITS})
+        with tempfile.TemporaryDirectory() as tmp:
+            for _, _, destination, text in files:
+                if destination.suffix == ".container":
+                    Path(tmp, destination.name).write_text(text)
+            generated = subprocess.run(["/usr/lib/systemd/system-generators/podman-system-generator", "-dryrun",
+                                        "-no-kmsg-log"], env={**os.environ, "QUADLET_UNIT_DIRS": tmp},
+                                       capture_output=True, text=True, timeout=60)
+        self.assertEqual(generated.returncode, 0, generated.stderr)
+        commands = {name: shlex.split(line.removeprefix("ExecStart="))
+                    for line in generated.stdout.splitlines() if line.startswith("ExecStart=")
+                    for name in oh_units.ACCESS_CONTAINED if f"--name {oh_units.ACCESS_CONTAINERS[name]} " in line
+                    or f"--name={oh_units.ACCESS_CONTAINERS[name]} " in line}
+        self.assertEqual(set(commands), set(oh_units.ACCESS_CONTAINED), generated.stdout)
+        for name, argv in commands.items():
+            with self.subTest(unit=name):
+                image_at = argv.index(account(host)["image"])
+                options, command = argv[:image_at], argv[image_at + 1:]
+                for flag in ("--runtime=runc", "--replace=false", "--cidfile=%t/%N.cid", "--umask=0077", "--read-only",
+                             "--stop-timeout=30", f"--workdir={release}"):
+                    self.assertIn(flag, options)
+                # Podman keeps the last value of a repeated boolean flag.
+                replace = [word for word in options if word == "--replace" or word.startswith("--replace=")]
+                self.assertEqual(replace[-1], "--replace=false")
+                self.assertRegex(" ".join(options), r"--user(?:=| )9001(?::9001)? ")
+                self.assertEqual(command[:3], [str(release / "container-env/bin/python"),
+                                               str(release / "program/bin/thermite"), "access"])
+        # The service systemd is handed keeps its place in Thermite.
+        self.assertEqual(generated.stdout.count("Slice=thermite.slice"), 2)
+        self.assertEqual(generated.stdout.count("PartOf=thermite.target"), 2)
+        self.assertEqual(generated.stdout.count("WantedBy=thermite.target"), 2)
 
     def test_node_exporter_is_never_the_states_user(self):
         """It has all of / and the host's processes: as the state's user it

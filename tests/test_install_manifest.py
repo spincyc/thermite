@@ -57,12 +57,18 @@ class Inventory(unittest.TestCase):
         self.assertEqual(items[Path("/etc/systemd/system/thermite-openhab.service.d/50-container-lifecycle.conf")].unit,
                          oh_units.RUNTIME, "a drop-in names the unit it extends")
         self.assertEqual(items[Path("/etc/containers/systemd/thermite-openhab.container")].unit, oh_units.RUNTIME)
+        # The gateway's worker is a container too: its quadlet and lifecycle
+        # drop-in, which a release's stage writes and the gateway step installs.
+        worker = Path("/etc/containers/systemd/thermite-access-worker.container")
+        self.assertEqual((items[worker].cls, items[worker].unit), ("unit", oh_units.ACCESS_WORKER))
+        self.assertEqual(items[UNITS / "thermite-access-worker.service.d/50-container-lifecycle.conf"].unit,
+                         oh_units.ACCESS_WORKER)
+        self.assertNotIn(UNITS / oh_units.ACCESS_WORKER, items, "no host unit of a contained service")
         links = {path: item.target for path, item in items.items() if item.cls == "link"}
         self.assertEqual(links, {
-            **{UNITS / "thermite.target.wants" / name: UNITS / name
-               for name in oh_units.ACCESS_UNITS[:2]},
+            UNITS / "thermite.target.wants" / oh_units.ACCESS: UNITS / oh_units.ACCESS,
             UNITS / "multi-user.target.wants" / ingress.UNIT: ingress.UNIT_FILE,
-        }, "the boot target's own link is the guard's, never an item")
+        }, "the boot target's own link is the guard's, never an item; a quadlet's generator enables it")
 
     def test_no_step_declares_the_unit_record_earlier_releases_wrote(self):
         # The upgrade from one of them sets it aside with what it no longer
@@ -117,13 +123,20 @@ class Inventory(unittest.TestCase):
         engine.check_items([item.to_json() for item in declared(host=MUSIC_HOST).values()], str(ROOT), recorded=False)
 
     def test_the_callback_relay_is_declared_once_its_map_exists(self):
-        relay = UNITS / oh_units.ACCESS_CALLBACKS
-        self.assertNotIn(relay, declared())
-        for present in (ROOT / "access/inputs/callbacks.json", relay):
+        relay = Path("/etc/containers/systemd/thermite-access-callbacks.container")
+        lifecycle = UNITS / "thermite-access-callbacks.service.d/50-container-lifecycle.conf"
+        # As a release before the containers installed it: a host unit, which
+        # the upgrade from one sets aside with its link.
+        earlier = UNITS / oh_units.ACCESS_CALLBACKS
+        self.assertFalse({relay, lifecycle, earlier} & set(declared()))
+        for present in (ROOT / "access/inputs/callbacks.json", relay, earlier):
             with self.subTest(present=present):
                 items = declared(present=(present,))
-                self.assertEqual(items[relay].cls, "unit")
-                self.assertIn(UNITS / "thermite.target.wants" / oh_units.ACCESS_CALLBACKS, items)
+                self.assertEqual((items[relay].cls, items[relay].unit), ("unit", oh_units.ACCESS_CALLBACKS))
+                self.assertEqual((items[lifecycle].cls, items[lifecycle].unit), ("unit", oh_units.ACCESS_CALLBACKS))
+                self.assertNotIn(earlier, items)
+                self.assertNotIn(UNITS / "thermite.target.wants" / oh_units.ACCESS_CALLBACKS, items)
+                engine.check_items([item.to_json() for item in items.values()], str(ROOT), recorded=False)
 
     def test_the_set_is_what_the_engine_accepts(self):
         items = [item.to_json() for item in declared().values()]

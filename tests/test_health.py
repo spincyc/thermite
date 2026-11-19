@@ -121,6 +121,10 @@ class Health(unittest.TestCase):
         }
         self.metrics = {"installed": True, "ok": True, "summary": "Prometheus ready, targets 53/53; Grafana answers",
                         "targets_up": 53, "targets": 53, "down": [], "systemd_collector": True}
+        #: The gateway's services as systemd has them: a house without callbacks has no relay.
+        self.units = {"thermite-access.service": ("loaded", "active"),
+                      "thermite-access-worker.service": ("loaded", "active"),
+                      "thermite-access-callbacks.service": ("not-found", "inactive")}
 
     def args(self, *, installation=True):
         return SimpleNamespace(url="http://127.0.0.1:13602", token_file=self.token_file, timeout=1,
@@ -133,7 +137,8 @@ class Health(unittest.TestCase):
         http.try_get_json.side_effect = lambda path: copy.deepcopy(self.responses[path])
         with mock.patch.object(health.lib, "Http", return_value=http) as client, \
                 mock.patch.object(health.lib, "read_token", return_value=TOKEN), \
-                mock.patch.object(health, "metrics_report", return_value=copy.deepcopy(self.metrics)):
+                mock.patch.object(health, "metrics_report", return_value=copy.deepcopy(self.metrics)), \
+                mock.patch.object(health, "unit_states", side_effect=lambda names: dict(self.units)):
             yield http, client
 
     def report(self, *, installation=True):
@@ -270,6 +275,73 @@ class Health(unittest.TestCase):
             with self.subTest(metrics=metrics):
                 self.metrics = metrics
                 self.assertTrue(self.report()["failures"])
+
+    def test_a_gateway_service_that_is_not_active_fails_and_a_house_without_a_relay_does_not(self):
+        report = self.report()
+        self.assertEqual(report["failures"], [])
+        self.assertEqual(report["gateway"], {"installed": True, "ok": True, "summary": "2 services active", "down": []})
+        worker, relay = "thermite-access-worker.service", "thermite-access-callbacks.service"
+        # A container that did not start, or one systemd keeps restarting.
+        for state in ("failed", "activating", "inactive"):
+            with self.subTest(worker=state):
+                self.units[worker] = ("loaded", state)
+                for installation in (True, False):
+                    report = self.report(installation=installation)
+                    self.assertEqual(report["failures"], [f"gateway: {worker} is {state}"])
+                    self.assertEqual(report["gateway"]["down"], [worker])
+        # Its quadlet gone while the gateway is there.
+        self.units[worker] = ("not-found", "inactive")
+        self.assertEqual(self.report()["failures"], [f"gateway: {worker} is not installed"])
+        self.units[worker] = ("loaded", "active")
+        # A relay, once the house has one, is held to the same.
+        self.units[relay] = ("loaded", "active")
+        self.assertEqual(self.report()["gateway"]["summary"], "3 services active")
+        self.units[relay] = ("loaded", "failed")
+        self.assertEqual(self.report()["failures"], [f"gateway: {relay} is failed"])
+        # Before any gateway is installed, and where systemd does not answer, nothing of it fails.
+        for units in ({name: ("not-found", "inactive") for name in self.units}, {}):
+            self.units = units
+            report = self.report()
+            self.assertEqual((report["failures"], report["gateway"]["installed"]), ([], False))
+
+    def test_a_gateway_service_still_starting_is_polled_within_the_settle_window(self):
+        worker = "thermite-access-worker.service"
+        self.units[worker] = ("loaded", "activating")
+        waits = []
+
+        def sleep(seconds):
+            waits.append(seconds)
+            if len(waits) == 2:
+                self.units[worker] = ("loaded", "active")
+
+        with self.backend():
+            report = health.settled(self.args(), clock=lambda: float(len(waits)), sleep=sleep)
+        self.assertEqual((report["failures"], len(waits)), ([], 2))
+        self.units[worker] = ("loaded", "failed")
+        args = self.args()
+        args.settle = 3
+        waits.clear()
+        with self.backend():
+            report = health.settled(args, clock=lambda: float(len(waits)), sleep=waits.append)
+        self.assertEqual(report["failures"], [f"gateway: {worker} is failed"])
+        self.assertEqual(len(waits), 3, "polled to the end of the window, then failed")
+
+    def test_the_units_are_read_from_systemd_in_one_bounded_call(self):
+        shown = ("Id=thermite-access.service\nLoadState=loaded\nActiveState=active\n\n"
+                 "Id=thermite-access-worker.service\nLoadState=loaded\nActiveState=failed\n\n"
+                 "Id=thermite-access-callbacks.service\nLoadState=not-found\nActiveState=inactive\n")
+        names = ("thermite-access.service", "thermite-access-worker.service", "thermite-access-callbacks.service")
+        with mock.patch("subprocess.run", return_value=SimpleNamespace(returncode=0, stdout=shown)) as run:
+            states = health.unit_states(names)
+        run.assert_called_once_with(["systemctl", "show", *names, "--property=Id,LoadState,ActiveState"],
+                                    capture_output=True, text=True, timeout=10, check=False)
+        self.assertEqual(states, {names[0]: ("loaded", "active"), names[1]: ("loaded", "failed"),
+                                  names[2]: ("not-found", "inactive")})
+        self.assertEqual(health.gateway_report(states)["summary"], "thermite-access-worker.service is failed")
+        with mock.patch("subprocess.run", return_value=SimpleNamespace(returncode=1, stdout=shown)):
+            self.assertEqual(health.unit_states(names), {})
+        with mock.patch("subprocess.run", side_effect=FileNotFoundError("systemctl")):
+            self.assertEqual(health.unit_states(names), {})
 
     def test_installation_asks_nothing_of_the_runtimes_own_pages(self):
         # An install's pages go through the gateway; the runtime's own page

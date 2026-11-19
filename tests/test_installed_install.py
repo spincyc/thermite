@@ -17,6 +17,7 @@ import oh_paths
 import oh_cli
 import oh_deploy as deploy
 from oh_install import steps
+from oh_install.access import source
 from oh_install.native_auth import NativeAuthError
 
 
@@ -240,7 +241,9 @@ class InstalledInstall(unittest.TestCase):
                                     assets=assets, runtime_url="http://127.0.0.1:13602",
                                     runtime_token_file=root / "bearer", tls_cert=root / "cert", tls_key=root / "key",
                                     allowed_hosts=["site.example"], listen=["127.0.0.1"],
-                                    timezone="Etc/UTC", install_environment=False,
+                                    timezone="Etc/UTC", install_environment=False, area=self.site,
+                                    application=source(self.site),
+                                    image="registry.example/python@sha256:" + "5" * 64,
                                     plan_directory=root / "operator-plan", **arguments)
         return root, target, receipt, location, run
 
@@ -255,8 +258,9 @@ class InstalledInstall(unittest.TestCase):
         self.assertFalse((self.site / "lib").exists())
         location.assert_called_once_with(root / "identity-state", target, self.site)
         self.assertFalse(receipt["activated"])
-        installs = receipt["unit_install_commands"]
-        self.assertEqual(len(installs), 2)
+        # The gateway's unit, the worker's quadlet and its lifecycle drop-in.
+        installs = [command for command in receipt["unit_install_commands"] if "-d" not in command]
+        self.assertEqual(len(installs), 3)
         for command in installs:
             source = Path(command[-2])
             self.assertEqual(source.parent, root / "operator-plan/units")

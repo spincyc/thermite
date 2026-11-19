@@ -15,6 +15,7 @@ import oh_http
 import oh_music
 import oh_ports
 import oh_sandbox as lib
+import oh_units
 from oh_cli import AREA
 
 SANDBOX_TOKEN = AREA / "var/sandbox/api-token"
@@ -35,7 +36,9 @@ var/<this host's name>/api-token, and the metrics services beside it:
 Prometheus ready with every scrape target up, and Grafana answering; on a
 host with music:, Music Assistant running, its API on loopback alone and its
 streams answering. Before thermite upgrade has installed them it says they
-are not installed yet.
+are not installed yet. Of an installed gateway it checks that systemd has
+each of its services active: the gateway, its policy worker and, where the
+house has one, its callback relay.
 
 --production --installation checks installation readiness with the same
 Thing policy as the installer's native readiness wait. Offline devices
@@ -44,7 +47,7 @@ errors, required add-ons and monitoring failures still fail. A runtime that
 has just started gets --settle seconds (default 120 with --installation) to
 finish: Things still initializing (missing or reloading handlers,
 UNINITIALIZED, INITIALIZING, UNKNOWN), transient REST outages, and add-ons,
-monitoring or music not ready yet are polled that long. Things still
+monitoring, music or a gateway service not ready yet are polled that long. Things still
 initializing then are reported as warnings; anything else still failing then
 fails. A Thing configuration error fails at once. --settle 0 takes one
 snapshot, as normal health checks do; they remain strict.
@@ -190,6 +193,7 @@ def run(args) -> dict:
 
     metrics = metrics_report(args.host) if getattr(args, "host", None) is not None else None
     music = music_report(args.host) if getattr(args, "host", None) is not None else None
+    gateway = gateway_report() if getattr(args, "host", None) is not None else None
     failures = []
     if summary["failed"]:
         failures.append(f"{len(summary['failed'])} Thing(s) " +
@@ -206,6 +210,8 @@ def run(args) -> dict:
         failures.append("music: " + music["summary"])
     if installation and music and not music["installed"]:
         failures.append("Music Assistant is not installed")
+    if gateway and gateway["installed"] and not gateway["ok"]:
+        failures.append("gateway: " + gateway["summary"])
     return {
         **({"mode": "installation"} if installation else {}),
         "url": args.url,
@@ -216,6 +222,7 @@ def run(args) -> dict:
         "addons": addon_report,
         **({"metrics": metrics} if metrics is not None else {}),
         **({"music": music} if music is not None else {}),
+        **({"gateway": gateway} if gateway is not None else {}),
         "failures": failures,
     }
 
@@ -230,6 +237,39 @@ def metrics_report(host: dict, installed: bool | None = None, health=None) -> di
             "summary": health.describe() + (f"; down: {', '.join(health.down)}" if health.down else ""),
             "prometheus": health.prometheus, "targets_up": health.up, "targets": health.total,
             "down": list(health.down), "grafana": health.grafana, "systemd_collector": health.systemd}
+
+
+def unit_states(names) -> dict[str, tuple[str, str]]:
+    """Each unit's (LoadState, ActiveState) as systemd has them now; none
+    where systemd does not answer."""
+    import subprocess
+    try:
+        shown = subprocess.run(["systemctl", "show", *names, "--property=Id,LoadState,ActiveState"],
+                               capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    states = {}
+    for block in shown.stdout.strip().split("\n\n") if shown.returncode == 0 else ():
+        values = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
+        if values.get("Id") in names:
+            states[values["Id"]] = (values.get("LoadState", ""), values.get("ActiveState", ""))
+    return states
+
+
+def gateway_report(states: dict[str, tuple[str, str]] | None = None) -> dict:
+    """The gateway's services as systemd has them; only an installed
+    gateway can fail. The worker and the relay answer nothing this command
+    could ask them, so their units are what says one is not running: a
+    container that did not start, or one that keeps restarting. An install
+    transaction commits on this report, taken within its settle window."""
+    states = unit_states(oh_units.ACCESS_UNITS) if states is None else states
+    loaded = {name: active for name, (load, active) in states.items() if load != "not-found"}
+    # The relay only where a house has callbacks; the other two always.
+    wanted = [name for name in oh_units.ACCESS_UNITS if name in loaded or name != oh_units.ACCESS_CALLBACKS]
+    down = [f"{name} is {loaded.get(name, 'not installed')}" for name in wanted if loaded.get(name) != "active"]
+    summary = "; ".join(down) if down else f"{len(wanted)} services active"
+    return {"installed": bool(loaded), "ok": not down, "summary": summary,
+            "down": [name for name in wanted if loaded.get(name) != "active"]}
 
 
 def music_report(host: dict, installed: bool | None = None, health=None) -> dict | None:
@@ -289,6 +329,8 @@ def print_human(report: dict) -> None:
         print(f"Metrics: {report['metrics']['summary']}")
     if "music" in report:
         print(f"Music: {report['music']['summary']}")
+    if report.get("gateway", {}).get("installed"):
+        print(f"Gateway: {report['gateway']['summary']}")
     print("RESULT: " + ("FAIL - " + "; ".join(report["failures"]) if report["failures"] else "ok"))
 
 

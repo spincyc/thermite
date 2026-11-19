@@ -397,21 +397,9 @@ class Prefetch(Step):
         return [Task("pull each pinned image that is not here yet", self.fetch)]
 
     def fetch(self, system: System) -> int | None:
-        code = runner.perform(Command(("-v",), root=True, terminal=True), system, self.context.area)
-        if code:
-            return code
-        for ref in manifest.images(self.context):
-            found, _ = system.capture(("sudo", "-n", "podman", "image", "exists", ref))
-            if found == 0:
-                continue
-            if found != 1:
-                system.say(f"   podman image exists {ref}: exit status {found}")
-                return found
-            code = runner.perform(Command(("podman", "pull", ref), root=True), system, self.context.area)
-            if code is None or code:
-                return code
-            self.pulled.append(ref)
-        return 0
+        code, pulled = steps.pull_missing(self.context, system, manifest.images(self.context))
+        self.pulled += pulled
+        return code
 
 
 class Room(Step):
@@ -606,7 +594,8 @@ def preparation(context: steps.Context) -> list[Step]:
     transaction plans and begins inside."""
     return [*steps.configuration_steps(context), steps.ShareLogins(context), steps.Packages(context),
             NativeIngressPrerequisites(context),
-            steps.AppArmorService(), steps.AddonFiles(context), steps.BootTest(context), steps.Account(context),
+            steps.AppArmorService(), steps.AddonFiles(context), steps.GatewayWheels(context),
+            steps.BootTest(context), steps.Account(context),
             steps.InstallationRoot(context)]
 
 
@@ -779,7 +768,9 @@ def run(context: steps.Context, system: System, build: Callable[[str], Work], *,
         items = work.items(system) if work.items is not None else manifest.desired(work.switching, system, root)
         _json(transaction.file("desired.json"), {
             "kind": work.kind, "tools": tools, "items": [item.to_json() for item in items],
-            "pulled": prefetch.pulled, "extra": _allocated(context.program) if work.release is not None else 0})
+            # The preparation pulls the one image it needs itself (steps.GatewayWheels).
+            "pulled": [*(ref for step in work.preparation for ref in getattr(step, "pulled", ())), *prefetch.pulled],
+            "extra": _allocated(context.program) if work.release is not None else 0})
         _json(transaction.file("operator.json"), {
             "uid": os.getuid(), "site": str(context.area), "record": str(transaction.file("record.json")),
             "head_before": transaction.record["head_before"], "head_after": transaction.record["head_after"]})

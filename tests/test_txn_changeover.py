@@ -182,6 +182,14 @@ class Fixture(unittest.TestCase):
 
 
 class Committed(Fixture):
+    def test_an_image_the_preparation_pulled_is_recorded_with_those_the_transaction_pulls(self):
+        self.host = Host(self)
+        prepared = Fake("prepare", self.log)
+        prepared.pulled = ["registry.example.test/python@sha256:" + "5" * 64]
+        self.assertEqual(self.transact(self.work([prepared], [Fake("switch", self.log)], [changeover.Authorize()])),
+                         changeover.COMMITTED)
+        self.assertEqual(json.loads((self.directory / "desired.json").read_text())["pulled"], prepared.pulled)
+
     def test_everything_before_begin_runs_while_thermite_runs_then_one_transaction_commits(self):
         self.assertEqual(self.run_upgrade(), changeover.COMMITTED)
         self.assertEqual(self.log, ["prepare", "sudo -v", "sudo -v", "plan", "begin", "guard", "collect", "switch",

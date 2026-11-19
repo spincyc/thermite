@@ -167,7 +167,11 @@ handoff or activation command. Follow
 including a new login for membership in group `thermite`. Confirm that the
 release and its state lie in `/srv/thermite/access`, beside the native
 `runtime/`, never in a private owner-home path, and that this fixture has
-exactly two access units and no callback listener. The installer's
+exactly two access units and no callback listener: the gateway's unit in
+`/etc/systemd/system` and the worker's quadlet,
+`/etc/containers/systemd/thermite-access-worker.container`, whose service
+has `SourcePath` set to it and the one drop-in
+`thermite-access-worker.service.d/50-container-lifecycle.conf`. The installer's
 certificate covers `localhost` and `127.0.0.1`; trust its authority
 certificate explicitly in each test client.
 
@@ -194,14 +198,31 @@ installed release's own `access bootstrap --descriptor "$RELEASE/config.json"`.
 Reuse the same state on reruns and after reboot; never bootstrap it again.
 
 For access upgrades, commit a site change and run `thermite install` again
-while the old access services are active, and confirm their new MainPIDs run
-from the new release (`RELEASE` then names it). Rerun it with nothing to
-change and confirm process IDs/start timestamps stay unchanged. Exercise an
+while the old access services are active, and confirm their new processes run
+from the new release (`RELEASE` then names it): the gateway's MainPID, and
+the worker container's own first process, since its service's MainPID is
+podman's monitor:
+
+```sh
+sudo readlink "/proc/$(systemctl show -P MainPID thermite-access.service)/cwd"
+sudo readlink "/proc/$(sudo podman container inspect --format '{{.State.Pid}}' thermite-access-worker)/cwd"
+sudo podman container inspect --format '{{.Config.User}} {{.HostConfig.ReadonlyRootfs}} {{.HostConfig.NetworkMode}}' thermite-access-worker
+```
+
+The last line must read `9001:9001 true host`. Rerun the install with nothing
+to change and confirm process IDs/start timestamps stay unchanged. Exercise an
 [interrupted upgrade](../../docs/installation.md#an-interrupted-upgrade) and
 confirm the previous release serves again on the same state, without
-bootstrap. A failing dependency installation must roll the run back, leave
-only its operator-private diagnostic log, remove its partial release, and
-preserve the existing state.
+bootstrap; from a release before the containers, that the worker's host unit
+is back and its quadlet gone. A failing dependency installation must roll the
+run back, leave only its operator-private diagnostic log, remove its partial
+release, and preserve the existing state. An empty or damaged wheelhouse
+(`build/sandbox/downloads/wheels/` in the site) without a network must stop
+the install before anything of Thermite stops, naming the directory. Stop the
+worker's container behind systemd's back (`sudo podman stop
+thermite-access-worker`, then `sudo systemctl stop
+thermite-access-worker.service`) and confirm `thermite health --production`
+fails with `gateway: thermite-access-worker.service is inactive`.
 
 Run the real HTTP and terminal acceptance helpers.
 

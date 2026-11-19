@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, Mock, patch
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 import oh_ports
-from oh_access import AccessError, callback_service as service, staging
+from oh_access import AccessError, callback_service as service, files, staging
 from oh_access.service import load_config as load_access
 from oh_access.files import atomic_private, json_private, private_directory
 
@@ -150,7 +150,9 @@ class Configuration(unittest.TestCase):
         inputs = dict(state=self.root / "site-state", plan_directory=self.root / (name + "-plan"), house="synthetic.yaml", assets=assets,
                       runtime_url=CONFIG["upstream"], runtime_token_file=self.root / "bearer",
                       tls_key=self.root / "key", tls_cert=self.root / "cert", allowed_hosts=["site.example"],
-                      listen=["127.0.0.1"], port=9443, timezone="UTC", area=source, install_environment=False)
+                      listen=["127.0.0.1"], port=9443, timezone="UTC", area=source, application=source,
+                      install_environment=False,
+                      image="registry.example/python@sha256:" + "5" * 64)
         # Isolate permanent-location policy for disposable temporary fixtures;
         # real private file custody and callback validation remain unpatched.
         with patch.object(staging, "_disposable", return_value=False), patch.object(staging, "_state_location"), patch.object(staging, "_service_parents"), patch("oh_access.service.compile_contract", side_effect=compile_fixture), patch("oh_access.service.ssl.SSLContext.load_cert_chain"):
@@ -187,8 +189,8 @@ class Configuration(unittest.TestCase):
         config = self.root / "release-opt-in/callbacks.json"
         self.assertEqual(service.load_config(config), CONFIG)
         self.assertEqual(stat.S_IMODE(config.stat().st_mode), 0o600)
-        unit = (self.root / "release-opt-in/units/thermite-access-callbacks.service").read_text()
-        self.assertIn('"callbacks" "--descriptor"', unit)
+        unit = (self.root / "release-opt-in/units/thermite-access-callbacks.container").read_text()
+        self.assertIn(" access callbacks --descriptor ", unit)
         # The command the receipt hands the installer is one this release's
         # own access verb accepts, and the receipt addresses nobody else.
         import oh_cli
@@ -197,12 +199,43 @@ class Configuration(unittest.TestCase):
         self.assertEqual((parsed.command, parsed.descriptor), ("verify", self.root / "release-opt-in/config.json"))
         self.assertFalse({"activation_commands", "owner_commands", "bootstrap_command",
                           "activation_requirements"} & set(receipt))
-        for field in ("User=thermite", "Group=thermite", "Slice=thermite.slice", "UMask=0077"):
+        account = files.service_identity()
+        for field in (f"User={account[0]}", f"Group={account[1]}", "Slice=thermite.slice", "UMask=0077",
+                      f"Environment=THERMITE_SERVICE_IDENTITY={account[0]}:{account[1]}"):
             self.assertIn("\n" + field + "\n", unit)
         self.assertIn("callbacks.json", unit)
-        self.assertNotIn("ReadWritePaths", unit)
+        # The relay is shown the program, its environment and its own map:
+        # no state, no secret, and nothing of the release that holds one.
+        release = self.root / "release-opt-in"
+        self.assertEqual([line for line in unit.splitlines() if line.startswith("Volume=")],
+                         [f"Volume={release / part}:{release / part}:ro,z"
+                          for part in ("program", "container-env", "callbacks.json")])
+        self.assertNotIn("site-state", unit)
         self.assertNotIn("runtime-bearer", unit)
         self.assertNotIn("tls-key", unit)
+        self.assertNotIn("secrets", unit)
+        # The plan holds the protected copy of every file the host installs,
+        # and the receipt the commands that install exactly those.
+        plan = self.root / "release-opt-in-plan/units"
+        self.assertEqual({path.name for path in plan.iterdir()},
+                         {"thermite-access.service", "thermite-access-worker.container",
+                          "thermite-access-worker.service.d.conf", "thermite-access-callbacks.container",
+                          "thermite-access-callbacks.service.d.conf"})
+        self.assertEqual([command[-2:] for command in receipt["unit_install_commands"] if "-d" not in command],
+                         [[source, destination] for name in receipt["units"]
+                          for source, destination in receipt["unit_files"][name]])
+        self.assertEqual(
+            [command[-1] for command in receipt["unit_install_commands"]],
+            ["/etc/systemd/system/thermite-access.service",
+             "/etc/containers/systemd/thermite-access-worker.container",
+             "/etc/systemd/system/thermite-access-worker.service.d",
+             "/etc/systemd/system/thermite-access-worker.service.d/50-container-lifecycle.conf",
+             "/etc/containers/systemd/thermite-access-callbacks.container",
+             "/etc/systemd/system/thermite-access-callbacks.service.d",
+             "/etc/systemd/system/thermite-access-callbacks.service.d/50-container-lifecycle.conf"])
+        self.assertEqual(receipt["containers"], {"thermite-access-worker.service": "thermite-access-worker",
+                                                 "thermite-access-callbacks.service": "thermite-access-callbacks"})
+        self.assertEqual(receipt["image"], "registry.example/python@sha256:" + "5" * 64)
         self.assertEqual(receipt["persistent_state"], plain["persistent_state"])
         self.assertEqual(list((self.root / "site-state").iterdir()), [])
         self.assertNotIn(CALLBACK, json.dumps(receipt))

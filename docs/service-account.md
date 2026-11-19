@@ -104,11 +104,18 @@ services, and the row of each monitoring service in `oh_metrics.services()`.
 No field has a default, the units are written from the records, and
 `tests/test_unit_invariants.py` fails when a rendered unit lacks a field, says
 something else than its record, or mounts a secret its record does not
-declare. The access services are host services that run as the state's
-user and need nothing of the runtime state but the directory their metrics
-go to: their units put an empty read-only directory in its place
-(`TemporaryFileSystem=`) and bind that one directory inside. The records
-also show what is still wide: every unit is on the host's network.
+declare. The access services run as the state's user and need nothing of
+the runtime state but the directory their metrics go to. The gateway is a
+host service: its unit puts an empty read-only directory in place of the
+runtime state (`TemporaryFileSystem=`) and binds that one directory inside.
+The policy worker and the callback relay are containers of the pinned Python
+image, which see only what their quadlets mount: read-only, the release's
+program, its environment and the descriptor each reads; the worker also the
+identity state and, of the release's secrets, the runtime token alone; the
+relay no state and no secret. The same test holds each of those mounts to
+its record, the release to read-only and the container's root file system
+to read-only. The records also show what is still wide: every unit is on
+the host's network, and the gateway reads the host as its user does.
 
 ### The node_exporter account
 
@@ -170,7 +177,8 @@ its record is where to raise it.
 The host's systemd manager and Podman backend remain root-managed.
 Application container entrypoints and processes start as UID/GID 9001,
 including the native runtime, and node_exporter as 9000; they do not start
-as root to repair mounted files. Native access units use `User=thermite` and `Group=thermite`.
+as root to repair mounted files. The gateway's unit uses `User=thermite` and `Group=thermite`;
+its worker and relay containers start as that account's UID and GID.
 Privileged host service management remains the administrator's responsibility.
 
 ## Upgrade an existing installation

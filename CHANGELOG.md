@@ -7,6 +7,24 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The policy worker and the Sonos callback relay run as containers of
+  the pinned Python image (`thermite-access-worker.service`,
+  `thermite-access-callbacks.service`, quadlets in
+  `/etc/containers/systemd`): read-only root, no capability, the service
+  account's UID and GID. Their Python environment is built by the image
+  at each install, without a network, from wheels the install first puts
+  in the site's `build/sandbox/downloads/wheels/` and checks against the
+  hashes in `lib/requirements-site.txt`; a host without a network is told
+  the directory and the command that fills it on another machine. A
+  distribution upgrade that changes the host's Python no longer stops
+  schedules, locks and Sonos callbacks. The gateway itself,
+  `thermite-access.service`, still runs on the host's Python: after such
+  an upgrade run `thermite install --config /srv/site --restart-runtime`.
+  An install commits only after it has seen both containers running the
+  new release, and `thermite health` has a `Gateway:` line for the three
+  services. A container's journal lines all have one priority: filter by
+  text (`journalctl -u thermite-access-worker.service -g
+  '^(WARNING|ERROR|CRITICAL) '`), not with `-p warning`.
 - `thermite check` writes nothing. It validates the house file, builds
   `conf/`, `metrics/` and `deploy/` in memory from it, the host file and
   `versions.json`, and lints the site. It no longer generates into the

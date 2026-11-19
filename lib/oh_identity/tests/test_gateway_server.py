@@ -406,7 +406,8 @@ class GatewayServer(SimpleTestCase):
         # The whole shutdown fits inside the unit's stop timeout, with time
         # left for the command drain, so systemd never has to kill it.
         from oh_access.staging import units
-        unit = units("/srv/thermite/access/releases/example", state="/srv/thermite/access/state")["thermite-access.service"]
+        unit = units("/srv/thermite/access/releases/example", state="/srv/thermite/access/state",
+                     image="registry.example/python@sha256:" + "5" * 64, identity=(9001, 9001))["thermite-access.service"]
         stop = int(next(line for line in unit.splitlines() if line.startswith("TimeoutStopSec=")).split("=")[1])
         self.assertLessEqual(config.graceful_timeout + 2 * service.CLOSE_SECONDS + service.CANCEL_SECONDS + 5, stop)
 

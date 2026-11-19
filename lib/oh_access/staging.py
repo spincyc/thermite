@@ -12,11 +12,29 @@ import oh_ports
 import oh_units
 from oh_service import ACCOUNT, GROUP
 
-from . import TEXTFILE_ENVIRONMENT, AccessError
-from .files import (atomic_private, json_private, private_directory, read_private,
+from . import TEXTFILE_ENVIRONMENT, AccessError, environment
+from .files import (STATED_IDENTITY, atomic_private, json_private, private_directory, read_private,
                     require_service_account, service_identity)
 
 ACCESS_UNITS = oh_units.ACCESS_UNITS
+#: Where the host keeps a host unit, a quadlet, and the drop-in of the
+#: service systemd's generator makes from a quadlet.
+HOST_UNITS = Path("/etc/systemd/system")
+QUADLETS = Path("/etc/containers/systemd")
+LIFECYCLE = "50-container-lifecycle.conf"
+#: How long a contained service has to stop before podman kills it: what a
+#: host unit's TimeoutStopSec= gives each of them. The worker joins its
+#: threads within worker.STOP_SECONDS of the signal.
+STOP_SECONDS = 30
+#: What of a release each contained service is shown, read-only: the
+#: program, its environment and the descriptor it is started with; for the
+#: worker also what that descriptor names. The relay is shown no secret and
+#: no state; the worker never the TLS key.
+RELEASE_MOUNTS = {
+    oh_units.ACCESS_WORKER: ("program", environment.DIRECTORY, "config.json", "contract.json",
+                             "secrets/runtime-bearer"),
+    oh_units.ACCESS_CALLBACKS: ("program", environment.DIRECTORY, "callbacks.json"),
+}
 
 
 class _EnvironmentInstallError(AccessError):
@@ -43,12 +61,119 @@ def _working_directory(value):
     return text + "/." if text.endswith((" ", "\\")) else text
 
 
-def units(destination, user=ACCOUNT, *, state, callbacks=False, textfile=None, runtime=None):
-    """textfile: the runtime's node_exporter textfile directory, where each
+def _quadlet(unit, description, root, verb, descriptor, *, state, image, identity, textfile):
+    """One contained service's quadlet. The container is the pinned Python
+    image with a read-only root, no capability and the host's network; the
+    process is the service account by number, which the unit also states
+    for the service's own guard (files.require_service_account). It sees
+    the release at the release's own path, so one descriptor serves a host
+    service and a container alike, and of the host nothing but its mounts.
+
+    Podman 4.9 is a supported host: these are only keys and podman flags
+    the units in deploy/ already use there, and podman run's --read-only
+    and --workdir."""
+    uid, gid = identity
+    record = oh_units.BOUNDS[unit]
+    if record.user != oh_units.STATE_USER or record.network != oh_units.HOST_NETWORK:
+        raise AccessError(f"{unit}: no quadlet is written for user {record.user!r} on network {record.network!r}")
+    release = Path(environment.plain(root))
+    mounts = [f"Volume={release / part}:{release / part}:ro,z" for part in RELEASE_MOUNTS[unit]]
+    if oh_units.ACCESS_STATE in record.secrets:
+        mounts.append(f"Volume={environment.plain(state)}:{state}:z")
+    metrics = []
+    if textfile is not None:
+        # The runtime's own directory, labelled as the runtime has it.
+        textfile = environment.plain(textfile)
+        metrics = [f"Volume={textfile}:{textfile}", f"Environment={TEXTFILE_ENVIRONMENT}={textfile}"]
+    python = release / environment.DIRECTORY / "bin/python"
+    return "\n".join([
+        "[Unit]",
+        f"Description=thermite {description}",
+        "After=network-online.target",
+        "Wants=network-online.target",
+        f"PartOf={oh_units.TARGET}",
+        "",
+        "[Container]",
+        f"ContainerName={oh_units.ACCESS_CONTAINERS[unit]}",
+        f"Image={image}",
+        f"Network={record.network}",
+        f"User={uid}",
+        f"Group={gid}",
+        "NoNewPrivileges=true",
+        "DropCapability=all",
+        # As every Thermite container: runc, since crun stacks AppArmor
+        # profiles under no-new-privileges; and a container id file of the
+        # unit's own, which its lifecycle drop-in removes the container by.
+        "PodmanArgs=--runtime=runc",
+        "PodmanArgs=--replace=false",
+        "PodmanArgs=--cidfile=%t/%N.cid",
+        "PodmanArgs=--umask=0077",
+        "PodmanArgs=--read-only",
+        f"PodmanArgs=--stop-timeout={STOP_SECONDS}",
+        # The release it runs, which the gateway step reads back from the
+        # running process (oh_access.deployment.live).
+        f"PodmanArgs=--workdir={release}",
+        *mounts,
+        *metrics,
+        f"Environment={STATED_IDENTITY}={uid}:{gid}",
+        # The program is mounted read-only: nothing could be written beside it.
+        "Environment=PYTHONDONTWRITEBYTECODE=1",
+        f"Exec={python} {release / 'program/bin/thermite'} access {verb} --descriptor {release / descriptor}",
+        "",
+        "[Service]",
+        f"Slice={oh_units.SLICE}",
+        f"MemoryHigh={record.memory_high}",
+        f"MemoryMax={record.memory_max}",
+        "UMask=0077",
+        f"SyslogIdentifier={unit.removesuffix('.service')}",
+        "Restart=on-failure",
+        "RestartSec=5",
+        # Past podman's own bound, so it is podman that ends a stop.
+        f"TimeoutStopSec={STOP_SECONDS + 15}",
+        "",
+        "[Install]",
+        f"WantedBy={oh_units.TARGET}",
+        "",
+    ])
+
+
+def destinations(name):
+    """Where the host installs a service's unit: a host service's unit file;
+    a contained one's quadlet, then the lifecycle drop-in of the service
+    systemd's generator makes from it, as every Thermite container has."""
+    if name in oh_units.ACCESS_CONTAINED:
+        return [QUADLETS / (oh_units.ACCESS_CONTAINERS[name] + ".container"), HOST_UNITS / (name + ".d") / LIFECYCLE]
+    return [HOST_UNITS / name]
+
+
+def unit_files(generated):
+    """Every file the host installs for units(): [(service, copy,
+    destination, text)], where `copy` names the file's protected copy in a
+    stage plan."""
+    from oh_deploy import render_container_dropin
+    files = []
+    for name, text in generated.items():
+        for destination in destinations(name):
+            dropin = destination.name == LIFECYCLE
+            files.append((name, name + ".d.conf" if dropin else destination.name, destination,
+                          render_container_dropin() if dropin else text))
+    return files
+
+
+def units(destination, user=ACCOUNT, *, state, image, identity, callbacks=False, textfile=None, runtime=None):
+    """Each service's unit by its service name: the gateway's a host unit on
+    the release's `env`, the others (oh_units.ACCESS_CONTAINED) quadlets of
+    `image`, the pinned Python image, on the release's environment.DIRECTORY.
+    unit_files() says where each is installed.
+
+    identity: the service account's (uid, gid). A container has no account
+    database, so its quadlet states the numbers.
+    textfile: the runtime's node_exporter textfile directory, where each
     service writes its metrics (oh_access.metrics); None writes none.
     runtime: the runtime state, of which no access service needs anything
-    else. Each sees an empty read-only directory in its place (systemd's
-    TemporaryFileSystem=), with the textfile directory bound inside."""
+    else. A host service sees an empty read-only directory in its place
+    (systemd's TemporaryFileSystem=), with the textfile directory bound
+    inside; a container sees only what its quadlet mounts."""
     root = Path(destination).absolute()
     state = _absolute(state)
     hidden, inside = "", False
@@ -73,10 +198,16 @@ def units(destination, user=ACCOUNT, *, state, callbacks=False, textfile=None, r
         config_name = "callbacks.json" if name == "callbacks" else "config.json"
         writable = "" if name == "callbacks" else "\nReadWritePaths=" + systemd(state)
         unit = "thermite-access" + suffix
+        description = {"worker": "room policy worker", "serve": "authenticated site",
+                       "callbacks": "verified UPnP callback ingress"}[name]
+        if unit + ".service" in oh_units.ACCESS_CONTAINED:
+            result[unit + ".service"] = _quadlet(unit + ".service", description, root, name, config_name, state=state,
+                                                 image=image, identity=identity, textfile=textfile)
+            continue
         # Its memory ceiling, as its record states it.
         record = oh_units.BOUNDS[unit + ".service"]
         result[unit + ".service"] = (
-            "[Unit]\nDescription=thermite " + {"worker": "room policy worker", "serve": "authenticated site", "callbacks": "verified UPnP callback ingress"}[name] +
+            "[Unit]\nDescription=thermite " + description +
             f"\nAfter=network-online.target\nWants=network-online.target\nPartOf={oh_units.TARGET}\n\n[Service]\nType=simple\nUser=" + user +
             "\nGroup=" + GROUP + f"\nSlice={oh_units.SLICE}\nMemoryHigh={record.memory_high}\nMemoryMax={record.memory_max}"
             "\nUMask=0077\nWorkingDirectory=" + _working_directory(root) +
@@ -89,6 +220,21 @@ def units(destination, user=ACCOUNT, *, state, callbacks=False, textfile=None, r
             "\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=30\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=read-only" + writable + hidden + metrics +
             f"\nRestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n\n[Install]\nWantedBy={oh_units.TARGET}\n")
     return result
+
+
+#: A release's Python environments: the host's Python builds `env`, for the
+#: gateway and the commands the operator runs; the pinned image's Python
+#: builds the other, for the contained services.
+ENVIRONMENTS = ("env", environment.DIRECTORY)
+
+
+def wheels(area, image, application):
+    """(directory, requirements): the operator's wheelhouse, below the site
+    `area`, for the pins a release staged from `application` carries, and
+    those pins. The install fills and checks it before a transaction
+    begins; a stage only reads it."""
+    requirements = (_absolute(application) / environment.REQUIREMENTS).read_bytes()
+    return environment.wheelhouse(_absolute(area), image, requirements), requirements
 
 
 def _absolute(value):
@@ -171,10 +317,13 @@ def _inventory(root, *, release=False):
         elif stat.S_ISREG(info.st_mode):
             if info.st_nlink != 1:
                 raise AccessError("Service custody must not change files linked outside their private tree")
-            executable = release and path.relative_to(root).parts[0] in {"program", "env"} and info.st_mode & 0o111
+            executable = (release and path.relative_to(root).parts[0] in {"program", *ENVIRONMENTS}
+                          and info.st_mode & 0o111)
             result.append((path, 0o700 if executable else 0o600))
-        elif stat.S_ISLNK(info.st_mode) and release and root / "env" in path.parents and (root / "env") in path.resolve().parents:
-            # venv's lib64 -> lib is the only usual link. It may not escape env.
+        elif stat.S_ISLNK(info.st_mode) and release and any(
+                root / name in path.parents and (root / name) in path.resolve().parents for name in ENVIRONMENTS):
+            # venv's lib64 -> lib is the only usual link. It may not escape
+            # its environment.
             result.append((path, None))
         else:
             raise AccessError("Private service trees must contain only regular files, directories and internal environment links")
@@ -375,11 +524,21 @@ def _export_plan(descriptor, receipt, custody, unit_sources=None):
 
 
 def stage(destination, *, state, house, assets, runtime_url, runtime_token_file, tls_cert, tls_key,
-          allowed_hosts, listen, port, timezone, user=None, wheelhouse=None, area=None,
+          allowed_hosts, listen, port, timezone, image, area, application, user=None, wheelhouse=None,
           install_environment=True, callbacks=None, plan_directory=None, host_ports=None, guest_http=None,
-          textfile=None, music=None, runtime=None):
+          textfile=None, music=None, runtime=None, podman=None):
     """A new release with explicit reusable site state. No database is migrated.
 
+    image is the pinned Python image the contained services run in. Its own
+    Python builds their environment here, from the site's wheelhouse for it
+    alone and without a network (wheels(), oh_access.environment);
+    `podman` runs that one command with root's podman, which holds the
+    image, and raises when it fails. The gateway's environment is the host
+    Python's, from the `wheelhouse` argument or the index, as before.
+
+    area is the site the release is for, or a checkout, and application
+    the directory its program is copied from. The caller names both
+    (oh_install.access.source): nothing here reads the selected site.
     listen is the HTTPS listener's addresses (oh_ports.gateway_listen).
     guest_http is host.yaml's optional Guest listener mapping (oh_access.guest).
     music is host.yaml's checked music (oh_music.settings): the gateway then
@@ -395,11 +554,12 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
     """
     from . import guest
     from .service import CONFIG_VERSION, compile_contract, load_config, validate_listeners
-    from oh_paths import PROGRAM, SITE, SITE_FILE
     if plan_directory is None:
         raise AccessError("An operator-owned plan directory is required for a safe, replayable custody handoff")
-    area = _absolute(area or SITE)
-    resources = PROGRAM if (area / SITE_FILE).is_file() else area
+    if install_environment and podman is None:
+        raise AccessError("The contained services' environment needs a way to run podman")
+    area = _absolute(area)
+    resources = _absolute(application)
     target = _absolute(destination)
     state = _absolute(state)
     plan = _absolute(plan_directory)
@@ -431,8 +591,9 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
                            guest_port=guest_http["port"] if guest_http else None, host_ports=host_ports)
     except (ValueError, TypeError) as exc:
         raise AccessError(str(exc)) from None
-    generated_units = units(target, user, state=state, callbacks=callback_config is not None, textfile=textfile,
-                            runtime=runtime)
+    generated_units = units(target, user, state=state, image=image, identity=(uid, gid),
+                            callbacks=callback_config is not None, textfile=textfile, runtime=runtime)
+    files = unit_files(generated_units)
     # Validate/create only the owned directory. Staging never initializes keys,
     # changes site identity, opens SQLite, migrates schemas or takes worker locks.
     _state_directory(state, uid, gid)
@@ -484,17 +645,35 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
         os.rmdir(validation_state.name, dir_fd=release_descriptor)
         if install_environment:
             _install_environment(target, program, plan, plan_descriptor, wheelhouse)
-        for name, source in generated_units.items():
-            atomic_private(target / "units" / name, source.encode())
+            # The image's Python writes it as this operator, into a directory
+            # that is here before the container is.
+            private_directory(target / environment.DIRECTORY)
+            podman(environment.build_command(image, target, wheels(area, image, resources)[0]))
+        for _, copy, _, source in files:
+            atomic_private(target / "units" / copy, source.encode())
         receipt = {"version": 1, "staged": True, "activated": False, "security_boundary_active": False,
                    "destination": str(target), "persistent_state": str(state), "config": str(target / "config.json"), "units": list(generated_units),
+                   # Each unit's installed files as [protected copy, destination],
+                   # and the container of each contained one.
+                   "unit_files": {name: [[str(plan / "units" / copy), str(destination)]
+                                         for unit, copy, destination, _ in files if unit == name]
+                                  for name in generated_units},
+                   "containers": {name: oh_units.ACCESS_CONTAINERS[name] for name in generated_units
+                                  if name in oh_units.ACCESS_CONTAINED},
+                   "image": image,
                    "environment_installed": install_environment,
                    "callbacks_staged": callback_config is not None, "callbacks_activated": False,
                    "service_user": ACCOUNT, "service_group": GROUP}
         command = ["sudo", "-u", ACCOUNT, "-g", GROUP, str(target / "env/bin/python"),
                    str(target / "program/bin/thermite"), "access"]
         receipt["verification_command"] = [*command, "verify", "--descriptor", str(target / "config.json")]
-        receipt["unit_install_commands"] = [["sudo", "install", "-o", "root", "-g", "root", "-m", "0644", str(plan / "units" / name), "/etc/systemd/system/" + name] for name in generated_units]
+        receipt["unit_install_commands"] = [
+            command for _, copy, destination, _ in files for command in (
+                # A drop-in's directory is the unit's own, and new with it.
+                *([["sudo", "install", "-d", "-o", "root", "-g", "root", "-m", "0755", str(destination.parent)]]
+                  if destination.parent not in (HOST_UNITS, QUADLETS) else []),
+                ["sudo", "install", "-o", "root", "-g", "root", "-m", "0644", str(plan / "units" / copy),
+                 str(destination)])]
         json_private(target / "stage.json", {})
         release_inventory = _inventory(target, release=True)
         for path, mode in release_inventory:
@@ -507,7 +686,8 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
                                          ["sudo", "/usr/bin/python3", "-I", "-S", str(plan / "custody.py"), str(plan / "custody.json")]]
         json_private(target / "stage.json", receipt)
         from .custody import manifest
-        _export_plan(plan_descriptor, receipt, manifest([release_inventory, state_inventory], uid, gid), generated_units)
+        _export_plan(plan_descriptor, receipt, manifest([release_inventory, state_inventory], uid, gid),
+                     {copy: source for _, copy, _, source in files})
         # Check while both contexts are open, so either replacement fails
         # the entire attempt without deleting the replacing directory.
         for path, descriptor, purpose in ((plan, plan_descriptor, "Plan"), (target, release_descriptor, "Release")):

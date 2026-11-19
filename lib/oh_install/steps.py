@@ -1396,6 +1396,100 @@ class AddonFiles(Step):
         return 0
 
 
+def pull_missing(context: Context, system: System, refs: list[str]) -> tuple[int | None, list[str]]:
+    """Pull, with root's podman, each pinned image it does not hold yet:
+    the exit status, and the refs this call pulled."""
+    from oh_install.runner import perform
+    pulled: list[str] = []
+    code = perform(Command(("-v",), root=True, terminal=True), system, context.area)
+    if code:
+        return code, pulled
+    for ref in refs:
+        found, _ = system.capture(("sudo", "-n", "podman", "image", "exists", ref))
+        if found == 0:
+            continue
+        if found != 1:
+            system.say(f"   podman image exists {ref}: exit status {found}")
+            return found, pulled
+        code = perform(Command(("podman", "pull", ref), root=True), system, context.area)
+        if code is None or code:
+            return code, pulled
+        pulled.append(ref)
+    return 0, pulled
+
+
+class GatewayWheels(Step):
+    """The wheels the gateway's worker and relay run on (the pins of
+    lib/requirements-site.txt), in the operator's cache and proven usable
+    by the pinned Python image, while Thermite still runs. The stage that
+    builds their environment has no network (oh_access.environment), so a
+    set that is incomplete, altered or made for another Python refuses the
+    transaction here, before anything stops.
+
+    The image is one every version runs (manifest.IMAGES). Root's podman
+    pulls it by digest here when it is not held yet, as changeover.Prefetch
+    pulls the rest: this step needs it first."""
+    title = "Gateway wheels"
+    always = True
+
+    def __init__(self, context: Context):
+        self.context = context
+        #: What this run pulled, for the transaction's record.
+        self.pulled: list[str] = []
+
+    def wanted(self) -> tuple[str, Path, bytes]:
+        from oh_access import staging
+        from oh_install.access import python_image, source
+        image = python_image(self.context)
+        return (image, *staging.wheels(self.context.area, image, source(self.context.area)))
+
+    def check(self, system: System) -> Check:
+        from oh_access import environment
+        try:
+            _, directory, requirements = self.wanted()
+        except (OSError, ValueError, KeyError) as exc:
+            return Check(False, "", f"the gateway's pinned wheels cannot be named: {exc}")
+        return Check(False, f"the {environment.pins(requirements)} pinned wheels of the gateway's worker and relay, "
+                            f"in {directory}, checked by the pinned image's pip without a network")
+
+    def actions(self, system: System) -> list[Action]:
+        return [Task("fetch what is missing of the gateway's pinned wheels, and verify every one", self.fetch)]
+
+    def fetch(self, system: System) -> int:
+        from oh_access import AccessError, environment
+        from oh_install.runner import perform
+        image, directory, requirements = self.wanted()
+        code, pulled = pull_missing(self.context, system, [image])
+        self.pulled += pulled
+        if code is None or code:
+            return code or 1
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            # The pins the set is for, beside it: the commands below read
+            # them there, and so does one typed on another machine.
+            (directory / "requirements-site.txt").write_bytes(requirements)
+            verify, fetch = environment.verify_command(image, directory), environment.fetch_command(image, directory)
+        except (OSError, AccessError) as exc:
+            system.say(f"   {exc}")
+            return 1
+
+        def run(argv: list[str]) -> bool:
+            return perform(Command(tuple(argv), root=True), system, self.context.area) == 0
+        # A complete set is only read: no network is used and nothing is
+        # fetched again. pip reuses each wheel a partial one already holds.
+        complete = any(directory.glob("*.whl")) and system.capture(("sudo", "-n", *verify))[0] == 0
+        if complete or run(fetch) and run(verify):
+            return 0
+        system.say(f"   The gateway's pinned wheels in {directory} are incomplete, or not the pinned ones, and could "
+                   "not be fetched and verified. Nothing was changed. With no network here, copy that directory to "
+                   "an x86-64 machine that has one and podman, fill it there with\n"
+                   f"     podman run --rm --volume {directory}:/wheels {image} python -m pip download "
+                   "--require-hashes --only-binary :all: --dest /wheels -r /wheels/requirements-site.txt\n"
+                   "   (with that machine's path in place of this one), copy it back and run the command again: "
+                   "every wheel is checked against the pinned hashes wherever it came from.")
+        return 1
+
+
 class AddonRepository(Step):
     """The pinned add-on files and the repaired bundles of the bindings
     that need one, in userdata's own repository; Karaf's resolver pointed

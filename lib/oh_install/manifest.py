@@ -140,7 +140,9 @@ def thermite_present(context: Context, system: System) -> list[Path]:
     install (oh_cli.install): that is how missing_recovery ends."""
     from oh_install import ingress, steps
     paths = [*deploy.INSTALLED.values(), ingress.UNIT_FILE, ingress.RULE_FILE, oh_apparmor.CONFIG,
-             oh_apparmor.POLICY, *(UNITS / name for name in oh_units.ACCESS_UNITS), UNIT_RECORD]
+             oh_apparmor.POLICY, *(UNITS / name for name in oh_units.ACCESS_UNITS),
+             *(Path("/etc/containers/systemd") / f"{name}.container" for name in oh_units.ACCESS_CONTAINERS.values()),
+             UNIT_RECORD]
     found = [path for path in paths if system.lexists(path)]
     root = context.installation.root
     if set(system.directory_entries(root) or ()) - {steps.TRANSACTIONS}:

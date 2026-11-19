@@ -10,7 +10,7 @@ import stat
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from types import SimpleNamespace
 
 AREA = Path(__file__).resolve().parents[1]
@@ -230,7 +230,8 @@ class Custody(unittest.TestCase):
         with self.assertRaisesRegex(AccessError, "plan directory is required"):
             staging.stage(target, state=state, house="unused", assets="unused", runtime_url="unused",
                           runtime_token_file="unused", tls_cert="unused", tls_key="unused", allowed_hosts=[],
-                          listen=["127.0.0.1"], port=13601, timezone="UTC")
+                          listen=["127.0.0.1"], port=13601, timezone="UTC", image="unused", area="unused",
+                          application="unused")
         self.assertFalse(target.exists())
         self.assertFalse(state.exists())
 
@@ -249,11 +250,13 @@ class Custody(unittest.TestCase):
         parent.mkdir(mode=0o700)
         plan = parent / "first"
         receipt = {"ownership_commands": [["sudo", "/usr/bin/python3", "-I", "-S", str(plan / "custody.py"), str(plan / "custody.json")]],
-                   "verification_command": ["true"], "destination": str(self.release), "units": list(staging.units(self.release, state=self.state)),
+                   "verification_command": ["true"], "destination": str(self.release), "units": list(staging.ACCESS_UNITS[:2]),
                    "unit_install_commands": []}
-        generated_units = staging.units(self.release, state=self.state)
+        generated_units = staging.units(self.release, state=self.state, image="registry.example/python@sha256:" + "5" * 64,
+                                        identity=(9001, 9001))
+        copies = {copy: text for _, copy, _, text in staging.unit_files(generated_units)}
         with staging._new_release(plan, purpose="Plan", private_parent=True) as descriptor:
-            staging._export_plan(descriptor, receipt, self.plan, generated_units)
+            staging._export_plan(descriptor, receipt, self.plan, copies)
         # The receipt, the manifest, its helper and the unit copies: nothing
         # in a plan is a script for an owner to run.
         self.assertEqual({path.name for path in plan.iterdir()},
@@ -266,7 +269,9 @@ class Custody(unittest.TestCase):
         # A service can replace its release units after handoff; the operator's
         # reviewed root-install source must retain the staged bytes.
         (self.release / "units").mkdir()
-        for name, source in generated_units.items():
+        self.assertEqual(set(copies), {"thermite-access.service", "thermite-access-worker.container",
+                                       "thermite-access-worker.service.d.conf"})
+        for name, source in copies.items():
             (self.release / "units" / name).write_text("[Service]\nExecStart=/malicious-root-command\n")
             self.assertEqual((plan / "units" / name).read_text(), source)
             self.assertEqual(stat.S_IMODE((plan / "units" / name).stat().st_mode), 0o600)
@@ -298,14 +303,17 @@ class Custody(unittest.TestCase):
                         patch.object(staging, "_disposable", return_value=False), patch.object(staging, "_state_location"), \
                         patch.object(staging, "_service_parents"), patch.object(staging, "_state_directory") as create, \
                         patch.object(staging.venv, "EnvBuilder") as builder, patch.object(staging.subprocess, "run") as run:
+                    podman = Mock()
                     with self.assertRaisesRegex(AccessError, "Release and state ancestors.*protected from replacement"):
                         staging.stage(target, state=state, house="unused", assets="unused", runtime_url="unused",
                                       runtime_token_file="unused", tls_cert="unused", tls_key="unused", allowed_hosts=[],
                                       listen=["127.0.0.1"], port=13601, timezone="UTC", plan_directory=root / "plan",
-                                      area=root / "source")
+                                      area=root / "source", application=root / "source", image="unused",
+                                      podman=podman)
                 create.assert_not_called()
                 builder.assert_not_called()
                 run.assert_not_called()
+                podman.assert_not_called()
                 self.assertFalse(target.exists())
                 self.assertFalse(state.exists())
                 self.assertFalse((root / "plan").exists())
