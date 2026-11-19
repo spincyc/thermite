@@ -18,9 +18,8 @@ SLICE = "thermite.slice"
 SHARE_GATE = "thermite-share-gate@.service"
 
 #: The gateway, its policy worker and its callback relay. oh_access.staging
-#: writes their units for each release: the gateway's a host service on the
-#: host's Python, the other two containers of the pinned Python image
-#: (ACCESS_CONTAINED).
+#: writes their units for each release: containers of the pinned Python
+#: image (ACCESS_CONTAINED).
 ACCESS = "thermite-access.service"
 ACCESS_WORKER = "thermite-access-worker.service"
 ACCESS_CALLBACKS = "thermite-access-callbacks.service"
@@ -35,7 +34,7 @@ CONTAINERS = {unit: unit.removesuffix(".service") for unit in CONTAINED}
 #: The access services that run in containers, and their containers. Their
 #: quadlets name a release, so a release's stage writes them and the gateway
 #: step installs them: `thermite generate` and deploy/ know nothing of them.
-ACCESS_CONTAINED = (ACCESS_WORKER, ACCESS_CALLBACKS)
+ACCESS_CONTAINED = ACCESS_UNITS
 ACCESS_CONTAINERS = {unit: unit.removesuffix(".service") for unit in ACCESS_CONTAINED}
 
 #: Bounds.user: the state's uid and gid (host.yaml's uid: and gid:), which own
@@ -51,8 +50,8 @@ OWN_USER = "own"
 HOST_NETWORK = "host"
 #: Bounds.secrets of the access services, below the installation root: the
 #: gateway's state (accounts, sessions, keys) and its release's secrets (the
-#: runtime token and the TLS key). A host service reads both as the state's
-#: user; a container reads what its quadlet mounts.
+#: runtime token and the TLS key). A container reads what its quadlet
+#: mounts.
 ACCESS_STATE = "access/state"
 ACCESS_RELEASE = "access/release/secrets"
 ACCESS_SECRETS = (ACCESS_STATE, ACCESS_RELEASE)
@@ -86,13 +85,12 @@ class Bounds:
 
 
 #: The services outside monitoring; oh_metrics.services() carries the others'.
-#: The access services run as the state's user. The gateway is a host
-#: service: its unit puts an empty directory in place of the runtime state,
-#: which none of them needs, with the metrics textfile directory alone
-#: inside. The worker and the relay are containers that see only what their
-#: quadlets mount: of a release, the program, its environment and the one
-#: descriptor each reads; the worker also the state and the runtime token,
-#: the relay no secret at all.
+#: The access services run as the state's user, in containers that see only
+#: what their quadlets mount: of the runtime state, which none of them
+#: needs, the metrics textfile directory alone. The gateway sees its release
+#: and the state; the worker and the relay, of a release, the program, its
+#: environment and the one descriptor each reads; the worker also the state
+#: and the runtime token, the relay no secret at all.
 BOUNDS = {
     RUNTIME: Bounds(STATE_USER, "2560M", "3G", HOST_NETWORK, ("secrets", "userdata")),
     ATV: Bounds(STATE_USER, "256M", "512M", HOST_NETWORK, ("atv/secrets",)),

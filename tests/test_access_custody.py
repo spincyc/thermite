@@ -269,8 +269,8 @@ class Custody(unittest.TestCase):
         # A service can replace its release units after handoff; the operator's
         # reviewed root-install source must retain the staged bytes.
         (self.release / "units").mkdir()
-        self.assertEqual(set(copies), {"thermite-access.service", "thermite-access-worker.container",
-                                       "thermite-access-worker.service.d.conf"})
+        self.assertEqual(set(copies), {"thermite-access.container", "thermite-access.service.d.conf",
+                                       "thermite-access-worker.container", "thermite-access-worker.service.d.conf"})
         for name, source in copies.items():
             (self.release / "units" / name).write_text("[Service]\nExecStart=/malicious-root-command\n")
             self.assertEqual((plan / "units" / name).read_text(), source)
@@ -301,8 +301,7 @@ class Custody(unittest.TestCase):
                 state = (protected if which == "state" else root) / "new-state"
                 with patch.object(staging, "service_identity", return_value=(os.geteuid() + 1, os.getegid())), \
                         patch.object(staging, "_disposable", return_value=False), patch.object(staging, "_state_location"), \
-                        patch.object(staging, "_service_parents"), patch.object(staging, "_state_directory") as create, \
-                        patch.object(staging.venv, "EnvBuilder") as builder, patch.object(staging.subprocess, "run") as run:
+                        patch.object(staging, "_service_parents"), patch.object(staging, "_state_directory") as create:
                     podman = Mock()
                     with self.assertRaisesRegex(AccessError, "Release and state ancestors.*protected from replacement"):
                         staging.stage(target, state=state, house="unused", assets="unused", runtime_url="unused",
@@ -311,8 +310,6 @@ class Custody(unittest.TestCase):
                                       area=root / "source", application=root / "source", image="unused",
                                       podman=podman)
                 create.assert_not_called()
-                builder.assert_not_called()
-                run.assert_not_called()
                 podman.assert_not_called()
                 self.assertFalse(target.exists())
                 self.assertFalse(state.exists())

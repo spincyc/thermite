@@ -6,8 +6,6 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 import shutil
 import stat
-import subprocess
-import venv
 import oh_ports
 import oh_units
 from oh_service import ACCOUNT, GROUP
@@ -17,28 +15,26 @@ from .files import (STATED_IDENTITY, atomic_private, json_private, private_direc
                     require_service_account, service_identity)
 
 ACCESS_UNITS = oh_units.ACCESS_UNITS
-#: Where the host keeps a host unit, a quadlet, and the drop-in of the
+#: Where the host keeps its own units, a quadlet, and the drop-in of the
 #: service systemd's generator makes from a quadlet.
 HOST_UNITS = Path("/etc/systemd/system")
 QUADLETS = Path("/etc/containers/systemd")
 LIFECYCLE = "50-container-lifecycle.conf"
-#: How long a contained service has to stop before podman kills it: what a
-#: host unit's TimeoutStopSec= gives each of them. The worker joins its
-#: threads within worker.STOP_SECONDS of the signal.
+#: How long a service has to stop before podman kills it. The worker joins
+#: its threads within worker.STOP_SECONDS of the signal.
 STOP_SECONDS = 30
-#: What of a release each contained service is shown, read-only: the
-#: program, its environment and the descriptor it is started with; for the
-#: worker also what that descriptor names. The relay is shown no secret and
-#: no state; the worker never the TLS key.
+#: What of a release each service is shown, read-only. The gateway, whose
+#: container the operator's commands run in too (bootstrap, setup,
+#: reset-admin, audit), is shown all of it. The others see the program, its
+#: environment and the descriptor each is started with; the worker also what
+#: that descriptor names. The relay is shown no secret and no state; the
+#: worker never the TLS key.
 RELEASE_MOUNTS = {
+    oh_units.ACCESS: ("",),
     oh_units.ACCESS_WORKER: ("program", environment.DIRECTORY, "config.json", "contract.json",
                              "secrets/runtime-bearer"),
     oh_units.ACCESS_CALLBACKS: ("program", environment.DIRECTORY, "callbacks.json"),
 }
-
-
-class _EnvironmentInstallError(AccessError):
-    """Keep the operator's diagnostic directory when environment setup fails."""
 
 
 def _systemd_text(value):
@@ -48,26 +44,13 @@ def _systemd_text(value):
     return text.replace("%", "%%")
 
 
-def systemd(value):
-    """One quoted list/command argument, not a scalar path directive."""
-    return '"' + _systemd_text(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
-def _working_directory(value):
-    # This scalar does not unquote or unescape: quotes and backslashes are
-    # literal filename characters. Only specifiers need escaping. A terminal
-    # '/.' preserves trailing whitespace/backslashes through the INI reader.
-    text = _systemd_text(value)
-    return text + "/." if text.endswith((" ", "\\")) else text
-
-
 def _quadlet(unit, description, root, verb, descriptor, *, state, image, identity, textfile):
-    """One contained service's quadlet. The container is the pinned Python
-    image with a read-only root, no capability and the host's network; the
-    process is the service account by number, which the unit also states
-    for the service's own guard (files.require_service_account). It sees
-    the release at the release's own path, so one descriptor serves a host
-    service and a container alike, and of the host nothing but its mounts.
+    """One service's quadlet. The container is the pinned Python image with
+    a read-only root, no capability and the host's network; the process is
+    the service account by number, which the unit also states for the
+    service's own guard (files.require_service_account). It sees the
+    release at the release's own path, as the stage wrote its descriptors,
+    and of the host nothing but its mounts.
 
     Podman 4.9 is a supported host: these are only keys and podman flags
     the units in deploy/ already use there, and podman run's --read-only
@@ -138,12 +121,10 @@ def _quadlet(unit, description, root, verb, descriptor, *, state, image, identit
 
 
 def destinations(name):
-    """Where the host installs a service's unit: a host service's unit file;
-    a contained one's quadlet, then the lifecycle drop-in of the service
-    systemd's generator makes from it, as every Thermite container has."""
-    if name in oh_units.ACCESS_CONTAINED:
-        return [QUADLETS / (oh_units.ACCESS_CONTAINERS[name] + ".container"), HOST_UNITS / (name + ".d") / LIFECYCLE]
-    return [HOST_UNITS / name]
+    """Where the host installs a service's unit: its quadlet, then the
+    lifecycle drop-in of the service systemd's generator makes from it, as
+    every Thermite container has."""
+    return [QUADLETS / (oh_units.ACCESS_CONTAINERS[name] + ".container"), HOST_UNITS / (name + ".d") / LIFECYCLE]
 
 
 def unit_files(generated):
@@ -161,71 +142,32 @@ def unit_files(generated):
 
 
 def units(destination, user=ACCOUNT, *, state, image, identity, callbacks=False, textfile=None, runtime=None):
-    """Each service's unit by its service name: the gateway's a host unit on
-    the release's `env`, the others (oh_units.ACCESS_CONTAINED) quadlets of
-    `image`, the pinned Python image, on the release's environment.DIRECTORY.
-    unit_files() says where each is installed.
+    """Each service's quadlet by its service name: a container of `image`,
+    the pinned Python image, on the release's environment. unit_files()
+    says where each is installed.
 
     identity: the service account's (uid, gid). A container has no account
     database, so its quadlet states the numbers.
     textfile: the runtime's node_exporter textfile directory, where each
     service writes its metrics (oh_access.metrics); None writes none.
     runtime: the runtime state, of which no access service needs anything
-    else. A host service sees an empty read-only directory in its place
-    (systemd's TemporaryFileSystem=), with the textfile directory bound
-    inside; a container sees only what its quadlet mounts."""
+    else: a container sees only what its quadlet mounts."""
     root = Path(destination).absolute()
     state = _absolute(state)
-    hidden, inside = "", False
     if runtime is not None:
         runtime = _absolute(runtime)
         if _overlap(runtime, root) or _overlap(runtime, state):
             raise AccessError("The access release and state must lie outside the runtime state")
-        hidden = "\nTemporaryFileSystem=" + systemd(str(runtime) + ":ro")
-        inside = textfile is not None and runtime in _absolute(textfile).parents
-    # '-': a missing directory never keeps a service from starting. Bound
-    # into the hidden runtime state it is writable as a mount of its own;
-    # elsewhere ProtectSystem=strict needs it named.
-    metrics = ("\nEnvironment=" + systemd(TEXTFILE_ENVIRONMENT + "=" + str(_absolute(textfile))) +
-               ("\nBindPaths=" if inside else "\nReadWritePaths=") +
-               systemd("-" + str(_absolute(textfile)))) if textfile else ""
     if user != ACCOUNT:
         raise AccessError("Access services require user thermite and group thermite")
-    command = [root / "env/bin/python", root / "program/bin/thermite", "access"]
     result = {}
     for name in (("serve", "worker", "callbacks") if callbacks else ("serve", "worker")):
-        suffix = "" if name == "serve" else "-" + name
-        config_name = "callbacks.json" if name == "callbacks" else "config.json"
-        writable = "" if name == "callbacks" else "\nReadWritePaths=" + systemd(state)
-        unit = "thermite-access" + suffix
+        unit = "thermite-access" + ("" if name == "serve" else "-" + name) + ".service"
         description = {"worker": "room policy worker", "serve": "authenticated site",
                        "callbacks": "verified UPnP callback ingress"}[name]
-        if unit + ".service" in oh_units.ACCESS_CONTAINED:
-            result[unit + ".service"] = _quadlet(unit + ".service", description, root, name, config_name, state=state,
-                                                 image=image, identity=identity, textfile=textfile)
-            continue
-        # Its memory ceiling, as its record states it.
-        record = oh_units.BOUNDS[unit + ".service"]
-        result[unit + ".service"] = (
-            "[Unit]\nDescription=thermite " + description +
-            f"\nAfter=network-online.target\nWants=network-online.target\nPartOf={oh_units.TARGET}\n\n[Service]\nType=simple\nUser=" + user +
-            "\nGroup=" + GROUP + f"\nSlice={oh_units.SLICE}\nMemoryHigh={record.memory_high}\nMemoryMax={record.memory_max}"
-            "\nUMask=0077\nWorkingDirectory=" + _working_directory(root) +
-            # env directly execs the staged interpreter; systemd restricts the
-            # executable token itself from containing quotes/backslashes. ':'
-            # disables its environment substitution so every '$' stays literal.
-            "\nExecStart=:/usr/bin/env -- " + " ".join(systemd(x) for x in [*command, name, "--descriptor", root / config_name]) +
-            # Without it the journal would name every one of them env.
-            "\nSyslogIdentifier=" + unit +
-            "\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=30\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=read-only" + writable + hidden + metrics +
-            f"\nRestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n\n[Install]\nWantedBy={oh_units.TARGET}\n")
+        result[unit] = _quadlet(unit, description, root, name, "callbacks.json" if name == "callbacks" else "config.json",
+                                state=state, image=image, identity=identity, textfile=textfile)
     return result
-
-
-#: A release's Python environments: the host's Python builds `env`, for the
-#: gateway and the commands the operator runs; the pinned image's Python
-#: builds the other, for the contained services.
-ENVIRONMENTS = ("env", environment.DIRECTORY)
 
 
 def wheels(area, image, application):
@@ -317,13 +259,10 @@ def _inventory(root, *, release=False):
         elif stat.S_ISREG(info.st_mode):
             if info.st_nlink != 1:
                 raise AccessError("Service custody must not change files linked outside their private tree")
-            executable = (release and path.relative_to(root).parts[0] in {"program", *ENVIRONMENTS}
-                          and info.st_mode & 0o111)
+            executable = release and path.relative_to(root).parts[0] in {"program", "env"} and info.st_mode & 0o111
             result.append((path, 0o700 if executable else 0o600))
-        elif stat.S_ISLNK(info.st_mode) and release and any(
-                root / name in path.parents and (root / name) in path.resolve().parents for name in ENVIRONMENTS):
-            # venv's lib64 -> lib is the only usual link. It may not escape
-            # its environment.
+        elif stat.S_ISLNK(info.st_mode) and release and root / "env" in path.parents and (root / "env") in path.resolve().parents:
+            # venv's lib64 -> lib is the only usual link. It may not escape env.
             result.append((path, None))
         else:
             raise AccessError("Private service trees must contain only regular files, directories and internal environment links")
@@ -434,13 +373,9 @@ def _new_release(target, *, purpose="Release", private_parent=False):
                 # inherited bit on this exclusively created directory, through its fd.
                 os.fchmod(descriptor, 0o700)
                 yield descriptor
-            except BaseException as error:
+            except BaseException:
                 if not _same_release(parent, target.name, descriptor):
                     raise AccessError(purpose + " path changed during staging; refusing to remove its replacement") from None
-                if private_parent and isinstance(error, _EnvironmentInstallError):
-                    # At this point the plan holds only a private diagnostic
-                    # log, never a runnable partial handoff or activation plan.
-                    raise
                 try:
                     # Anchor deletion to the directory created above. rmtree's
                     # fd-based walk never follows links into other releases or
@@ -465,33 +400,6 @@ def _new_release(target, *, purpose="Release", private_parent=False):
                 raise AccessError(purpose + " path changed during staging")
         finally:
             os.close(descriptor)
-
-
-def _install_environment(target, program, plan, descriptor, wheelhouse):
-    log = plan / "environment-install.log"
-    fd = os.open(log.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=descriptor)
-    with os.fdopen(fd, "wb") as output:
-        os.fchmod(output.fileno(), 0o600)
-        try:
-            output.write(b"Creating the private Python environment.\n")
-            output.flush()
-            venv.EnvBuilder(with_pip=True).create(target / "env")
-            argv = [str(target / "env/bin/python"), "-m", "pip", "install", "--require-hashes",
-                    "-r", str(program / "lib/requirements-site.txt")]
-            if wheelhouse:
-                argv.extend(["--no-index", "--find-links", str(Path(wheelhouse).absolute())])
-            completed = subprocess.run(argv, stdout=output, stderr=subprocess.STDOUT, check=False)
-            if completed.returncode:
-                raise RuntimeError("Pinned dependency installation exited " + str(completed.returncode))
-        except Exception as error:
-            output.write(("\n" + type(error).__name__ + ": " + str(error) + "\n").encode("utf-8", "replace"))
-            for captured in (getattr(error, "output", None), getattr(error, "stderr", None)):
-                if captured:
-                    output.write(captured if isinstance(captured, bytes) else captured.encode("utf-8", "replace"))
-            output.flush()
-            os.fsync(output.fileno())
-            raise _EnvironmentInstallError("Service environment installation failed; review the private diagnostic log at " +
-                                           str(log) + ". The partial release was removed.") from None
 
 
 def _export_plan(descriptor, receipt, custody, unit_sources=None):
@@ -524,17 +432,16 @@ def _export_plan(descriptor, receipt, custody, unit_sources=None):
 
 
 def stage(destination, *, state, house, assets, runtime_url, runtime_token_file, tls_cert, tls_key,
-          allowed_hosts, listen, port, timezone, image, area, application, user=None, wheelhouse=None,
+          allowed_hosts, listen, port, timezone, image, area, application, user=None,
           install_environment=True, callbacks=None, plan_directory=None, host_ports=None, guest_http=None,
           textfile=None, music=None, runtime=None, podman=None):
     """A new release with explicit reusable site state. No database is migrated.
 
-    image is the pinned Python image the contained services run in. Its own
-    Python builds their environment here, from the site's wheelhouse for it
-    alone and without a network (wheels(), oh_access.environment);
-    `podman` runs that one command with root's podman, which holds the
-    image, and raises when it fails. The gateway's environment is the host
-    Python's, from the `wheelhouse` argument or the index, as before.
+    image is the pinned Python image the services run in. Its own Python
+    builds their environment here, from the site's wheelhouse for it alone
+    and without a network (wheels(), oh_access.environment); `podman` runs
+    that one command with root's podman, which holds the image, and raises
+    when it fails, with the partial release removed.
 
     area is the site the release is for, or a checkout, and application
     the directory its program is copied from. The caller names both
@@ -557,7 +464,7 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
     if plan_directory is None:
         raise AccessError("An operator-owned plan directory is required for a safe, replayable custody handoff")
     if install_environment and podman is None:
-        raise AccessError("The contained services' environment needs a way to run podman")
+        raise AccessError("The services' environment needs a way to run podman")
     area = _absolute(area)
     resources = _absolute(application)
     target = _absolute(destination)
@@ -644,7 +551,6 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
         os.unlink(validation_config.name, dir_fd=release_descriptor)
         os.rmdir(validation_state.name, dir_fd=release_descriptor)
         if install_environment:
-            _install_environment(target, program, plan, plan_descriptor, wheelhouse)
             # The image's Python writes it as this operator, into a directory
             # that is here before the container is.
             private_directory(target / environment.DIRECTORY)
@@ -654,19 +560,19 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
         receipt = {"version": 1, "staged": True, "activated": False, "security_boundary_active": False,
                    "destination": str(target), "persistent_state": str(state), "config": str(target / "config.json"), "units": list(generated_units),
                    # Each unit's installed files as [protected copy, destination],
-                   # and the container of each contained one.
+                   # and its container.
                    "unit_files": {name: [[str(plan / "units" / copy), str(destination)]
                                          for unit, copy, destination, _ in files if unit == name]
                                   for name in generated_units},
-                   "containers": {name: oh_units.ACCESS_CONTAINERS[name] for name in generated_units
-                                  if name in oh_units.ACCESS_CONTAINED},
+                   "containers": {name: oh_units.ACCESS_CONTAINERS[name] for name in generated_units},
                    "image": image,
                    "environment_installed": install_environment,
                    "callbacks_staged": callback_config is not None, "callbacks_activated": False,
                    "service_user": ACCOUNT, "service_group": GROUP}
-        command = ["sudo", "-u", ACCOUNT, "-g", GROUP, str(target / "env/bin/python"),
-                   str(target / "program/bin/thermite"), "access"]
-        receipt["verification_command"] = [*command, "verify", "--descriptor", str(target / "config.json")]
+        # As the services run: one-shot containers of the same image, as
+        # the account, which root's podman starts.
+        for name, verb in (("verification_command", "verify"), ("migration_command", "migrate")):
+            receipt[name] = ["sudo", *environment.service_command(image, target, (uid, gid), verb, state=state)]
         receipt["unit_install_commands"] = [
             command for _, copy, destination, _ in files for command in (
                 # A drop-in's directory is the unit's own, and new with it.

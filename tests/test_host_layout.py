@@ -318,8 +318,8 @@ class GatewayRoot(unittest.TestCase):
             release = access / "releases/fixture-release"
             release.mkdir(parents=True)
             (access / tui.AUTHORITY).write_text("fixture authority\n")
-            unit = Path(temporary) / "thermite-access.service"
-            unit.write_text(f"[Service]\nUser=thermite\nWorkingDirectory={release}\n")
+            unit = Path(temporary) / "thermite-access.container"
+            unit.write_text(f"[Container]\nUser=9001\nPodmanArgs=--read-only\nPodmanArgs=--workdir={release}\n")
             with mock.patch.object(tui, "UNIT", unit), mock.patch.object(tui, "installed_profile", return_value=None):
                 self.assertEqual(tui.installed_authority(), str(access / tui.AUTHORITY))
 

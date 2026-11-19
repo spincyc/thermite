@@ -7,6 +7,14 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The gateway runs in the pinned Python image too
+  (`thermite-access.service` is now a quadlet), so nothing of an
+  installed release depends on the host's Python. Commands run from a
+  release (`access bootstrap`, `setup`, `reset-admin`, `audit`) run in
+  the gateway's container with `sudo podman exec`, as
+  `docs/installation.md` shows, and need the gateway running. The
+  previous application installed over this layout is refused and rolled
+  back: use `thermite revert`.
 - An upgrade that drops a unit it had enabled (as the next one does for the
   policy worker and the callback relay) no longer fails while setting the
   installed version aside with "sync: error opening '.../links/...partial': No

@@ -24,7 +24,6 @@ sys.path.insert(0, str(AREA / "lib"))
 
 import oh_cli
 import oh_paths
-import oh_units
 from oh_access import staging
 from oh_install.access import Gateway
 from tests import test_access_deployment as deployment
@@ -105,15 +104,12 @@ class StagedUnits(Accepted, unittest.TestCase):
         for name, text in units.items():
             with self.subTest(unit=name):
                 [line] = [line for line in text.splitlines() if line.startswith(("ExecStart=", "Exec="))]
-                contained = line.startswith("Exec=")
-                self.assertEqual(contained, name in oh_units.ACCESS_CONTAINED)
-                words = shlex.split(line.removeprefix("Exec=") if contained else line.partition(" -- ")[2])
+                words = shlex.split(line.removeprefix("Exec="))
                 # The interpreter and the program are the release's own, never
                 # a path that moves with an upgrade: the unit and the parser
-                # that reads its command line are always of one release. A
-                # container's interpreter is the one its image built.
-                self.assertEqual(words[:2], [str(release / ("container-env" if contained else "env") / "bin/python"),
-                                             str(release / "program/bin/thermite")])
+                # that reads its command line are always of one release. The
+                # interpreter is the one the image built into the release.
+                self.assertEqual(words[:2], [str(release / "env/bin/python"), str(release / "program/bin/thermite")])
                 parsed = self.accepted(words[2:])
                 started[parsed.command] = parsed.descriptor
         self.assertEqual(started, {"serve": release / "config.json", "worker": release / "config.json",

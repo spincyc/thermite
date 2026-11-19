@@ -193,9 +193,10 @@ class Configuration(unittest.TestCase):
         # The command the receipt hands the installer is one this release's
         # own access verb accepts, and the receipt addresses nobody else.
         import oh_cli
-        command = receipt["verification_command"]
-        parsed = oh_cli.parser_of("access").parse_args(command[command.index("access") + 1:])
-        self.assertEqual((parsed.command, parsed.descriptor), ("verify", self.root / "release-opt-in/config.json"))
+        for name, verb in (("verification_command", "verify"), ("migration_command", "migrate")):
+            command = receipt[name]
+            parsed = oh_cli.parser_of("access").parse_args(command[command.index("access") + 1:])
+            self.assertEqual((parsed.command, parsed.descriptor), (verb, self.root / "release-opt-in/config.json"))
         self.assertFalse({"activation_commands", "owner_commands", "bootstrap_command",
                           "activation_requirements"} & set(receipt))
         account = files.service_identity()
@@ -208,7 +209,7 @@ class Configuration(unittest.TestCase):
         release = self.root / "release-opt-in"
         self.assertEqual([line for line in unit.splitlines() if line.startswith("Volume=")],
                          [f"Volume={release / part}:{release / part}:ro,z"
-                          for part in ("program", "container-env", "callbacks.json")])
+                          for part in ("program", "env", "callbacks.json")])
         self.assertNotIn("site-state", unit)
         self.assertNotIn("runtime-bearer", unit)
         self.assertNotIn("tls-key", unit)
@@ -217,7 +218,7 @@ class Configuration(unittest.TestCase):
         # and the receipt the commands that install exactly those.
         plan = self.root / "release-opt-in-plan/units"
         self.assertEqual({path.name for path in plan.iterdir()},
-                         {"thermite-access.service", "thermite-access-worker.container",
+                         {"thermite-access.container", "thermite-access.service.d.conf", "thermite-access-worker.container",
                           "thermite-access-worker.service.d.conf", "thermite-access-callbacks.container",
                           "thermite-access-callbacks.service.d.conf"})
         self.assertEqual([command[-2:] for command in receipt["unit_install_commands"] if "-d" not in command],
@@ -225,14 +226,17 @@ class Configuration(unittest.TestCase):
                           for source, destination in receipt["unit_files"][name]])
         self.assertEqual(
             [command[-1] for command in receipt["unit_install_commands"]],
-            ["/etc/systemd/system/thermite-access.service",
+            ["/etc/containers/systemd/thermite-access.container",
+             "/etc/systemd/system/thermite-access.service.d",
+             "/etc/systemd/system/thermite-access.service.d/50-container-lifecycle.conf",
              "/etc/containers/systemd/thermite-access-worker.container",
              "/etc/systemd/system/thermite-access-worker.service.d",
              "/etc/systemd/system/thermite-access-worker.service.d/50-container-lifecycle.conf",
              "/etc/containers/systemd/thermite-access-callbacks.container",
              "/etc/systemd/system/thermite-access-callbacks.service.d",
              "/etc/systemd/system/thermite-access-callbacks.service.d/50-container-lifecycle.conf"])
-        self.assertEqual(receipt["containers"], {"thermite-access-worker.service": "thermite-access-worker",
+        self.assertEqual(receipt["containers"], {"thermite-access.service": "thermite-access",
+                                                 "thermite-access-worker.service": "thermite-access-worker",
                                                  "thermite-access-callbacks.service": "thermite-access-callbacks"})
         self.assertEqual(receipt["image"], "registry.example/python@sha256:" + "5" * 64)
         self.assertEqual(receipt["persistent_state"], plain["persistent_state"])

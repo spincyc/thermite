@@ -236,14 +236,15 @@ class InstalledInstall(unittest.TestCase):
                 patch.object(staging, "_service_parents"), \
                 patch.object(staging, "_state_location") as location, \
                 patch("oh_access.service.compile_contract", side_effect=compile_contract), \
-                patch("oh_access.service.load_config"), patch.object(staging.subprocess, "run") as run:
+                patch("oh_access.service.load_config"):
+            run = Mock()
             receipt = staging.stage(target, state=root / "identity-state", house=self.site / "instance/devices.yaml",
                                     assets=assets, runtime_url="http://127.0.0.1:13602",
                                     runtime_token_file=root / "bearer", tls_cert=root / "cert", tls_key=root / "key",
                                     allowed_hosts=["site.example"], listen=["127.0.0.1"],
                                     timezone="Etc/UTC", install_environment=False, area=self.site,
                                     application=source(self.site),
-                                    image="registry.example/python@sha256:" + "5" * 64,
+                                    image="registry.example/python@sha256:" + "5" * 64, podman=run,
                                     plan_directory=root / "operator-plan", **arguments)
         return root, target, receipt, location, run
 
@@ -258,9 +259,9 @@ class InstalledInstall(unittest.TestCase):
         self.assertFalse((self.site / "lib").exists())
         location.assert_called_once_with(root / "identity-state", target, self.site)
         self.assertFalse(receipt["activated"])
-        # The gateway's unit, the worker's quadlet and its lifecycle drop-in.
+        # The gateway's and the worker's quadlets, and the lifecycle drop-in of each.
         installs = [command for command in receipt["unit_install_commands"] if "-d" not in command]
-        self.assertEqual(len(installs), 3)
+        self.assertEqual(len(installs), 4)
         for command in installs:
             source = Path(command[-2])
             self.assertEqual(source.parent, root / "operator-plan/units")

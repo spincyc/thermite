@@ -32,9 +32,11 @@ DEFAULT_URL = f"https://{HOST}:{oh_ports.ACCESS_PORT}"
 LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
 #: The gateway's copy of the house model; Guests may read it.
 MODEL_PATH = "/static/remote/house.js"
-#: The installed gateway's unit; its WorkingDirectory is <gateway root>/releases/<release>
-#: (oh_install.access.Gateway), and <gateway root>/tls-cert.pem its authority.
-UNIT = Path("/etc/systemd/system/thermite-access.service")
+#: The installed gateway's quadlet; its container's working directory is
+#: <gateway root>/releases/<release> (oh_install.access.Gateway), and
+#: <gateway root>/tls-cert.pem its authority.
+UNIT = Path("/etc/containers/systemd/thermite-access.container")
+WORKDIR = "PodmanArgs=--workdir="
 AUTHORITY = "tls-cert.pem"
 #: Where a server keeps that file in the default installation root,
 #: /srv/thermite: the gateway root is its access/ directory.
@@ -195,8 +197,8 @@ def installed_authority() -> str | None:
     for line in map(str.strip, text.splitlines()):
         if line.startswith("["):
             section = line
-        elif section == "[Service]" and line.startswith("WorkingDirectory="):
-            directory = line.split("=", 1)[1].replace("%%", "%")
+        elif section == "[Container]" and line.startswith(WORKDIR):
+            directory = line.removeprefix(WORKDIR)
     release = Path(directory) if directory else None
     if release is None or not release.is_absolute() or release.parent.name != "releases":
         return None

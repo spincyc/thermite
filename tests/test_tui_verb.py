@@ -354,9 +354,9 @@ class Trust(Scratch):
         root = self.root / "srv/thermite/access"
         (root / "releases/abc").mkdir(parents=True)
         shutil.copyfile(self.authority(), root / "tls-cert.pem")
-        unit = self.root / "thermite-access.service"
-        unit.write_text("[Unit]\nDescription=x\n[Service]\nUser=thermite\nWorkingDirectory="
-                        + str(root / "releases/abc") + "\n")
+        unit = self.root / "thermite-access.container"
+        unit.write_text("[Unit]\nDescription=x\n[Container]\nUser=9001\nPodmanArgs=--workdir="
+                        + str(root / "releases/abc") + "\n[Service]\nUMask=0077\n")
         with mock.patch.object(tui, "UNIT", unit):
             self.assertEqual(tui.trust(f"https://thermite:{PORT}", None),
                              (str(root / "tls-cert.pem"), "this computer's installation"))

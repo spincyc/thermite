@@ -20,7 +20,7 @@ sys.path.insert(0, str(AREA / "lib"))
 
 import oh_ports
 import oh_units
-from oh_access import AccessError, deployment, staging
+from oh_access import AccessError, deployment, environment, staging
 from oh_access.files import json_private, private_directory, atomic_private
 from oh_install import access
 from oh_install.access import (Gateway, GatewayInputs, installed_release, openssl_config, served_names, site_inputs,
@@ -238,7 +238,8 @@ class Host:
         # No callback relay is installed unless a test installs one.
         self.overrides = {staging.ACCESS_UNITS[2]: UnitOrigin(load_state="not-found", active="inactive")}
         #: The first process of each container, as root's podman reports it.
-        self.container_pids = {container: "456" for container in oh_units.ACCESS_CONTAINERS.values()}
+        self.container_pids = {container: "123" if container == "thermite-access" else "456"
+                               for container in oh_units.ACCESS_CONTAINERS.values()}
 
     def say(self, text):
         self.messages.append(text)
@@ -260,7 +261,7 @@ class Host:
             self.unit_bytes[argv[-1]] = Path(argv[-2]).read_bytes()
         if "stop" in argv:
             self.active = False
-        if "--now" in argv:
+        if "start" in argv:
             self.active = True
         return 0
 
@@ -272,8 +273,9 @@ class Host:
             # As systemd's generator makes it from the quadlet this run installed.
             return UnitOrigin(source=quadlet, fragment="/run/systemd/generator/" + name, drop_ins=" ".join(dropins),
                               active="active" if self.active else "inactive")
-        if self.installed is None and "/etc/systemd/system/" + name not in self.unit_bytes:
+        if self.installed is None:
             return UnitOrigin(load_state="not-found", active="inactive")
+        # As a version from before the services ran in containers installed it.
         return UnitOrigin(fragment="/etc/systemd/system/" + name, active="active" if self.active else "inactive")
 
     def unit_origins(self, names):
@@ -289,13 +291,10 @@ class Host:
             # Certificate checks read the fixture's real certificates.
             result = subprocess.run(list(argv), capture_output=True, text=True, check=False)
             return result.returncode, result.stdout
-        if "--value" in argv:
-            return 0, "123\n"
         if tuple(argv[:5]) == ("sudo", "-n", "podman", "container", "inspect"):
             return 0, self.container_pids[argv[-1]] + "\n"
-        state = "generated" if argv[2] in oh_units.ACCESS_CONTAINED else "enabled"
         active = "activating" if argv[2] == getattr(self, "inactive", None) else "active"
-        return 0, f"ActiveState={active}\nUnitFileState={state}\nNeedDaemonReload=no\n"
+        return 0, f"ActiveState={active}\nUnitFileState=generated\nNeedDaemonReload=no\n"
 
     def sleep(self, seconds):
         pass
@@ -348,14 +347,15 @@ class GatewayFixture(PrivateFixture):
     def stage(self, release, **kwargs):
         """staging.stage's receipt for `release`, as the gateway runs it."""
         self.staged.append({"release": release, **kwargs})
-        command = ["sudo", "-u", "thermite", "-g", "thermite", str(release / "env/bin/python"),
-                   str(release / "program/bin/thermite"), "access"]
         files, commands = self.unit_plan(self.current, release)
+        once = {verb: ["sudo", *environment.service_command(IMAGE, release, IDENTITY, verb, state=kwargs["state"])]
+                for verb in ("verify", "migrate")}
         return {"destination": str(release), "persistent_state": kwargs["state"], "config": str(release / "config.json"),
                 "units": ["thermite-access.service", "thermite-access-worker.service"],
-                "unit_files": files, "containers": {"thermite-access-worker.service": "thermite-access-worker"},
+                "unit_files": files, "containers": {"thermite-access.service": "thermite-access",
+                                                    "thermite-access-worker.service": "thermite-access-worker"},
                 "ownership_commands": [["sudo", "/usr/bin/python3", "-I", "-S", str(self.root / "custody.py"), "custody.json"]],
-                "verification_command": [*command, "verify", "--descriptor", str(release / "config.json")],
+                "verification_command": once["verify"], "migration_command": once["migrate"],
                 "unit_install_commands": commands}
 
     def gateway(self, *, inputs=True, transaction=TRANSACTION, context=None):
@@ -406,9 +406,7 @@ class Lifecycle(GatewayFixture):
         for name, text in units.items():
             with self.subTest(unit=name):
                 service = text.split("[Service]\n", 1)[1].split("\n\n", 1)[0].splitlines()
-                # A host service is started through env; a container's output is podman's.
-                self.assertEqual(any(line.startswith("ExecStart=:/usr/bin/env -- ") for line in service),
-                                 name not in oh_units.ACCESS_CONTAINED)
+                # A container's output reaches the journal through podman.
                 self.assertEqual([line for line in service if line.startswith("SyslogIdentifier=")],
                                  ["SyslogIdentifier=" + name.removesuffix(".service")])
 
@@ -419,7 +417,7 @@ class Lifecycle(GatewayFixture):
         system.fail_migration = True
         with patch.object(Gateway, "_https", return_value="https://house.example.test:13601"):
             self.assertEqual(gateway.perform(system), 1)
-            self.assertFalse(any("--now" in command for command in system.commands))
+            self.assertFalse(any("start" in command for command in system.commands))
             self.assertEqual(self.journal(gateway)["phase"], "staged")
             migration = next(index for index, command in enumerate(system.commands) if "migrate" in command)
             stops = [index for index, command in enumerate(system.commands) if "stop" in command]
@@ -465,7 +463,7 @@ class Lifecycle(GatewayFixture):
         # The old listener's process stops before the new release starts, and
         # readiness is checked, and the terminal profile saved, on the new port.
         stops = [index for index, command in enumerate(system.commands) if "stop" in command]
-        start = next(index for index, command in enumerate(system.commands) if "--now" in command)
+        start = next(index for index, command in enumerate(system.commands) if "start" in command)
         self.assertTrue(stops)
         self.assertLess(max(stops), start)
         self.assertEqual(requests, [("/api/v1/security", f"house.example.test:{port}")])
@@ -532,7 +530,7 @@ class Lifecycle(GatewayFixture):
             self.assertEqual(gateway.perform(system), 1)
         self.assertIn("   native commissioning failed", system.messages)
         self.assertEqual(self.staged, [])
-        self.assertFalse(any("migrate" in command or "--now" in command for command in system.commands))
+        self.assertFalse(any("migrate" in command or "start" in command for command in system.commands))
 
     def test_installed_private_release_is_discovered_from_unit_not_readability(self):
         system = Host()
@@ -542,22 +540,73 @@ class Lifecycle(GatewayFixture):
             with self.assertRaisesRegex(ValueError, "root custody"):
                 installed_release(system)
 
-    def test_the_unit_staging_writes_identifies_its_release_and_repeats_are_refused(self):
+    def test_the_quadlet_staging_writes_identifies_its_release_and_repeats_are_refused(self):
         release = Path("/srv/thermite/access/releases/fixture")
         unit = staging.units(release, state=Path("/srv/thermite/access/state"), image=IMAGE, identity=IDENTITY,
                              textfile=Path("/srv/thermite/runtime/textfile"))["thermite-access.service"]
-        # Its list directives repeat: each writable path is its own line.
-        self.assertEqual(unit.count("\nReadWritePaths="), 2)
+        # Its list directives repeat: each mount and each podman flag is its own line.
+        self.assertGreater(unit.count("\nVolume="), 2)
+        self.assertGreater(unit.count("\nPodmanArgs="), 2)
+        quadlet, lifecycle = map(str, staging.destinations("thermite-access.service"))
         system = Host()
-        system.installed = release
-        with patch.object(system, "unit_file", return_value=UnitFile(unit.encode(), 0, 0o644)):
-            self.assertEqual(installed_release(system), release)
-        for directive in ("User=thermite", "WorkingDirectory=/srv/elsewhere"):
-            repeated = unit.replace("[Service]\n", "[Service]\n" + directive + "\n")
-            with self.subTest(directive=directive), \
-                    patch.object(system, "unit_file", return_value=UnitFile(repeated.encode(), 0, 0o644)), \
-                    self.assertRaisesRegex(AccessError, "ambiguous"):
+        system.unit_bytes.update({quadlet: unit.encode(), lifecycle: b""})
+        self.assertEqual(installed_release(system), release)
+        for directive in ("User=9001", "PodmanArgs=--workdir=/srv/elsewhere"):
+            system.unit_bytes[quadlet] = unit.replace("[Container]\n", "[Container]\n" + directive + "\n").encode()
+            with self.subTest(directive=directive), self.assertRaisesRegex(AccessError, "ambiguous"):
                 installed_release(system)
+        for case, text in (("root", unit.replace("\nUser=9001\n", "\nUser=0\n")),
+                           ("a name", unit.replace("\nGroup=9001\n", "\nGroup=thermite\n")),
+                           ("no release", unit.replace("\nPodmanArgs=--workdir=", "\nPodmanArgs=--env=X=")),
+                           ("a relative release", unit.replace("--workdir=/srv/", "--workdir=srv/"))):
+            system.unit_bytes[quadlet] = text.encode()
+            with self.subTest(case=case), self.assertRaisesRegex(AccessError, "does not identify its persistent release"):
+                installed_release(system)
+        system.unit_bytes[quadlet] = unit.encode()
+        generated = dict(source=quadlet, fragment="/run/systemd/generator/thermite-access.service")
+        for case, origin in (("a drop-in beside the lifecycle's", UnitOrigin(**generated, drop_ins=lifecycle + " /etc/x.conf")),
+                             ("no lifecycle drop-in", UnitOrigin(**generated)),
+                             ("a transient unit", UnitOrigin(**generated, drop_ins=lifecycle, transient=True)),
+                             ("a host unit with a drop-in", UnitOrigin(fragment="/etc/systemd/system/thermite-access.service",
+                                                                       drop_ins=lifecycle)),
+                             ("another quadlet", UnitOrigin(source="/etc/containers/systemd/other.container",
+                                                            fragment=generated["fragment"], drop_ins=lifecycle))):
+            system.overrides["thermite-access.service"] = origin
+            with self.subTest(case=case), self.assertRaisesRegex(AccessError, "unexpected overrides or unit provenance"):
+                installed_release(system)
+        del system.overrides["thermite-access.service"]
+        with patch.object(system, "unit_file", return_value=UnitFile(unit.encode(), 1000, 0o644)), \
+                self.assertRaisesRegex(AccessError, "root custody"):
+            installed_release(system)
+
+    def test_the_installed_release_is_read_before_the_transaction_sets_an_earlier_versions_unit_aside(self):
+        gateway, system = self.gateway(), Host()
+        system.installed, system.active = Path("/srv/old-release"), True
+        self.assertEqual(GatewayInputs(gateway).perform(system), 0, system.messages)
+        # The transaction collects: the earlier version's gateway unit, which
+        # this one does not install, is set aside; the worker's quadlet stays.
+        name, worker = staging.ACCESS_UNITS[:2]
+        quadlet, lifecycle = map(str, staging.destinations(worker))
+        system.active = False
+        system.overrides[name] = UnitOrigin(load_state="not-found", active="inactive")
+        system.overrides[worker] = UnitOrigin(source=quadlet, fragment="/run/systemd/generator/" + worker,
+                                              drop_ins=lifecycle, active="inactive")
+        with self.assertRaisesRegex(AccessError, "related access units remain"):
+            installed_release(system)
+        self.assertIsNone(gateway.check(system).problem)
+        run = system.run
+
+        def reloaded(argv, cwd):
+            if "daemon-reload" in argv:
+                # systemd now sees what this run installed.
+                del system.overrides[name], system.overrides[worker]
+            return run(argv, cwd)
+
+        system.run = reloaded
+        with patch.object(Gateway, "_https", return_value="https://house.example.test:13601"):
+            self.assertEqual(gateway.perform(system), 0, system.messages)
+        self.assertEqual(self.journal(gateway)["previous_release"], "/srv/old-release")
+        self.assertFalse(any("Gateway verified" in message for message in system.messages), "an upgrade")
 
     def test_failed_https_never_marks_deployment_complete(self):
         gateway, system = self.gateway(), Host()
@@ -628,7 +677,7 @@ class Lifecycle(GatewayFixture):
                 self.assertTrue(any("unknown unit provenance or overrides" in message for message in system.messages), system.messages)
                 self.assertFalse((gateway.context.var / "gateway/current.json").exists())
 
-    def test_the_worker_and_the_relay_are_installed_as_quadlets_started_and_seen_running_this_release(self):
+    def test_the_services_are_installed_as_quadlets_started_and_seen_running_this_release(self):
         gateway, system = self.gateway(), Host()
         system.installed, system.active = Path("/srv/old-release"), True
         with patch.object(Gateway, "_https", return_value="https://house.example.test:13601"):
@@ -637,16 +686,25 @@ class Lifecycle(GatewayFixture):
         quadlet, lifecycle = map(str, staging.destinations(worker))
         self.assertEqual((quadlet, lifecycle), ("/etc/containers/systemd/thermite-access-worker.container",
                                                 "/etc/systemd/system/thermite-access-worker.service.d/50-container-lifecycle.conf"))
-        self.assertEqual(set(system.unit_bytes), {"/etc/systemd/system/thermite-access.service", quadlet, lifecycle})
+        self.assertEqual(set(system.unit_bytes), {quadlet, lifecycle,
+                                                  *map(str, staging.destinations("thermite-access.service"))})
         commands = [command for command in system.commands if command[:2] == ("sudo", "systemctl")]
-        # Reloaded once the files are there; the host service enabled, the generated one only started.
-        self.assertEqual(commands[-3:], [("sudo", "systemctl", "daemon-reload"),
-                                         ("sudo", "systemctl", "enable", "--now", "thermite-access.service"),
-                                         ("sudo", "systemctl", "start", worker)])
+        # Reloaded once the files are there; a generated service is only started, never enabled.
+        self.assertEqual(commands[-2:], [("sudo", "systemctl", "daemon-reload"),
+                                         ("sudo", "systemctl", "start", "thermite-access.service", worker)])
+        self.assertFalse(any("enable" in command for command in system.commands))
         self.assertLess(max(index for index, command in enumerate(system.commands) if "install" in command),
                         system.commands.index(("sudo", "systemctl", "daemon-reload")))
-        # Each look hands root's helper the gateway's main process and the
-        # container's own first process, never podman's monitor.
+        # The identity state is checked and migrated by one-shot containers
+        # of the release's own environment, as the account, before any starts.
+        once = [command for command in system.commands if command[:3] == ("sudo", "podman", "run")]
+        self.assertEqual([command[command.index("access") + 1] for command in once], ["verify", "migrate"])
+        for command in once:
+            self.assertEqual(command, ("sudo", *environment.service_command(
+                IMAGE, gateway.release, IDENTITY, command[command.index("access") + 1], state=gateway.root / "state")))
+            self.assertLess(system.commands.index(command), system.commands.index(commands[-1]))
+        # Each look hands root's helper each container's own first process,
+        # never podman's monitor.
         looks = [command for command in system.commands if "live" in command]
         self.assertEqual(len(looks), 2, "once when it answers, and again after the settle")
         for look in looks:
@@ -708,7 +766,7 @@ class Lifecycle(GatewayFixture):
         system.fail_upstream = True
         with patch.object(gateway, "_https", return_value="https://house.example.test:13601"):
             self.assertEqual(gateway.perform(system), 1)
-        self.assertFalse(any("migrate" in command or "--now" in command or "stop" in command for command in system.commands))
+        self.assertFalse(any("migrate" in command or "start" in command or "stop" in command for command in system.commands))
         self.assertNotEqual(self.journal(gateway)["phase"], "complete")
         self.assertFalse((gateway.context.var / "gateway/current.json").exists())
 
@@ -739,7 +797,7 @@ class Lifecycle(GatewayFixture):
                        str(gateway.root / "tls-cert.pem")), system.commands)
         handshake(Path(metadata["tls_cert"]), Path(metadata["tls_key"]), authority, "house.example.test")
         self.assertTrue(any("migrate" in command for command in system.commands))
-        self.assertTrue(any("--now" in command for command in system.commands))
+        self.assertTrue(any("start" in command for command in system.commands))
         self.assertEqual(self.journal(gateway)["phase"], "complete")
         profile = json.loads((gateway.context.var / "gateway/current.json").read_bytes())
         self.assertEqual(profile["url"], "https://house.example.test:13601")

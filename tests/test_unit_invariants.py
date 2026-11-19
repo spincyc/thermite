@@ -157,7 +157,7 @@ def within(path: str, other: str) -> bool:
 
 
 def access_problems(found: dict, record: oh_units.Bounds, host: dict, release: Path, state: Path) -> list[str]:
-    """What a contained access service's quadlet shows its container that
+    """What an access service's quadlet shows its container that
     its record does not: its mounts are all it sees of the host, so each is
     held to the release, read-only, the identity state and the textfile
     directory, and to the secret stores of those that the record names."""
@@ -222,29 +222,20 @@ def bound_problems(text: str, record: oh_units.Bounds, host: dict, access: dict 
         if said != {"Network": [record.network], "User": [str(uid)], "Group": [str(gid)]}:
             problems.append(f"runs as {said}")
         reached = [value.split(":")[0] for value in found.get(("Container", "Volume"), [])]
-        hidden = []
         if access is not None:
             problems += access_problems(found, record, host, **access)
     else:
-        said = {key: found.get(("Service", key)) for key in ("User", "Group")}
-        if record.user != oh_units.STATE_USER or said != {"User": [oh_service.ACCOUNT], "Group": [oh_service.GROUP]}:
-            problems.append(f"runs as {said}")
-        # A host service sees the host's files, as far as its user reads them,
-        # but for what its unit hides and what it binds back in.
-        reached = ["/", *(value.strip('"').lstrip("-") for key in ("BindPaths", "BindReadOnlyPaths")
-                          for value in found.get(("Service", key), []))]
-        hidden = [value.strip('"').removesuffix(":ro") for value in found.get(("Service", "TemporaryFileSystem"), [])]
-        if not set(oh_units.ACCESS_SECRETS) <= set(record.secrets):
-            problems.append("a host service reads the access secrets its record does not declare")
+        # A host service would see the host's files as far as its user
+        # reads them: every secret store, whatever its record says.
+        problems.append("is a host service, not a container")
+        reached = []
     root = str(deploy.state(host).root)
     given = [f"{root}/{name}" for name in record.secrets if not name.startswith("access/")]
     def sources(path):
-        """What of `reached` leads to `path`: not / where the unit hides it,
-        and for a user of the unit's own nothing from above the runtime
-        state, which only the state's user and group enter (0750)."""
-        return [source for source in reached
-                if not (source == "/" and any(within(path, cover) for cover in hidden))
-                and not (record.user == oh_units.OWN_USER and within(root, source))]
+        """What of `reached` leads to `path`: for a user of the unit's own
+        nothing from above the runtime state, which only the state's user
+        and group enter (0750)."""
+        return [source for source in reached if not (record.user == oh_units.OWN_USER and within(root, source))]
 
     for store in (f"{root}/{name}" for name in oh_service.PRIVATE):
         for source in sources(store):
@@ -316,7 +307,7 @@ class Bounds(unittest.TestCase):
                          ["MemoryHigh is ['infinity'], not 2560M"])
         self.assertIn("runs as", strayed(grafana, "User=9001\n", "User=0\n")[0])
         self.assertIn("runs as", strayed(grafana, "Network=host\n", "")[0])
-        self.assertIn("runs as", strayed(oh_units.ACCESS, "User=thermite\n", "User=root\n")[0])
+        self.assertIn("runs as", strayed(oh_units.ACCESS, "User=9001\n", "User=0\n")[0])
         # A secret store, a file of one, or a directory that holds one, mounted without being declared.
         password = f"Volume={root}/monitoring/secrets/grafana-admin-password"
         for mount, problem in ((f"Volume={root}/monitoring/secrets:/all:ro\n{password}", "mounts"),
@@ -329,16 +320,16 @@ class Bounds(unittest.TestCase):
         self.assertEqual(strayed(oh_units.BLACKBOX, "[Service]", "[Service]",
                                  dataclasses.replace(records[oh_units.BLACKBOX], secrets=("music",))),
                          [f"declares {root}/music, which it does not reach"])
-        # A host service that sees the runtime state, or binds a store of it back in.
+        # A host service: it would read every store its user does. No daemon is one.
         gateway = oh_units.ACCESS
-        self.assertIn(f"TemporaryFileSystem=\"{root}:ro\"\n", units[gateway])
-        self.assertIn(f"BindPaths=\"-{root}/textfile\"\n", units[gateway])
-        self.assertNotIn(f"ReadWritePaths=\"-{root}/textfile\"", units[gateway])
-        seen = strayed(gateway, f"TemporaryFileSystem=\"{root}:ro\"\n", "")
-        self.assertEqual(seen, [f"reaches {root}/{name} through /, which its record does not declare"
-                                for name in oh_service.PRIVATE])
-        self.assertEqual(strayed(gateway, "[Install]", f"BindReadOnlyPaths=\"{root}/userdata\"\n[Install]"),
+        self.assertEqual(bound_problems("[Service]\nUser=thermite\nGroup=thermite\nMemoryHigh=256M\nMemoryMax=512M\n",
+                                        records[gateway], host), ["is a host service, not a container"])
+        # A container that is mounted a store of the runtime state, or the state itself.
+        self.assertEqual(strayed(gateway, "[Service]", f"Volume={root}/userdata:{root}/userdata:ro\n[Service]"),
                          [f"mounts {root}/userdata, which its record does not declare"])
+        self.assertEqual(strayed(gateway, "[Service]", f"Volume={root}:{root}:ro\n[Service]"),
+                         [f"reaches {root}/{name} through {root}, which its record does not declare"
+                          for name in oh_service.PRIVATE])
         # A user of its own keeps nothing of the state's: not a store mounted for it by name.
         node = oh_units.NODE_EXPORTER
         self.assertEqual(strayed(node, "[Service]", f"Volume={root}/secrets:/s:ro\n[Service]"),
@@ -348,14 +339,15 @@ class Bounds(unittest.TestCase):
         self.assertIn("MemoryHigh 2G is not below MemoryMax 1G", strayed(grafana, "[Service]", "[Service]", loose))
         self.assertEqual(bound_problems(units[grafana], None, host), ["no record"])
 
-    def test_a_contained_access_service_sees_only_what_its_record_declares(self):
+    def test_an_access_service_sees_only_what_its_record_declares(self):
         host, units = fixture_houses()["a host with every service"]
         records = deploy.bounds(host)
         release, state = ACCESS_UNITS["release"], ACCESS_UNITS["state"]
-        worker, relay = oh_units.ACCESS_WORKER, oh_units.ACCESS_CALLBACKS
-        self.assertEqual(oh_units.ACCESS_CONTAINED, (worker, relay))
-        self.assertEqual((records[worker].secrets, records[relay].secrets),
-                         (("access/state", "access/release/secrets/runtime-bearer"), ()))
+        gateway, worker, relay = oh_units.ACCESS_UNITS
+        self.assertEqual(oh_units.ACCESS_CONTAINED, (gateway, worker, relay))
+        self.assertEqual((records[gateway].secrets, records[worker].secrets, records[relay].secrets),
+                         (("access/state", "access/release/secrets"),
+                          ("access/state", "access/release/secrets/runtime-bearer"), ()))
 
         def volumes(unit):
             return directives(units[unit])[("Container", "Volume")]
@@ -365,13 +357,14 @@ class Bounds(unittest.TestCase):
             return bound_problems(units[unit].replace(old, new), record or records[unit], host, ACCESS_UNITS)
 
         textfile = str(deploy.state(host).textfile)
-        # All either sees of the host: nothing of the runtime state but the textfile directory.
+        # All each sees of the host: nothing of the runtime state but the textfile directory.
+        self.assertEqual(volumes(gateway), [f"{release}:{release}:ro,z", f"{state}:{state}:z", f"{textfile}:{textfile}"])
         self.assertEqual(volumes(worker), [*(f"{release / part}:{release / part}:ro,z" for part in (
-            "program", "container-env", "config.json", "contract.json", "secrets/runtime-bearer")),
+            "program", "env", "config.json", "contract.json", "secrets/runtime-bearer")),
             f"{state}:{state}:z", f"{textfile}:{textfile}"])
         self.assertEqual(volumes(relay), [*(f"{release / part}:{release / part}:ro,z" for part in (
-            "program", "container-env", "callbacks.json")), f"{textfile}:{textfile}"])
-        for unit in (worker, relay):
+            "program", "env", "callbacks.json")), f"{textfile}:{textfile}"])
+        for unit in (gateway, worker, relay):
             found = directives(units[unit])
             with self.subTest(unit=unit):
                 self.assertEqual((found[("Container", "User")], found[("Container", "Group")]), (["9001"], ["9001"]))
@@ -384,13 +377,18 @@ class Bounds(unittest.TestCase):
                                  ["states the account ['THERMITE_SERVICE_IDENTITY=9000:9001']"])
                 self.assertEqual(strayed(unit, "PodmanArgs=--read-only\n", ""), ["its root file system is writable"])
                 self.assertIn("runs as", strayed(unit, "User=9001\n", "User=0\n")[0])
-                program = f"Volume={release}/program:{release}/program:ro,z\n"
+                part = release if unit == gateway else release / "program"
+                program = f"Volume={part}:{part}:ro,z\n"
                 self.assertEqual(strayed(unit, program, program.replace(":ro,z", ":z")),
-                                 [f"mounts {release}/program of its release writable"])
-                self.assertEqual(strayed(unit, program, program.replace(f":{release}/program:", ":/program:")),
-                                 [f"mounts {release}/program at another path"])
+                                 [f"mounts {part} of its release writable"])
+                self.assertEqual(strayed(unit, program, program.replace(f":{part}:", ":/program:")),
+                                 [f"mounts {part} at another path"])
                 self.assertEqual(strayed(unit, program, program + "Volume=/etc:/etc:ro\n"),
                                  ["mounts /etc, which is neither its release, its state nor the textfile directory"])
+        # The gateway: its release with both secrets, and the state.
+        self.assertEqual(strayed(gateway, f"Volume={state}:{state}:z\n", ""), [f"declares {state}, which it does not reach"])
+        self.assertEqual(strayed(gateway, f"Volume={release}:{release}:ro,z\n", f"Volume={release}/program:{release}/program:ro,z\n"),
+                         [f"declares {release}/secrets, which it does not reach"])
         # The relay: no state, no secret, and not the release that holds them.
         end = "[Service]"
         self.assertEqual(strayed(relay, end, f"Volume={state}:{state}:z\n{end}"),
@@ -415,7 +413,7 @@ class Bounds(unittest.TestCase):
 
     @unittest.skipUnless(Path("/usr/lib/systemd/system-generators/podman-system-generator").is_file(),
                          "Podman Quadlet generator absent")
-    def test_the_quadlet_generator_accepts_the_contained_access_services(self):
+    def test_the_quadlet_generator_accepts_the_access_services(self):
         host, units = fixture_houses()["a host with every service"]
         release = ACCESS_UNITS["release"]
         files = staging.unit_files({name: units[name] for name in oh_units.ACCESS_UNITS})
@@ -443,12 +441,12 @@ class Bounds(unittest.TestCase):
                 replace = [word for word in options if word == "--replace" or word.startswith("--replace=")]
                 self.assertEqual(replace[-1], "--replace=false")
                 self.assertRegex(" ".join(options), r"--user(?:=| )9001(?::9001)? ")
-                self.assertEqual(command[:3], [str(release / "container-env/bin/python"),
+                self.assertEqual(command[:3], [str(release / "env/bin/python"),
                                                str(release / "program/bin/thermite"), "access"])
         # The service systemd is handed keeps its place in Thermite.
-        self.assertEqual(generated.stdout.count("Slice=thermite.slice"), 2)
-        self.assertEqual(generated.stdout.count("PartOf=thermite.target"), 2)
-        self.assertEqual(generated.stdout.count("WantedBy=thermite.target"), 2)
+        self.assertEqual(generated.stdout.count("Slice=thermite.slice"), 3)
+        self.assertEqual(generated.stdout.count("PartOf=thermite.target"), 3)
+        self.assertEqual(generated.stdout.count("WantedBy=thermite.target"), 3)
 
     def test_node_exporter_is_never_the_states_user(self):
         """It has all of / and the host's processes: as the state's user it

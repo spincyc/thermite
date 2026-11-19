@@ -1,4 +1,4 @@
-"""The Python environment of the access services that run in a container.
+"""The Python environment of the access services, which run in containers.
 
 The pinned Python image builds it with its own interpreter, at the path its
 containers see it at, from a wheelhouse alone and without a network: the
@@ -9,9 +9,11 @@ image's pip, and every wheel is checked against the hashes in
 lib/requirements-site.txt each time one is used.
 
 This module only says what to run. Each command is a `podman run` for the
-caller to hand to root's podman, which holds the image; the process inside
-is the calling operator, not root: it writes the operator's wheelhouse and
-the release being staged, both the operator's until the custody handoff.
+caller to hand to root's podman, which holds the image. The process that
+fills the wheelhouse or builds the environment is the calling operator, not
+root: it writes the operator's wheelhouse and the release being staged, both
+the operator's until the custody handoff. A service command
+(service_command) runs after that handoff, as the service account.
 """
 
 import hashlib
@@ -20,6 +22,7 @@ from pathlib import Path
 import re
 
 from . import AccessError
+from .files import STATED_IDENTITY
 
 #: The versions.json name of the pinned Python image: the Apple TV helper's
 #: and the metrics exporter's too, so every site already pins and pulls it.
@@ -27,9 +30,8 @@ IMAGE = "atv_helper"
 #: The hash-pinned requirements, below the application and below a release's
 #: program.
 REQUIREMENTS = "lib/requirements-site.txt"
-#: A release's environment for its contained services, beside `env`, which
-#: the host's Python builds for the others.
-DIRECTORY = "container-env"
+#: A release's environment.
+DIRECTORY = "env"
 #: The operator's cache of wheelhouses, below the site.
 STORE = Path("build/sandbox/downloads/wheels")
 #: What the services import that carries compiled code or is their server:
@@ -92,7 +94,7 @@ def verify_command(image: str, wheels) -> list[str]:
 
 
 def build_command(image: str, release, wheels) -> list[str]:
-    """Build `release`/container-env from the release's own requirements
+    """Build `release`/env from the release's own requirements
     and `wheels` alone. --copies: the environment holds its interpreter's
     launcher, never a link out of the release (custody refuses those)."""
     release = Path(plain(release))
@@ -104,3 +106,20 @@ def build_command(image: str, release, wheels) -> list[str]:
                 f'"$1/bin/python" {_PIP} install {_OFFLINE} -r /requirements.txt; '
                 f'"$1/bin/python" {_PIP} check; '
                 f'exec "$1/bin/python" -I -c "import {", ".join(IMPORTS)}"', str(target))
+
+
+def service_command(image: str, release, identity, verb: str, *, state) -> list[str]:
+    """Run `thermite access VERB` of `release` once, as its services run:
+    in the pinned image, as the service account by number, which the
+    command states as a unit does (files.require_service_account), with a
+    read-only root and no capability. It sees the release, read-only, and
+    the identity state, and has no network: this is for the commands an
+    install runs before the services start, which use none."""
+    release, (uid, gid) = Path(plain(release)), identity
+    state = plain(state)
+    return ["podman", "run", "--rm", "--runtime=runc", "--network=none", "--read-only", "--user", f"{uid}:{gid}",
+            "--umask=0077", "--cap-drop=all", "--security-opt=no-new-privileges",
+            "--env", f"{STATED_IDENTITY}={uid}:{gid}", "--env", "PYTHONDONTWRITEBYTECODE=1",
+            "--volume", f"{release}:{release}:ro,z", "--volume", f"{state}:{state}:z", f"--workdir={release}",
+            image, str(release / DIRECTORY / "bin/python"), str(release / "program/bin/thermite"), "access", verb,
+            "--descriptor", str(release / "config.json")]

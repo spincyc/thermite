@@ -17,7 +17,6 @@ import ssl
 import oh_cli
 import oh_music
 import oh_ports
-import oh_units
 from oh_access import AccessError, environment, guest, staging
 from oh_access.files import atomic_private, json_private, private_directory, read_private
 from oh_install import manifest
@@ -111,12 +110,17 @@ def python_image(context):
     return oh_deploy.image(context.versions, environment.IMAGE)
 
 
-#: The thermite-access.service directives that identify its release.
+#: What identifies the gateway's release in its unit: a quadlet names the
+#: working directory as podman's --workdir; a host unit, as a version from
+#: before the gateway ran in a container installed it, as WorkingDirectory=.
 RELEASE_DIRECTIVES = ("User", "Group", "WorkingDirectory")
+WORKDIR = "--workdir="
 
 
 def installed_release(system):
-    """Discover opaque service state through the installed, root-owned unit."""
+    """Discover opaque service state through the installed, root-owned unit:
+    the gateway's quadlet, or an earlier version's host unit."""
+    quadlet, lifecycle = map(str, staging.destinations(staging.ACCESS_UNITS[0]))
     origin = system.unit_origin("thermite-access.service")
     if not origin.known:
         raise AccessError("cannot determine the installed gateway unit; inspect systemd before retrying")
@@ -128,9 +132,13 @@ def installed_release(system):
             if not sibling.known or sibling.load_state != "not-found":
                 raise AccessError("gateway unit is missing while related access units remain; restore its protected unit before adopting state")
         return None
-    if origin.drop_ins or origin.transient or origin.source or not origin.fragment:
+    # systemd's generator makes the service from the quadlet (SourcePath=);
+    # its one drop-in is its lifecycle's.
+    contained = origin.source == quadlet
+    if (origin.transient or not origin.fragment
+            or (origin.drop_ins.split() != [lifecycle] if contained else origin.drop_ins or origin.source)):
         raise AccessError("installed gateway has unexpected overrides or unit provenance")
-    unit = system.unit_file(Path(origin.fragment))
+    unit = system.unit_file(Path(quadlet if contained else origin.fragment))
     if unit is None or unit.uid != 0 or unit.mode & 0o022 or not unit.ancestors_trusted:
         raise AccessError("installed gateway unit is not protected by root custody")
     values = {}
@@ -139,20 +147,28 @@ def installed_release(system):
         line = line.strip()
         if line.startswith("["):
             section = line
-        elif section == "[Service]" and "=" in line and not line.startswith(("#", ";")):
+        elif section == ("[Container]" if contained else "[Service]") and "=" in line and not line.startswith(("#", ";")):
             key, value = line.split("=", 1)
+            if contained and key == "PodmanArgs" and value.startswith(WORKDIR):
+                key, value = "WorkingDirectory", value.removeprefix(WORKDIR)
             # Only the identifying directives must be single; list directives
-            # such as ReadWritePaths and Environment repeat in staged units.
+            # such as Volume and Environment repeat in staged units.
             if key not in RELEASE_DIRECTIVES:
                 continue
             if key in values:
                 raise AccessError("installed gateway has ambiguous service directives")
             values[key] = value
-    root = Path(values.get("WorkingDirectory", "").replace("%%", "%"))
-    if (values.get("User") != "thermite" or values.get("Group") != "thermite"
-            or not root.is_absolute() or ".." in root.parts or root == Path("/")):
+    # A container runs as the account by number, never as root.
+    account = [values.get(key, "") for key in ("User", "Group")]
+    identified = (all(value.isdecimal() and int(value) > 0 for value in account) if contained
+                  else account == ["thermite", "thermite"])
+    root = Path(values.get("WorkingDirectory", "") if contained else values.get("WorkingDirectory", "").replace("%%", "%"))
+    if not identified or not root.is_absolute() or ".." in root.parts or root == Path("/"):
         raise AccessError("installed gateway does not identify its persistent release safely")
     return root
+
+
+_UNREAD = object()
 
 
 class Gateway(Step):
@@ -201,10 +217,20 @@ class Gateway(Step):
         #: transaction: one installs only the units it declared before it
         #: began, so a newly found map waits in access/inputs.
         self.deferred = False
+        self._installed = _UNREAD
+
+    def installed(self, system):
+        """The installed gateway's release, read once. A run reads it while
+        it prepares (prove): the transaction sets aside the units this
+        version no longer installs before this step runs, and an earlier
+        version's gateway unit is one of them."""
+        if self._installed is _UNREAD:
+            self._installed = installed_release(system)
+        return self._installed
 
     def check(self, system):
         try:
-            old = installed_release(system)
+            old = self.installed(system)
             detail = "upgrade the gateway and preserve its identity, TLS and callbacks" if old else "install the persistent HTTPS gateway and identity state"
             return Check(False, detail)
         except (OSError, ValueError, AccessError) as exc:
@@ -224,12 +250,11 @@ class Gateway(Step):
     def desired(self, system):
         """The units, the side-by-side releases, the identity state and the
         fixed inputs a release migrates or reissues, and the public trust
-        certificate. A host service is its unit and the link that enables
-        it; a contained one its quadlet and lifecycle drop-in, which
-        systemd's generator enables. Old identity tars stay where they are."""
+        certificate. A service is its quadlet and lifecycle drop-in; no link
+        enables it, since systemd's generator does. Old identity tars stay
+        where they are."""
         units = [*staging.ACCESS_UNITS[:2], *(staging.ACCESS_UNITS[2:] if self.relays(system) else ())]
         return [*(manifest.unit(path) for name in units for path in staging.destinations(name)),
-                *(manifest.link(name) for name in units if name not in oh_units.ACCESS_CONTAINED),
                 manifest.Item(self.root / "releases", "versioned"), manifest.Item(self.root / "state", "tree"),
                 manifest.Item(self.root / "inputs", "tree"), manifest.Item(self.root / "tls-cert.pem", "file"),
                 manifest.Item(self.root / "backups", "shared")]
@@ -287,6 +312,7 @@ class Gateway(Step):
         """Refuse, before the transaction begins, what this run could not
         carry over from the installed gateway: a callback relay without its
         exact map in access/inputs. Nothing is written."""
+        self.installed(system)
         if not (self.inputs / "callbacks.json").exists():
             origin = system.unit_origin(staging.ACCESS_UNITS[2])
             if not origin.known or origin.load_state != "not-found":
@@ -440,7 +466,7 @@ class Gateway(Step):
                                     podman=lambda argv: self._run(system, "sudo", *argv),
                                     area=self.context.area, application=source(self.context.area),
                                     plan_directory=plan, callbacks=callback,
-                                    wheelhouse=self.options.get("wheelhouse"), host_ports=oh_ports.effective(self.context.host),
+                                    host_ports=oh_ports.effective(self.context.host),
                                     guest_http=self.context.host.get("guest_http"),
                                     textfile=self.context.installation.state.textfile,
                                     runtime=self.context.installation.state.root,
@@ -523,14 +549,11 @@ class Gateway(Step):
                 raise AccessError("gateway and worker must both be stopped before migrating identity state")
 
     def _pid(self, system, name, container):
-        """The service's own process: a host service's main process; of a
-        contained one, whose main process is podman's monitor, the first
-        process of its container, which root's podman knows."""
-        if container is None:
-            code, value = system.capture(["systemctl", "show", name, "--property=MainPID", "--value"])
-        else:
-            code, value = system.capture(["sudo", "-n", "podman", "container", "inspect", "--format",
-                                          "{{.State.Pid}}", container])
+        """The service's own process: the first process of its container,
+        which root's podman knows. The unit's main process is podman's
+        monitor."""
+        code, value = system.capture(["sudo", "-n", "podman", "container", "inspect", "--format",
+                                      "{{.State.Pid}}", container])
         pid = value.strip()
         if code or not pid.isdecimal() or int(pid) <= 0:
             raise AccessError(f"{name} has no live process")
@@ -542,20 +565,18 @@ class Gateway(Step):
         release. Returns each one's process id."""
         files, containers = receipt["unit_files"], receipt["containers"]
         installs = {(command[-2], command[-1]) for command in receipt["unit_install_commands"] if "-d" not in command}
-        if (set(files) != set(receipt["units"]) or not set(containers) <= set(files)
+        if (set(files) != set(receipt["units"]) or set(containers) != set(files)
                 or installs != {(source, destination) for pairs in files.values() for source, destination in pairs}
                 or any([destination for _, destination in files[name]] != [str(path) for path in staging.destinations(name)]
                        for name in files)):
             raise _UnitAuthorityError("gateway unit plan does not cover every service")
         pids = {}
         for name in receipt["units"]:
-            container = containers.get(name)
             primary, *dropins = (destination for _, destination in files[name])
             origin = system.unit_origin(name)
-            # systemd's generator makes a contained service from its quadlet
+            # systemd's generator makes the service from its quadlet
             # (SourcePath=); the one drop-in is its lifecycle's.
-            bound = (origin.source == primary and bool(origin.fragment) and origin.drop_ins.split() == dropins
-                     if container else not origin.source and not origin.drop_ins and origin.fragment == primary)
+            bound = origin.source == primary and bool(origin.fragment) and origin.drop_ins.split() == dropins
             if (not origin.known or origin.transient or origin.load_state not in {"loaded", "not-found"}
                     or origin.load_state == "loaded" and not bound
                     or origin.load_state == "not-found" and (origin.source or origin.fragment)):
@@ -573,12 +594,12 @@ class Gateway(Step):
             values = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
             # A generated unit cannot be enabled: its quadlet's WantedBy= is.
             if (code or values.get("ActiveState") != "active" or values.get("NeedDaemonReload") != "no"
-                    or values.get("UnitFileState") != ("generated" if container else "enabled")):
-                raise AccessError(f"{name} has not reached its enabled, active state")
-            pids[name] = self._pid(system, name, container)
+                    or values.get("UnitFileState") != "generated"):
+                raise AccessError(f"{name} has not reached its active state")
+            pids[name] = self._pid(system, name, containers[name])
         self._helper(system, "live", receipt["destination"], *pids.values())
         for name, pid in pids.items():
-            if self._pid(system, name, containers.get(name)) != pid:
+            if self._pid(system, name, containers[name]) != pid:
                 raise AccessError("gateway process changed during live release verification")
         return pids
 
@@ -681,7 +702,7 @@ class Gateway(Step):
     def perform(self, system):
         try:
             self._workspace()
-            old = installed_release(system)
+            old = self.installed(system)
             record = {"version": 1, "versions": self.versions, "release": str(self.release),
                       "previous_release": str(old) if old else None}
             self._save(record, phase="planned")
@@ -703,19 +724,14 @@ class Gateway(Step):
             self._run(system, *receipt["verification_command"])
             self._upstream(system, record, receipt)
             self._stop(system)
-            command = receipt["verification_command"]
-            migrate = [*command[:-3], "migrate", "--descriptor", receipt["config"]]
-            self._run(system, *migrate)
+            self._run(system, *receipt["migration_command"])
             self._save(record, phase="migrated")
             for command in receipt["unit_install_commands"]:
                 self._run(system, *command)
             self._run(system, "sudo", "systemctl", "daemon-reload")
-            contained = [name for name in receipt["units"] if name in receipt["containers"]]
-            self._run(system, "sudo", "systemctl", "enable", "--now",
-                      *(name for name in receipt["units"] if name not in contained))
-            # The reload made these from their quadlets, already wanted by
-            # the target: systemctl enable refuses a generated unit.
-            self._run(system, "sudo", "systemctl", "start", *contained)
+            # The reload made the services from their quadlets, already
+            # wanted by the target: systemctl enable refuses a generated unit.
+            self._run(system, "sudo", "systemctl", "start", *receipt["units"])
             self._save(record, phase="activated")
             last = None
             for attempt in range(30):

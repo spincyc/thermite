@@ -1,6 +1,6 @@
-"""The contained access services' Python environment: the pinned image
-builds it from a wheelhouse alone, and the install fills and proves that
-wheelhouse before a transaction begins."""
+"""The access services' Python environment: the pinned image builds it from
+a wheelhouse alone, and the install fills and proves that wheelhouse before
+a transaction begins."""
 from __future__ import annotations
 
 import os
@@ -59,7 +59,7 @@ class Commands(unittest.TestCase):
         self.assertIn(" install --dry-run ", verify)
         # The build: an environment whose interpreter is a copy, the pins, a
         # consistency check and one load of what carries compiled code.
-        target = release / "container-env"
+        target = release / "env"
         self.assertEqual(options(commands["build"])[0][-6:],
                          ["--volume", f"{target}:{target}:z",
                           "--volume", f"{release}/program/lib/requirements-site.txt:/requirements.txt:ro,z",
@@ -67,6 +67,20 @@ class Commands(unittest.TestCase):
         self.assertEqual(options(commands["build"])[1][2:], ["thermite-environment", str(target)])
         self.assertTrue(build.startswith('python -m venv --copies "$1"; '))
         self.assertIn(' check; exec "$1/bin/python" -I -c "import argon2, django, ', build)
+
+    def test_a_service_command_runs_once_as_the_account_in_the_image_without_a_network(self):
+        release, state = Path("/srv/thermite/access/releases/a"), Path("/srv/thermite/access/state")
+        argv = environment.service_command(IMAGE, release, (9001, 9001), "migrate", state=state)
+        self.assertEqual(argv, [
+            "podman", "run", "--rm", "--runtime=runc", "--network=none", "--read-only", "--user", "9001:9001",
+            "--umask=0077", "--cap-drop=all", "--security-opt=no-new-privileges",
+            # The numbers the service's own guard compares its process with.
+            "--env", "THERMITE_SERVICE_IDENTITY=9001:9001", "--env", "PYTHONDONTWRITEBYTECODE=1",
+            "--volume", f"{release}:{release}:ro,z", "--volume", f"{state}:{state}:z", f"--workdir={release}", IMAGE,
+            f"{release}/env/bin/python", f"{release}/program/bin/thermite", "access", "migrate",
+            "--descriptor", f"{release}/config.json"])
+        with self.assertRaises(AccessError):
+            environment.service_command(IMAGE, release, (9001, 9001), "verify", state="/srv/a b/state")
 
     def test_a_path_a_volume_or_a_unit_would_misread_is_refused(self):
         for path in ("/srv/a:b/wheels", "/srv/a b", "/srv/%h", "/srv/$HOME", 'relative/wheels', "/srv/a\nb", '/srv/"a"',
@@ -163,7 +177,7 @@ class Wheels(unittest.TestCase):
         self.assertEqual(staging.wheels(self.site, IMAGE, self.site), (self.wheels, REQUIREMENTS))
         check = self.step.check(Host())
         self.assertEqual((check.done, check.problem), (False, None))
-        self.assertEqual(check.detail, f"the 24 pinned wheels of the gateway's worker and relay, in {self.wheels}, "
+        self.assertEqual(check.detail, f"the 24 pinned wheels of the gateway's services, in {self.wheels}, "
                                        "checked by the pinned image's pip without a network")
         self.assertTrue(self.step.always)
 
@@ -240,21 +254,20 @@ class Staged(unittest.TestCase):
                 mock.patch.object(staging, "_service_parents"), mock.patch.object(staging, "_trusted_ancestors"), \
                 mock.patch.object(staging, "_private_plan_parent"), \
                 mock.patch("oh_access.service.compile_contract", side_effect=compile_contract), \
-                mock.patch("oh_access.service.load_config"), mock.patch.object(staging, "_install_environment") as host:
+                mock.patch("oh_access.service.load_config"):
             receipt = staging.stage(self.root / "release", state=self.root / "state", house="unused",
                                     assets=self.site / "assets", runtime_url="http://127.0.0.1:13602",
                                     runtime_token_file=self.root / "bearer", tls_cert=self.root / "cert",
                                     tls_key=self.root / "key", allowed_hosts=["site.example"], listen=["127.0.0.1"],
                                     port=13601, timezone="Etc/UTC", image=IMAGE, area=self.site, application=self.site,
                                     plan_directory=self.root / "plan", podman=podman)
-        host.assert_called_once()
         return receipt
 
-    def test_the_image_builds_the_contained_services_environment_into_the_release_before_custody(self):
+    def test_the_image_builds_the_services_environment_into_the_release_before_custody(self):
         release, built = self.root / "release", []
 
         def podman(argv):
-            target = release / "container-env"
+            target = release / "env"
             # The directory is there, the operator's and private, before the container is.
             self.assertEqual((stat.S_IMODE(target.stat().st_mode), target.stat().st_uid), (0o700, os.geteuid()))
             self.assertEqual(argv, environment.build_command(IMAGE, release, environment.wheelhouse(self.site, IMAGE, REQUIREMENTS)))
@@ -270,14 +283,20 @@ class Staged(unittest.TestCase):
         self.assertEqual(len(built), 1)
         self.assertTrue(receipt["environment_installed"])
         # Custody takes it with the rest: private modes, its launcher executable, its one link inside it.
-        modes = {path.relative_to(release / "container-env").as_posix(): mode
-                 for path, mode in staging._inventory(release, release=True) if (release / "container-env") in path.parents}
+        modes = {path.relative_to(release / "env").as_posix(): mode
+                 for path, mode in staging._inventory(release, release=True) if (release / "env") in path.parents}
         self.assertEqual(modes, {"bin": 0o700, "bin/python": 0o700, "lib": 0o700, "lib/module.py": 0o600, "lib64": None})
-        self.assertEqual(stat.S_IMODE((release / "container-env/bin/python").stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE((release / "env/bin/python").stat().st_mode), 0o700)
+        # The host's Python builds nothing, and the receipt's commands are the image's.
+        self.assertEqual(sorted(path.name for path in (self.root / "plan").iterdir()),
+                         ["custody.json", "custody.py", "stage.json", "units"])
+        for name, verb in (("verification_command", "verify"), ("migration_command", "migrate")):
+            self.assertEqual(receipt[name], ["sudo", *environment.service_command(
+                IMAGE, release, staging.service_identity(), verb, state=self.root / "state")])
 
     def test_a_failed_build_removes_the_partial_release_and_a_link_out_of_the_environment_is_refused(self):
         def fails(argv):
-            (self.root / "release/container-env/partial").write_text("")
+            (self.root / "release/env/partial").write_text("")
             raise AccessError("gateway deployment command failed")
 
         with self.assertRaisesRegex(AccessError, "gateway deployment command failed"):
@@ -286,7 +305,7 @@ class Staged(unittest.TestCase):
         self.assertFalse((self.root / "plan").exists())
 
         def escapes(argv):
-            (self.root / "release/container-env/python").symlink_to("/usr/bin/python3")
+            (self.root / "release/env/python").symlink_to("/usr/bin/python3")
 
         with self.assertRaisesRegex(AccessError, "only regular files, directories and internal environment links"):
             self.stage(escapes)

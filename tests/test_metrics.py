@@ -1519,10 +1519,10 @@ class Units(unittest.TestCase):
         from oh_access import staging
         self.assertEqual(staging.ACCESS_UNITS, oh_units.ACCESS_UNITS)
         self.assertLessEqual(set(oh_units.ACCESS_UNITS), set(oh_units.DAEMONS))
-        # The contained ones are a release's own, never rendered into deploy/.
+        # Their containers are a release's own, never rendered into deploy/.
         self.assertFalse(set(oh_units.ACCESS_UNITS) & set(oh_units.CONTAINERS))
         self.assertEqual(set(oh_deploy.CONTAINER_DROPINS), set(oh_units.CONTAINED))
-        self.assertEqual(oh_units.ACCESS_CONTAINED, oh_units.ACCESS_UNITS[1:])
+        self.assertEqual(oh_units.ACCESS_CONTAINED, oh_units.ACCESS_UNITS)
         self.assertFalse(set(oh_units.ACCESS_CONTAINERS.values()) & set(oh_units.CONTAINERS.values()))
 
 
@@ -1533,13 +1533,9 @@ class Units(unittest.TestCase):
                               textfile="/srv/example/runtime/textfile", **account)
         self.assertEqual(len(units), 3)
         for name, text in units.items():
-            if name in oh_units.ACCESS_CONTAINED:
-                # A container is mounted the directory, writable, where the host has it.
-                self.assertIn("\nEnvironment=THERMITE_TEXTFILE_DIR=/srv/example/runtime/textfile\n", text, name)
-                self.assertIn("\nVolume=/srv/example/runtime/textfile:/srv/example/runtime/textfile\n", text, name)
-                continue
-            self.assertIn('\nEnvironment="THERMITE_TEXTFILE_DIR=/srv/example/runtime/textfile"\n', text, name)
-            self.assertIn('\nReadWritePaths="-/srv/example/runtime/textfile"\n', text, name)
+            # A container is mounted the directory, writable, where the host has it.
+            self.assertIn("\nEnvironment=THERMITE_TEXTFILE_DIR=/srv/example/runtime/textfile\n", text, name)
+            self.assertIn("\nVolume=/srv/example/runtime/textfile:/srv/example/runtime/textfile\n", text, name)
         for text in staging.units("/opt/example/release", state="/srv/example/access", **account).values():
             self.assertNotIn("THERMITE_TEXTFILE_DIR", text)
             self.assertNotIn("textfile", text)

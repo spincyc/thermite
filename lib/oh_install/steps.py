@@ -1424,7 +1424,7 @@ def pull_missing(context: Context, system: System, refs: list[str]) -> tuple[int
 
 
 class GatewayWheels(Step):
-    """The wheels the gateway's worker and relay run on (the pins of
+    """The wheels the gateway's services run on (the pins of
     lib/requirements-site.txt), in the operator's cache and proven usable
     by the pinned Python image, while Thermite still runs. The stage that
     builds their environment has no network (oh_access.environment), so a
@@ -1454,7 +1454,7 @@ class GatewayWheels(Step):
             _, directory, requirements = self.wanted()
         except (OSError, ValueError, KeyError) as exc:
             return Check(False, "", f"the gateway's pinned wheels cannot be named: {exc}")
-        return Check(False, f"the {environment.pins(requirements)} pinned wheels of the gateway's worker and relay, "
+        return Check(False, f"the {environment.pins(requirements)} pinned wheels of the gateway's services, "
                             f"in {directory}, checked by the pinned image's pip without a network")
 
     def actions(self, system: System) -> list[Action]:

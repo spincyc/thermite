@@ -201,23 +201,26 @@ unowned drop-in stops for review; see [service ownership](service-account.md).
 ### The gateway's services and Python
 
 The gateway runs from a release under `access/releases/<id>`, staged anew by
-every install. Two of its three services are containers of the pinned Python
-image (the `atv_helper` image of `versions.json`, which the Apple TV helper
-and the Item exporter run too): the policy worker,
-`thermite-access-worker.service`, and the callback relay,
+every install. Its services are containers of the pinned Python image (the
+`atv_helper` image of `versions.json`, which the Apple TV helper and the Item
+exporter run too): the gateway itself, `thermite-access.service`, the policy
+worker, `thermite-access-worker.service`, and the callback relay,
 `thermite-access-callbacks.service`. Their quadlets are in
 `/etc/containers/systemd`, and each runs with a read-only root file system,
 no capability, the host's network and the service account's UID and GID. A
-container sees of the host only what its quadlet mounts: the release's
-program, its Python environment and the one descriptor the service reads;
-the worker also the identity state and the runtime token, the relay neither.
+container sees of the host only what its quadlet mounts: the gateway its
+release and the identity state; the worker and the relay the release's
+program, its Python environment and the one descriptor each reads; the
+worker also the identity state and the runtime token, the relay neither.
 
-That environment, `container-env` in the release, is built at each stage by
-the image's own Python, without a network, from wheels the install put in the
+That environment, `env` in the release, is built at each stage by the
+image's own Python, without a network, from wheels the install put in the
 site's `build/sandbox/downloads/wheels/` before it stopped anything. Nothing
 of the host's Python is in it, so a distribution upgrade that moves the host
-to another Python leaves the worker and the relay running: schedules,
-locks and Sonos callbacks keep working.
+to another Python leaves the gateway, the worker and the relay running:
+the controls, accounts, schedules, locks and Sonos callbacks keep working.
+The `thermite` command still runs on the host's Python, in an application
+environment that is rebuilt for a new one.
 
 The install fetches those wheels with the same image and checks every one
 against the hashes in `lib/requirements-site.txt`. A host without a network
@@ -226,37 +229,32 @@ x86-64 machine with podman; copy the directory back and run the install
 again. The image itself is pulled by digest, by root's podman, like every
 other pinned image.
 
-The gateway itself, `thermite-access.service`, is still a service of the
-host on an environment the host's Python built (`env` in the release), and
-the commands run from a release (`access bootstrap`, `setup`, `reset-admin`,
-`audit` and the others) use that environment too. This is a complete,
-supported installation. What it does not survive is the host's Python
-changing under an installed release: after a distribution upgrade to another
-Python minor version `thermite-access.service` no longer starts, so the
-controls and accounts are unreachable until the gateway is staged again,
-while openHAB, the worker and the relay keep running. `thermite health
---production` then fails with `gateway: thermite-access.service is failed`.
-Stage a new release with the host's current Python:
+The commands that run from a release (`access bootstrap`, `setup`,
+`reset-admin`, `audit` and `music-tidal`) run in the gateway's container,
+which is the service account and is mounted the release and the identity
+state, so the gateway must be running. The quadlet names the release:
 
 ```sh
-thermite install --config /srv/site --restart-runtime
+RELEASE=$(sed -n 's/^PodmanArgs=--workdir=//p' /etc/containers/systemd/thermite-access.container)
+sudo podman exec -it thermite-access "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" \
+  access reset-admin --descriptor "$RELEASE/config.json" --user admin
 ```
 
-To see the two containers after an upgrade (read-only commands):
+To see the containers after an upgrade (read-only commands):
 
 ```sh
-systemctl is-active thermite-access-worker.service thermite-access-callbacks.service
-systemctl show -P SourcePath thermite-access-worker.service
+systemctl is-active thermite-access.service thermite-access-worker.service thermite-access-callbacks.service
+systemctl show -P SourcePath thermite-access.service
 sudo podman ps --filter name=thermite-access --format '{{.Names}} {{.Status}} {{.Image}}'
-RELEASE=$(systemctl show -P WorkingDirectory thermite-access.service)
-for name in thermite-access-worker thermite-access-callbacks; do
+RELEASE=$(sed -n 's/^PodmanArgs=--workdir=//p' /etc/containers/systemd/thermite-access.container)
+for name in thermite-access thermite-access-worker thermite-access-callbacks; do
   pid=$(sudo podman container inspect --format '{{.State.Pid}}' "$name") &&
     sudo readlink "/proc/$pid/cwd"
 done; echo "$RELEASE"
-journalctl -u thermite-access-worker.service -u thermite-access-callbacks.service -b --no-pager | tail -n 20
+journalctl -u thermite-access.service -u thermite-access-worker.service -u thermite-access-callbacks.service -b --no-pager | tail -n 20
 ```
 
-Each `readlink` line is the release the gateway runs, `$RELEASE`. A house
+Each `readlink` line is the release the quadlet names, `$RELEASE`. A house
 without Sonos callbacks has no relay: its unit is `inactive` and podman has
 no such container.
 
@@ -568,10 +566,10 @@ shown them to everyone. See the
 for owner setup and the account model.
 
 If every administrator's password is lost, `thermite access reset-admin
---descriptor FILE --user NAME`, run on the host as the `thermite` service
-account, sets a new password on an existing account and makes it an
-administrator. It leaves every other account alone and is recorded in the
-security audit.
+--descriptor FILE --user NAME`, run on the host
+[in the gateway's container](#the-gateway-s-services-and-python), sets a new
+password on an existing account and makes it an administrator. It leaves
+every other account alone and is recorded in the security audit.
 
 The installer binds native HTTP/HTTPS to loopback and applies a dedicated
 `nftables` table that blocks non-loopback access to native ports, including
@@ -887,8 +885,8 @@ journalctl -u thermite-access.service -g 'audit action='
 journalctl -u thermite-access.service -g 'audit action=login outcome=denied'
 journalctl -u thermite-access.service -u thermite-access-worker.service -g '^(WARNING|ERROR|CRITICAL) '
 journalctl -u thermite-openhab.service -g '^\[(WARN|ERROR)'
-RELEASE=$(systemctl show -P WorkingDirectory thermite-access.service)
-sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" \
+RELEASE=$(sed -n 's/^PodmanArgs=--workdir=//p' /etc/containers/systemd/thermite-access.container)
+sudo podman exec thermite-access "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" \
   access audit --descriptor "$RELEASE/config.json" --since 7d --action login
 ```
 
@@ -1005,8 +1003,8 @@ Updating Thermite does not silently replace those pins. Keep the private
 repository clean and keep `var/application-releases/` and
 `var/gateway/authority/`. Application environments install their
 dependencies from the hashed `lib/requirements-app.txt` and are rebuilt
-automatically after a Python minor-version upgrade. The gateway's own
-environment is not; see
+automatically after a Python minor-version upgrade. The gateway's services
+do not use the host's Python; see
 [the gateway's services and Python](#the-gateway-s-services-and-python).
 
 Each commit keeps two versions and removes older ones: the current and the

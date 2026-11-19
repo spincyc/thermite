@@ -57,16 +57,16 @@ class Inventory(unittest.TestCase):
         self.assertEqual(items[Path("/etc/systemd/system/thermite-openhab.service.d/50-container-lifecycle.conf")].unit,
                          oh_units.RUNTIME, "a drop-in names the unit it extends")
         self.assertEqual(items[Path("/etc/containers/systemd/thermite-openhab.container")].unit, oh_units.RUNTIME)
-        # The gateway's worker is a container too: its quadlet and lifecycle
-        # drop-in, which a release's stage writes and the gateway step installs.
-        worker = Path("/etc/containers/systemd/thermite-access-worker.container")
-        self.assertEqual((items[worker].cls, items[worker].unit), ("unit", oh_units.ACCESS_WORKER))
-        self.assertEqual(items[UNITS / "thermite-access-worker.service.d/50-container-lifecycle.conf"].unit,
-                         oh_units.ACCESS_WORKER)
-        self.assertNotIn(UNITS / oh_units.ACCESS_WORKER, items, "no host unit of a contained service")
+        # The gateway and its worker are containers too: the quadlet and
+        # lifecycle drop-in of each, which a release's stage writes and the
+        # gateway step installs.
+        for name in (oh_units.ACCESS, oh_units.ACCESS_WORKER):
+            quadlet = Path("/etc/containers/systemd") / (name.removesuffix(".service") + ".container")
+            self.assertEqual((items[quadlet].cls, items[quadlet].unit), ("unit", name))
+            self.assertEqual(items[UNITS / (name + ".d") / "50-container-lifecycle.conf"].unit, name)
+            self.assertNotIn(UNITS / name, items, "no host unit of a contained service")
         links = {path: item.target for path, item in items.items() if item.cls == "link"}
         self.assertEqual(links, {
-            UNITS / "thermite.target.wants" / oh_units.ACCESS: UNITS / oh_units.ACCESS,
             UNITS / "multi-user.target.wants" / ingress.UNIT: ingress.UNIT_FILE,
         }, "the boot target's own link is the guard's, never an item; a quadlet's generator enables it")
 

@@ -9,23 +9,21 @@ ones back.
 Staging (`oh_access.staging.stage`) copies the program and every remote asset
 into a new persistent private release, compiles authority from the validated
 house and native providers, installs the hash-pinned site environment, and
-writes the services' units. The gateway's is a systemd unit with
-`User=thermite`, `Group=thermite` and `UMask=0077`; arbitrary service account
-overrides are refused. The worker's and the callback relay's are quadlets of
-the pinned Python image: a read-only root, no capability, the service
-account's UID and GID, and of the release only the program, its environment
-and what each reads, mounted read-only at the release's own paths. A
-container has no account named `thermite`, so its quadlet states the numbers
-in `THERMITE_SERVICE_IDENTITY`, which a service honours only when it runs as
-exactly them; what keeps another account out is the files' owner and modes.
-Staging never installs or starts those units. No service path points back
-into the source checkout.
+writes the services' units: quadlets of the pinned Python image, with a
+read-only root, no capability and the service account's UID and GID;
+arbitrary service account overrides are refused. The gateway is mounted its
+release, read-only, and the identity state; the worker and the callback
+relay only the program, its environment and what each reads, read-only at
+the release's own paths. A container has no account named `thermite`, so its
+quadlet states the numbers in `THERMITE_SERVICE_IDENTITY`, which a service
+honours only when it runs as exactly them; what keeps another account out is
+the files' owner and modes. Staging never installs or starts those units. No
+service path points back into the source checkout.
 
-A release holds two environments. `env` is a venv of the host's Python, for
-the gateway and the commands below. `container-env` is built by the image's
-own Python (`oh_access.environment`), with no network, from the site's
-wheelhouse for these pins and this image; the install fills and checks that
-wheelhouse before its transaction begins.
+A release's environment, `env`, is built by the image's own Python
+(`oh_access.environment`), with no network, from the site's wheelhouse for
+these pins and this image; the install fills and checks that wheelhouse
+before its transaction begins. The host's Python has no part in a release.
 
 Releases and state live in a service-accessible root outside native runtime
 state and private operator home directories: `access/` in the installation
@@ -66,14 +64,11 @@ child from replacement. Group- or world-writable access parents, such as an
 older `2770` one, must be tightened before staging. Staging as the service
 account is refused.
 
-Python environment installation writes a private `environment-install.log`
-inside the operator's plan. On environment or dependency failure, staging
-removes the partial release and retains only the diagnostic plan, without
-changing existing authority. Review that log locally and run the install
-again; diagnostic contents are never printed or copied into receipts.
+A failed environment build removes the partial release and its plan,
+without changing existing authority; the install shows what the build said.
 
 No ownership changes run during staging, and one privileged command: root's
-podman, which holds the image, runs the build of `container-env`, as the
+podman, which holds the image, runs the build of `env`, as the
 operator inside and without a network. Once handed
 over, release and state directories belong to
 `thermite:thermite` with mode 0700, ordinary files are 0600, and release program
@@ -90,16 +85,20 @@ state aside first.
 Staging accepts an existing `thermite:thermite` mode-0700 state root without
 opening its contents. It validates new release inputs against a temporary empty
 state directory, then removes that directory. Existing authority is unchanged.
-`access verify` runs read-only as thermite, verifies complete release/state
+`access verify` runs as thermite, in a one-shot container of the release's
+image and environment without a network, verifies complete release/state
 ownership, group, modes, bounded internal environment links and TLS/configuration,
 and refuses missing state instead of initializing it.
 
-The installed release is the gateway unit's working directory. For a new
-site, the owner can create the first administrator from the host:
+The installed release is the working directory the gateway's quadlet gives
+its container, and the commands below run in that container: it is the
+service account, with the release and the identity state mounted, so the
+gateway must be running. For a new site, the owner can create the first
+administrator from the host:
 
 ```sh
-RELEASE=$(systemctl show -P WorkingDirectory thermite-access.service)
-sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access bootstrap --descriptor "$RELEASE/config.json" --user admin
+RELEASE=$(sed -n 's/^PodmanArgs=--workdir=//p' /etc/containers/systemd/thermite-access.container)
+sudo podman exec -it thermite-access "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access bootstrap --descriptor "$RELEASE/config.json" --user admin
 ```
 
 Both password prompts are hidden and require a terminal;
@@ -113,7 +112,7 @@ operator-owned.
 To create the first administrator on the web Security page instead, run:
 
 ```sh
-sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access setup --descriptor "$RELEASE/config.json"
+sudo podman exec -it thermite-access "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access setup --descriptor "$RELEASE/config.json"
 ```
 
 This initializes a fresh schema with no account and prints a one-use
@@ -126,13 +125,13 @@ If every administrator's password is lost, give one existing account a new
 one from the host:
 
 ```sh
-sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access reset-admin --descriptor "$RELEASE/config.json" --user admin
+sudo podman exec -it thermite-access "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access reset-admin --descriptor "$RELEASE/config.json" --user admin
 ```
 
 It asks for the new password at the terminal and makes that account an active
 administrator. The service account already owns the accounts and the signing
-keys, so nothing else is asked for; the gateway may be running or stopped,
-and the schema must be current. That account's sessions and tokens end. No
+keys, so nothing else is asked for; the gateway must be running, since the
+command runs in its container. That account's sessions and tokens end. No
 other account, lock, setting or pairing changes. The security audit records
 it as `user.reset_admin` by a `local` principal. An unknown name is refused
 with the site's account names.
@@ -345,10 +344,9 @@ live descriptions, and stops rather than enable an unverified relay.
 
 It then hands the release to `thermite`, verifies custody, stops the
 installed access services, migrates, installs the plan's protected unit
-copies, reloads systemd, enables and starts the gateway and starts the
-generated services of the two quadlets. It checks each service's process
-(the gateway's MainPID, a container's first process) against the staged
-release by its working directory, with a bounded retry, then HTTPS and the
+copies, reloads systemd and starts the generated services of the quadlets.
+It checks each service's process (its container's first process) against the
+staged release by its working directory, with a bounded retry, then HTTPS and the
 boundary again, and after a few seconds that every process is still the one
 it saw: a container that does not start, or starts and fails, rolls the
 install back. The owner then checks
