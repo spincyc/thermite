@@ -140,24 +140,20 @@ class Changed(unittest.TestCase):
 
 
 class Mutations(Changed):
-    @classmethod
-    def setUpClass(cls):
-        # The example's conf/, which `thermite validate` reads beside each
-        # changed house: what a site holds between an edit and a generate.
+    def setUp(self):
+        super().setUp()
         scratch = tempfile.TemporaryDirectory()
-        cls.addClassCleanup(scratch.cleanup)
-        cls.root = Path(scratch.name)
-        test_generated_output.written(HOUSE, cls.root)
-        cls.objects = inventory.conf_objects(cls.root / "conf")
+        self.addCleanup(scratch.cleanup)
+        self.root = Path(scratch.name)
 
     def verbs(self):
         """thermite validate, then thermite generate --check, on the house
-        file; each as its main() runs, into an empty tree."""
-        things, items, problems = self.objects
+        file; each as its main() runs, into an empty tree. A changed house
+        that loads builds a conf that agrees with it (oh_render.build), so
+        validate finds no problem."""
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), \
-                mock.patch.object(generate, "AREA", AREA), \
-                mock.patch.object(inventory, "conf_objects", lambda conf: (things, items, list(problems))):
-            self.assertIn(validate.main(["--house", str(HOUSE), "--conf", str(self.root / "conf")]), (0, 1))
+                mock.patch.object(generate, "AREA", AREA):
+            self.assertEqual(validate.main(["--house", str(HOUSE)]), 0)
             # Everything is missing from the empty tree, hence 1; nothing is written.
             self.assertEqual(generate.main(["--check", "--house", str(HOUSE), "--conf", str(self.root / "none/conf"),
                                             "--root", str(self.root / "none")]), 1)

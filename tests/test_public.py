@@ -43,7 +43,7 @@ class Portable(unittest.TestCase):
             args = ["--house", str(house), "--conf", str(root / "conf")]
             command(["generate", *args, "--root", str(root)])
             command(["generate", "--check", *args, "--root", str(root)])
-            command(["validate", *args])
+            command(["validate", "--house", str(house)])
             data = oh_inventory.load(house)
             data["devices"][0]["name"] = "Renamed example display"
             house.write_text(json.dumps(data))

@@ -151,38 +151,74 @@ class Closed(unittest.TestCase):
 
 
 class Validate(Scratch):
-    def test_it_runs_generates_checks_and_reports_a_missing_or_empty_conf(self):
+    def stranger(self):
+        """The Sony integration, rendering one Thing more: of no device, at no
+        device's address."""
+        from oh_integrations import sony_ip_control as sony
+        render = sony.render
+
+        def with_a_stranger(device, house, out):
+            render(device, house, out)
+            out.things["http:url:stranger"] = {"configuration": {"baseURL": "http://192.0.2.250/"}}
+        return mock.patch.object(sony, "render", with_a_stranger)
+
+    def test_it_builds_what_the_house_generates_and_reads_or_writes_no_conf(self):
         house = self.house(EXAMPLE)
-        code, out, _ = run("validate", "--house", str(house), "--conf", str(self.root / "conf"), "--json")
-        self.assertEqual(code, 1)
-        self.assertIn("does not exist; run thermite generate", json.loads(out)["problems"][0])
-        (self.root / "conf").mkdir()
-        code, out, _ = run("validate", "--house", str(house), "--conf", str(self.root / "conf"), "--json")
-        self.assertEqual((code, json.loads(out)["status"]), (1, "problems"))
-        self.assertIn("defines no Things or Items", json.loads(out)["problems"][0])
+        code, out, _ = run("validate", "--house", str(house), "--json")
+        report = json.loads(out)
+        self.assertEqual((code, report["status"], report["problems"]), (0, "ok", []))
+        built = oh_render.build(House(copy.deepcopy(EXAMPLE)))
+        self.assertEqual((report["devices"], report["things"], report["items"]),
+                         (len(EXAMPLE["devices"]), *(len(table) for table in oh_render.objects(built)[:2])))
+        self.assertGreater(report["things"], 0)
+        self.assertEqual([path.name for path in self.root.iterdir()], ["devices.yaml"])
+        # The switch went with the conf/ it named.
+        with contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as exit_:
+            oh_cli.main(["validate", "--house", str(house), "--conf", str(self.root / "conf")])
+        self.assertEqual(exit_.exception.code, 2)
+        self.assertIn("--conf", err.getvalue())
         themed = self.house({**EXAMPLE, "theme": "no-such-theme"}, "themed.yaml")
         code, out, _ = run("validate", "--house", str(themed), "--json")
         self.assertEqual((code, json.loads(out)["status"]), (2, "invalid"))
         self.assertTrue(json.loads(out)["problems"][0].startswith("theme:"))
 
-    def test_a_device_nothing_watches_is_named_in_a_note_that_is_no_problem(self):
-        # Its own generated conf: the checkout's is ignored by Git and absent from a fresh clone.
+    def test_a_build_that_disagrees_with_the_house_is_its_problem_and_generate_writes_none_of_it(self):
         house, conf = self.house(EXAMPLE), self.root / "conf"
-        self.assertEqual(run("generate", "--house", str(house), "--conf", str(conf), "--root", str(self.root))[0], 0)
-        code, out, err = run("validate", "--house", str(house), "--conf", str(conf))
+        problems = ["conf/yaml/sony_ip_control.yaml: Thing http:url:stranger: 'stranger' is not a device id in "
+                    "instance/devices.yaml"]
+        things = len(oh_render.objects(oh_render.build(House(copy.deepcopy(EXAMPLE))))[0])
+        with self.stranger():
+            code, out, _ = run("validate", "--house", str(house), "--json")
+            self.assertEqual((code, json.loads(out)["status"], json.loads(out)["problems"]), (1, "problems", problems))
+            # Counted with the Thing that is the problem: the report is of what was built.
+            self.assertEqual(json.loads(out)["things"], things + 1)
+            code, out, err = run("validate", "--house", str(house))
+            self.assertEqual((code, err.splitlines()[0]), (1, f"thermite validate: {problems[0]}"))
+            self.assertIn(" 1 problems", out)
+            code, out, err = run("generate", "--house", str(house), "--conf", str(conf), "--root", str(self.root))
+        self.assertEqual((code, out), (2, ""))
+        self.assertEqual(err.splitlines(), [f"thermite generate: {problems[0]}",
+                                            "thermite generate: what the house file generates disagrees with it, in 1 "
+                                            "place; nothing done"])
+        self.assertEqual([path.name for path in self.root.iterdir()], ["devices.yaml"])
+
+    def test_a_device_nothing_watches_is_named_in_a_note_that_is_no_problem(self):
+        house = self.house(EXAMPLE)
+        code, out, err = run("validate", "--house", str(house))
         note = ("example_computer: it has an address and nothing reads whether it answers; list network_ping under "
                 "its controls.observe to have it pinged")
         self.assertEqual(code, 0, err)
         self.assertEqual(err, f"thermite validate: note: {note}\n")
         self.assertTrue(out.endswith(" 0 problems, 1 note\n"), out)
-        code, out, _ = run("validate", "--house", str(house), "--conf", str(conf), "--json")
+        code, out, _ = run("validate", "--house", str(house), "--json")
         self.assertEqual((code, json.loads(out)["status"], json.loads(out)["notes"]), (0, "ok", [note]))
         pinged = copy.deepcopy(EXAMPLE)
         next(device for device in pinged["devices"]
              if device["id"] == "example_computer")["controls"] = {"observe": ["network_ping"]}
-        code, out, _ = run("validate", "--house", str(self.house(pinged, "pinged.yaml")), "--conf", str(conf), "--json")
-        # That conf is the example's, without the ping Thing: a problem of its own, and no note.
-        self.assertEqual((json.loads(out)["status"], json.loads(out)["notes"]), ("problems", []))
+        code, out, _ = run("validate", "--house", str(self.house(pinged, "pinged.yaml")), "--json")
+        # Its own build has the ping Thing, whatever conf/ a site still holds: no problem, and no note.
+        self.assertEqual((code, json.loads(out)["status"], json.loads(out)["notes"]), (0, "ok", []))
+        self.assertEqual(json.loads(out)["things"], len(oh_render.objects(oh_render.build(House(copy.deepcopy(EXAMPLE))))[0]) + 1)
 
 
 class Planned(Scratch):
@@ -227,12 +263,11 @@ class Planned(Scratch):
                              "--conf", str(plain / "conf"), "--root", str(plain))
         self.assertEqual((code, err), (0, ""))
         self.assertNotIn("note", out.splitlines()[-1])
-        self.assertEqual(oh_inventory.conf_objects(conf)[:2], oh_inventory.conf_objects(plain / "conf")[:2])
+        self.assertEqual(oh_render.objects(oh_render.build(House(self.planned())))[:2],
+                         oh_render.objects(oh_render.build(House(copy.deepcopy(EXAMPLE))))[:2])
 
     def test_validate_names_each_one_in_a_note_that_is_no_problem(self):
-        house, conf = self.house(self.planned()), self.root / "conf"
-        self.assertEqual(run("generate", "--house", str(house), "--conf", str(conf), "--root", str(self.root))[0], 0)
-        code, out, err = run("validate", "--house", str(house), "--conf", str(conf))
+        code, out, err = run("validate", "--house", str(self.house(self.planned())))
         self.assertEqual((code, err), (0, self.notes("validate")))
         self.assertTrue(out.endswith(" 0 problems, 2 notes\n"), out)
 

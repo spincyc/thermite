@@ -65,9 +65,9 @@ class Verb(NamedTuple):
 #: verb: Verb. The summaries are what `thermite --help` lists.
 VERBS = {
     "init": Verb("house", "create a private site, or pin an installed application upgrade", site=False),
-    "check": Verb("house", "generate, validate and lint the selected configuration"),
+    "check": Verb("house", "validate, build and lint the selected configuration; write nothing"),
     "generate": Verb("house", "write conf/ and metrics/ from the house file, and deploy/'s systemd units"),
-    "validate": Verb("house", "check the house file, and that conf/ agrees with it"),
+    "validate": Verb("house", "check the house file, and that what it generates agrees with it"),
     "lint": Verb("house", "refuse credentials in Git, and docs naming a missing make target"),
     "test": Verb("test", "boot conf/ on a test runtime; test routing and the controls end to end"),
     "sandbox": Verb("test", f"run a thermite sandbox from a copy of conf/ on {SANDBOX_URL.split('//')[1]}"),

@@ -38,6 +38,12 @@ application overlap and existing user files. Replace the example before
 commissioning hardware. Init creates no account or service and does not
 initialize or publish Git.
 
+Check validates the house file, builds everything `thermite generate` would
+write from it, the host file and `versions.json`, and lints the site's files.
+It writes nothing: `conf/`, `metrics/` and `deploy/` appear when
+`thermite generate` runs, which the sandbox and a boot check run by hand
+need; an install renders its own from the commit.
+
 Run `thermite install --config /path/to/private-site` from any directory.
 Use `--config DIR` to select a site.
 Access service commands name their release's service descriptor with

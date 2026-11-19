@@ -319,9 +319,11 @@ recovery. Preparation and normal startup refuse that incomplete cache.
 
 On a slow machine or under software CPU emulation, give the boot check a
 longer startup budget, then rerun the installer with a larger native
-readiness allowance:
+readiness allowance. Run by hand, the boot check reads the site's `conf/`,
+which `thermite generate` writes and `thermite check` does not:
 
 ```sh
+thermite generate --config "$HOME/thermite-site"
 thermite test boot --config "$HOME/thermite-site" --timeout 1800
 thermite install --config "$HOME/thermite-site" --native-timeout 1800
 ```

@@ -91,13 +91,6 @@ TOP = {
                 "before": Key(TEXT, "the device id the signal goes on to", required=True)}))}),
 }
 
-DSL_THING = re.compile(
-    r"^\s*(?:Thing|Bridge)\s+([\w-]+:[\w-]+(?::[\w-]+)+)(.*)$", re.MULTILINE)
-DSL_ITEM = re.compile(
-    r"^\s*(?:Switch|String|Number(?::\w+)?|Dimmer|Contact|Rollershutter|Color|"
-    r"DateTime|Location|Player|Image|Call|Group(?::[\w:()]+)?)\s+(\w+)",
-    re.MULTILINE)
-
 
 class ConfigError(ValueError):
     """A configuration file thermite cannot use: missing, unreadable, not
@@ -468,51 +461,6 @@ def without_mac(house: House) -> list[str]:
     return sorted(d["id"] for d in house.devices if d.get("ip") and not d.get("mac"))
 
 
-def conf_objects(conf: Path) -> tuple[dict, dict, list[str]]:
-    """Things and Items defined under conf/, keyed by UID and name.
-
-    YAML (conf/yaml/) is the primary format. DSL files are read only far
-    enough to name what they define, so that nothing escapes the checks by
-    being written in the other syntax.
-    """
-    things: dict[str, dict] = {}
-    items: dict[str, dict] = {}
-    problems: list[str] = []
-    conf = Path(conf)
-
-    def add(table: dict, key: str, where: str, body: object, kind: str) -> None:
-        if key in table:
-            problems.append(
-                f"{where}: {kind} {key} also defined in {table[key]['file']}")
-        table[key] = {"file": where, "body": body}
-
-    for path in sorted((conf / "yaml").glob("*.y*ml")):
-        where = str(path.relative_to(conf.parent))
-        try:
-            document = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except yaml.YAMLError as error:
-            problems.append(f"{where}: YAML does not parse: {error}")
-            continue
-        if document is None:
-            continue
-        if not isinstance(document, dict):
-            problems.append(f"{where}: top level must be a mapping")
-            continue
-        for uid, body in (document.get("things") or {}).items():
-            add(things, str(uid), where, body or {}, "Thing")
-        for name, body in (document.get("items") or {}).items():
-            add(items, str(name), where, body or {}, "Item")
-    for path in sorted((conf / "things").glob("*.things")):
-        where = str(path.relative_to(conf.parent))
-        for match in DSL_THING.finditer(path.read_text(encoding="utf-8")):
-            add(things, match.group(1), where, match.group(2), "Thing")
-    for path in sorted((conf / "items").glob("*.items")):
-        where = str(path.relative_to(conf.parent))
-        for match in DSL_ITEM.finditer(path.read_text(encoding="utf-8")):
-            add(items, match.group(1), where, None, "Item")
-    return things, items, problems
-
-
 def addresses(value: object) -> set[str]:
     """Every IPv4 address appearing anywhere in a Thing definition."""
     found: set[str] = set()
@@ -534,7 +482,10 @@ HOUSE_ITEMS = frozenset({"house_all_off", "house_routing_io_events", "house_rout
 
 
 def cross_check(house: House, things: dict, items: dict) -> list[str]:
-    """Problems where conf/ disagrees with the house."""
+    """Problems where a conf/ disagrees with the house it was built from:
+    its Things by UID and Items by name, each with the file that defines
+    it and its body (oh_render.objects, whose build() holds every conf to
+    this)."""
     # Runtime-only: providers import inventory through oh_conf.
     import oh_features
     from oh_integrations import REGISTRY, declared, defining

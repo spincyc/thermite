@@ -82,16 +82,18 @@ class ConfigParameter(unittest.TestCase):
         self.assertEqual(oh_paths.select_args(args), args)
         self.assertNotIn("THERMITE_SITE", os.environ)
 
-    def test_check_stops_after_a_failed_validation(self):
+    def test_check_validates_builds_and_lints_stops_at_the_first_failure_and_never_generates(self):
         from oh_cli import check, generate, validate, lint
-        with patch.object(generate, "main", return_value=0) as generated, \
-                patch.object(validate, "main", return_value=1) as validated, \
-                patch.object(lint, "main", return_value=0) as scanned:
-            self.assertEqual(check.main([]), 1)
-        # An upgrade's check removes what an earlier version generated.
-        generated.assert_called_once_with(["--prune"])
-        validated.assert_called_once_with([])
-        scanned.assert_not_called()
+        for codes, expected, ran in (((0, 0, 0), 0, (1, 1, 1)), ((1, 0, 0), 1, (1, 0, 0)), ((0, 2, 0), 2, (1, 1, 0)),
+                                     ((0, 0, 1), 1, (1, 1, 1))):
+            with self.subTest(codes=codes), patch.object(generate, "main") as generated, \
+                    patch.object(validate, "main", return_value=codes[0]) as validated, \
+                    patch.object(check, "built", return_value=codes[1]) as built, \
+                    patch.object(lint, "main", return_value=codes[2]) as scanned:
+                self.assertEqual(check.main([]), expected)
+                self.assertEqual((validated.call_count, built.call_count, scanned.call_count), ran)
+                # The verb that writes conf/, metrics/ and deploy/ is not run, with --prune or without.
+                generated.assert_not_called()
 
 
 def parsers(parser, path):

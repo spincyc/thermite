@@ -7,6 +7,18 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- `thermite check` writes nothing. It validates the house file, builds
+  `conf/`, `metrics/` and `deploy/` in memory from it, the host file and
+  `versions.json`, and lints the site. It no longer generates into the
+  site's ignored `conf/`, so a file an earlier version left there
+  neither stops an upgrade nor is removed by one:
+  `thermite generate --check` names it and `thermite generate --prune`
+  removes it. `thermite validate` builds in memory too and reads no
+  `conf/`: its `--conf` is gone, and a missing or stale `conf/` is
+  `thermite generate --check`'s to report. The sandbox and a boot check
+  run by hand still read `conf/`: run `thermite generate` first. A
+  generated configuration that disagrees with its house file is now
+  refused by every verb that builds one.
 - With `--house FILE`, a theme file or IR profile the house names is
   read from beside FILE, not from the selected site's `instance/`.
 - An upgrade that changes the openHAB pin no longer fails at random.
@@ -905,15 +917,6 @@ rollback. The unified deployment workflow uses a separate committed private site
   "Rooms through the day" shows a room with no readback as Unknown. A
   receiver's integration names each zone's power through a new optional
   `powered_by(device)` hook; a device with one power Item needs none.
-- `thermite check`, which an upgrade runs on the private site, now removes a
-  file under the site's `conf/` or `metrics/` that an earlier version
-  generated and nothing generates now, as `thermite generate --prune` does.
-  An upgrade that stopped generating a file used to stop there, with
-  nothing installed, until the file was deleted by hand. A file there
-  without the generated header still stops the check, except in
-  `conf/html/remote/`: the remote page's files are copied there without
-  one, and the page fills that directory whole, so a release that drops a
-  page's file removes the site's copy.
 - A locked room with a passive display (`passive: true`) is now verified
   once everything else on its route reads back, and the policy page says
   so. It used to stay degraded ("needs attention") for as long as it was

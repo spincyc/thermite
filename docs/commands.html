@@ -39,7 +39,7 @@
 <h1 id="commands">Commands</h1>
 <p>One program, <code>thermite</code>, with a verb for each job. Every verb answers <code>--help</code> (or <code>thermite help VERB</code>) with what it does, its switches and examples; this page is that help, word for word.</p>
 <h2 id="house">The house file, and what is generated from it</h2>
-<table class="verbs"><tbody><tr><td><a href="#init"><code>thermite init</code></a></td><td>create a private site, or pin an installed application upgrade</td></tr><tr><td><a href="#check"><code>thermite check</code></a></td><td>generate, validate and lint the selected configuration</td></tr><tr><td><a href="#generate"><code>thermite generate</code></a></td><td>write conf/ and metrics/ from the house file, and deploy/&#x27;s systemd units</td></tr><tr><td><a href="#validate"><code>thermite validate</code></a></td><td>check the house file, and that conf/ agrees with it</td></tr><tr><td><a href="#lint"><code>thermite lint</code></a></td><td>refuse credentials in Git, and docs naming a missing make target</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#init"><code>thermite init</code></a></td><td>create a private site, or pin an installed application upgrade</td></tr><tr><td><a href="#check"><code>thermite check</code></a></td><td>validate, build and lint the selected configuration; write nothing</td></tr><tr><td><a href="#generate"><code>thermite generate</code></a></td><td>write conf/ and metrics/ from the house file, and deploy/&#x27;s systemd units</td></tr><tr><td><a href="#validate"><code>thermite validate</code></a></td><td>check the house file, and that what it generates agrees with it</td></tr><tr><td><a href="#lint"><code>thermite lint</code></a></td><td>refuse credentials in Git, and docs naming a missing make target</td></tr></tbody></table>
 <h2 id="test">Test on a test runtime, never production</h2>
 <table class="verbs"><tbody><tr><td><a href="#test"><code>thermite test</code></a></td><td>boot conf/ on a test runtime; test routing and the controls end to end</td></tr><tr><td><a href="#sandbox"><code>thermite sandbox</code></a></td><td>run a thermite sandbox from a copy of conf/ on 127.0.0.1:13616</td></tr></tbody></table>
 <h2 id="production">Production runtime on this host</h2>
@@ -59,9 +59,9 @@ remotes. One program, a verb for each job; `thermite help VERB` explains one.
 
 the house file, and what is generated from it:
   init                 create a private site, or pin an installed application upgrade
-  check                generate, validate and lint the selected configuration
+  check                validate, build and lint the selected configuration; write nothing
   generate             write conf/ and metrics/ from the house file, and deploy/&#x27;s systemd units
-  validate             check the house file, and that conf/ agrees with it
+  validate             check the house file, and that what it generates agrees with it
   lint                 refuse credentials in Git, and docs naming a missing make target
 
 test on a test runtime, never production:
@@ -166,13 +166,17 @@ examples:
                                     pin an installed upgrade while preserving all configuration and prior releases
 </pre>
 </section>
-<section class="verb" id="check"><h3><code>thermite check</code></h3><p>Generate, validate and lint the selected configuration.</p><pre class="help">usage: thermite check [-h] [--config DIR]
+<section class="verb" id="check"><h3><code>thermite check</code></h3><p>Validate, build and lint the selected configuration; write nothing.</p><pre class="help">usage: thermite check [-h] [--config DIR]
 
-Generate, validate and lint a private configuration directory.
+Validate, build and lint a private configuration directory.
 
-No service is changed. Generated configuration stays in the site&#x27;s ignored
-output, where a file an earlier generate wrote that nothing generates now is
-removed; any other file there stops the check.
+Nothing is written and no service is changed. The house file is validated
+(thermite validate); then conf/, metrics/ and deploy/ are built in memory
+from it, the host file and versions.json, as thermite generate would write
+them; then the tracked files are linted (thermite lint). What is on disk
+under conf/, metrics/ and deploy/ is neither read nor touched: thermite
+generate --check compares it, and thermite generate --prune removes what
+nothing generates now.
 
 options:
   -h, --help     show this help message and exit
@@ -240,15 +244,14 @@ examples:
   thermite generate --prune         write, and remove generated files nothing generates any more
 </pre>
 </section>
-<section class="verb" id="validate"><h3><code>thermite validate</code></h3><p>Check the house file, and that conf/ agrees with it.</p><pre class="help">usage: thermite validate [-h] [--config DIR] [--house FILE] [--conf DIR] [--json]
+<section class="verb" id="validate"><h3><code>thermite validate</code></h3><p>Check the house file, and that what it generates agrees with it.</p><pre class="help">usage: thermite validate [-h] [--config DIR] [--house FILE] [--json]
 
-Check instance/devices.yaml, and that conf/ agrees with it.
+Check instance/devices.yaml, and that what it generates agrees with it.
 
 options:
   -h, --help     show this help message and exit
   --config DIR   use this private configuration directory
   --house FILE   the house file (default: instance/devices.yaml)
-  --conf DIR     the runtime conf directory (default: conf/)
   --json         print the report as JSON
 
 switches every verb takes:
@@ -257,13 +260,13 @@ switches every verb takes:
   --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
-  0  the house file is valid and conf/ agrees with it
-  1  conf/ is missing, empty or disagrees with the house file
+  0  the house file is valid and what it generates agrees with it
+  1  what it generates disagrees with it
   2  a wrong switch, or a house file that is missing, cannot be read or
-     has a problem (conf/ is not checked)
+     has a problem (nothing is built)
 
 examples:
-  thermite validate                 check the house file and conf/ against it
+  thermite validate                 check the house file and what it generates
   thermite validate --json          the same, as JSON
 </pre>
 </section>

@@ -465,6 +465,7 @@
     "tests/test_brand_icon.py",
     "tests/test_build_identity.py",
     "tests/test_canonical_package.py",
+    "tests/test_check.py",
     "tests/test_clean_routes.py",
     "tests/test_client_liveness.py",
     "tests/test_client_telemetry.py",

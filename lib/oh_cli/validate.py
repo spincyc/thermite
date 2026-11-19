@@ -1,12 +1,15 @@
-"""Check instance/devices.yaml, and that conf/ agrees with it.
+"""Check instance/devices.yaml, and that what it generates agrees with it.
 
-    thermite validate [--json] [--house FILE] [--conf DIR]
+    thermite validate [--json] [--house FILE]
 
 The house file must pass every check thermite generate runs (its devices,
-integrations, routing and theme). Every Thing in conf/ must belong to a
-device in the house file (the last segment of its UID is the device id)
-and use only that device's address; every Item must be a room location
-(loc_<room>) or be named after a device.
+integrations, routing and theme). Its conf/ is then built in memory and
+written nowhere: every Thing in it must belong to a device in the house
+file (the last segment of its UID is the device id) and use only that
+device's address; every Item must be a room location (loc_<room>) or be
+named after a device. thermite generate holds what it writes to the same,
+so no conf/ is read here: whether the one on disk is current is
+thermite generate --check's to say.
 
 A device that nothing watches is named in a note, which is no problem and
 changes no exit status: one an integration commands with no reading of
@@ -19,32 +22,31 @@ accepted and renders nothing.
 
 from __future__ import annotations
 
-import json
 import sys
 
 import oh_cli
 import oh_inventory as inventory
 import oh_metrics as metrics
+import oh_render as render
 from oh_conf import House
 
 EXAMPLES = (
-    ("thermite validate", "check the house file and conf/ against it"),
+    ("thermite validate", "check the house file and what it generates"),
     ("thermite validate --json", "the same, as JSON"),
 )
 
 NOTES = """\
 exit status:
-  0  the house file is valid and conf/ agrees with it
-  1  conf/ is missing, empty or disagrees with the house file
+  0  the house file is valid and what it generates agrees with it
+  1  what it generates disagrees with it
   2  a wrong switch, or a house file that is missing, cannot be read or
-     has a problem (conf/ is not checked)
+     has a problem (nothing is built)
 """
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = oh_cli.command("validate", __doc__.splitlines()[0], EXAMPLES, NOTES)
     oh_cli.add_house(parser)
-    oh_cli.add_conf(parser)
     oh_cli.add_json(parser)
     arguments = parser.parse_args(argv)
     try:
@@ -56,16 +58,12 @@ def main(argv: list[str] | None = None) -> int:
                      "status": "invalid", "things": 0})
         return 2
     devices = len(house.devices)
-    things, items, problems = inventory.conf_objects(arguments.conf)
-    if not arguments.conf.is_dir():
-        problems.append(f"{arguments.conf} does not exist; run thermite generate")
-    elif not things and not items and (devices or house.rooms):
-        # An empty house (thermite init --empty) rightly generates none.
-        problems.append(f"{arguments.conf} defines no Things or Items; run thermite generate")
-    else:
-        problems += inventory.cross_check(house, things, items)
-    # From the house file alone, as generate would render it: conf/ may be stale.
-    notes = [metrics.unobserved_text(*found) for found in metrics.unobserved(house)]
+    try:
+        built, problems = render.build(house), []
+    except render.Disagreement as error:
+        built, problems = error.conf, error.problems
+    things, items, _ = render.objects(built)
+    notes = [metrics.unobserved_text(*found) for found in metrics.unobserved(house, built)]
     if arguments.json:
         oh_cli.emit({"devices": devices, "items": len(items), "notes": notes, "problems": problems,
                      "status": "ok" if not problems else "problems", "things": len(things)})
