@@ -42,6 +42,7 @@ from pathlib import Path
 
 import oh_integrations as integrations
 from oh_conf import RULE_SENDS, Addon, Conf, House, fill, indented, uses
+from oh_shape import MAPPING, TEXT, Key
 from oh_integrations import _io
 
 from .. import routing
@@ -51,11 +52,12 @@ ITEM = "house_reboot"
 ITEMS = "yaml/reboots.yaml"
 RULE = "automation/js/reboots.js"
 SOURCE = Path(__file__).resolve().parent / "reboots.js"
-HOUSE_KEYS = ("reboots",)
-DEVICE_KEYS = ("reboot",)
-HOUSE_ITEMS = (ITEM,)
+HOUSE_KEYS = {"reboots": Key(MAPPING, "when the devices marked reboot: nightly restart", keys={
+    "time": Key(TEXT, "the time of day, as 24-hour HH:MM in quotes; 03:00 when left out")})}
 #: The one value a device's `reboot` takes.
 NIGHTLY = "nightly"
+DEVICE_KEYS = {"reboot": Key(TEXT, "when thermite restarts it: each night, while it is idle", choices=(NIGHTLY,))}
+HOUSE_ITEMS = (ITEM,)
 DEFAULT_TIME = "03:00"
 TIME = re.compile(r"([01][0-9]|2[0-3]):([0-5][0-9])")
 #: What every reboot Item is commanded with.

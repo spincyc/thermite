@@ -34,6 +34,7 @@ import re
 from pathlib import Path
 
 from oh_conf import Addon, House, YamlFile, point, uses
+from oh_shape import NUMBER, TEXT, TRUTH, Key
 
 from . import _commands, _script, denonmarantz_http
 
@@ -47,7 +48,10 @@ ADDONS = (Addon("binding", "heos"), Addon("automation", "jsscripting", "guarded 
 ASSETS: dict[str, str] = {}
 #: heos_pid: the receiver's player ID; heos_bridge: true on the one HEOS
 #: receiver that hosts the house's bridge (host()).
-DEVICE_KEYS = ("heos_pid", "heos_bridge")
+DEVICE_KEYS = {
+    "heos_pid": Key((NUMBER, TEXT), "the receiver's HEOS player id, as HEOS get_players reports it: a whole number, never 0"),
+    "heos_bridge": Key(TRUTH, "whether this receiver carries the house's HEOS connection: true on one receiver, left out on the others"),
+}
 #: Optional music transport, never an HDMI routing stage: an unavailable HEOS
 #: connection does not fail a routed source's working power/input path.
 ROUTE_OPTIONAL = True

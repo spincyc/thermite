@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 
 from oh_conf import Addon, House, YamlFile, point, retarget, uses
+from oh_shape import MAPPING, NUMBER, TEXT, Key
 from . import _commands, _script
 from . import _instr as instr
 from . import globalcache_ir as ir
@@ -19,7 +20,9 @@ HEADER = ("Optional source CEC requests through an explicitly wired BK-808 input
           "Transport replies are not player power/playback observations.")
 ADDONS = (Addon("binding", "http"), Addon("automation", "jsscripting", "finite source CEC keys"))
 ASSETS: dict[str, str] = {}
-DEVICE_KEYS = ("cec",)
+DEVICE_KEYS = {"cec": Key(MAPPING, "the HDMI matrix input a disc player's CEC keys are sent through", keys={
+    "matrix": Key(TEXT, "the device id of the matrix", required=True),
+    "input": Key(NUMBER, "the matrix input the player is on: 1 to 8", required=True)})}
 RULE = "automation/js/bk808_cec.js"
 SOURCE = Path(__file__).with_suffix(".js")
 KEYS = {"power_on": 1, "power_off": 2, "up": 3, "left": 4, "ok": 5, "right": 6,

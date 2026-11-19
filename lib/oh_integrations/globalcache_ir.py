@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 
 from oh_conf import Addon, House, LIB, YamlFile, point, retarget, uses
+from oh_shape import MAPPING, NUMBER, TEXT, Key
 from . import _commands, _script
 
 NAME = "ir"
@@ -23,7 +24,11 @@ HEADER = ("Verified IR keys only; no device power or playback state is inferred.
 ADDONS = (Addon("binding", "globalcache"), Addon("transformation", "map"),
           Addon("automation", "jsscripting", "finite verified IR dispatch"))
 ASSETS: dict[str, str] = {}
-DEVICE_KEYS = ("ir",)
+DEVICE_KEYS = {"ir": Key(MAPPING, "the IR emitter that drives the device", keys={
+    "model": Key(TEXT, "the emitter's model", required=True),
+    "ip": Key(TEXT, "the emitter's IPv4 address", required=True),
+    "connector": Key(NUMBER, "which of the emitter's connectors points at the device: 1, 2 or 3", required=True),
+    "profile": Key(TEXT, "the file of verified IR commands, as ir/<name>.json under instance/", required=True)})}
 #: The iTach's TCP API.
 DISCOVER_PORTS = (4998,)
 from oh_paths import SITE

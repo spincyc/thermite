@@ -41,7 +41,7 @@ The application stays in its Python environment. `init` creates a separate priva
 
 ## Describe your house
 
-Edit `instance/devices.yaml` and `instance/host.yaml` in the private site. Replace the example inventory with your own rooms and devices, using fixed network addresses. A TV entry looks like this:
+Edit `instance/devices.yaml` and `instance/host.yaml` in the private site. Replace the example inventory with your own rooms and devices, using fixed network addresses. [The house file](house-file.html) lists every key `devices.yaml` may have. A TV entry looks like this:
 
 ```yaml
 rooms:

@@ -22,6 +22,7 @@ applied once by bin/thermite matrix-settings, never by a rule.
 from __future__ import annotations
 
 from oh_conf import House, YamlFile, options_text, uses
+from oh_shape import MAPPING, TEXT, Key
 
 from . import _instr as instr
 from . import _diagnostics as diag
@@ -39,7 +40,6 @@ HEADER = (
 ADDONS = instr.ADDONS
 ASSETS: dict[str, str] = {}
 INPUTS = OUTPUTS = 8
-DEVICE_KEYS = ("settings",)
 READBACK_INPUTS = tuple(str(number) for number in range(1, INPUTS + 1))
 KINDS = {"hdmi_matrix"}
 #: All that the Thing ever sends: it reads and sets routing and input EDIDs.
@@ -65,6 +65,11 @@ OUTPUT_SETTINGS = {
     "hdr": (HDR, "allhdr", "set hdr conversion", "hdr"),
     "hdcp": (HDCP, "allhdcp", "tx hdcp", "hdcp"),
 }
+DEVICE_KEYS = {"settings": Key(MAPPING, "the matrix's fixed settings, which thermite matrix-settings applies once", keys={
+    "edid": Key(MAPPING, "the EDID each input presents", by="input number, or default", each=Key(TEXT, "an EDID name")),
+    "scaler": Key(TEXT, "what the outputs' scalers do", choices=tuple(SCALER)),
+    "hdr": Key(TEXT, "the outputs' HDR conversion", choices=tuple(HDR)),
+    "hdcp": Key(TEXT, "the HDCP version the outputs ask for, in quotes", choices=tuple(HDCP))})}
 
 
 def ports(device: dict) -> tuple[int, int]:

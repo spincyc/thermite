@@ -27,10 +27,16 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass
 
-CONSTANT, FUNCTION = "constant", "function"
+from oh_shape import Key
+
+CONSTANT, FUNCTION, KEYS = "constant", "function", "keys"
 #: What a hook of each kind is in a module that defines it. Another kind of
-#: entry is one more line here, and its check.
-KINDS = {CONSTANT: lambda value: not callable(value), FUNCTION: callable}
+#: entry is one more line here, and its check. KEYS is a declaration of
+#: house-file keys: {key: oh_shape.Key}, the key's kind of value and what
+#: it is for.
+KINDS = {CONSTANT: lambda value: not callable(value), FUNCTION: callable,
+         KEYS: lambda value: isinstance(value, dict) and all(
+             isinstance(name, str) and isinstance(key, Key) for name, key in value.items())}
 
 
 class UndeclaredHook(Exception):
@@ -356,11 +362,13 @@ _TABLE = (
 
     # Facts about a vendor's devices live in its module, never in a generic
     # one, so no table outside this package names an integration.
-    Hook("DEVICE_KEYS", CONSTANT, """
-        device fields it reads (validate() checks them); the house file
-        refuses any device key no module or the inventory core
-        (oh_inventory) declares""", default=()),
-    Hook("HOUSE_KEYS", CONSTANT, "top-level house-file keys it reads, likewise", default=()),
+    Hook("DEVICE_KEYS", KEYS, """
+        {key: oh_shape.Key} of the device fields it reads: each one's kind
+        of value and what it is for, which the house-file reference page
+        and schema are made from (validate() checks the values, in its own
+        words); the house file refuses any device key no module or the
+        inventory core (oh_inventory) declares""", default=()),
+    Hook("HOUSE_KEYS", KEYS, "{key: oh_shape.Key} of the top-level house-file keys it reads, likewise", default=()),
     Hook("NEEDS_MAC", CONSTANT, """
         True: it derives a device's identity from its mac, so a device
         listing it needs one""", default=False),

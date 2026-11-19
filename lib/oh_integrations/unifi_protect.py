@@ -13,6 +13,7 @@ import json
 import re
 
 from oh_conf import Addon, House, YamlFile, point, uses
+from oh_shape import MAPPING, NUMBER, TEXT, TRUTH, Key
 
 NAME = "unifi_protect"
 PHASE = "control"  # authentication is required; this integration sends no control commands
@@ -30,9 +31,13 @@ CONTROLLER_UID = "unifi:controller:protect_console"
 NVR_UID = "unifi:nvr:protect"
 STATUS_GROUP = "house_camera_status"
 RULE = "automation/js/unifi_protect.js"
-DEVICE_KEYS = ("protect",)
+DEVICE_KEYS = {"protect": Key(MAPPING, "which of the Protect console's cameras this is", keys={
+    "device_id": Key(TEXT, "the camera's 24-character Protect id", required=True),
+    "package_camera": Key(TRUTH, "whether a doorbell has a second camera, for packages")})}
 #: The console's host and port (oh_features.remote_cameras validates them).
-HOUSE_KEYS = ("protect",)
+HOUSE_KEYS = {"protect": Key(MAPPING, "the UniFi Protect console the cameras are on; its credentials are not kept here", keys={
+    "host": Key(TEXT, "the console's IPv4 address", required=True),
+    "port": Key(NUMBER, "the console's HTTPS port; 443 when left out")})}
 HOUSE_ITEMS = (STATUS_GROUP,)
 #: The motion-timestamp rule only updates Items.
 ITEM_ONLY_RULES = (RULE,)

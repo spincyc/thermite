@@ -7,6 +7,15 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The docs site has a page of every key the house file may have:
+  what it holds, what it is for and what reads it, `routing` included
+  (house-file.html, linked from Get started). It is made from the
+  declaration `thermite validate` checks the file against, so it
+  names every key the file takes and none it refuses. The same
+  declaration is published as a JSON Schema, house.schema.json, which
+  an editor can check the file against as you type. `thermite
+  validate` says what it said before; `version: true` is now refused,
+  where it used to pass as 1.
 - Two of a device's problem messages named openHAB; they say thermite:
   "is not paired or refuses thermite" and "answered in a way thermite
   does not understand", on the remotes, in `thermite device` and on

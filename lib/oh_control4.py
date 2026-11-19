@@ -24,6 +24,8 @@ import os
 import re
 from pathlib import Path
 
+from oh_shape import LIST, MAPPING, NUMBER, TEXT, Key
+
 STRUCTURE = {"root", "site", "building", "floor", "room"}
 ENTITY = {"device", "proxy"}
 # typeName is preferred; these are the numeric types pyControl4 users rely on
@@ -95,8 +97,15 @@ SECRET_VARIABLE = re.compile(r"(?i)pass|secret|token|key|auth|cred|user|login|pi
 #: Control4 items that are that device; control4_stale lists items known to
 #: be gone; control4_rooms maps a Control4 room name to a room id;
 #: control4_director selects the controller `fetch` asks.
-HOUSE_KEYS = ("control4_rooms", "control4_stale", "control4_director")
-DEVICE_KEYS = ("c4_item",)
+HOUSE_KEYS = {
+    "control4_rooms": Key(MAPPING, "which room each Control4 room is", by="Control4 room name", each=Key(TEXT, "a room id")),
+    "control4_stale": Key(LIST, "Control4 items known to be gone, which the comparison then leaves out",
+                          each=Key(NUMBER, "a Control4 item id")),
+    "control4_director": Key(TEXT, "the device id of the controller that thermite control4 fetch asks, in a house with "
+                                   "more than one"),
+}
+DEVICE_KEYS = {"c4_item": Key((NUMBER, LIST), "the Control4 item, or the items, that are this device",
+                              each=Key(NUMBER, "a Control4 item id"))}
 
 
 def item_id(value: object) -> bool:

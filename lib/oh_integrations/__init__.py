@@ -106,10 +106,19 @@ def powered(device: dict, items: dict[str, dict]) -> dict[str, str]:
     return needs
 
 
-def declared(hook: str, modules=REGISTRY) -> tuple:
+def declared(hook: str, modules=REGISTRY) -> tuple | dict:
     """Every value of the tuple `hook` across `modules`, in their order,
-    without repeats. The modules may be more than the integrations: a
-    feature declares its house keys and Items under the same names, and
-    answers nothing for a name it lacks."""
+    without repeats; for a declaration of keys (DEVICE_KEYS, HOUSE_KEYS),
+    {key: its oh_shape.Key}, and a key two of them declare is an error.
+    The modules may be more than the integrations: a feature declares its
+    house keys and Items under the same names, and answers nothing for a
+    name it lacks."""
     default = _hooks.HOOKS[hook].default
-    return tuple(dict.fromkeys(value for module in modules for value in getattr(module, hook, default)))
+    if _hooks.HOOKS[hook].kind != _hooks.KEYS:
+        return tuple(dict.fromkeys(value for module in modules for value in getattr(module, hook, default)))
+    keys: dict = {}
+    for module in modules:
+        for name, key in dict(getattr(module, hook, default)).items():
+            if keys.setdefault(name, key) is not key:
+                raise ValueError(f"{hook}: {module.__name__} declares {name}, which another module declares too")
+    return keys

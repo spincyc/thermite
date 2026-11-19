@@ -7,6 +7,7 @@ Thing belongs to a known device at that device's address.
 
 from __future__ import annotations
 
+import dataclasses
 import difflib
 import ipaddress
 import re
@@ -17,6 +18,7 @@ import yaml
 
 import oh_control4
 from oh_semantic import KINDS, LOCATION_TAGS
+from oh_shape import LIST, MAPPING, NUMBER, TEXT, Key, fits, of_kind, unknown, words
 
 if TYPE_CHECKING:
     from oh_conf import House
@@ -25,26 +27,69 @@ ID = re.compile(r"^[a-z][a-z0-9_]*$")
 MAC = re.compile(r"^[0-9a-f]{2}(?::[0-9a-f]{2}){5}$")
 IPV4 = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?![\d.])")
 
-ROOM_KEYS = {"label", "tag", "in"}
-#: The keys devices.yaml may have at its top level that this module and the
-#: house-wide remote read. Integrations, features and Control4 (oh_control4)
-#: declare theirs (HOUSE_KEYS, keys()); the module that reads each key
-#: validates what is under it.
-TOP_KEYS = frozenset({"version", "rooms", "devices", "routing", "later", "services", "theme",
-                      "diagnostics"})
+#: The shape of the house file, declared (oh_shape): validate() derives its
+#: checks of key names and kinds of value from these, and the docs site its
+#: reference page and schema (declarations(), shape()), so a key is written
+#: down once. ROOM is a room's keys.
+ROOM = {
+    "label": Key(TEXT, "the room's name, as people read it", required=True),
+    "tag": Key(TEXT, "its openHAB Location tag (Room, Kitchen, Building and so on), which places it in the semantic model"),
+    "in": Key(TEXT, "the room id of the room or building it is part of"),
+}
 #: The keys any device may have: its identity, address and controls, how
 #: closely monitoring watches it (monitor), and owner documentation no
 #: program reads: notes, and the Control4 driver name `thermite control4
-#: summary` suggests. Integrations and Control4 declare the fields they read
-#: (DEVICE_KEYS, keys()) and validate them.
-DEVICE_KEYS = frozenset({"id", "room", "kind", "name", "make", "model", "ip", "mac", "via", "controls", "notes",
-                         "control4", "monitor"})
-#: Device keys whose value is text.
-TEXT_KEYS = ("id", "room", "kind", "name", "make", "model", "ip", "mac", "via", "notes", "control4", "monitor")
-#: monitor: required (the default) lets a device's failed control checks
-#: count against control health and alert; optional still shows them on the
-#: dashboards but never counts them, for a device known to be broken.
-MONITOR = ("required", "optional")
+#: summary` suggests. Integrations, features and Control4 declare the
+#: fields they read (DEVICE_KEYS) and validate them. The text keys are
+#: checked in this order.
+DEVICE = {
+    "id": Key(TEXT, "its name in thermite: snake_case and its own; every Item of the device starts with it", required=True),
+    "room": Key(TEXT, "the room id of the room it is in", required=True),
+    "kind": Key(TEXT, "what it is (tv, avr, streamer, hdmi_matrix and so on), which gives it its place in the "
+                      "semantic model", required=True),
+    "name": Key(TEXT, "what people call it, where that is more than its model"),
+    "make": Key(TEXT, "who makes it"),
+    "model": Key(TEXT, "its model"),
+    "ip": Key(TEXT, "its own IPv4 address; every device has one unless it has via"),
+    "mac": Key(TEXT, "its MAC address, lowercase with colons, for dhcp-reservations and discover"),
+    "via": Key(TEXT, "the device id of the gateway that reaches it (IR, serial, a relay), for a device with no "
+                     "address of its own"),
+    "controls": Key(MAPPING, "the integrations that read it (observe) and command it (control)", by="phase",
+                    must="a mapping of phase to integration names",
+                    each=Key(LIST, "integration names", each=Key(TEXT, "the name of an integration"),
+                             must="a list of integration names", empty=True)),
+    "notes": Key(TEXT, "whatever its owner wants to remember; no program reads it"),
+    "control4": Key(TEXT, "the Control4 driver name that thermite control4 summary suggested; no program reads it"),
+    # required lets a device's failed control checks count against control
+    # health and alert; optional still shows them on the dashboards but
+    # never counts them.
+    "monitor": Key(TEXT, "how closely it is watched: optional keeps a device known to be broken out of control "
+                         "health and its alerts, and required is the same as leaving it out",
+                   choices=("required", "optional")),
+}
+#: The top-level keys this module and the house-wide remote read.
+#: Integrations, features and Control4 (oh_control4) declare theirs
+#: (HOUSE_KEYS: routing is the routing feature's); the module that reads
+#: each key validates what is under it.
+TOP = {
+    "version": Key(NUMBER, "the format of the file: 1", required=True, choices=(1,)),
+    "rooms": Key(MAPPING, "the rooms of the house", by="room id", each=Key(MAPPING, "a room", keys=ROOM),
+                 must="a mapping of room ids", empty=True),
+    "devices": Key(LIST, "the devices of the house", each=Key(MAPPING, "a device", keys=DEVICE),
+                   must="a list of devices"),
+    "later": Key(LIST, "devices not set up yet: their ids are kept for them and discover knows them, and nothing "
+                       "is generated for them", each=Key(MAPPING, "a device to be: an id, and whatever is known of it"),
+                 must="a list of devices", empty=True),
+    "services": Key(LIST, "the ids of Things in conf/ that belong to no device, which validate then accepts",
+                    each=Key(TEXT, "a service id"), must="a list of service ids", empty=True),
+    "theme": Key(TEXT, "the colors of the remote: a built-in theme's name, or a theme file under instance/"),
+    "diagnostics": Key(MAPPING, "what else is known about the picture's path", keys={
+        "observers": Key(LIST, "devices that report on the signal passing between two others", each=Key(
+            MAPPING, "an observer and the two devices it sits between", keys={
+                "device": Key(TEXT, "the observer's device id", required=True),
+                "after": Key(TEXT, "the device id the signal comes from", required=True),
+                "before": Key(TEXT, "the device id the signal goes on to", required=True)}))}),
+}
 
 DSL_THING = re.compile(
     r"^\s*(?:Thing|Bridge)\s+([\w-]+:[\w-]+(?::[\w-]+)+)(.*)$", re.MULTILINE)
@@ -79,7 +124,7 @@ CORE = tuple((f"tag:yaml.org,2002:{name}", re.compile(pattern)) for name, patter
     ("int", r"[-+]?[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+"),
     ("float", r"[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN)"),
 ))
-TEXT = "tag:yaml.org,2002:str"
+STR = "tag:yaml.org,2002:str"
 #: Digits after a zero: octal in YAML 1.1 (010 is 8, and 08 is text),
 #: decimal in YAML 1.2, and often a code that is text to whoever wrote it.
 LEADING_ZERO = re.compile(r"[-+]?0[0-9_]+")
@@ -90,7 +135,7 @@ def unclear(value: str, read: str) -> tuple[str, str] | None:
     mean one thing; None for one that does. `read` is the tag PyYAML, a YAML
     1.1 reader, gives it: what every earlier thermite made of it. It means
     one thing when the YAML 1.2 core schema reads it the same."""
-    core = next((tag for tag, pattern in CORE if pattern.fullmatch(value)), TEXT)
+    core = next((tag for tag, pattern in CORE if pattern.fullmatch(value)), STR)
     quoted = '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
     if read.endswith(":merge"):
         return "merge key", "<< merges another mapping into this one in YAML 1.1 only: write its keys out here"
@@ -225,7 +270,7 @@ def room_label(data: dict, room: str) -> str:
 def validate_rooms(rooms: object) -> list[str]:
     """Problems in the rooms mapping: ids, labels, Location tags, nesting."""
     if not isinstance(rooms, dict):
-        return ["rooms must map room ids to {label, tag, in}"]
+        return [f"rooms must map room ids to {{{', '.join(ROOM)}}}"]
     problems: list[str] = []
     for room, entry in rooms.items():
         where = f"rooms.{room}"
@@ -244,7 +289,7 @@ def validate_rooms(rooms: object) -> list[str]:
                 problems.append(f"{where}: in {entry['in']!r} is not another room id")
             elif "tag" in entry and "tag" not in parent:
                 problems.append(f"{where}: is a Location, so the room it is in needs a tag too")
-        for key in sorted(set(entry) - ROOM_KEYS):
+        for key in sorted(unknown(ROOM, entry)):
             problems.append(f"{where}: unknown key '{key}'")
     for room in rooms:
         trail = [room]
@@ -258,17 +303,40 @@ def validate_rooms(rooms: object) -> list[str]:
     return problems
 
 
-def keys() -> tuple[frozenset, frozenset]:
-    """(top-level keys, device keys) devices.yaml may have: this module's,
-    and those the integrations, the features and Control4 declare."""
+def declarations() -> tuple[dict[str, Key], dict[str, Key], dict[tuple[str, str], str]]:
+    """(top-level keys, device keys, who reads each) of devices.yaml: this
+    module's, and those the integrations, the features and Control4
+    declare (HOUSE_KEYS, DEVICE_KEYS). The readers are by (hook, key), for
+    the keys that are not this module's."""
     # Imported here: the integration modules import lib/oh_conf.py, which
     # imports this module.
     import oh_features
     import oh_integrations
 
-    owners = (*oh_integrations.REGISTRY, *oh_features.REGISTRY, oh_control4)
-    return (TOP_KEYS | frozenset(oh_integrations.declared("HOUSE_KEYS", owners)),
-            DEVICE_KEYS | frozenset(oh_integrations.declared("DEVICE_KEYS", owners)))
+    top, device, readers = dict(TOP), dict(DEVICE), {}
+    owners = [*((module, module.NAME) for module in (*oh_integrations.REGISTRY, *oh_features.REGISTRY)),
+              (oh_control4, "control4")]
+    for module, name in owners:
+        house, fields = oh_integrations.declared("HOUSE_KEYS", (module,)), oh_integrations.declared("DEVICE_KEYS", (module,))
+        for hook, found, into in (("HOUSE_KEYS", house, top), ("DEVICE_KEYS", fields, device)):
+            for key, declaration in found.items():
+                if into.setdefault(key, declaration) is not declaration:
+                    raise ValueError(f"{hook}: {name} declares {key}, which another module declares too")
+                readers[hook, key] = name
+    return top, device, readers
+
+
+def keys() -> tuple[frozenset, frozenset]:
+    """(top-level keys, device keys) devices.yaml may have."""
+    top, device, _ = declarations()
+    return frozenset(top), frozenset(device)
+
+
+def shape() -> Key:
+    """The whole house file, as one declaration."""
+    top, device, _ = declarations()
+    devices = dataclasses.replace(top["devices"], each=dataclasses.replace(top["devices"].each, keys=device))
+    return Key(MAPPING, "the house file", keys={**top, "devices": devices})
 
 
 def validate(data: object) -> list[str]:
@@ -281,15 +349,13 @@ def validate(data: object) -> list[str]:
     # imports this module.
     import oh_integrations
 
-    if not isinstance(data, dict) or data.get("version") != 1:
-        return ["devices.yaml: version must be 1"]
-    top_keys, device_keys = keys()
-    problems = [f"unknown top-level key '{key}'{hint(key, top_keys)}" for key in data if key not in top_keys]
-    for key, kind, what in (("rooms", dict, "a mapping of room ids"), ("devices", list, "a list of devices"),
-                            ("routing", dict, "a mapping"), ("later", list, "a list of devices"),
-                            ("services", list, "a list of service ids")):
-        if data.get(key) is not None and not isinstance(data[key], kind):
-            problems.append(f"{key} must be {what}")
+    top_keys, device_keys, _ = declarations()
+    if not isinstance(data, dict) or not fits(top_keys["version"], data.get("version")):
+        return [f"devices.yaml: version must be {words(top_keys['version'])}"]
+    problems = [f"unknown top-level key '{key}'{hint(key, top_keys)}" for key in unknown(top_keys, data)]
+    for key, declaration in top_keys.items():
+        if declaration.must and data.get(key) is not None and not of_kind(declaration, data[key]):
+            problems.append(f"{key} must be {declaration.must}")
     # A section left empty (`later:` above entries that are all commented
     # out) is the same as none. Not devices: code reads it as
     # data.get("devices", []) and data["devices"], which a null breaks.
@@ -316,10 +382,10 @@ def validate(data: object) -> list[str]:
             problems.append(f"devices[{index}]: must be a mapping with at least id, room and kind")
             continue
         where = str(device.get("id") or f"devices[{index}]")
-        for key in device:
-            if key not in device_keys:
-                problems.append(f"{where}: unknown key '{key}'{hint(key, device_keys)}")
-        wrong = [key for key in TEXT_KEYS if device.get(key) is not None and not isinstance(device[key], str)]
+        for key in unknown(device_keys, device):
+            problems.append(f"{where}: unknown key '{key}'{hint(key, device_keys)}")
+        wrong = [key for key, declaration in DEVICE.items()
+                 if declaration.kind == TEXT and device.get(key) is not None and not of_kind(declaration, device[key])]
         for key in wrong:
             problems.append(f"{where}: {key} {device[key]!r} must be text")
         if wrong:
@@ -327,7 +393,8 @@ def validate(data: object) -> list[str]:
         # A device reached through a gateway (IR, serial, relay) has no
         # address of its own; it names the gateway instead. A MAC is only
         # for dhcp-reservations and discover, which name devices lacking one.
-        for key in ("id", "room", "kind") if device.get("via") else ("id", "room", "kind", "ip"):
+        for key in (*(key for key, declaration in DEVICE.items() if declaration.required),
+                    *(() if device.get("via") else ("ip",))):
             if not device.get(key):
                 problems.append(f"{where}: missing {key}")
         if device.get("id"):
@@ -350,20 +417,20 @@ def validate(data: object) -> list[str]:
                 problems.append(
                     f"{where}: mac '{device['mac']}' is not lowercase aa:bb:..")
             unique("mac", device["mac"], where)
-        if device.get("monitor") is not None and device["monitor"] not in MONITOR:
-            problems.append(f"{where}: monitor must be {' or '.join(MONITOR)}")
+        if device.get("monitor") is not None and not fits(DEVICE["monitor"], device["monitor"]):
+            problems.append(f"{where}: monitor must be {words(DEVICE['monitor'])}")
         controls = device.get("controls")
         if controls is None:
             controls = {}
-        if not isinstance(controls, dict):
-            problems.append(f"{where}: controls must be a mapping of phase to integration names")
+        if not of_kind(DEVICE["controls"], controls):
+            problems.append(f"{where}: controls must be {DEVICE['controls'].must}")
             continue
         for phase, names in controls.items():
             if phase not in allowed:
                 problems.append(f"{where}: unknown controls phase '{phase}'{hint(phase, allowed)}")
                 continue
-            if names is not None and not isinstance(names, list):
-                problems.append(f"{where}: controls.{phase} must be a list of integration names")
+            if names is not None and not of_kind(DEVICE["controls"].each, names):
+                problems.append(f"{where}: controls.{phase} must be {DEVICE['controls'].each.must}")
                 continue
             for name in names or []:
                 if not isinstance(name, str) or name not in allowed[phase]:

@@ -19,6 +19,7 @@ from pathlib import Path
 import yaml
 
 from oh_conf import GUARD_PROFILE, Addon, House, YamlFile, options_text, point, uses, volume_js
+from oh_shape import TEXT, Key
 from . import _commands, _script
 
 NAME = "sonos"
@@ -34,7 +35,8 @@ ADDONS = (Addon("binding", "sonos"), Addon("automation", "jsscripting", "Sonos r
 ASSETS: dict[str, str] = {}
 #: The binding derives a player's UDN from its MAC, so a device needs one.
 NEEDS_MAC = True
-DEVICE_KEYS = ("sonos_udn",)
+DEVICE_KEYS = {"sonos_udn": Key(TEXT, "the player's UDN, by which its events are told from another's: RINCON_, its "
+                                       "mac in capitals without the colons, then 01400")}
 #: The binding talks UPnP to the player's HTTP port.
 PROBE_PORTS = (1400,)
 DISCOVER_PORTS = (1400,)

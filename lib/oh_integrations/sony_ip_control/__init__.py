@@ -71,6 +71,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from oh_conf import Addon, House, YamlFile, options_text, retarget, uses
+from oh_shape import TRUTH, Key
 from .. import _commands, _script
 
 from .. import _pairing, sony_rest
@@ -87,7 +88,8 @@ HEADER = (
 )
 ADDONS = (Addon("automation", "jsscripting", "the Sony TV rule (sony_ip_control.js)"),)
 ASSETS: dict[str, str] = {}
-DEVICE_KEYS = ("sony_speaker_audio",)
+DEVICE_KEYS = {"sony_speaker_audio": Key(TRUTH, "whether the TV's own speakers are used: false gives it no volume or mute "
+                                                "of its own, and true is the same as leaving it out")}
 REMOTE_LAYOUT = "sony_tv"
 #: The rule talks to the TV's REST API and IRCC on plain HTTP.
 PROBE_PORTS = (80,)

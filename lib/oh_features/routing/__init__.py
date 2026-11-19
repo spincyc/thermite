@@ -96,6 +96,7 @@ from types import ModuleType
 import oh_integrations as integrations
 import oh_inventory as inventory
 from oh_conf import Addon, Conf, House, fill, indented, options_text, uses
+from oh_shape import LIST, MAPPING, NUMBER, TEXT, TRUTH, Key, unknown
 
 NAME = "routing"
 ITEMS = "yaml/routing.yaml"
@@ -113,19 +114,89 @@ OFF = "off"
 #: Routing telemetry: JSON counts routing.js posts (its METRICS_ITEM).
 METRICS_ITEM = "house_routing_metrics"
 HOUSE_ITEMS = (METRICS_ITEM,)
-EDID_KEYS = {"idle"}
 #: A room's devices that a choice powers and switches, in the order the
 #: signal reaches them: the screen is the last.
 STAGES = ("receiver", "display")
 #: Kinds of network player that are a room's sound where they stand, as a
 #: soundbar is (targets()).
 PLAYERS = ("streaming_amp", "audio_streamer")
-STAGE_KEYS = {"device", "zone", "input", "input_by_source", "sources", "sync_with"}
 #: The room keys of what its other devices are sent on any source, and on
 #: Off. Not `on` and `off`: YAML reads those as true and false.
 ACTIONS = ("on_actions", "off_actions")
-ROOM_KEYS = {"room", "label", "hdmi_output", "hdmi_audio_output", "hdmi_switch", "usb", "usb_only", "usb_unused", "sources", "sleep_sources", "edid",
-             "audio", *STAGES, *ACTIONS}
+
+#: The shape of `routing`, declared (oh_shape): the checks of its key names
+#: below, and its part of the house-file reference page and schema, come
+#: from here. What each value must be beyond its kind (a port the matrix
+#: has, a device that can switch) is validate()'s, in its own words.
+_INPUT = Key(TEXT, "an input of the device, by the name its integration gives it")
+#: A room's receiver or display.
+STAGE = {
+    "device": Key(TEXT, "its device id", required=True),
+    "zone": Key(NUMBER, "the receiver's zone this room listens to: 2 or more, and left out for the main zone"),
+    "input": Key(TEXT, "the input the signal before it arrives on: from the HDMI matrix, the room's switch or its receiver"),
+    "input_by_source": Key(MAPPING, "another input for some of the sources that reach it that way", by="source", each=_INPUT),
+    "sources": Key(MAPPING, "the sources cabled to it alone, each on its input", by="source", each=_INPUT),
+    "sync_with": Key(TEXT, "the room whose receiver is another zone of this one: while both show the same matrix source, "
+                           "this zone takes that room's input, so both screens show one picture"),
+}
+#: A display may instead be passive, and then has only its device.
+DISPLAY = {**STAGE, "passive": Key(TRUTH, "whether thermite leaves the display alone: true for one it sends nothing "
+                                          "to and reads nothing from, which then has only its device here")}
+_ACTIONS = {name: Key(MAPPING, what, by="device id", each=Key(TEXT, "the name of one of the device's actions, in quotes"))
+            for name, what in zip(ACTIONS, ("what other devices are sent when the room turns to any source: a curtain "
+                                            "and lights, say", "what they are sent when it turns Off"))}
+ROOM = {
+    "room": Key(TEXT, "the room it is in, for a routed room that is not a room of its own (a desk's screen in an office)"),
+    "label": Key(TEXT, "its name on the remote, where that is not its room's"),
+    "hdmi_output": Key(NUMBER, "the HDMI matrix output its screen is on; without one it offers only sources cabled to it"),
+    "hdmi_audio_output": Key(NUMBER, "a second matrix output, to its receiver, for a room whose picture and sound "
+                                     "leave the matrix apart"),
+    "hdmi_switch": Key(MAPPING, "the HDMI switch in front of its display, or one output of a matrix of its own", keys={
+        "device": Key(TEXT, "the switch's device id", required=True),
+        "output": Key(NUMBER, "which output of a matrix of its own the room is on"),
+        "matrix_input": Key(NUMBER, "the switch input the house's HDMI matrix arrives on"),
+        "inputs": Key(MAPPING, "the sources cabled to the switch, each on its input", by="source",
+                      each=Key(NUMBER, "an input of the switch"))}),
+    "usb": Key(MAPPING, "its USB device ports (keyboard, camera), by USB matrix", by="device id of a USB matrix",
+               each=Key(LIST, "the matrix's device ports that are this room's", each=Key(NUMBER, "a device port"))),
+    "usb_only": Key(MAPPING, "sources that move only some of those ports", by="source", each=Key(
+        MAPPING, "the ports that source moves, by USB matrix", by="device id of a USB matrix",
+        each=Key(LIST, "device ports", each=Key(NUMBER, "a device port")))),
+    "usb_unused": Key(TEXT, "what becomes of the ports a source does not move: preserve leaves them where they "
+                            "are (as when left out), park moves them to usb_off_host", choices=("preserve", "park")),
+    "sources": Key(LIST, "the sources it offers, in the order its selector shows them", required=True,
+                   each=Key(TEXT, "a source: a key of routing.sources")),
+    "sleep_sources": Key(LIST, "sources of this room alone that are put in standby when it turns Off",
+                         each=Key(TEXT, "a source")),
+    "edid": Key(TEXT, "the EDID its output gives the sources shown on it, under routing.edid: one of the matrix's "
+                      "EDID names"),
+    "audio": Key(TEXT, "the device its Volume and Mute drive: a soundbar or streaming amplifier in a room it "
+                       "covers, or its own receiver or display"),
+    "receiver": Key(MAPPING, "its receiver", keys=STAGE),
+    "display": Key(MAPPING, "its display", keys=DISPLAY),
+    **_ACTIONS,
+}
+SOURCE_KEYS = {
+    "label": Key(TEXT, "its name on the rooms' Source selectors", required=True),
+    "hdmi_input": Key(NUMBER, "the HDMI matrix input it is cabled to; a source without one is cabled to a room"),
+    "usb_host": Key((NUMBER, MAPPING), "the USB matrix host port its computer is on, or one for each USB matrix",
+                    by="device id of a USB matrix", each=Key(NUMBER, "a host port")),
+    "idle": Key(TEXT, "what becomes of it when no room shows it: preserve leaves it on (as when left out), "
+                      "standby puts it in standby", choices=("preserve", "standby")),
+}
+HOUSE_KEYS = {"routing": Key(MAPPING, "which source each room can show, and how it gets there", must="a mapping", empty=True, keys={
+    "hdmi_matrix": Key(TEXT, "the device id of the HDMI matrix the rooms share; a house without one leaves it "
+                             "and hdmi_off_input out"),
+    "hdmi_off_input": Key(NUMBER, "the matrix input a room's output is turned to for Off: one with nothing on it"),
+    "usb_off_host": Key(NUMBER, "the USB matrix host port a room's device ports are parked on: one with no computer on it"),
+    "edid": Key(MAPPING, "each source's matrix input presents the EDID of the display it is turned on in; {} for that alone",
+                keys={"idle": Key(TEXT, "the EDID an input presents while no room shows its source: one of the "
+                                        "matrix's EDID names")}),
+    "sources": Key(MAPPING, "the sources, by the device id of each", required=True, by="device id",
+                   each=Key(MAPPING, "a source", keys=SOURCE_KEYS)),
+    "rooms": Key(MAPPING, "the routed rooms, by room id (or a name of its own, with room)", required=True,
+                 by="room id", each=Key(MAPPING, "a routed room", keys=ROOM)),
+})}
 
 
 def item_name(room: str) -> str:
@@ -392,7 +463,7 @@ def validate(data: object) -> list[str]:
                 if any(source in (room.get("sleep_sources") or []) for room in rooms_section.values()
                        if isinstance(room, dict) and isinstance(room.get("sleep_sources", []), list)):
                     problems.append(f"{where}.idle: remove this source from sleep_sources before enabling standby")
-        for key in sorted(set(entry) - {"label", "hdmi_input", "usb_host", "idle"}):
+        for key in sorted(unknown(SOURCE_KEYS, entry)):
             problems.append(f"{where}: unknown key '{key}'")
 
     outputs: dict[object, str] = {}
@@ -508,7 +579,7 @@ def validate(data: object) -> list[str]:
             problems.append(f"{where}.label: must be a name")
         if "audio" in entry:
             problems += _audio_problems(where, data, room, devices)
-        for key in sorted(set(entry) - ROOM_KEYS):
+        for key in sorted(unknown(ROOM, entry)):
             problems.append(f"{where}: unknown key '{key}'")
     problems += _wiring_problems(rooms_section)
     problems += _sync_problems(rooms_section, sources, devices)
@@ -521,8 +592,7 @@ def validate(data: object) -> list[str]:
                 if key is not None:
                     problems.append(f"{routing['hdmi_matrix']}.settings.edid.{key}: routing.edid sets the "
                                     f"EDID of input {number} ({source}); fix only the inputs no source uses")
-    for key in sorted(set(routing) - {"hdmi_matrix", "hdmi_off_input", "usb_off_host", "edid", "sources",
-                                      "rooms"}):
+    for key in sorted(unknown(HOUSE_KEYS["routing"].keys, routing)):
         problems.append(f"routing: unknown key '{key}'")
     if not problems and any(source.get("idle") == "standby" for source in sources.values()):
         contract = table(House.unchecked(data))["lifecycle"]
@@ -689,7 +759,7 @@ def _stage_problems(where: str, spec: object, offered: list, sources: dict, devi
             problems.append(f"{at}: must name an offered source upstream of this stage")
         if value(at, input_) and input_ in taken and taken[input_] != "input":
             problems.append(f"{at}: {input_} is already a locally cabled source input")
-    for key in sorted(set(spec) - STAGE_KEYS):
+    for key in sorted(unknown(STAGE, spec)):
         problems.append(f"{where}: unknown key '{key}'")
     return problems
 
@@ -885,7 +955,7 @@ def _switch_problems(where: str, switch: object, offered: list, sources: dict, d
             if value in taken:
                 problems.append(f"{at}: {value} already used by {taken[value]}")
             taken.setdefault(value, source)
-    for name in sorted(set(switch) - {"device", "output", "matrix_input", "inputs"}):
+    for name in sorted(unknown(ROOM["hdmi_switch"].keys, switch)):
         problems.append(f"{where}: unknown key '{name}'")
     return problems
 
@@ -943,7 +1013,7 @@ def _edid_names(routing: dict, devices: dict, hdmi_ok: bool, problems: list[str]
         return names
     if "idle" in edid and names is not None and not (isinstance(edid["idle"], str) and edid["idle"] in names):
         problems.append(f"routing.edid.idle: {edid['idle']!r} is not an EDID name of {routing['hdmi_matrix']}")
-    for key in sorted(set(edid) - EDID_KEYS):
+    for key in sorted(unknown(HOUSE_KEYS["routing"].keys["edid"].keys, edid)):
         problems.append(f"routing.edid: unknown key '{key}'")
     return names
 

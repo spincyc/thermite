@@ -56,7 +56,7 @@ thermite remote --mock</code></pre>
 <p>The initial inventory is fictional. Generating and validating files sends no device commands; the mock remote simulates controls. Its first run downloads its locked terminal dependency with npm. Podman is needed when you move on to an openHAB test runtime or server installation.</p>
 <p>The application stays in its Python environment. <code>init</code> creates a separate private site; it starts no services and creates no Git repository.</p>
 <h2 id="describe-your-house">Describe your house</h2>
-<p>Edit <code>instance/devices.yaml</code> and <code>instance/host.yaml</code> in the private site. Replace the example inventory with your own rooms and devices, using fixed network addresses. A TV entry looks like this:</p>
+<p>Edit <code>instance/devices.yaml</code> and <code>instance/host.yaml</code> in the private site. Replace the example inventory with your own rooms and devices, using fixed network addresses. <a href="house-file.html">The house file</a> lists every key <code>devices.yaml</code> may have. A TV entry looks like this:</p>
 <pre><code class="language-yaml">rooms:
   living_room: {label: Living Room}
 

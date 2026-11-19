@@ -33,6 +33,7 @@ import json
 from pathlib import Path
 
 from oh_conf import GUARD_PROFILE, Addon, House, YamlFile, options_text, point, retarget, uses, volume_js
+from oh_shape import NUMBER, Key
 
 from . import _diagnostics as diag
 from . import _io, _script
@@ -53,7 +54,7 @@ HEADER = (
 ADDONS = (Addon("binding", "denonmarantz"), Addon("binding", "http"),
           Addon("automation", "jsscripting", "receiver signal snapshots and the routing actor"))
 ASSETS: dict[str, str] = {}
-DEVICE_KEYS = ("zones",)
+DEVICE_KEYS = {"zones": Key(NUMBER, "how many zones the receiver has, the main zone included: 1 to 4, and 2 when left out")}
 #: Seconds between the binding's polls of the HTTP API. The receiver closes
 #: every connection, and each poll opens one for each of its requests, so it
 #: polls three times less often than the binding allows (5 s). It reads

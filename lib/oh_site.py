@@ -43,10 +43,13 @@ PAGES = (
     ("service-account", "Service account", "The Thermite service account", "Service ownership, permissions and migration from the old account name."),
     ("music", "Music", "Music", "Music Assistant on a music: host: libraries, ports, AirPlay timing and backups."),
     ("screenshots", "Screenshots", "Documentation screenshots", "Reproduce the screenshots using fictional inventory and the actual clients."),
+    ("house-file", "House file", "The house file", "Every key of the house file: what it holds, what it is for and what reads it."),
 )
 DOCUMENT_PAGES = {name: oh_cli.PROGRAM_ROOT / "docs" / f"{name}.md"
                   for name in ("requirements", "installation", "iso", "ports", "packaging", "service-account", "music")}
 DOCUMENT_PAGES["screenshots"] = SOURCE / "capture-docs.md"
+#: A reference page, reached from Get started and not from the navigation.
+DOCUMENT_PAGES["house-file"] = SOURCE / "pages/house-file.md"
 EXAMPLES = ("harbor",)
 TOP = ("README.md", "FAQ.md")
 HOST_FILE = AREA / "instance/host.yaml"
@@ -303,6 +306,57 @@ def all_palettes() -> list[str]:
     return [*brand.builtin(), *EXAMPLES]
 
 
+def house_reference() -> str:
+    """The house file's keys, as the Markdown tables of its reference page.
+    They are made from the declaration the file is checked against
+    (oh_inventory.declarations()), so the page names every key the file
+    takes and none it refuses."""
+    # Imported here: the site's other pages need no integration.
+    import oh_integrations
+    import oh_inventory
+    import oh_shape
+
+    top, device, readers = oh_inventory.declarations()
+
+    def table(rows, hook: str | None = None) -> list[str]:
+        out = ["| Key | Value | What it is |" + (" Read by |" if hook else ""), "|---|---|---|" + ("---|" if hook else "")]
+        for path, key in rows:
+            value = oh_shape.words(key) + (", required" if key.required else "")
+            doc = key.doc[:1].upper() + key.doc[1:] + "."
+            reader = f" {readers.get((hook, path), 'thermite')} |" if hook else ""
+            out.append(f"| `{path}` | {value} | {doc} |{reader}")
+        return out + [""]
+
+    def nested(name: str, key) -> list[tuple]:
+        return oh_shape.rows({name: key})[1:]
+
+    allowed = oh_integrations.allowed()
+    out = ["## The top level", "", *table(top.items(), "HOUSE_KEYS"),
+           "## A room", "", "Each entry of `rooms`, under the id the rest of the file calls the room by.", "",
+           *table(nested("rooms", top["rooms"])),
+           "## A device", "", "Each entry of `devices`. The keys an integration reads are checked by it, and only "
+           "on a device that lists it.", "", *table(device.items(), "DEVICE_KEYS"),
+           "### controls", "", "The integrations a device may list, by phase:", "",
+           *(f"- `{phase}`: {', '.join(f'`{name}`' for name in sorted(allowed[phase]))}" for phase in allowed), ""]
+    for name, key in device.items():
+        if nested(name, key):
+            out += [f"### {name}", "", *table(nested(name, key))]
+    for name, key in top.items():
+        if name not in ("rooms", "devices") and nested(name, key):
+            out += [f"## {name}", "", *table(nested(name, key))]
+    return "\n".join(out)
+
+
+def house_schema() -> dict:
+    """The house file as JSON Schema, from the same declaration: key names
+    and kinds of value, which is less than `thermite validate` checks."""
+    import oh_inventory
+    import oh_shape
+
+    return {"$schema": "https://json-schema.org/draft/2020-12/schema", "$id": SITE_URL + "house.schema.json",
+            "title": "thermite house file", **oh_shape.schema(oh_inventory.shape())}
+
+
 def fill(text: str) -> str:
     """The {{name}} pieces a page or the template may use."""
     pieces = {
@@ -317,6 +371,7 @@ def fill(text: str) -> str:
         "contrast": contrast_list(),
         "harbor": (SOURCE / "examples/harbor.json").read_text(encoding="utf-8").strip(),
         "palette_names": " ".join(all_palettes()),
+        "house_keys": house_reference(),
     }
     return re.sub(r"\{\{(\w+)\}\}", lambda m: pieces[m.group(1)], text)
 
@@ -364,6 +419,7 @@ def build() -> dict[str, bytes]:
         files[f"examples/{name}.json"] = PALETTE_FILES[name].read_bytes()
     schema = json.loads(brand.SCHEMA.read_text(encoding="utf-8"))
     files["theme.schema.json"] = (json.dumps(schema, indent=2) + "\n").encode("utf-8")
+    files["house.schema.json"] = (json.dumps(house_schema(), indent=2) + "\n").encode("utf-8")
     return files
 
 
@@ -518,7 +574,7 @@ def repository_files() -> dict[str, bytes]:
 #: themes/ and examples/. export() removes a stray file only here, so the
 #: Markdown sources docs/ also holds (DOCUMENT_PAGES) and anything else
 #: there are never removed.
-BUILT = re.compile(r"docs/(?:[^/]+\.html|theme\.schema\.json|(?:assets|themes|examples)/.+)")
+BUILT = re.compile(r"docs/(?:[^/]+\.html|(?:theme|house)\.schema\.json|(?:assets|themes|examples)/.+)")
 
 
 def compare(root: Path, files: dict[str, bytes]) -> tuple[list[str], list[str]]:
