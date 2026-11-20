@@ -8,6 +8,10 @@
   const ITEM = /^[A-Za-z][A-Za-z0-9_]{0,160}$/;
   const SECRET = /(?:^|_)(?:pairing|password|passwd|passphrase|secret|token|psk|authorization|credential|auth)(?:_|$)/i; // lint: allow (an Item-name pattern, no credential)
   const MAX_ITEMS = 12;
+  // The categories in the order both clients show them, each with its title
+  // and what its readings are not.
+  const GROUPS = [["video", "Current video"], ["audio", "Current audio"], ["path", "Configured path"],
+    ["edid", "EDID capabilities", "Advertised support, not the current format."], ["processing", "Processing & settings"]];
 
   function text(value) {
     return String(value == null ? "" : value).replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "").trim().slice(0, 180);
@@ -129,5 +133,65 @@
     }
     return { items: items, project: project };
   }
-  global.RemoteDiagnostics = { create: create, unavailable: unavailable, MAX_ITEMS: MAX_ITEMS };
+  // What a reading with no value says: one of three texts, never the value sent.
+  function silence(entry) {
+    return entry.availability === "unavailable" ? "Unavailable"
+      : entry.value === "Awaiting fresh report" ? "Awaiting fresh report" : "Not reported";
+  }
+  function ago(seconds) {
+    return seconds < 120 ? Math.floor(seconds) + "s ago" : seconds < 7200 ? Math.floor(seconds / 60) + " min ago"
+      : Math.floor(seconds / 3600) + " h ago";
+  }
+  /* A model arranged for a narrow column, the same in the browser and the
+   * terminal. Each category is a group; its readings stand under the device
+   * that reports them, whose age is told once (`age`, the oldest of them, and
+   * `stale`) rather than on every row. Readings without a value are not rows:
+   * `quiet` names them in one line for each of the three things they say, or
+   * says that alone where a device reports nothing or a group holds nothing
+   * else. `count` is a group's readings that have a value. A model in which
+   * nothing could be read (unavailable() above) is `blank`, with no groups. */
+  function outline(model, now) {
+    const sections = model && model.sections || {};
+    const names = {};
+    (model && model.route || []).concat(model && model.audioRoute || []).forEach((node) => { names[node.device] = text(node.label); });
+    const every = CATEGORIES.flatMap((category) => sections[category] || []);
+    if (!every.length || every.every((entry) => entry.availability === "unavailable" && !entry.device)) return { blank: true, groups: [] };
+    const groups = GROUPS.map(([id, title, note]) => {
+      const entries = sections[id] || [];
+      const blocks = [];
+      entries.forEach((entry) => {
+        const configured = entry.basis === "configured";
+        const device = configured ? "" : entry.device || "";
+        let block = blocks.find((candidate) => candidate.id === device);
+        if (!block) {
+          block = { id: device, device: device ? names[device] || text(device) : "", rows: [], silent: {}, times: [], unknown: false, stale: false };
+          blocks.push(block);
+        }
+        const label = text(id === "path" ? String(entry.label).charAt(0).toUpperCase() + String(entry.label).slice(1) : entry.label);
+        if (entry.availability !== "reported") {
+          (block.silent[silence(entry)] = block.silent[silence(entry)] || []).push(label);
+          return;
+        }
+        const known = Number.isFinite(entry.observedAt);
+        const stale = !configured && (Boolean(entry.stale) || !known);
+        if (!configured && known) block.times.push(entry.observedAt);
+        if (!configured && !known) block.unknown = true;
+        block.stale = block.stale || stale;
+        block.rows.push({ label: label, value: text(entry.value), stale: stale });
+      });
+      if (!blocks.length) blocks.push({ id: "", device: "", rows: [], silent: { "Not reported": [] }, times: [], unknown: false, stale: false });
+      return { id: id, title: title, note: note || "", count: blocks.reduce((sum, block) => sum + block.rows.length, 0),
+        stale: blocks.some((block) => block.stale),
+        blocks: blocks.map((block) => {
+          const said = Object.keys(block.silent);
+          // The heading names a group's one reading, and a device's name all of its own.
+          const alone = block.id ? !block.rows.length && said.length === 1 : entries.length < 2;
+          const age = block.unknown ? "age unknown" : block.times.length ? ago(Math.max(0, (now - Math.min(...block.times)) / 1000)) : "";
+          return { device: block.device, age: age && block.stale ? "stale · " + age : age, stale: block.stale, rows: block.rows,
+            quiet: said.map((name) => alone ? name : name + ": " + block.silent[name].join(", ")) };
+        }) };
+    });
+    return { blank: false, groups: groups };
+  }
+  global.RemoteDiagnostics = { create: create, unavailable: unavailable, outline: outline, MAX_ITEMS: MAX_ITEMS };
 })(globalThis);

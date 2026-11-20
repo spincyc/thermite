@@ -56,7 +56,9 @@
     disc_player: "Disc player",
     game_console: "Game console",
     curtain: "Curtain", lighting: "Lighting", hdmi_matrix: "HDMI matrix", hdmi_switch: "HDMI switch",
-    usb_matrix: "USB matrix"
+    usb_matrix: "USB matrix", hdmi_processor: "HDMI processor", monitor: "Monitor", sub: "Subwoofer", computer: "Computer",
+    power: "Power", control4_controller: "Control4 controller", control4_remote: "Control4 remote", camera: "Camera",
+    doorbell: "Doorbell", thermostat: "Thermostat", climate_gateway: "Climate gateway", climate_endpoint: "Climate endpoint"
   };
   // A key presses the first of its buttons the remote on show has.
   const KEYS = {
@@ -1088,8 +1090,11 @@
           const roles = [];
           if (current.display && current.display.id === device.id) roles.push("Screen");
           if (current.audio && current.audio.id === device.id) roles.push("Volume");
-          return { id: device.id, label: device.label, roles: roles,
-            meta: [KIND_NAME[device.kind] || device.kind, device.model].filter(Boolean).join(" · ") };
+          // A model that only repeats the device's name or its kind is left out.
+          const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
+          const kind = KIND_NAME[device.kind] || device.kind;
+          const model = device.model && !same(device.model, device.label) && !same(device.model, kind) ? device.model : "";
+          return { id: device.id, label: device.label, roles: roles, meta: [kind, model].filter(Boolean).join(" · ") };
         })
       };
     }

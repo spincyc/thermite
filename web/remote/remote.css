@@ -311,7 +311,6 @@ body[data-stale] :is([data-led], .target) .led {
   display: flex;
   gap: var(--space-1);
   padding: var(--space-1);
-  margin-bottom: var(--space-5);
   border: 1px solid var(--panel-border);
   border-radius: var(--radius-pill);
   background: var(--panel-hover);
@@ -346,50 +345,94 @@ body[data-stale] :is([data-led], .target) .led {
   border-radius: var(--radius-row);
 }
 
-.signal__source {
-  margin: 4px 0 8px;
+/* The title, and the source the readings describe. */
+.signal__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0 var(--space-3);
+}
+
+.signal__head .info__title { margin: 0; }
+.signal__source { margin: 0; color: var(--ink); font-size: 13px; font-weight: 600; }
+.signal__route { margin: var(--space-1) 0 0; color: var(--ink-muted); font-size: 12px; overflow-wrap: anywhere; }
+.signal > .info__note { margin-top: var(--space-2); }
+
+/* A category: its title opens and closes it. */
+.signal__group { border-top: 1px solid var(--panel-border); }
+.signal__group:first-of-type { margin-top: var(--space-3); }
+
+.signal__summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.signal__summary::-webkit-details-marker { display: none; }
+
+.signal__summary::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin: 0 3px 0 1px;
+  border: solid var(--ink-muted);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(-45deg);
+  transition: transform var(--dur-state);
+}
+
+.signal__group[open] > .signal__summary::before { transform: translateY(-2px) rotate(45deg); }
+.signal__summary .info__title { flex: 1; margin: 0; }
+.signal__summary:hover .info__title { color: var(--ink); }
+.signal__tally { color: var(--ink-muted); font-size: 11px; }
+/* Open, the rows say it themselves. */
+.signal__group[open] .signal__tally { display: none; }
+.signal__group > .info__note { margin: 0 0 var(--space-2); }
+
+/* A device and what it reports: its name and age once, then label and value
+   on one line, the value on a line of its own where the two do not fit. */
+.signal__block { padding-bottom: var(--space-2); }
+
+.signal__device {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin: 0 0 2px;
   color: var(--ink);
-  font-weight: 600;
-}
-
-.signal__section + .signal__section {
-  margin-top: var(--space-2);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--panel-border);
-}
-
-.signal__rows {
-  display: grid;
-  gap: var(--space-1);
-  margin: var(--space-4) 0 0;
+  font-size: 12px;
+  font-weight: 620;
   overflow-wrap: anywhere;
 }
 
-.signal__rows dt {
-  margin-top: var(--space-3);
-  color: var(--ink-muted);
-  font-size: 12px;
+.signal__age { flex: none; color: var(--ink-muted); font-size: 11px; font-weight: 400; }
+.signal__device, .signal__rows, .signal__quiet { max-width: 64ch; }
+
+.signal__rows { margin: 0; font-size: 12px; line-height: 1.35; }
+
+.signal__row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0 var(--space-3);
+  padding: 2px 0;
 }
 
-.signal__rows dt:first-child { margin-top: 0; }
-.signal__value { margin: 0; color: var(--ink); font-size: 14px; }
-.signal__value[data-availability="not_reported"],
-.signal__value[data-availability="unavailable"] { color: var(--ink-muted); }
-.signal__meta { display: block; margin-top: var(--space-1); color: var(--ink-muted); font-size: 11px; }
-.signal__meta--stale { color: var(--th-busy); }
+.signal__row dt { min-width: 0; color: var(--ink-muted); overflow-wrap: anywhere; }
+.signal__row dd { min-width: 0; margin: 0 0 0 auto; color: var(--ink); text-align: right; overflow-wrap: anywhere; }
+.signal__quiet { margin: 2px 0 0; color: var(--ink-muted); font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
+.signal .signal__stale { color: var(--th-busy); }
 
-.signal__room { margin: 0; font-weight: 650; }
-.signal__route { margin: 0 0 12px; color: var(--ink-muted); font-size: 12px; overflow-wrap: anywhere; }
-.signal__table { width: 100%; margin-top: 8px; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
-.signal__table th, .signal__table td { padding: 5px 4px; border-bottom: 1px solid var(--panel-border); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
-.signal__table thead th { color: var(--ink-muted); font-size: 10px; font-weight: 500; }
-.signal__table thead th:first-child { width: 37%; }
-.signal__table thead th:last-child { width: 15%; }
-.signal__section .info__title { margin-bottom: 4px; }
-.signal__table tbody th { color: var(--ink-muted); font-weight: 500; }
-.signal__table .signal__value { font-size: 12px; }
-.signal__table .signal__meta { margin-top: 3px; font-size: 10px; }
-.signal__age { font-size: 10px; color: var(--ink-muted); }
+/* In the sheet a thumb opens the groups, and the text is a size larger. */
+.sheet .signal__summary { min-height: var(--tap); }
+.sheet .signal__device, .sheet .signal__rows { font-size: 13px; }
+.sheet .signal__quiet, .sheet .signal__age, .sheet .signal__tally { font-size: 12px; }
+
 .info__signal-link { border: 0; padding: 0; background: none; color: var(--accent); cursor: pointer; text-align: left; font-size: 12px; }
 .panel--info .info__tabs, .panel--info [data-signal] { display: none; }
 
@@ -1635,11 +1678,15 @@ body[data-stale] :is([data-led], .target) .led {
   font-size: 17px;
 }
 
-.info {
+.info,
+.info__view {
   display: grid;
   gap: var(--space-5);
   align-content: start;
+  min-width: 0;
 }
+
+.info__view[hidden] { display: none; }
 
 .map {
   display: grid;
@@ -1662,30 +1709,30 @@ body[data-stale] :is([data-led], .target) .led {
   font-weight: 560;
 }
 
+/* A device a line: its name, what it is beside it (below, where the two do
+   not fit), and what of the room it is. */
 .devices {
-  width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
+  display: grid;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .device {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 3px 0;
   font-size: 13px;
+  line-height: 1.35;
 }
 
-.devices th { color: var(--ink-muted); font-size: 10px; font-weight: 500; text-align: left; }
-.devices th:last-child { width: 27%; }
-.devices th, .devices td { padding: 6px 4px; border-bottom: 1px solid var(--panel-border); vertical-align: top; overflow-wrap: anywhere; }
+.device--none { color: var(--ink-muted); }
+.device__text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 
 .device__name {
+  margin-right: var(--space-1);
   font-weight: 620;
-}
-
-.device__roles {
-  font-size: 11px;
-  color: var(--ink-muted);
 }
 
 .device__meta {
@@ -1693,6 +1740,17 @@ body[data-stale] :is([data-led], .target) .led {
   font-weight: 400;
   font-size: 11px;
   color: var(--ink-muted);
+}
+
+.device .device__meta { display: inline-block; font-size: 12px; }
+
+.device__role {
+  flex: none;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-pill);
+  color: var(--ink-muted);
+  font-size: 11px;
 }
 
 .badge {
@@ -2257,9 +2315,11 @@ kbd {
 }
 
 @media (min-width: 1200px) and (min-height: 760px) {
-  .panel--info { flex: 0 1 auto; max-height: 42%; }
+  /* Each panel as tall as what it holds, the signal's taking what is left of
+     the column; where the two are taller than it, each gives way in proportion. */
+  .panel--info { flex: 0 1 auto; min-height: 200px; }
   .panel--info .info__signal-link { display: none; }
-  .panel--signal { display: flex; flex: 1; min-height: 220px; width: 100%; }
+  .panel--signal { display: flex; flex: 1 1 auto; min-height: 220px; width: 100%; }
 }
 
 @media (min-width: 1600px) {

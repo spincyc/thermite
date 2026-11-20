@@ -70,6 +70,9 @@ function create(options) {
     announce: "",
     log: [],
     logVisible: options.logVisible != null ? Boolean(options.logVisible) : store.get("remote.logVisible") !== false,
+    // The signal view's open groups, kept as the page keeps its own.
+    signalGroups: typeof store.get("remote.signal") === "string"
+      ? View.SIGNAL_GROUPS.filter((id) => store.get("remote.signal").split(",").includes(id)) : View.SIGNAL_OPEN.slice(),
     scroll: {},
     bubbles: {},
     blink: false,
@@ -762,6 +765,18 @@ function create(options) {
     changed();
   }
 
+  // The signal view's groups: one opened or closed (a click on its heading),
+  // or with no group named all of them open, then all but the two current ones closed.
+  function toggleSignalGroups(group) {
+    const open = ui.signalGroups;
+    const next = group ? (open.includes(group) ? open.filter((id) => id !== group) : open.concat(group))
+      : View.SIGNAL_GROUPS.every((id) => open.includes(id)) ? View.SIGNAL_OPEN : View.SIGNAL_GROUPS;
+    ui.signalGroups = View.SIGNAL_GROUPS.filter((id) => next.includes(id));
+    store.set("remote.signal", ui.signalGroups.join(","));
+    ui.revealFocus = false;
+    changed();
+  }
+
   function toggleLog() {
     ui.logVisible = !ui.logVisible;
     store.set("remote.logVisible", ui.logVisible);
@@ -878,6 +893,9 @@ function create(options) {
         break;
       case "volume-mode":
         session.toggleVolumeMode();
+        break;
+      case "signal-group":
+        if (View.SIGNAL_GROUPS.includes(hit.group)) toggleSignalGroups(hit.group);
         break;
       case "control":
         session.operate(hit.control, hit.action);
@@ -1275,6 +1293,7 @@ function create(options) {
       return;
     }
     if (name === "pageup" || name === "pagedown") return pageScroll(name === "pageup" ? -1 : 1);
+    if (ui.overlay.kind === "signal" && (ch === "d" || ch === "D")) return toggleSignalGroups();
     // Watch's Info as these: the arrows choose its buttons and switches, PgUp and PgDn scroll it.
     if (["remotes-menu", "lock-menu", "audio-choice", "audio-inputs", "music-item", "info"].includes(ui.overlay.kind) && ["up", "down", "left", "right"].includes(name)) return moveControl(name === "up" || name === "left" ? -1 : 1);
     if (ui.overlay.kind === "topology") {
@@ -1422,7 +1441,7 @@ function create(options) {
     const lower = ch ? ch.toLowerCase() : "";
     if (lower === "r") return openSheet("rooms");
     if (lower === "i") return openSheet("info");
-    if (lower === "d") return openSheet("signal");
+    if (lower === "d") return ui.pane === "signal" ? toggleSignalGroups() : openSheet("signal");
     if (lower === "h") return openSheet("day");
     if (lower === "v") {
       session.toggleVolumeMode();

@@ -44,7 +44,7 @@ const TUI_SHORTCUTS = [
   [["PgUp", "PgDn"], "Scroll the pane"],
   [["r"], "Rooms"],
   [["i"], "Info"],
-  [["d"], "Signal & audio"],
+  [["d"], "Signal & audio; again, all of it or less"],
   [["h"], "Rooms through the day"],
   [["v"], "Volume slider"],
   [["t"], "Theme"],
@@ -334,7 +334,7 @@ function paneHelp(ctx, frame) {
       .concat(ctx.session?.roomLock().canManage ? [[["o"], "lock menu"]] : []);
     case "remote": return remoteHelp(ctx, frame);
     case "info": return ["Info", [["\u2191\u2193"], "room"], [["\u2190\u2192"], "source"], [["Enter"], "apply source"], [["PgUp/PgDn"], "scroll"]];
-    case "signal": return ["Signal & audio", [["↑↓"], "room"], [["←→"], "source"], [["Enter"], "apply source"], [["PgUp/PgDn"], "scroll"]];
+    case "signal": return ["Signal & audio", [["↑↓"], "room"], [["←→"], "source"], [["Enter"], "apply source"], [["PgUp/PgDn"], "scroll"], [["d"], signalMore(ctx)]];
     case "sheet:info": return ["Info", [["\u2191\u2193"], "choose"], [["Enter"], "press"], [["PgUp/PgDn"], "scroll"], [["Esc"], "close"]];
     case "log": return ctx.ui.screen === "pairing" ? ["Log", [["\u2191\u2193"], "scroll"], [["PgUp/PgDn"], "scroll"]]
       : ["Log", [["\u2191\u2193"], "room"], [["\u2190\u2192"], "source"], [["Enter"], "apply source"], [["PgUp/PgDn"], "scroll"]];
@@ -342,7 +342,7 @@ function paneHelp(ctx, frame) {
     case "pair-card": return ["Pairing", [["\u2191\u2193"], "field"], [["Enter"], "pair/send"]];
     case "sheet:help": return ["Help", [["\u2191\u2193"], "scroll"], [["Esc"], "close"]];
     case "sheet:day": return ["Rooms through the day", [["\u2191\u2193"], "room"], [["PgUp/PgDn"], "scroll"], [["Esc"], "close"]];
-    case "sheet:signal": return ["Signal & audio", [["\u2191\u2193"], "scroll"], [["Esc"], "close"]];
+    case "sheet:signal": return ["Signal & audio", [["\u2191\u2193"], "scroll"], [["d"], signalMore(ctx)], [["Esc"], "close"]];
     case "sheet:inputs": return ["Inputs", [["\u2191\u2193"], "choose"], [["Enter"], "select"]];
     case "sheet:lock-menu": return ["Room lock", [["\u2191\u2193"], "choose"], [["Enter"], "select"], [["Esc"], "close"]];
     default: return null;
@@ -499,7 +499,13 @@ function remoteScreen(frame, ctx, rect) {
   });
   if (modes) modes.draw(frame.grid);
   if (infoWidth) {
-    const infoHeight = inline ? Math.min(10, Math.floor(mainHeight * 0.38)) : mainHeight;
+    // Above the signal the info is as tall as what it says, up to two fifths of the column.
+    let infoHeight = mainHeight;
+    if (inline) {
+      const probe = new Grid(infoWidth - 2, null, "base");
+      infoContent(probe, infoWidth - 2, ctx, true);
+      infoHeight = Math.max(3, Math.min(probe.height + 2, Math.floor(mainHeight * 0.4)));
+    }
     panel(frame, ctx, { x: rect.x + roomsWidth + remoteWidth, y: rect.y, w: infoWidth, h: infoHeight }, {
       key: "info", color: "info", title: "info",
       content: (inner, w) => infoContent(inner, w, ctx, inline)
@@ -1047,21 +1053,33 @@ function button(g, ctx, x, y, text, key, hit, style) {
   return rounded(g, x, y, text, length(text) + 4, focused(ctx, key) ? "key.focus" : style || "key", hit);
 }
 
+// A device a row: its name, what it is beside it where that fits and on the
+// row below where it does not, and what of the room it is at the right edge.
+function deviceRows(g, y, w, devices) {
+  if (!devices.length) return paragraph(g, 1, y, w - 2, "No devices in the inventory", "dim");
+  devices.forEach((device) => {
+    const roles = device.roles.map((role) => " " + role + " ");
+    const badges = roles.reduce((sum, role) => sum + length(role) + 1, 0);
+    const room = Math.max(8, w - 2 - badges);
+    const names = wrap(device.label, room);
+    names.forEach((line, index) => g.put(1, y + index, line, "base"));
+    let x = w - badges;
+    roles.forEach((role) => { x = g.put(x, y, role, "badge") + 1; });
+    const end = 1 + length(names[names.length - 1]);
+    const beside = Boolean(device.meta) && end + 2 + length(device.meta) <= 1 + (names.length > 1 ? w - 2 : room);
+    if (beside) g.put(end + 2, y + names.length - 1, device.meta, "dim");
+    y += names.length;
+    if (device.meta && !beside) y = paragraph(g, 3, y, w - 4, device.meta, "dim");
+  });
+  return y;
+}
+
 function infoContent(g, w, ctx, compact = false) {
   if (listening(ctx)) return Listen.info(g, w, ctx, KIT);
   const session = ctx.session;
   const shown = session.info();
   if (compact) {
-    let y = heading(g, 0, "Devices in the room");
-    const roleWidth = 10, nameWidth = Math.max(8, w - roleWidth - 4);
-    shown.devices.forEach((device) => {
-      const names = wrap(device.label, nameWidth), roles = wrap(device.roles.join(", ") || "—", roleWidth);
-      for (let row = 0; row < Math.max(names.length, roles.length); row++, y++) {
-        g.put(1, y, names[row] || "", "base");
-        g.put(w - roleWidth - 1, y, roles[row] || "", "dim");
-      }
-      if (device.meta) y = paragraph(g, 1, y, w - 2, device.meta, "faint");
-    });
+    let y = deviceRows(g, heading(g, 0, "Devices in the room"), w, shown.devices);
     y = heading(g, y + 1, "Controls");
     shown.rows.forEach(([label, value]) => { y = paragraph(g, 1, y, w - 2, label + ": " + value, "dim"); });
     return paragraph(g, 1, y + 1, w - 2, "v · Volume " + (session.volumeMode() === "slider" ? "slider" : "buttons"), "dim");
@@ -1107,16 +1125,7 @@ function infoContent(g, w, ctx, compact = false) {
     });
     y = paragraph(g, 1, y, w - 2, "Not connected yet. Later, turning the room on and off will run them; these buttons stay as a backup.", "dim");
   }
-  y = heading(g, y + 1, "Devices in the room");
-  if (!shown.devices.length) y = paragraph(g, 1, y, w - 2, "No devices in the inventory", "dim");
-  shown.devices.forEach((device) => {
-    let x = g.put(1, y, fit(device.label, w - 2), "base") + 1;
-    device.roles.forEach((role) => {
-      if (x + length(role) + 2 < w) x = g.put(x, y, " " + role + " ", "badge") + 1;
-    });
-    g.put(3, y + 1, fit(device.meta, w - 4), "dim");
-    y += 2;
-  });
+  y = deviceRows(g, heading(g, y + 1, "Devices in the room"), w, shown.devices);
   if (session.demo) {
     y = heading(g, y + 1, "Demo: mock backend");
     const answering = session.isAnswering();
@@ -1156,7 +1165,7 @@ function logContent(g, w, ctx) {
 function sheet(frame, ctx, width, height) {
   const overlay = ctx.ui.overlay;
   frame.grid.hit(0, 0, width, height, { kind: "dismiss" });
-  const w = Math.min(width - 2, overlay.kind === "day" ? 160 : ["signal", "topology", "music-library"].includes(overlay.kind) ? 100
+  const w = Math.min(width - 2, overlay.kind === "day" ? 160 : ["topology", "music-library"].includes(overlay.kind) ? 100 : overlay.kind === "signal" ? 76
     : ["info", "help", "cameras"].includes(overlay.kind) ? 66 : ["lock-menu", "audio-choice", "audio-inputs"].includes(overlay.kind) ? 40
       : overlay.kind === "music-group" ? 60 : 50);
   const content = {
@@ -1198,35 +1207,68 @@ function sheet(frame, ctx, width, height) {
   });
 }
 
+// The signal view's groups that are open: the two current ones, until others are chosen.
+const SIGNAL_GROUPS = ["video", "audio", "path", "edid", "processing"];
+const SIGNAL_OPEN = ["video", "audio"];
+
+function signalGroups(ctx) {
+  return Array.isArray(ctx.ui.signalGroups) ? ctx.ui.signalGroups : SIGNAL_OPEN;
+}
+
+// What d does in the signal view: opens every group, or all but the two current ones closed.
+function signalMore(ctx) {
+  return SIGNAL_GROUPS.every((id) => signalGroups(ctx).includes(id)) ? "show less" : "show all";
+}
+
+// The room's signal as diagnostics.js outline() arranges it: a group a
+// heading, which a click opens and closes (d: all of them, or the two
+// current ones), and closed says how many readings it holds; under it each
+// device once, with its readings' age, and a reading a row, its value at
+// the right edge or on the row below where the two do not fit.
 function signalContent(g, w, ctx) {
   const model = ctx.session.diagnostics ? ctx.session.diagnostics() : null;
-  let y = paragraph(g, 1, 0, w - 2, "Current reports · bold/amber values are stale", "dim");
-  if (!model) return paragraph(g, 1, y, w - 2, "Reading the confirmed signal path\u2026", "dim");
-  y = paragraph(g, 1, y, w - 2, model.room.label + " \u00b7 " + (model.source ? model.source.label : "Source unknown"), "strong");
+  if (!model) return paragraph(g, 1, 0, w - 2, "Reading the confirmed signal path\u2026", "dim");
+  let y = paragraph(g, 1, 0, w - 2, model.room.label + " \u00b7 " + (model.source ? model.source.label : "Source unknown"), "strong");
   if (model.route && model.route.length) y = paragraph(g, 1, y, w - 2, model.route.map((step) => step.label).join(" → "), "dim");
   if (model.audioRoute && model.audioRoute.length) y = paragraph(g, 1, y, w - 2, "Audio · " + model.audioRoute.map((step) => step.label).join(" → "), "dim");
-  if (model.pending) y = paragraph(g, 1, y, w - 2, "Switching to " + model.pending.label + "; readings still describe the confirmed source.", "tone.busy") + 1;
-  const groups = [["video", "Current video"], ["audio", "Current audio"], ["path", "Configured path"],
-    ["edid", "EDID capabilities"], ["processing", "Processing & settings"]];
-  groups.forEach(([id, title]) => {
-    y = heading(g, y, title);
-    const rows = model.sections[id] || [];
-    rows.forEach((entry) => {
-      const value = entry.availability === "reported" ? entry.value : entry.availability === "unavailable" ? "Unavailable"
-        : entry.availability === "not_reported" && entry.value === "Awaiting fresh report" ? "Awaiting fresh report" : "Not reported";
-      const labelWidth = Math.max(10, Math.min(22, Math.floor((w - 3) * 0.38))), valueWidth = w - labelWidth - 4;
-      const labels = wrap(entry.label, labelWidth), values = wrap(value, valueWidth);
-      const reported = entry.availability === "reported";
-      const stale = reported && entry.basis !== "configured"
-        && (entry.stale || !Number.isFinite(entry.observedAt));
-      const valueStyle = !reported ? "dim" : stale ? "tone.busy+bold" : "base";
-      for (let row = 0; row < Math.max(labels.length, values.length); row++, y++) {
-        g.put(1, y, labels[row] || "", "dim");
-        g.put(labelWidth + 3, y, values[row] || "", valueStyle);
+  if (model.pending) y = paragraph(g, 1, y, w - 2, "Switching to " + model.pending.label + "; readings still describe the confirmed source.", "tone.busy");
+  const view = globalThis.RemoteDiagnostics.outline(model, ctx.now);
+  if (view.blank) return paragraph(g, 1, y, w - 2, "Unavailable", "dim");
+  const open = signalGroups(ctx);
+  // A row's label, then its value at the right edge after a leader, or on the row below.
+  const pair = (x, label, value, style) => {
+    const room = w - 1 - x;
+    if (length(label) + 2 + length(value) <= room) {
+      const gap = room - length(label) - length(value);
+      g.line(x, y, [[label, "dim"], [gap > 3 ? " " + "\u00b7".repeat(gap - 2) + " " : " ".repeat(gap), "rule"], [value, style]]);
+      y += 1;
+      return;
+    }
+    y = paragraph(g, x, y, room, label, "dim");
+    wrap(value, Math.max(4, room - 2)).forEach((line) => { g.put(w - 1 - length(line), y, line, style); y += 1; });
+  };
+  view.groups.forEach((group) => {
+    const shown = open.includes(group.id);
+    const tally = shown ? "" : (group.count ? String(group.count) : "\u2014") + (group.stale ? " \u00b7 stale" : "");
+    const at = g.put(1, y, (shown ? "\u25be " : "\u25b8 ") + group.title, "section");
+    const end = w - 1 - (tally ? length(tally) + 1 : 0);
+    if (end - at > 2) g.put(at + 1, y, "\u2500".repeat(end - at - 1), "rule");
+    if (tally) g.put(w - 1 - length(tally), y, tally, group.stale ? "tone.busy" : "dim");
+    g.hit(0, y, w, 1, { kind: "signal-group", group: group.id, label: group.title + (shown ? ": close" : ": open") }, false);
+    y += 1;
+    if (!shown) return;
+    if (group.note) y = paragraph(g, 1, y, w - 2, group.note, "faint");
+    group.blocks.forEach((block) => {
+      const x = block.device ? 2 : 1;
+      if (block.device) {
+        const age = block.age ? "  " + block.age : "";
+        g.put(1, y, fit(block.device, Math.min(length(block.device), Math.max(4, w - 2 - length(age)))), "strong");
+        if (age) g.put(w - 1 - length(block.age), y, block.age, block.stale ? "tone.busy" : "dim");
+        y += 1;
       }
-      if (entry.detail) y = paragraph(g, labelWidth + 3, y, valueWidth, entry.detail, "faint");
+      block.rows.forEach((row) => pair(x, row.label, row.value, row.stale ? "tone.busy+bold" : "base"));
+      block.quiet.forEach((line) => { y = paragraph(g, x, y, w - 1 - x, line, "faint"); });
     });
-    if (!rows.length) y = paragraph(g, 1, y, w - 2, "Not reported", "dim");
   });
   return y;
 }
@@ -1454,4 +1496,4 @@ function pairCardContent(g, w, ctx, narrow) {
 // What listen.js draws with, so its keys, meters and rows look as the rest.
 const KIT = { focused, heading, paragraph, chip, button, rounded, meter, ledChar, ledStyle, lightOf, heard, slice, GLYPHS, LIT, UNLIT, ARROW };
 
-module.exports = { render, GLYPHS, TUI_SHORTCUTS, PAIR_SHORTCUTS, WIDE, MEDIUM, pairDevices, pairColumns, PAIR_FIELDS, signalInline };
+module.exports = { render, GLYPHS, TUI_SHORTCUTS, PAIR_SHORTCUTS, WIDE, MEDIUM, pairDevices, pairColumns, PAIR_FIELDS, signalInline, SIGNAL_GROUPS, SIGNAL_OPEN };

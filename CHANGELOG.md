@@ -23,6 +23,21 @@ rollback. The unified deployment workflow uses a separate committed private site
   silent TV input; until the room's Source or the input is first read,
   what it plays is unknown rather than sound. An amplifier so fed no
   longer shows Playing while its desk shows a computer.
+- The remote's room information reads at a glance now. A room's devices are
+  a line each, its name with what it is beside it and what of the room it
+  drives (Screen, Volume) as a badge, instead of a two-column table with a
+  row of two cells per device. Signal & audio drops its five tables and
+  their repeated Report/Value/Age headings for the same arrangement in the
+  browser and the terminal: a reading is a line, its label and its value,
+  under the name of the device that reports it, whose readings' age is said
+  once, and stale values and ages say so; what a device did not report, or
+  what is unavailable, is one quiet line naming the readings rather than a
+  row each. Each of the five groups (current video, current audio, the
+  configured path, EDID capabilities, processing and settings) closes to
+  its heading, which counts the readings it holds; the two current ones
+  stay open, and the choice is kept. In the terminal a click on a group's
+  heading opens or closes it, `d` again shows all of the signal and then
+  less, and the panel beside the remote takes the height the groups need.
 - An AVPro Edge AC-MX-44X HDMI matrix (`avpro_telnet`) can restart
   nightly too, as its own web page's Reboot button restarts it: `SET RBT`
   over telnet restarts its controller with its routes kept, and its web

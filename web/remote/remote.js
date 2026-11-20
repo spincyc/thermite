@@ -60,6 +60,7 @@
   let infoView = "devices";
   let signalRunning = false;
   let signalFocus = false;
+  let signalGroups = null;
   // The bubble whose lock menu is open, and a touch held on a bubble.
   let menuFor = null;
   let press = null;
@@ -607,10 +608,7 @@
       ]));
       info.prepend(node("section", { class: "info__section" }, [
         node("h3", { class: "info__title" }, "Devices in the room"),
-        node("table", { class: "devices" }, [
-          node("thead", null, node("tr", null, [node("th", { scope: "col" }, "Device"), node("th", { scope: "col" }, "Role")])),
-          node("tbody", { "data-devices": "" })
-        ])
+        node("ul", { class: "devices", "data-devices": "" })
       ]));
       if (!session.demo) return;
       info.appendChild(node("section", { class: "info__section" }, [
@@ -630,7 +628,7 @@
       ]));
     });
     all("[data-info]").forEach((info) => {
-      const devices = node("div", { "data-info-devices": "" });
+      const devices = node("div", { class: "info__view", "data-info-devices": "" });
       while (info.firstChild) devices.appendChild(info.firstChild);
       info.appendChild(node("div", { class: "info__tabs", role: "group", "aria-label": "Room information" }, [
         node("button", { type: "button", "data-action": "info-view", "data-view": "devices", "aria-pressed": "true" }, "Devices"),
@@ -688,6 +686,7 @@
 
   function updateSignal() {
     const model = session.diagnostics();
+    const view = model ? globalThis.RemoteDiagnostics.outline(model, Date.now()) : null;
     all("[data-signal]").forEach((panel) => {
       const context = session.current().id + ":" + session.state(session.current().id).value;
       if (panel.dataset.context !== context) {
@@ -695,43 +694,71 @@
         if (scroller) scroller.scrollTop = 0;
         panel.dataset.context = context;
       }
+      // A group redrawn while its heading has the focus keeps it.
+      const active = document.activeElement;
+      const held = active && active !== panel && panel.contains(active) ? active.closest("[data-group]") : null;
       panel.textContent = "";
-      panel.appendChild(node("h3", { class: "info__title" }, "Signal & audio"));
-      panel.appendChild(node("p", { class: "signal__room" }, session.current().label));
+      const head = node("div", { class: "signal__head" }, node("h3", { class: "info__title" }, "Signal & audio"));
+      panel.appendChild(head);
       if (!model) {
         panel.appendChild(node("p", { class: "info__note" }, "Reading the confirmed signal path\u2026"));
         return;
       }
       const confirmed = session.state(session.current().id).value;
       const source = session.current().options.find((option) => option.id === confirmed);
-      panel.appendChild(node("p", { class: "signal__source" }, model.source ? model.source.label
+      head.appendChild(node("p", { class: "signal__source" }, model.source ? model.source.label
         : source ? source.label : confirmed === "off" ? "Off" : "Source unknown"));
       if (model.route && model.route.length) panel.appendChild(node("p", { class: "signal__route" }, model.route.map((step) => step.label).join(" → ")));
       if (model.audioRoute && model.audioRoute.length) panel.appendChild(node("p", { class: "signal__route" }, "Audio · " + model.audioRoute.map((step) => step.label).join(" → ")));
       if (model.pending) panel.appendChild(node("p", { class: "info__note" }, "Switching to " + model.pending.label + "; readings still describe the confirmed source."));
-      const groups = [["video", "Current video"], ["audio", "Current audio"], ["path", "Configured path"],
-        ["edid", "EDID capabilities"], ["processing", "Processing & settings"]];
-      groups.forEach(([id, title]) => {
-        const section = node("section", { class: "signal__section" }, node("h4", { class: "info__title" }, title));
-        if (id === "edid") section.appendChild(node("p", { class: "info__note" }, "Advertised support, not the current format."));
-        const body = node("tbody");
-        const list = node("table", { class: "signal__table" }, [
-          node("thead", null, node("tr", null, [node("th", { scope: "col" }, "Report"), node("th", { scope: "col" }, "Value"), node("th", { scope: "col" }, "Age")])), body]);
-        (model.sections[id] || []).forEach((entry) => {
-          const value = entry.availability === "reported" ? entry.value : entry.availability === "unavailable" ? "Unavailable"
-            : entry.availability === "not_reported" && entry.value === "Awaiting fresh report" ? "Awaiting fresh report" : "Not reported";
-          const detail = node("td", { class: "signal__value", "data-availability": entry.availability }, node("span", null, value));
-          if (entry.detail) detail.appendChild(node("small", { class: "signal__meta" }, entry.detail));
-          const age = entry.basis === "configured" ? "Config." : entry.availability !== "reported" ? "—"
-            : !Number.isFinite(entry.observedAt) ? "Unknown" : Math.max(0, Math.floor((Date.now() - entry.observedAt) / 1000)) + "s" + (entry.stale ? " · stale" : "");
-          body.appendChild(node("tr", null, [node("th", { scope: "row" }, entry.label), detail,
-            node("td", { class: "signal__age" + (entry.stale ? " signal__meta--stale" : "") }, age)]));
-        });
-        if (!body.children.length) body.appendChild(node("tr", null, node("td", { colspan: "3" }, "Not reported")));
-        section.appendChild(list);
-        panel.appendChild(section);
+      if (view.blank) {
+        panel.appendChild(node("p", { class: "info__note" }, "Unavailable"));
+        return;
+      }
+      view.groups.forEach((group) => panel.appendChild(signalGroup(group)));
+      const again = held && all("[data-signal] .signal__group").find((group) => panel.contains(group)
+        && group.getAttribute("data-group") === held.getAttribute("data-group"));
+      if (again) again.firstChild.focus({ preventScroll: true });
+    });
+  }
+
+  // The groups of the signal view that are open: the two current ones, until one is opened or closed.
+  function openGroups() {
+    if (!signalGroups) {
+      const kept = store.get("remote.signal");
+      signalGroups = new Set(typeof kept === "string" ? kept.split(",") : ["video", "audio"]);
+    }
+    return signalGroups;
+  }
+
+  // One category (diagnostics.js outline()): its title opens and closes it,
+  // and says while it is closed how many readings it holds.
+  function signalGroup(group) {
+    const details = node("details", { class: "signal__group", "data-group": group.id, open: openGroups().has(group.id) ? "" : null }, [
+      node("summary", { class: "signal__summary" }, [
+        node("h4", { class: "info__title" }, group.title),
+        node("span", { class: "signal__tally" + (group.stale ? " signal__stale" : "") },
+          (group.count ? String(group.count) : "\u2014") + (group.stale ? " \u00b7 stale" : ""))
+      ]),
+      group.note ? node("p", { class: "info__note" }, group.note) : null
+    ].concat(group.blocks.map((block) => node("div", { class: "signal__block" }, [
+      block.device ? node("p", { class: "signal__device" }, [node("span", null, block.device),
+        block.age ? node("span", { class: "signal__age" + (block.stale ? " signal__stale" : "") }, block.age) : null]) : null,
+      block.rows.length ? node("dl", { class: "signal__rows" }, block.rows.map((row) => node("div", { class: "signal__row" }, [
+        node("dt", null, row.label), node("dd", { class: row.stale ? "signal__stale" : null }, row.value)]))) : null
+    ].concat(block.quiet.map((line) => node("p", { class: "signal__quiet" }, line)))))));
+    details.addEventListener("toggle", () => {
+      const open = openGroups();
+      if (details.open === open.has(group.id)) return;
+      if (details.open) open.add(group.id);
+      else open.delete(group.id);
+      store.set("remote.signal", Array.from(open).join(","));
+      // The same group beside the remote and in the sheet.
+      all("[data-signal] .signal__group").forEach((other) => {
+        if (other.getAttribute("data-group") === group.id) other.open = details.open;
       });
     });
+    return details;
   }
 
   function buildShortcuts(mode) {
@@ -780,12 +807,12 @@
     });
     all("[data-devices]").forEach((list) => {
       list.textContent = "";
-      if (!shown.devices.length) list.appendChild(node("tr", null, node("td", { colspan: "2" }, "No devices in the inventory")));
+      if (!shown.devices.length) list.appendChild(node("li", { class: "device device--none" }, "No devices in the inventory"));
       shown.devices.forEach((device) => {
-        list.appendChild(node("tr", { class: "device" }, [
-          node("td", { class: "device__name" }, [device.label, node("small", { class: "device__meta" }, device.meta)]),
-          node("td", { class: "device__roles" }, device.roles.join(" · ") || "—")
-        ]));
+        list.appendChild(node("li", { class: "device" }, [
+          node("span", { class: "device__text" }, [node("span", { class: "device__name" }, device.label), " ",
+            node("span", { class: "device__meta" }, device.meta)])
+        ].concat(device.roles.map((role) => node("span", { class: "device__role" }, role)))));
       });
     });
   }
