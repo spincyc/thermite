@@ -302,7 +302,8 @@ class Readers(unittest.TestCase):
                 with self.subTest(path=path, hook=name):
                     self.assertIsNotNone(HOOKS[name].order, "give the hook an order: the registry's decides nothing")
         # The readers this test must be seeing.
-        self.assertLessEqual({"remote", "stage", "fields", "diagnostics", "problem"}, taken)
+        self.assertLessEqual({"remote", "stage", "fields", "problem"}, taken)
+        self.assertNotIn("diagnostics", taken, "signal observations combine every enabled provider")
 
     def test_no_generic_module_imports_an_integration(self):
         for path, nodes in generic().items():

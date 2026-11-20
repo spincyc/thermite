@@ -34,7 +34,7 @@ class ResponseEnvelope(unittest.TestCase):
 
     def test_json_keeps_only_requested_bounded_fields(self):
         result = self.transform(diag.json_snapshot(["RX0"], required="RX0"),
-                                json.dumps({"RX0": "\x1b1080p60", "secret": "private", "unexpected": [1]}))
+                                json.dumps({"RX0": "\x1b1080p60", "unrelated": "ignored", "unexpected": [1]}))
         self.assertEqual(result["values"], {"RX0": "1080p60"})
         self.assertNotIn("status", result)
 
