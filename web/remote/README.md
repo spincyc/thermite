@@ -89,7 +89,11 @@ speaker. Watch's volume caption names the room's speaker as a button to
 Listen to it. A Sonos Arc on its TV input reads as playing whatever its TV
 sends; while its TV audio format is no signal or silence and it names no
 track, Listen counts it idle, whatever Music Assistant says, and its Play
-resumes Music Assistant's queue (without Music, Play is off).
+resumes Music Assistant's queue (without Music, Play is off). A routed room
+may say a source carries a picture alone (`carries`) and which input of the
+room's speaker its route feeds (`audio_input`): while the room shows such a
+source and the speaker is on that input, Listen counts it idle the same way,
+and until either is first read it is not known to play.
 
 Listen shows the room's speakers as bubbles (when it has more than one; 1 to
 9 choose), then for the chosen one what plays: its cover, title, artist and

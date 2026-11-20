@@ -126,12 +126,14 @@
 
     // What a speaker plays, as the room lists and its bubble show it. One
     // Music Assistant cannot reach, that reports nothing itself, is not
-    // answering rather than still being read. A soundbar's silent TV input
-    // plays to Music Assistant too; only the device itself knows it is
-    // silent (audio.silent).
+    // answering rather than still being read. A soundbar's silent TV input,
+    // or an input fed by a room's source of picture alone, plays to Music
+    // Assistant too; only the device itself knows it is silent
+    // (audio.silent), and until it has read what tells, nobody knows.
     function stateOf(id) {
       const shown = heard(id);
-      if (shown && audio.silent(id)) return { playing: false, paused: false, title: null, unknown: false };
+      const quiet = shown ? audio.silent(id) : false;
+      if (quiet !== false) return { playing: false, paused: false, title: null, unknown: quiet === null };
       if (shown) return { playing: shown.playing === true, paused: shown.paused, title: shown.title, unknown: false };
       const device = reported(id);
       return { playing: device ? device.playing === true : false, paused: false, title: device && device.title || null,
@@ -228,8 +230,9 @@
       const own = audio.view();
       if (!own) return null;
       const played = musicView(id);
-      // Music Assistant keeps the library and the group; the device says it plays nothing.
-      const silent = Boolean(played) && audio.silent(id);
+      // Music Assistant keeps the library and the group; the device says it
+      // plays nothing, or has not read yet whether it does.
+      const quiet = played ? audio.silent(id) : false, silent = quiet !== false;
       const ids = rooms[room];
       const extra = own.transport.filter((key) => !MUSIC_COVERS[key.id]);
       const transport = played ? MUSIC_KEYS.map(([key, label, icon]) => {
@@ -254,7 +257,7 @@
         // What the device says of the stream it plays: its service and format.
         badges: own.track ? [own.track.service, own.track.format].filter(Boolean) : [],
         progress: played && !silent ? played.progress : null,
-        playing: silent ? false : played ? played.playing : own.playing,
+        playing: quiet === true ? false : played && !silent ? played.playing : own.playing,
         transport: transport,
         volume: own.volume,
         muted: own.muted,
@@ -286,7 +289,7 @@
     function press(key) {
       if (driven()) {
         // On a silent TV input Play resumes Music Assistant's queue, not the TV's stream.
-        if (key === "play_pause") return music.playPause(audio.silent(chosen[room]));
+        if (key === "play_pause") return music.playPause(audio.silent(chosen[room]) !== false);
         if (key === "previous") return music.previous();
         if (key === "next") return music.next();
         if (key === "shuffle") return music.toggleShuffle();

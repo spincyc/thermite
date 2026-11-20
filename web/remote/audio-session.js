@@ -21,8 +21,10 @@
  *
  * devices() lists each place's devices; view() is the chosen device's page,
  * or null without one; select(id) chooses another. silent(id) is whether
- * the device reports playing only a silent TV input (its state's silent),
- * which Music Assistant cannot tell from sound. press(key),
+ * the device reports playing only what is no sound: a silent TV input (its
+ * state's silent), or the input a room feeds while that room shows a
+ * source of picture alone (its state's route); null while what tells is
+ * not read yet. Music Assistant cannot tell either from sound. press(key),
  * setVolume(value), stepVolume(±1), toggleMute(), togglePower(),
  * chooseInput(value), set(item, value), toggle(item) and step(item, ±1)
  * send its commands. Each shows what it sent until the device reads it
@@ -246,24 +248,52 @@
 
     // Whether it plays: true, false, or null while its state is not known;
     // a play/pause just pressed shows what it asked for. Sound with no
-    // track named while its silent Item reads silent is nothing: a soundbar's
-    // TV input with the TV sending none.
+    // track named is nothing while silenced() says so.
     function playingOf(id) {
       const state = page(id).state;
       const status = state ? valueOf(id, state.item) : null;
-      const plays = status === null ? null : state.playing.includes(status) && !silenced(id, state);
+      const quiet = status !== null && state.playing.includes(status) ? silenced(id, state) : false;
+      const plays = status === null || quiet === null ? null : state.playing.includes(status) && !quiet;
       const value = shown(id, "playing", plays === null ? null : String(plays)).value;
       return value === null ? null : value === "true";
     }
 
+    // A routed room's Source as its read-back has it, null while not read.
+    function sourceOf(room) {
+      try { return present(backend.snapshot(room).value); } catch (error) { return null; }
+    }
+
+    // The devices a route from the room feeds (their state's route).
+    function routedFrom(room) {
+      return ids.filter((id) => ((page(id).state || {}).route || []).some((route) => route.room === room));
+    }
+
+    // Whether its sound with no track named is none: true while its silent
+    // Item reads silent (a soundbar's TV input with the TV sending none), or
+    // while a route that feeds it carries a picture alone (the room reads
+    // such a source and, where the route names one, the device is on the
+    // input the room feeds); null while one of those may hold but is not
+    // read yet (a runtime just started reads the TV input before its
+    // format); else false.
     function silenced(id, state) {
       const title = (page(id).track || {}).title;
-      return Boolean(state.silent) && !(title && valueOf(id, title)) && state.silent.is.includes(valueOf(id, state.silent.item));
+      if (title && valueOf(id, title)) return false;
+      const conditions = (state.silent ? [[[valueOf(id, state.silent.item), state.silent.is]]] : [])
+        .concat((state.route || []).map((route) => [[sourceOf(route.room), route.is]]
+          .concat(route.input ? [[valueOf(id, route.input.item), route.input.is]] : [])));
+      let unread = false;
+      for (const readings of conditions) {
+        if (readings.some(([value, is]) => value !== null && !is.includes(value))) continue;
+        if (readings.every(([value]) => value !== null)) return true;
+        unread = true;
+      }
+      return unread ? null : false;
     }
 
     function silent(id) {
       const state = ((house.devices[id] || {}).audio || {}).state;
-      return Boolean(state && state.silent) && state.playing.includes(valueOf(id, state.item)) && silenced(id, state);
+      if (!state || !(state.silent || state.route) || !state.playing.includes(valueOf(id, state.item))) return false;
+      return silenced(id, state);
     }
 
     function devicesView() {
@@ -349,7 +379,8 @@
         // sound, an input or a title kept from guests has none).
         now: track ? track.title : isPlaying === null ? "Reading…"
           : isPlaying ? "Playing" + (from ? " from " + from[1] : "") : "Nothing playing",
-        // A silent TV input has nothing to play or pause, as the Sonos app has it.
+        // Silence (a silent TV input, the input of a route of picture alone)
+        // has nothing to play or pause, as the Sonos app has it.
         transport: (audio.transport || []).map((key) => key === "play_pause"
           ? Object.assign({ id: key, label: isPlaying ? "Pause" : "Play", icon: isPlaying ? "pause" : "play" },
             silent(id) ? { disabled: true } : {})
@@ -534,6 +565,10 @@
           changed();
         }
         else if (event.type === "problem" && ids.includes(event.device)) changed();
+        else if (event.type === "state" && routedFrom(event.room).length) {
+          routedFrom(event.room).forEach(heard);
+          changed();
+        }
         else if (event.type === "connection") { connected = event.connected; changed(); }
         else if (event.type === "access") changed();
       }));

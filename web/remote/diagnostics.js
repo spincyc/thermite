@@ -69,6 +69,11 @@
         const ports = [node.input != null ? "input " + node.input : "", node.output != null ? "output " + node.output : ""].filter(Boolean).join(" · ");
         sections.path.push(row("Audio " + node.role, node.label + (ports ? " · " + ports : ""), "reported", { basis: "configured", device: node.device }));
       });
+      // A path that carries a picture or sound alone says so (routing's carries).
+      const carries = chosen.source ? chosen.source.carries : null;
+      if (nodes.length && (carries === "display" || carries === "audio")) {
+        sections.path.push(row("Carries", carries === "display" ? "Display only" : "Audio only", "reported", { basis: "configured" }));
+      }
       if (!nodes.length) sections.path.push(row("Path", sourceId === "off" ? "Room is off" : "Source not reported", "not_reported", { basis: "configured" }));
       const activeReadings = readings(roomId, sourceId);
       activeReadings.forEach((entry) => {

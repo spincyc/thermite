@@ -204,13 +204,15 @@ def paths(facts: Known) -> list[dict]:
             path = facts.manifest["rooms"][zone]["sources"][source]
             nodes = [node for node in [*path["nodes"], *path.get("audioNodes", [])] if node["device"] == ident]
             # The device a room's Volume and Mute drive is in use with every
-            # source, though no signal passes through it (health_paths()).
+            # source that carries sound, though no signal passes through it
+            # (health_paths()).
             if not nodes and (routed.get(zone) or {}).get("audio") == ident:
                 nodes = [{"role": "volume"}]
             for node in nodes:
                 out.append({"zone": zone, "room": entry["label"], "source": source,
                             "source_label": facts.mapping["sources"].get(source) or path.get("label") or source,
-                            "role": node["role"], **{key: node[key] for key in ("input", "output") if key in node}})
+                            "role": node["role"], "carries": path.get("carries", "both"),
+                            **{key: node[key] for key in ("input", "output") if key in node}})
     return out
 
 
@@ -631,7 +633,8 @@ def text(found: dict) -> str:
     if what["paths"]:
         places: dict[tuple, list[str]] = {}
         for use in what["paths"]:
-            port = ", ".join(f"{key} {use[key]}" for key in ("input", "output") if key in use)
+            port = ", ".join([f"{key} {use[key]}" for key in ("input", "output") if key in use]
+                             + ([f"{use['carries']} only"] if use.get("carries", "both") != "both" else []))
             places.setdefault((use["room"], use["role"]), []).append(
                 use["source_label"] + (f" ({port})" if port else ""))
         lines += [f"  {room}: {role} for {', '.join(sources)}" for (room, role), sources in places.items()]

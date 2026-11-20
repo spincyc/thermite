@@ -364,6 +364,8 @@ def views(house: House, rooms: dict, activity: dict, pairings: dict) -> dict:
         page = device.get("audio") or {}
         read.add((page.get("state") or {}).get("item"))
         read.add(((page.get("state") or {}).get("silent") or {}).get("item"))
+        for route in (page.get("state") or {}).get("route") or ():
+            read.update((route["item"], (route.get("input") or {}).get("item")))
         read.update((page.get("track") or {}).values())
         for entry in (*page.get("settings", ()), *page.get("facts", ())):
             read.update((entry["item"], (entry.get("when") or {}).get("item")))

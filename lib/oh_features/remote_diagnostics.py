@@ -70,7 +70,9 @@ def _rooms(house: House) -> dict:
                 port = (stage.get("sources") or {}).get(source_id,
                         (stage.get("input_by_source") or {}).get(source_id, stage.get("input")))
                 node(stage["device"], role, input=port, zone=stage.get("zone") or "main")
-            path = {"label": sources[source_id]["label"], "nodes": nodes}
+            # What the source's signal carries to the room (routing's carries):
+            # display, audio or both.
+            path = {"label": sources[source_id]["label"], "nodes": nodes, "carries": routing.carried(room, source_id)}
             if room.get("hdmi_audio_output") is not None and not (local_display or local_receiver or local_switch):
                 # Two HDMI cables carry the same source: video bypasses the
                 # receiver, while a separate matrix output feeds its audio.

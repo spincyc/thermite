@@ -133,6 +133,55 @@ class RoomAudio(unittest.TestCase):
         self.assertIn("is this room's receiver on zone 2", problems(zones(), "example_lounge", "example_avr")[0])
         self.assertEqual(problems(desk(), "example_west", "example_tv"), [])
 
+    def test_what_a_source_carries_is_one_of_its_room_s_sources_and_a_known_word(self):
+        def problems(room, carries):
+            data = desk()
+            data["routing"]["rooms"][room]["carries"] = carries
+            return [p for p in oh_render.validate(data) if ".carries" in p]
+        self.assertEqual(problems("example_east", {"example_computer": "display"}), [])
+        self.assertEqual(problems("example_east", {}),
+                         ["routing.rooms.example_east.carries: must map the room's sources to what each carries "
+                          "(display, audio, both)"])
+        self.assertEqual(problems("example_east", {"example_playerr": "display"}),
+                         ["routing.rooms.example_east.carries.example_playerr: "
+                          "'example_playerr' is not in this room's sources"])
+        self.assertEqual(problems("example_east", {"example_computer": "video"}),
+                         ["routing.rooms.example_east.carries.example_computer: 'video' is not display, audio or both"])
+
+    def test_the_input_a_rooms_route_feeds_is_an_input_of_its_audio_device(self):
+        def problems(data, room, value):
+            data["routing"]["rooms"][room]["audio_input"] = value
+            return [p for p in oh_render.validate(data) if "audio_input" in p]
+        self.assertEqual(problems(desk(), "example_east", "optical"), [])
+        self.assertEqual(problems(desk(audio=None), "example_east", "optical"),
+                         ["routing.rooms.example_east.audio_input: needs audio, the device whose input it is"])
+        self.assertEqual(problems(desk(), "example_east", "coax"),
+                         ["routing.rooms.example_east.audio_input: 'coax' is not an input of fixture_amp "
+                          "(wifi, bluetooth, line-in, optical, HDMI)"])
+
+    def test_a_source_of_picture_alone_names_the_route_that_quiets_the_rooms_audio(self):
+        data = desk()
+        east = data["routing"]["rooms"]["example_east"]
+        east["carries"] = {"example_computer": "display"}
+        east["audio_input"] = "optical"
+        model, authority = compiled(data)
+        state = model["devices"]["fixture_amp"]["audio"]["state"]
+        self.assertEqual(state["route"], [{"room": "example_east", "item": "loc_example_east_source",
+                                           "is": ["example_computer"],
+                                           "input": {"item": "fixture_amp_input", "is": ["optical"]}}])
+        # Without audio_input the route names no input, and the gateway reads
+        # the route's Items either way.
+        del east["audio_input"]
+        model, authority = compiled(data)
+        state = model["devices"]["fixture_amp"]["audio"]["state"]
+        self.assertEqual(state["route"], [{"room": "example_east", "item": "loc_example_east_source",
+                                           "is": ["example_computer"]}])
+        self.assertIn("loc_example_east_source", authority["views"]["remote"]["stateupdated"])
+        self.assertIn("fixture_amp_input", authority["views"]["remote"]["statechanged"])
+        # A room of picture and sound alone names no route.
+        model, _ = compiled(desk())
+        self.assertNotIn("route", model["devices"]["fixture_amp"]["audio"]["state"])
+
     def test_a_building_covers_its_nested_rooms_and_lists_their_devices(self):
         data = desk(audio=None)
         data["rooms"]["example_east"]["tag"] = "Building"

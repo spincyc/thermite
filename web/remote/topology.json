@@ -85,7 +85,8 @@
             "input": "hdmi2",
             "zone": "main"
           }
-        ]
+        ],
+        "carries": "both"
       }
     },
     "example_west": {
@@ -111,7 +112,8 @@
             "input": "hdmi2",
             "zone": "main"
           }
-        ]
+        ],
+        "carries": "both"
       },
       "example_player": {
         "label": "Player",
@@ -128,7 +130,8 @@
             "input": "hdmi1",
             "zone": "main"
           }
-        ]
+        ],
+        "carries": "both"
       }
     }
   },

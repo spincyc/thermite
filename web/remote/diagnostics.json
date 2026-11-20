@@ -592,7 +592,8 @@
               "input": "hdmi1",
               "zone": "main"
             }
-          ]
+          ],
+          "carries": "both"
         },
         "example_computer": {
           "label": "Computer",
@@ -616,7 +617,8 @@
               "input": "hdmi2",
               "zone": "main"
             }
-          ]
+          ],
+          "carries": "both"
         }
       }
     },
@@ -645,7 +647,8 @@
               "input": "hdmi2",
               "zone": "main"
             }
-          ]
+          ],
+          "carries": "both"
         }
       }
     }

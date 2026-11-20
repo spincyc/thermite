@@ -109,13 +109,16 @@ FAMILIES = {
     "thermite_thing_online": ("gauge", "1 when the Thing is ONLINE."),
     "thermite_thing_status_info": ("gauge", "The Thing's status, as a label; always 1."),
     "thermite_item_value": ("gauge", "A numeric Item state: switches 1 or 0, numbers as they are; a speaker's "
-                            "playing state (point playing) 0 idle (a soundbar's silent TV input too), 1 sound "
-                            "with no track named (TV audio, line-in), 2 a track."),
+                            "playing state (point playing) 0 idle (a soundbar's silent TV input too, and an "
+                            "input fed by a room's source of picture alone), 1 sound with no track named (TV "
+                            "audio, line-in), 2 a track."),
     "thermite_item_info": ("gauge", "A selection Item's state, as a label; always 1. A routing zone's source Item "
                            "names its zone too: join it with a check on(zone), as a room may have two zones."),
     "thermite_item_unknown": ("gauge", "1 while a kept Item is NULL or UNDEF (a selection also while empty) and "
                               "its device is not known to be off: it has not reported, or did not answer; Thing "
-                              "status and the checks say which. A source Item names its zone."),
+                              "status and the checks say which. A source Item names its zone. A speaker's playing "
+                              "state is unknown too while it plays with no track named and what tells sound from "
+                              "silence is not read yet."),
     "thermite_item_device_off": ("gauge", "1 while a kept Item has no value because the power Item it needs on, "
                                  "its device's or its receiver zone's, reads OFF: a TV in standby has no input, "
                                  "volume or mute."),
@@ -570,11 +573,35 @@ def _no_value(spec: dict, state_of: dict) -> str:
 
 #: A speaker's playing values (point playing): idle, sound with no track
 #: named (TV audio or line-in: a blank title), a track. Sound with no track
-#: named while its silent reading reads silent (a soundbar's TV input with the
-#: TV silent) is idle.
+#: named is idle while its silent reading reads silent (a soundbar's TV input
+#: with the TV silent) or a route that feeds it carries a picture alone
+#: (sounding()), and unknown while what tells is not read yet.
 PLAYING_IDLE, PLAYING_SOUND, PLAYING_TRACK = 0.0, 1.0, 2.0
 #: Titles that name nothing, as oh_features.playing reads them.
 NO_TITLE = ("Unknown",)
+
+
+def sounding(spec: dict, state_of: dict) -> float | None:
+    """What a speaker that plays with no track named plays (its map entry,
+    the Items' states): PLAYING_IDLE while its silent reading reads silent,
+    or a route of its `route` holds (the room reads a source of picture
+    alone and, where it names one, the speaker is on the input the room
+    feeds); None while one of those may hold but is not read yet (a runtime
+    just started reads a soundbar's TV input before its TV audio format);
+    else PLAYING_SOUND."""
+    silent = spec.get("silent")
+    conditions = ([[silent]] if silent else []) + [[route, *([route["input"]] if route.get("input") else [])]
+                                                   for route in spec.get("route") or []]
+    unread = False
+    for readings in conditions:
+        states = [to_text(state_of.get(reading.get("item"))) for reading in readings]
+        if any(state is not None and state not in (reading.get("is") or [])
+               for state, reading in zip(states, readings, strict=True)):
+            continue
+        if None not in states:
+            return PLAYING_IDLE
+        unread = True
+    return None if unread else PLAYING_SOUND
 
 
 def _offline(mapping: dict, things: list | None) -> set[str]:
@@ -614,11 +641,11 @@ def _items(mapping: dict, answer: list, things: list | None = None) -> list[Samp
                 continue
             title = to_text(state_of.get(spec["title"])) if spec.get("title") else "?"
             value = PLAYING_IDLE if state not in (spec.get("playing") or []) \
-                else PLAYING_TRACK if title and title not in NO_TITLE else PLAYING_SOUND
-            silent = spec.get("silent") or {}
-            if value == PLAYING_SOUND and silent and to_text(state_of.get(silent.get("item"))) in (silent.get("is") or []):
-                value = PLAYING_IDLE
-            samples.append(("thermite_item_value", item, value))
+                else PLAYING_TRACK if title and title not in NO_TITLE else sounding(spec, state_of)
+            if value is None:
+                samples.append((_no_value(spec, state_of), item, 1.0))
+            else:
+                samples.append(("thermite_item_value", item, value))
             continue
         if convert == "enum":
             text = to_label(state, spec.get("options"))

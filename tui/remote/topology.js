@@ -101,12 +101,17 @@ function shortLabel(node, manifest) {
   return label;
 }
 
+// A path that carries a picture or sound alone says so (routing's carries).
+function carried(route) {
+  return route.carries === "display" ? " (display only)" : route.carries === "audio" ? " (audio only)" : "";
+}
+
 function routeRows(manifest, roomId, reading, connected) {
   const routes = manifest.routes[roomId] || {};
   return Object.entries(routes).map(([id, route]) => {
     const stages = {};
     FIELDS.slice(1, -1).forEach(role => { stages[role] = route.nodes.filter(node => node.role === role); });
-    return { id, room: roomId, label: plain(route.label || id), route, stages, status: status(routes, id, reading, connected) };
+    return { id, room: roomId, label: plain(route.label || id) + carried(route), route, stages, status: status(routes, id, reading, connected) };
   });
 }
 

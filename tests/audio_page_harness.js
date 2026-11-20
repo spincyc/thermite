@@ -1,7 +1,8 @@
 'use strict';
 // stdin: a generated house model (remote_model.build) with argv's two audio
 // devices: the first owned by a room argv[3] locks, the second by none;
-// argv[4], a file of a house model with a Sonos Arc. Runs
+// argv[4], a file of a house model with a Sonos Arc; argv[5], one whose
+// routed room shows a source of picture alone. Runs
 // the Audio page's session (audio-session.js) on the mock backend, and the
 // openHAB backend's command() and audio Items on a fake fetch and stream;
 // prints what each showed and sent. Nothing leaves the process.
@@ -12,7 +13,7 @@ for (const name of ['navigation.js', 'remotes.js', 'backend.js', 'backend-mock.j
   vm.runInThisContext(fs.readFileSync(path.join(WEB, name), 'utf8'), {filename: name});
 }
 const house = JSON.parse(fs.readFileSync(0, 'utf8'));
-const [owned, free, lockedRoom, barFile] = process.argv.slice(2);
+const [owned, free, lockedRoom, barFile, routeFile] = process.argv.slice(2);
 const {RemoteBackend, RemoteAudio} = globalThis;
 const settle = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
 const sectionsOf = (view) => view.sections.map((section) => [section.id, section.settings.map((s) => [s.item, s.kind, s.text, s.pending])]);
@@ -317,9 +318,53 @@ async function arc() {
   return out;
 }
 
+// A room that shows a source of picture alone feeds the input its route
+// drives no sound: while the room reads such a source and the device is on
+// that input, what it plays with no track named is nothing.
+async function route() {
+  const desk = JSON.parse(fs.readFileSync(routeFile, 'utf8'));
+  const id = Object.keys(desk.devices).find((name) => (((desk.devices[name].audio || {}).state || {}).route || []).length);
+  const state = desk.devices[id].audio.state;
+  const room = state.route[0].room;
+  const backend = recording(RemoteBackend.create(desk, {backend: 'mock', latency: 4,
+    initial: {[room]: 'example_computer'}, audio: {[id + '_title']: ' '}}));
+  backend.devices[id].input = 'optical';
+  const session = RemoteAudio.create({backend, house: desk});
+  await session.start(id);
+  const shown = () => [session.view().playing, session.view().now, session.silent(id)];
+  const key = () => session.view().transport.find((button) => button.id === 'play_pause');
+  const out = {route: state.route};
+  // The room shows the computer and the amp is on the input its route feeds.
+  out.quiet = shown();
+  out.quietKey = key();
+  // The room switching off, and back, is heard.
+  await backend.choose(room, 'off');
+  out.off = shown();
+  await backend.choose(room, 'example_computer');
+  out.again = shown();
+  // On another input its sound is its own.
+  await session.chooseInput('bluetooth');
+  await settle(40);
+  out.otherInput = shown();
+  // What tells (the room's Source) not read yet: not known to be either.
+  await session.chooseInput('optical');
+  await settle(40);
+  backend.items[room].value = 'UNDEF';
+  backend.emitState(room);
+  await settle();
+  out.unread = shown();
+  // A track is a track whatever the route carries.
+  backend.items[room].value = 'example_computer';
+  backend.updateAudio(id, id + '_title', 'Sample Track');
+  await settle();
+  out.track = shown();
+  session.stop();
+  return out;
+}
+
 (async () => {
   const report = {mock: await mock(), locked: await locked(), unheard: await unheard(), review: await review(),
-                  restart: await restart(), openhab: await openhab(), arc: await arc()};
+                  restart: await restart(), openhab: await openhab(), arc: await arc(), route: await route()};
   process.stdout.write(JSON.stringify(report));
   process.exit(0);
 })().catch((error) => { process.stderr.write(String(error.stack)); process.exit(1); });

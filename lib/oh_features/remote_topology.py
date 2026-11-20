@@ -84,7 +84,7 @@ def manifest(house: House, conf: Conf) -> dict:
     for room_id, room in sorted(paths.items()):
         routes[room_id] = {}
         for source_id, path in sorted(room["sources"].items()):
-            route = {"label": path["label"], "nodes": copy.deepcopy(path["nodes"])}
+            route = {"label": path["label"], "nodes": copy.deepcopy(path["nodes"]), "carries": path["carries"]}
             if path.get("audioNodes"):
                 route["audioNodes"] = copy.deepcopy(path["audioNodes"])
             for kind, chain in (("video", path["nodes"]), ("audio", path.get("audioNodes", []))):

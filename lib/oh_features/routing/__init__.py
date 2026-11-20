@@ -123,6 +123,9 @@ PLAYERS = ("streaming_amp", "audio_streamer")
 #: The room keys of what its other devices are sent on any source, and on
 #: Off. Not `on` and `off`: YAML reads those as true and false.
 ACTIONS = ("on_actions", "off_actions")
+#: What a source's signal carries to a room (its `carries`): a picture
+#: alone, sound alone, or both, as for a source it leaves out.
+CARRIES = ("display", "audio", "both")
 
 #: The shape of `routing`, declared (oh_shape): the checks of its key names
 #: below, and its part of the house-file reference page and schema, come
@@ -172,6 +175,13 @@ ROOM = {
                       "EDID names"),
     "audio": Key(TEXT, "the device its Volume and Mute drive: a soundbar or streaming amplifier in a room it "
                        "covers, or its own receiver or display"),
+    "carries": Key(MAPPING, "what a source's signal carries to it where that is not both picture and sound: "
+                            "display for a picture alone (a computer whose sound stays with it), audio for sound "
+                            "alone; a display source's path leaves out the room's audio device, which plays none of it",
+                   by="source", each=Key(TEXT, "what the source carries", choices=CARRIES)),
+    "audio_input": Key(TEXT, "the input of its audio device that its route feeds (optical, for a streaming "
+                             "amplifier on its HDMI switch's audio out); without it, any sound that device plays "
+                             "with no track named is taken to come from the route"),
     "receiver": Key(MAPPING, "its receiver", keys=STAGE),
     "display": Key(MAPPING, "its display", keys=DISPLAY),
     **_ACTIONS,
@@ -275,6 +285,13 @@ def guard_rooms(house: House, device_id: str) -> dict[str, str]:
     device's role there (targets())."""
     rooms = (house.data.get("routing") or {}).get("rooms") or {}
     return {room: role for room in rooms if (role := targets(house, room).get(device_id))}
+
+
+def carried(entry: dict, source: str) -> str:
+    """What a source's signal carries to a routed room: its `carries`,
+    else both."""
+    value = (entry.get("carries") or {}).get(source) if isinstance(entry.get("carries"), dict) else None
+    return value if value in CARRIES else "both"
 
 
 def room_label(house: House, room: str) -> str:
@@ -579,6 +596,10 @@ def validate(data: object) -> list[str]:
             problems.append(f"{where}.label: must be a name")
         if "audio" in entry:
             problems += _audio_problems(where, data, room, devices)
+        if "carries" in entry:
+            problems += _carries_problems(f"{where}.carries", entry["carries"], offered)
+        if "audio_input" in entry:
+            problems += _audio_input_problems(where, entry, devices)
         for key in sorted(unknown(ROOM, entry)):
             problems.append(f"{where}: unknown key '{key}'")
     problems += _wiring_problems(rooms_section)
@@ -625,6 +646,39 @@ def _audio_problems(where: str, data: dict, room: str, devices: dict) -> list[st
                 "the main zone's"]
     if ident not in stages and device.get("room") not in covered_rooms(House.unchecked(data), room):
         return [f"{where}.audio: {ident} is in {device.get('room')}, not in a room {room} covers"]
+    return []
+
+
+def _carries_problems(where: str, carries: object, offered: list) -> list[str]:
+    """Problems with a room's `carries`: what each source it offers carries."""
+    if not isinstance(carries, dict) or not carries:
+        return [f"{where}: must map the room's sources to what each carries ({', '.join(CARRIES)})"]
+    problems = []
+    for source, value in carries.items():
+        if source not in offered:
+            problems.append(f"{where}.{source}: '{source}' is not in this room's sources")
+        if not isinstance(value, str) or value not in CARRIES:
+            problems.append(f"{where}.{source}: {value!r} is not {', '.join(CARRIES[:-1])} or {CARRIES[-1]}")
+    return problems
+
+
+def _audio_input_problems(where: str, entry: dict, devices: dict) -> list[str]:
+    """Problems with a room's `audio_input`: one of the inputs its `audio`
+    device reads (its control's input), the one the room's route feeds."""
+    from .. import remote_model  # it imports this module
+
+    if "audio" not in entry:
+        return [f"{where}.audio_input: needs audio, the device whose input it is"]
+    device = _known(devices, entry["audio"])
+    if device is None:
+        return []  # _audio_problems says so
+    options = ((remote_model.provider(device)[1] or {}).get("input") or {}).get("options") or []
+    values = [str(option[0]) for option in options]
+    if not values:
+        return [f"{where}.audio_input: {device['id']} reads no input thermite controls"]
+    if entry["audio_input"] not in values:
+        return [f"{where}.audio_input: {entry['audio_input']!r} is not an input of {device['id']} "
+                f"({', '.join(values)})"]
     return []
 
 

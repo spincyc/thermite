@@ -223,6 +223,27 @@ class Offline(Guarded):
         self.assertNotIn("http://", out)
         self.assertNotRegex(out, r"\bOK\b|FAILING|ago\b")
 
+    def test_a_path_that_carries_a_picture_alone_says_so_and_uses_no_speaker(self):
+        from tests import test_metrics
+        inventory = copy.deepcopy(test_metrics.INVENTORY)
+        inventory["devices"].append({"id": "example_amp", "room": "example_east", "kind": "streaming_amp",
+                                     "make": "WiiM", "model": "Amp Pro", "ip": "192.0.2.41",
+                                     "controls": {"observe": ["wiim_http"], "control": ["wiim_http"]}})
+        east = inventory["routing"]["rooms"]["example_east"]
+        east["sources"].append("example_player")
+        east["display"]["sources"] = {"example_player": "hdmi1"}
+        east["audio"] = "example_amp"
+        east["carries"] = {"example_computer": "display"}
+        with mock.patch.object(House, "load", classmethod(lambda cls, path: House(copy.deepcopy(inventory)))):
+            code, out, err = run("device", "example_display")
+            self.assertEqual((code, err), (0, ""))
+            self.assertIn("  Example East: display for Computer (input hdmi2, display only), Player (input hdmi1)\n",
+                          out)
+            code, amp, err = run("device", "example_amp")
+            self.assertEqual((code, err), (0, ""))
+        # The room's Volume and Mute drive it only where the source carries sound.
+        self.assertIn("  Example East: volume for Player\n", amp)
+
     def test_json_is_the_same_facts_as_data(self):
         code, out, _ = run("device", TV, "--json")
         found = json.loads(out)

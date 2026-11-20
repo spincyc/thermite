@@ -47,6 +47,18 @@ def bar():
     return remote_model.build(House(data))
 
 
+def routed():
+    """The desk: example_east's amplifier is its `audio`, on the input its
+    route feeds (`audio_input`), and its computer carries a picture alone."""
+    data = json.loads((AREA / "instance/devices.yaml").read_text())
+    data["devices"].append({"id": OWNED, "room": ROOM, "ip": "192.0.2.41", **WIIM})
+    east = data["routing"]["rooms"][ROOM]
+    east["audio"] = OWNED
+    east["carries"] = {"example_computer": "display"}
+    east["audio_input"] = "optical"
+    return remote_model.build(House(data))
+
+
 def settings(view):
     return {setting["item"].removeprefix(FREE + "_"): setting for section in view["sections"]
             for setting in section["settings"]}
@@ -60,9 +72,11 @@ class AudioPage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as scratch:
             arc = Path(scratch) / "arc.json"
             arc.write_text(json.dumps(bar()))
+            route = Path(scratch) / "route.json"
+            route.write_text(json.dumps(routed()))
             run = subprocess.run([shutil.which("node"), str(AREA / "tests/audio_page_harness.js"), OWNED, FREE, ROOM,
-                                  str(arc)], input=json.dumps(model()), text=True, env=env, capture_output=True,
-                                 timeout=30)
+                                  str(arc), str(route)], input=json.dumps(model()), text=True, env=env,
+                                 capture_output=True, timeout=30)
         if run.returncode:
             raise AssertionError(run.stderr)
         cls.report = json.loads(run.stdout)
@@ -78,9 +92,10 @@ class AudioPage(unittest.TestCase):
         # which Listen trusts over Music Assistant.
         self.assertEqual(out["silence"], [False, "Nothing playing", True])
         self.assertEqual(out["noSignal"], [False, "Nothing playing", True])
-        # TV sound, or a format not read yet, is TV audio as before.
+        # TV sound is TV audio as before; a format not read yet (a runtime just
+        # started reads the state first) is not known to be either.
         self.assertEqual(out["sound"], [True, "Playing", False])
-        self.assertEqual(out["unread"], [True, "Playing", False])
+        self.assertEqual(out["unread"], [None, "Reading…", None])
         # A track is a track whatever the TV input carries.
         self.assertEqual(out["track"], [True, "Sample Track", False])
         self.assertEqual(out["stopped"], [False, "Nothing playing", False])
@@ -88,6 +103,24 @@ class AudioPage(unittest.TestCase):
         self.assertEqual(out["silentKey"], {"key": {"id": "play_pause", "label": "Play", "icon": "play", "disabled": True},
                                             "sent": [], "playing": False})
         self.assertEqual(out["soundKey"], {"id": "play_pause", "label": "Pause", "icon": "pause"})
+
+    def test_an_amp_on_the_input_a_room_feeds_plays_nothing_while_it_shows_a_source_of_picture_alone(self):
+        out = self.report["route"]
+        self.assertEqual(out["route"], [{"room": ROOM, "item": f"loc_{ROOM}_source", "is": ["example_computer"],
+                                         "input": {"item": f"{OWNED}_input", "is": ["optical"]}}])
+        # The room shows the computer and the amp is on the input its route
+        # feeds: nothing plays, and Play is off, as a silent TV input's is.
+        self.assertEqual(out["quiet"], [False, "Nothing playing", True])
+        self.assertEqual(out["quietKey"], {"id": "play_pause", "label": "Play", "icon": "play", "disabled": True})
+        # The room switching off, and back, is heard.
+        self.assertEqual(out["off"], [True, "Playing from Optical", False])
+        self.assertEqual(out["again"], [False, "Nothing playing", True])
+        # On another input its sound is its own.
+        self.assertEqual(out["otherInput"], [True, "Playing from Bluetooth", False])
+        # What tells (the room's Source) not read yet: not known to be either.
+        self.assertEqual(out["unread"], [None, "Reading…", None])
+        # A track is a track whatever the route carries.
+        self.assertEqual(out["track"], [True, "Sample Track", False])
 
     def test_each_place_lists_its_devices_and_what_they_play(self):
         places = {place["place"]: place["devices"] for place in self.mock["devices"]}

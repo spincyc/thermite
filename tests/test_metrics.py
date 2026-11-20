@@ -445,11 +445,48 @@ class Speakers(unittest.TestCase):
         mapping = {"devices": {"example_speaker": self.MAP["devices"]["example_speaker"]},
                    "items": {"example_speaker_state": spec}}
         online = [{"UID": uid, "statusInfo": {"status": "ONLINE"}} for uid in self.MAP["devices"]["example_speaker"]["things"]]
+        # A runtime just started reads its state before its TV audio format:
+        # until then, whether it plays any sound is unknown, not sound.
         for (title, codec), value in (((" ", "silence"), 0.0), ((" ", "noSignal"), 0.0), ((" ", "dolbyDigital"), 1.0),
-                                      ((" ", "NULL"), 1.0), (("Example Track", "silence"), 2.0)):
+                                      ((" ", "NULL"), None), ((" ", "UNDEF"), None), (("Example Track", "silence"), 2.0),
+                                      (("Example Track", "NULL"), 2.0)):
             answer = items(example_speaker_state="PLAYING", example_speaker_title=title, example_speaker_codec=codec)
-            self.assertEqual(exporter._items(mapping, answer, online)[0], ("thermite_item_value", labels, value),
-                             (title, codec))
+            self.assertEqual(exporter._items(mapping, answer, online)[0],
+                             ("thermite_item_unknown", labels, 1.0) if value is None
+                             else ("thermite_item_value", labels, value), (title, codec))
+
+    def test_a_route_of_picture_alone_feeds_the_rooms_speaker_no_sound(self):
+        inventory = with_speakers()
+        east = inventory["routing"]["rooms"]["example_east"]
+        east["audio"] = "example_amp"
+        east["carries"] = {"example_computer": "display"}
+        east["audio_input"] = "optical"
+        mapping = json.loads(rendered(inventory)[oh_metrics.EXPORTER_MAP])
+        spec = mapping["items"]["example_amp_status"]
+        self.assertEqual(spec["route"], [{"item": "loc_example_east_source", "is": ["example_computer"],
+                                          "input": {"item": "example_amp_input", "is": ["optical"]}}])
+        labels = {"device": "example_amp", "room": "example_east", "kind": "streaming_amp",
+                  "item": "example_amp_status", "point": "playing"}
+        sub = {"devices": {"example_amp": mapping["devices"]["example_amp"]}, "items": {"example_amp_status": spec}}
+        online = [{"UID": uid, "statusInfo": {"status": "ONLINE"}} for uid in mapping["devices"]["example_amp"]["things"]]
+        # The room shows the computer (a picture alone) and the amp is on the
+        # input its route feeds: idle. Another source or another input is
+        # sound, and what tells not read yet is unknown, not sound.
+        for states, sample in (
+                ({"loc_example_east_source": "example_computer", "example_amp_input": "optical"},
+                 ("thermite_item_value", labels, 0.0)),
+                ({"loc_example_east_source": "off", "example_amp_input": "optical"},
+                 ("thermite_item_value", labels, 1.0)),
+                ({"loc_example_east_source": "example_computer", "example_amp_input": "bluetooth"},
+                 ("thermite_item_value", labels, 1.0)),
+                ({"loc_example_east_source": "NULL", "example_amp_input": "optical"},
+                 ("thermite_item_unknown", labels, 1.0)),
+                ({"loc_example_east_source": "example_computer", "example_amp_input": "UNDEF"},
+                 ("thermite_item_unknown", labels, 1.0)),
+                ({"loc_example_east_source": "NULL", "example_amp_input": "NULL"},
+                 ("thermite_item_unknown", labels, 1.0))):
+            answer = items(example_amp_status="play", example_amp_title=" ", **states)
+            self.assertEqual(exporter._items(sub, answer, online)[0], sample, states)
 
     def test_a_speaker_is_required_while_it_played_lately_or_was_playing_when_last_read(self):
         recorded = [rule for rule in yaml.safe_load(self.FILES["prometheus/alerts.yml"])["groups"][0]["rules"]
@@ -807,6 +844,25 @@ class Checks(unittest.TestCase):
         amp = [rule for rule in recorded if rule["labels"].get("device") == "example_amp"]
         self.assertTrue(amp)
         self.assertEqual({rule["labels"]["required"] for rule in amp}, {"true", "false"})
+
+    def test_a_source_of_picture_alone_does_not_use_the_rooms_audio_device(self):
+        inventory = copy.deepcopy(INVENTORY)
+        inventory["devices"].append({"id": "example_amp", "room": "example_east", "kind": "streaming_amp",
+                                     "make": "WiiM", "model": "Amp Pro", "ip": "192.0.2.41",
+                                     "controls": {"observe": ["wiim_http"], "control": ["wiim_http"]}})
+        east = inventory["routing"]["rooms"]["example_east"]
+        east["audio"] = "example_amp"
+        east["carries"] = {"example_computer": "display"}
+        self.assertEqual(oh_inventory.validate(inventory), [])
+        mapping = json.loads(rendered(inventory)[oh_metrics.EXPORTER_MAP])
+        east_sources = mapping["paths"]["loc_example_east_source"]["sources"]
+        self.assertEqual(list(east_sources), ["example_computer"])
+        self.assertNotIn("example_amp", east_sources["example_computer"])
+        # It is still checked, by its own playing alone: no zone's demand.
+        recorded, _ = alerts.checks(mapping)
+        amp = [rule for rule in recorded if rule["labels"].get("device") == "example_amp"]
+        self.assertTrue(amp)
+        self.assertFalse(any("zone" in rule["labels"] for rule in amp))
 
     def test_a_shared_receivers_power_is_checked_per_zone(self):
         from tests import test_zone_sync as zones

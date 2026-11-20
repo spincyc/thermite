@@ -539,6 +539,23 @@
                 "description": "the device its Volume and Mute drive: a soundbar or streaming amplifier in a room it covers, or its own receiver or display",
                 "type": "string"
               },
+              "carries": {
+                "description": "what a source's signal carries to it where that is not both picture and sound: display for a picture alone (a computer whose sound stays with it), audio for sound alone; a display source's path leaves out the room's audio device, which plays none of it",
+                "type": "object",
+                "additionalProperties": {
+                  "description": "what the source carries",
+                  "type": "string",
+                  "enum": [
+                    "display",
+                    "audio",
+                    "both"
+                  ]
+                }
+              },
+              "audio_input": {
+                "description": "the input of its audio device that its route feeds (optical, for a streaming amplifier on its HDMI switch's audio out); without it, any sound that device plays with no track named is taken to come from the route",
+                "type": "string"
+              },
               "receiver": {
                 "description": "its receiver",
                 "type": "object",

@@ -103,6 +103,30 @@ def audio_page(device: dict) -> dict | None:
     return next((page for module in integrations.defining("audio") if (page := module.audio(device))), None)
 
 
+def quiet_routes(house: House, ident: str) -> list[dict]:
+    """The routes that feed a device and can carry it no sound: for each
+    routed room whose `audio` it is and whose sources include some that
+    carry a picture alone (routing's carries: display), {"room", "item": the
+    room's Source Item, "is": those sources}, and "input": {"item": the
+    device's input Item, "is": [the room's audio_input]} where the room
+    names the input its route feeds. While a room reads one of those
+    sources (and the device is on that input), whatever the device plays
+    with no track named is no sound: an amplifier on the optical out of an
+    HDMI switch that shows a computer."""
+    device = house.by_id[ident]
+    out = []
+    for room, entry in ((house.data.get("routing") or {}).get("rooms") or {}).items():
+        quiet = [source for source in entry.get("sources") or [] if routing.carried(entry, source) == "display"]
+        if entry.get("audio") != ident or not quiet:
+            continue
+        found = {"room": room, "item": routing.item_name(room), "is": quiet}
+        selector = (provider(device)[1] or {}).get("input") or {}
+        if entry.get("audio_input") is not None and selector.get("item"):
+            found["input"] = {"item": selector["item"], "is": [str(entry["audio_input"])]}
+        out.append(found)
+    return out
+
+
 def capabilities(device: dict) -> tuple[dict | None, str | None, str | None]:
     module, control = provider(device)
     if module is not None:
@@ -143,6 +167,8 @@ def build(house: House) -> dict:
         if (page := audio_page(device)) and control:
             row["audio"] = {**page, "place": house.room_label(device["room"]),
                             "rooms": routing.guard_rooms(house, ident)}
+            if page.get("state") and (quiet := quiet_routes(house, ident)):
+                row["audio"]["state"] = {**page["state"], "route": quiet}
         availability = next((entry for module in integrations.defining("remote_availability")
                              if (entry := module.remote_availability(device)) is not None), None)
         if availability is not None:

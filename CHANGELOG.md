@@ -7,6 +7,22 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A routed room may say what a source's signal carries to it
+  (`routing.rooms.<room>.carries.<source>`): `display` for a picture alone
+  (a computer whose sound stays with it), `audio` for sound alone, both
+  where it is left out. A display source's path leaves out the room's
+  `audio` device, which plays none of it: the Signal diagnostics, the
+  remotes' Topology and `thermite device` label such a path "display only"
+  ("audio only" the other way), and the device is not required while the
+  room shows that source. `audio_input` names the input of the room's
+  `audio` device its route feeds (optical, for a streaming amplifier on
+  its HDMI switch's audio out). While the room shows a source of picture
+  alone and the device is on that input, what it plays with no track
+  named is no sound: the boards and the checks read it idle, and the
+  remotes' Listen shows Nothing playing with Play off, as a soundbar's
+  silent TV input; until the room's Source or the input is first read,
+  what it plays is unknown rather than sound. An amplifier so fed no
+  longer shows Playing while its desk shows a computer.
 - An AVPro Edge AC-MX-44X HDMI matrix (`avpro_telnet`) can restart
   nightly too, as its own web page's Reboot button restarts it: `SET RBT`
   over telnet restarts its controller with its routes kept, and its web

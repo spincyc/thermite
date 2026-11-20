@@ -623,8 +623,9 @@ def exporter_map(house: House, conf=None) -> dict:
     Source selector and each speaker's playing state: the state Item of its
     audio page (oh_integrations audio(), as the remotes' Listen reads it),
     with the page's playing values and its title Item, which tell a track
-    from TV audio or line-in (exporter PLAYING_TRACK), and its silent
-    reading, which tells TV audio from a silent TV."""
+    from TV audio or line-in (exporter PLAYING_TRACK), its silent reading,
+    which tells TV audio from a silent TV, and the routes that feed it a
+    picture alone (remote_model.quiet_routes())."""
     import oh_integrations
     from oh_integrations import _commands
     from oh_features import remote_model
@@ -639,6 +640,7 @@ def exporter_map(house: House, conf=None) -> dict:
             things.setdefault(thing_device(uid), []).append(uid)
     devices: dict[str, dict] = {}
     items: dict[str, dict] = {}
+    present = {name for file in conf.yaml.values() for name in file.items}
     for device in house.devices:
         ident = device["id"]
         devices[ident] = {"room": device["room"], "kind": device["kind"], "label": house.label(device),
@@ -671,12 +673,17 @@ def exporter_map(house: House, conf=None) -> dict:
         page = remote_model.audio_page(device) or {}
         state, title = page.get("state") or {}, (page.get("track") or {}).get("title")
         silent = state.get("silent") or {}
-        if state.get("item") in dict(conf.points(ident)) and state.get("playing"):
+        points = dict(conf.points(ident))
+        routes = [{key: route[key] for key in ("item", "is", "input") if key in route}
+                  for route in remote_model.quiet_routes(house, ident)
+                  if route["item"] in present and ("input" not in route or route["input"]["item"] in points)]
+        if state.get("item") in points and state.get("playing"):
             items[state["item"]] = {"device": ident, "room": device["room"], "kind": device["kind"], "point": "playing",
                                     "convert": "playing", "playing": [str(value) for value in state["playing"]],
-                                    **({"title": title} if title in dict(conf.points(ident)) else {}),
+                                    **({"title": title} if title in points else {}),
                                     **({"silent": {"item": silent["item"], "is": [str(value) for value in silent["is"]]}}
-                                       if silent.get("item") in dict(conf.points(ident)) else {})}
+                                       if silent.get("item") in points else {}),
+                                    **({"route": routes} if routes else {})}
     for file in conf.yaml.values():
         for name, item in file.items.items():
             groups = item.get("groups") or []
@@ -696,7 +703,6 @@ def exporter_map(house: House, conf=None) -> dict:
     # Each device's playing Items (oh_features.playing), which the exporter
     # keeps as thermite_playing_timestamp_seconds.
     from oh_features import playing
-    present = {name for file in conf.yaml.values() for name in file.items}
     shown = {device["id"]: names for device in house.devices
              if (names := playing.items(device)) and set(names.values()) <= present}
     result = {"version": MAP_VERSION, "rooms": rooms, "devices": devices, "sources": sources,
@@ -747,14 +753,15 @@ def health_paths(house: House, conf, items: dict) -> tuple[dict, list[dict]]:
 
     Membership is per source, not room: local display sources bypass the
     receiver and matrices, and a room's `audio` device (the one its Volume
-    and Mute drive) joins every source. Only control integrations supply
-    availability checks; an optional Cast observer cannot invalidate working
-    Sony control. A check reads what holds now, and which readings those
-    are is signals()'s to say: a Thing's status, a probed port, what a
-    rule's own reads of the device meet. The device's problem Item is none:
-    it keeps the problem of a command until the device takes one
-    (oh_integrations._commands), so it would fail a check for as long as
-    nobody commands the device again.
+    and Mute drive) joins every source whose signal carries sound, not one
+    that carries a picture alone (routing's carries). Only control
+    integrations supply availability checks; an optional Cast observer
+    cannot invalidate working Sony control. A check reads what holds now,
+    and which readings those are is signals()'s to say: a Thing's status, a
+    probed port, what a rule's own reads of the device meet. The device's
+    problem Item is none: it keeps the problem of a command until the
+    device takes one (oh_integrations._commands), so it would fail a check
+    for as long as nobody commands the device again.
     Infrastructure serving routing is monitored even when every zone is Off.
     A speaker (a `playing` point, exporter_map()) is in use while it plays,
     or did within alerts.IN_USE: its demand is {"item": its playing Item,
@@ -811,14 +818,15 @@ def health_paths(house: House, conf, items: dict) -> tuple[dict, list[dict]]:
         name = routing.item_name(zone)
         paths[name] = {"zone": zone, "label": entry["label"], "sources": {}}
         # The device the room's Volume and Mute drive (routing.rooms.<id>.audio)
-        # is in use with every source, though no signal passes through it.
+        # is in use with every source that carries sound, though no signal
+        # passes through it.
         audio = (routed.get(zone) or {}).get("audio")
         for source, path in entry["sources"].items():
             nodes = path["nodes"] + path.get("audioNodes", [])
             used = paths[name]["sources"][source] = list(dict.fromkeys(n["device"] for n in nodes))
             for node in nodes:
                 device_checks(node["device"], {"item": name, "source": source}, node)
-            if audio in devices and audio not in used:
+            if audio in devices and audio not in used and path.get("carries") != "display":
                 used.append(audio)
                 device_checks(audio, {"item": name, "source": source})
     for ident, device in devices.items():

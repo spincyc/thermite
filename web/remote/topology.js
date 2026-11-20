@@ -38,7 +38,9 @@
         const usb = (Array.isArray(route.usb) ? route.usb : []).filter(entry => entry && seen.has(entry.device)).map(entry => ({
           device: entry.device, host: port(entry.host), ports: (Array.isArray(entry.ports) ? entry.ports : []).map(port).filter(Boolean)
         }));
-        routes[room][source] = { label: text(route.label) || source, nodes: path, usb, ...(audioNodes.length ? { audioNodes } : {}) };
+        // What the source's signal carries to the room: display, audio or both.
+        const carries = ["display", "audio"].includes(route.carries) ? route.carries : "both";
+        routes[room][source] = { label: text(route.label) || source, nodes: path, usb, carries, ...(audioNodes.length ? { audioNodes } : {}) };
       }
     }
     const edgeIds = new Set();
@@ -156,6 +158,11 @@
     if (!state || !own(routes, state.value)) return { label: "Unknown", detail: "No source report, no answer, or an input this room does not offer." };
     if (state.value === source) return { label: "Reported", detail: pending ? "Last reported source; switching to " + routes[pending].label + "." : "The room reports this configured source." };
     return { label: "Configured", detail: "The room reports " + routes[state.value].label + ", not this source." };
+  }
+
+  // A path that carries a picture or sound alone says so.
+  function carriesLabel(route) {
+    return route.carries === "display" ? "Display only" : route.carries === "audio" ? "Audio only" : "";
   }
 
   function nativePorts(node) {
@@ -327,7 +334,7 @@
           else if (key === "status") {
             cell.appendChild(element("span", { class: "row-status", "data-status-label": row.status.label, title: row.status.detail }, row.status.label));
             if (row.status.label === "Switching" || row.status.label === "Unknown") cell.appendChild(element("small", { class: "status-detail", title: row.status.detail }, row.status.detail));
-          } else if (key === "source") cell.appendChild(deviceButton(row.sourceNode, kind + ":" + row.id + ":source", row.sourceLabel));
+          } else if (key === "source") cell.appendChild(deviceButton(row.sourceNode, kind + ":" + row.id + ":source", row.sourceLabel, kind === "video" ? carriesLabel(row.path.route) : ""));
           else if (key === "usb") cell.appendChild(deviceButton(row.matrix, kind + ":" + row.id + ":usb", null, "HOST " + row.host));
           else if (key === "ports") cell.textContent = row.ports.join(", ") || "—";
           else {
@@ -365,7 +372,7 @@
     const list = element("ul", { class: "route-list" });
     view.paths.forEach(path => {
       const row = element("li", { class: "route-row" });
-      row.append(element("h3", {}, roomLabel(path.room) + " · " + path.route.label), element("p", {}, path.route.nodes.map(node => node.label + (nativePorts(node) ? " [" + nativePorts(node) + "]" : "")).join(" → ")));
+      row.append(element("h3", {}, roomLabel(path.room) + " · " + path.route.label + (carriesLabel(path.route) ? " · " + carriesLabel(path.route) : "")), element("p", {}, path.route.nodes.map(node => node.label + (nativePorts(node) ? " [" + nativePorts(node) + "]" : "")).join(" → ")));
       if (path.route.audioNodes) row.appendChild(element("p", {}, "Configured audio · " + path.route.audioNodes.map(node => node.label + (nativePorts(node) ? " [" + nativePorts(node) + "]" : "")).join(" → ")));
       path.route.usb.forEach(usb => row.appendChild(element("p", {}, "Configured USB · " + deviceLabel(usb.device) + " HOST " + usb.host + " · DEVICE ports " + usb.ports.join(", "))));
       list.appendChild(row);

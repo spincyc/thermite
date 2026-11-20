@@ -332,8 +332,10 @@ _TABLE = (
                      (previous, play_pause, next, tv)
           state      {"item", "playing": [values while it plays], "silent"
                      (optional): {"item", "is": [values]} while which it
-                     plays nothing unless it names a track: a soundbar's TV
-                     input, which reads as playing with the TV silent}
+                     plays nothing unless it names a track, and before
+                     whose first reading what it plays is not known: a
+                     soundbar's TV input, which reads as playing with the
+                     TV silent}
           track      {"title", "artist", "album", "service" (Item names,
                      free text), "duration" (seconds), "sample_rate" (Hz),
                      "bit_depth" (bits): plain Number Items}

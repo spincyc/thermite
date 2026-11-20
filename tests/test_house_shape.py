@@ -180,6 +180,7 @@ class Reference(unittest.TestCase):
         self.assertEqual(schema["properties"]["later"]["type"], ["array", "null"])
         rooms = schema["properties"]["routing"]["properties"]["rooms"]["additionalProperties"]["properties"]
         self.assertEqual(rooms["usb_unused"]["enum"], ["preserve", "park"])
+        self.assertEqual(rooms["carries"]["additionalProperties"]["enum"], ["display", "audio", "both"])
         self.assertEqual(json.loads(oh_site.build()["house.schema.json"]), schema)
         self.assertTrue(oh_site.BUILT.fullmatch("docs/house.schema.json"))
 
