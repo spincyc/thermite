@@ -470,11 +470,17 @@ A device that does better after a restart can restart every night. Give it
 `reboot: nightly` in the house file. The top-level `reboots: {time:
 "03:00"}` sets when, in the host's time zone; 03:00 is the default. Only a
 device Thermite can restart without cutting its power can opt in: an
-HDFury VRROOM, a Denon or Marantz receiver under HEOS control, or an OREI
-UKM-404 USB matrix (or a rebadge of it), whose own web page's Reboot
-command restarts its controller with each port's host kept. That does not
-restart the matrix's network module, so it does not cure a matrix whose
-web page or network has stopped answering. Whether
+HDFury VRROOM, an AVPro Edge AC-MX-44X HDMI matrix, a Denon or Marantz
+receiver under HEOS control, or an OREI UKM-404 USB matrix (or a rebadge
+of it), whose own web page's Reboot command restarts its controller with
+each port's host kept. That does not restart the UKM-404's network module,
+so it does not cure a matrix whose web page or network has stopped
+answering. The AVPro restarts as its own web page's Reboot button does:
+its controller first, then its network module. Its routes are kept, and
+it answers again in about 20 seconds, Control4 included. A matrix whose
+telnet port and web page have already stopped answering cannot take that
+command, so the nightly restart can only head off such a lockup, not
+cure one. Whether
 a receiver's HEOS restart also restarts its audio and video processing,
 and not only its network module, is not confirmed. Apple TVs have no such
 command, and a SHIELD needs ADB, which Thermite does not use.
@@ -482,8 +488,9 @@ command, and a SHIELD needs ADB, which Thermite does not use.
 The devices restart one at a time, two minutes apart: receivers before
 switches, so each switch then reads its receiver's EDID afresh. A device
 is skipped while it does not answer or is in use, meaning a receiver with
-a zone on, a VRROOM whose input has a signal, or a USB matrix while a room
-whose USB ports it switches is on. A VRROOM whose web page has
+a zone on, a VRROOM whose input has a signal, a USB matrix while a room
+whose USB ports it switches is on, or an AVPro while a room that shows one
+of its outputs is on. A VRROOM whose web page has
 stopped answering while its telnet port still answers is restarted anyway,
 since that hang is what the restart cures. After each restart
 Thermite waits up to five minutes for the device to answer again. A USB

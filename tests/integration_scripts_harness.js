@@ -357,17 +357,26 @@ test('a failed restore of the previous keystore stops retrying and shows failed 
 // connection and close it at once, `mute` close one at its next request,
 // unanswered, and `hangup` close one at that request, unanswered. `silent`
 // takes a SET without answering it, and `down` takes no connection. close()
-// closes every connection while idle. `format` shapes each answer.
+// closes every connection while idle. `format` shapes each answer. SET RBT
+// is answered RBT, then its listing again on the same connection, and no
+// GET or SET is answered for restartMs; `rbt` 'refuse' answers it CMD ERR
+// and 'silent' not at all. Its web server records each request (posts) and
+// answers webStatus, or, while `webDown`, takes no connection.
 function avpro({ send = true } = {}) {
   const clock = { now: 0 }, hooks = [];
   const matrix = { refuse: false, mute: false, hangup: null, silent: false, error: false, down: false, routes: [1, 1, 1, 1], opened: [],
-    requests: [], links: [],
+    requests: [], links: [], rbt: 'answer', restartMs: 4000, downUntil: -1, restarts: 0, posts: [], webStatus: 200, webDown: false,
     format: line => line, close() { for (const link of matrix.links) link.peerClosed = true; } };
   const listing = () => [...matrix.routes.map((input, i) => `OUT${i + 1} VS IN${input}`),
     ...matrix.routes.map((_, i) => `OUT${i + 1} EXAUD LEV100`)];
   const thermiteIO = {
     deadline: ms => clock.now + ms,
     remaining: end => { if (end <= clock.now) throw Error('deadline'); return end - clock.now; },
+    http(url, method, body, headers) {
+      if (matrix.webDown) throw Error('Connection refused');
+      matrix.posts.push([url, method, body, headers['Content-Type']]);
+      return { getStatus: () => matrix.webStatus };
+    },
     open() {
       if (matrix.down) throw Error('refused');
       matrix.opened.push(clock.now / 10000);
@@ -387,6 +396,14 @@ function avpro({ send = true } = {}) {
       const request = text.replace(/\r\n$/, '');
       matrix.requests.push(request);
       if (matrix.mute || request === matrix.hangup) { link.peerClosed = true; return; }
+      if (request === 'SET RBT') {
+        if (matrix.rbt === 'refuse') link.lines.push('CMD ERR');
+        else if (matrix.rbt === 'answer') {
+          matrix.restarts += 1; matrix.downUntil = clock.now + matrix.restartMs; link.lines.push('RBT', ...listing());
+        }
+        return;
+      }
+      if (clock.now < matrix.downUntil) return;
       const set = /^SET OUT(\d+) VS IN(\d+)$/.exec(request);
       if (set && matrix.error) link.lines.push('CMD ERR');
       else if (set && matrix.silent) matrix.routes[set[1] - 1] = Number(set[2]);
@@ -399,13 +416,15 @@ function avpro({ send = true } = {}) {
   Object.assign(items, { matrix_problem: 'NULL', matrix_avpro_telnet_commands: 'NULL' });
   const source = send ? avproSource : avproSource.replace('const SEND = true;', 'const SEND = false;');
   const loaded = run(source.replace('// THERMITE_BOUNDED_IO', ''), { DEVICES: [{ id: 'matrix', host: '192.0.2.30', port: 23,
-    inputs: 4, outputs: 4 }] }, { items, clock, globals: { thermiteIO }, strict: true,
+    webPort: 80, inputs: 4, outputs: 4 }] }, { items, clock, globals: { thermiteIO }, strict: true,
     runtime: { lifecycleTracker: { addDisposeHook: hook => hooks.push(hook) } } });
   const warnings = () => loaded.said().filter(([level]) => level === 'warn').map(([, message]) => message);
   return { ...loaded, clock, matrix, items, warnings, unload: () => hooks.forEach(hook => hook()),
     poll: () => { loaded.rules.avpro_telnet_matrix_poll.execute(); clock.now += 10000; },
     command: (output, input) => loaded.rules.avpro_telnet_matrix_command.execute({
-      itemName: `matrix_output${output}_input`, receivedCommand: String(input) }) };
+      itemName: `matrix_output${output}_input`, receivedCommand: String(input) }),
+    reboot: (value = 'reboot') => loaded.rules.avpro_telnet_matrix_command.execute({
+      itemName: 'matrix_reboot', receivedCommand: value }) };
 }
 
 test('an AVPro matrix is read every 10 s and switched on one kept connection, closed when the script unloads', () => {
@@ -516,12 +535,70 @@ test('each way an AVPro switch ends is its record, and what the matrix did not t
 
 test('a read-only copy connects to no AVPro matrix and only logs what it would send', () => {
   const r = avpro({ send: false });
-  r.poll(); r.poll(); r.command(4, 2);
+  r.poll(); r.poll(); r.command(4, 2); r.reboot();
   assert.deepEqual(r.matrix.opened, []); assert.deepEqual(r.posted.filter(([item]) => item.includes('_input')), []);
   assert(r.logs.some(([level, message]) => level === 'info' && message === 'matrix: SEND is false, not sending SET OUT4 VS IN2'));
+  assert(r.logs.some(([level, message]) => level === 'info' && message === 'matrix: SEND is false, not sending SET RBT'));
   // Its own record says the command went nowhere, and blames no matrix.
-  assert.deepEqual(r.recorded(), [['warn', 'matrix_output4_input', '2', 'dropped', 'read_only']]);
+  assert.deepEqual(r.recorded(), [['warn', 'matrix_output4_input', '2', 'dropped', 'read_only'],
+    ['warn', 'matrix_reboot', 'reboot', 'dropped', 'read_only']]);
   assert.deepEqual(r.problems('matrix_problem'), ['UNDEF']);
+});
+
+test('an AVPro reboot is SET RBT, then its network module\'s restart; nothing is sent until it has restarted', () => {
+  const r = avpro(), item = 'matrix_reboot';
+  r.poll();
+  r.reboot();
+  assert.deepEqual(r.matrix.requests, ['GET OUT0 VS', 'SET RBT']); assert.equal(r.matrix.restarts, 1);
+  assert.deepEqual(r.matrix.posts, [['http://192.0.2.30:80/do', 'POST', '{"cmd":"c s reboot"}', 'application/json;charset=utf-8']]);
+  assert(r.matrix.links[0].closed);
+  for (let output = 1; output <= 4; output++) assert.equal(r.items[`matrix_output${output}_input`], 'UNDEF');
+  // For 30 s a switch is not sent, and a poll reads nothing.
+  r.command(4, 2); r.poll(); r.poll(); r.poll();
+  assert.deepEqual(r.matrix.requests, ['GET OUT0 VS', 'SET RBT']); assert.equal(r.items.matrix_output4_input, 'UNDEF');
+  // Then a new connection reads it again.
+  r.poll();
+  assert.deepEqual(r.matrix.opened, [0, 4]); assert.deepEqual(r.matrix.requests.slice(2), ['GET OUT0 VS']);
+  assert.equal(r.items.matrix_output4_input, '1');
+  r.command(4, 2);
+  assert.equal(r.items.matrix_output4_input, '2');
+  assert.deepEqual(r.recorded(), [['info', item, 'reboot', 'applied', '-'], ['warn', 'matrix_output4_input', '2', 'unsent', 'not_ready'],
+    ['info', 'matrix_output4_input', '2', 'applied', '-']]);
+  assert.deepEqual(r.warnings(), ['matrix: restarting, so SET OUT4 VS IN2 is not sent']);
+  assert(r.logs.some(([level, message]) => level === 'info' &&
+    message === 'matrix: answered SET RBT and restarts its network module; it is read again in 30 s'));
+  // The routing executor queues a reboot in order, as an action, and takes only `reboot`.
+  const provider = r.context.routingProvider();
+  assert.equal(provider.oneShot(item), true); assert.equal(provider.oneShot('matrix_output4_input'), false);
+  assert.equal(provider.has(item, 'reboot'), true); assert.equal(provider.has(item, 'restart'), false);
+  r.clock.now += 30000;
+  assert.deepEqual(provider.execute(item, 'reboot'), { outcome: 'applied' });
+  assert.equal(r.matrix.restarts, 2);
+});
+
+test('an AVPro that refuses SET RBT keeps its routes; one that does not answer it is UNDEF and connected again', () => {
+  const r = avpro(), item = 'matrix_reboot';
+  r.poll();
+  r.matrix.rbt = 'refuse'; r.reboot();
+  assert.equal(r.items.matrix_output4_input, '1'); assert.deepEqual(r.warnings(), ['matrix: refused SET RBT']);
+  r.matrix.rbt = 'silent'; r.reboot();
+  assert.equal(r.items.matrix_output4_input, 'UNDEF'); assert(r.matrix.links[0].closed);
+  assert.deepEqual(r.warnings().slice(1), ['matrix: did not answer SET RBT']);
+  r.poll();
+  assert.deepEqual(r.matrix.opened, [0, 1]); assert.equal(r.items.matrix_output4_input, '1');
+  r.reboot('restart');
+  r.matrix.down = true; r.matrix.close(); r.reboot();
+  assert.deepEqual(r.matrix.posts, []);
+  // A web server that does not take the network module's restart leaves the
+  // controller's under way; a second reboot meanwhile is not sent.
+  r.matrix.down = false; r.matrix.rbt = 'answer'; r.matrix.webDown = true; r.reboot(); r.reboot();
+  assert.deepEqual(r.warnings().slice(-1), ['matrix: answered SET RBT, but its network module was not restarted: Connection refused']);
+  r.matrix.webDown = false; r.matrix.webStatus = 500; r.clock.now += 30000; r.reboot();
+  assert.deepEqual(r.warnings().slice(-1), ['matrix: answered SET RBT, but its network module was not restarted: its web server answered HTTP 500']);
+  assert.deepEqual(r.recorded(), [['warn', item, 'reboot', 'refused', 'refused'], ['warn', item, 'reboot', 'unknown', 'no_answer'],
+    ['warn', item, '?', 'dropped', 'invalid'], ['warn', item, 'reboot', 'unsent', 'unreachable'], ['info', item, 'reboot', 'applied', '-'],
+    ['warn', item, 'reboot', 'unsent', 'not_ready'], ['info', item, 'reboot', 'applied', '-']]);
+  assert.equal(r.matrix.restarts, 2);
 });
 
 // A Sony projector on ADCP. It greets each connection with `greeting`

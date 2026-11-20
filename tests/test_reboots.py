@@ -26,6 +26,7 @@ from oh_cli import reboot as cli  # noqa: E402
 from oh_conf import House, unfilled  # noqa: E402
 from oh_features import reboots  # noqa: E402
 from oh_integrations import _io, ukm404_http  # noqa: E402
+from tests.test_vrroom_telnet import HOUSE as VRROOM_HOUSE  # noqa: E402
 from tests.test_zone_sync import HOUSE as ROUTED  # noqa: E402
 
 SWITCH = {"id": "example_switch", "room": "example_desk", "kind": "hdmi_switch", "make": "HDFury", "model": "VRROOM",
@@ -76,7 +77,7 @@ class Validation(unittest.TestCase):
         device(data, "example_receiver")["reboot"] = "daily"
         self.assertEqual(render.validate(data), [
             "example_tv.reboot: none of its integrations under control can restart it; "
-            "these can: heos, ukm404_http, vrroom_telnet",
+            "these can: avpro_telnet, heos, ukm404_http, vrroom_telnet",
             "example_receiver.reboot: 'daily' is not nightly"])
 
     def test_a_switch_restarts_only_with_its_web_page_to_say_it_is_idle(self):
@@ -117,6 +118,54 @@ def routed():
     data = copy.deepcopy(ROUTED)
     device(data, "example_usb")["reboot"] = "nightly"
     return data
+
+
+def den():
+    """A fictional room shown by output 4 of its own AVPro matrix
+    (example_avpro), which restarts nightly."""
+    return {
+        "version": 1,
+        "rooms": {"example_den": {"label": "Example Den", "tag": "Room"}},
+        "devices": [
+            {"id": "example_avpro", "room": "example_den", "kind": "hdmi_matrix", "make": "AVPro Edge",
+             "model": "AC-MX-44X", "ip": "192.0.2.70", "controls": {"control": ["avpro_telnet"]}, "reboot": "nightly"},
+            {"id": "example_den_computer", "room": "example_den", "kind": "computer", "model": "Computer",
+             "ip": "192.0.2.72"}],
+        "routing": {"sources": {"example_den_computer": {"label": "Computer"}},
+                    "rooms": {"example_den": {
+                        "hdmi_switch": {"device": "example_avpro", "output": 4, "inputs": {"example_den_computer": 1}},
+                        "sources": ["example_den_computer"]}}},
+    }
+
+
+class HdmiMatrix(unittest.TestCase):
+    def test_an_avpro_restarts_only_while_each_room_showing_its_outputs_is_off(self):
+        data = den()
+        self.assertEqual(render.validate(data), [])
+        self.assertEqual(reboots.table(House(data))["devices"], [{
+            "id": "example_avpro", "nightly": True, "item": "example_avpro_reboot",
+            "answers": [f"example_avpro_output{output}_input" for output in range(1, 5)], "things": [], "signs": [],
+            "idle": [{"item": "loc_example_den_source", "is": "off"}]}])
+        items = {name: item for file in render.build(House(data)).yaml.values() for name, item in file.items.items()}
+        self.assertEqual(items["example_avpro_reboot"], {
+            "type": "String", "label": "Reboot", "groups": ["example_avpro"], "tags": ["Control"], "autoupdate": False,
+            "metadata": {"commandDescription": {"config": {"options": "reboot=Reboot"}}}})
+
+    def test_an_avpro_no_room_shows_cannot_restart_nightly(self):
+        data = den()
+        del data["routing"]
+        self.assertEqual(render.validate(data), [
+            "example_avpro.reboot: nothing would show it idle; an HDMI matrix restarts nightly only while the rooms "
+            "that show its outputs (routing.rooms.<room>.hdmi_switch) are Off, and no room lists it"])
+        del device(data, "example_avpro")["reboot"]
+        self.assertEqual(render.validate(data), [])
+
+    def test_a_switch_that_reads_its_own_signal_is_not_held_by_its_room(self):
+        """A desk left on its computer overnight is idle while the computer
+        sleeps, which only the switch sees."""
+        entry = next(entry for entry in reboots.table(House(copy.deepcopy(VRROOM_HOUSE)))["devices"]
+                     if entry["id"] == "example_switch")
+        self.assertEqual([check["item"] for check in entry["idle"]], ["example_switch_signal"])
 
 
 def usb_thing(files):

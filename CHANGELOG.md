@@ -7,6 +7,20 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- An AVPro Edge AC-MX-44X HDMI matrix (`avpro_telnet`) can restart
+  nightly too, as its own web page's Reboot button restarts it: `SET RBT`
+  over telnet restarts its controller with its routes kept, and its web
+  server is then sent the network module's restart (`c s reboot`). It
+  answers again in about 20 seconds, and Control4 reconnects by itself. A
+  new `<id>_reboot` Item, commanded `reboot`, sends it; until the matrix is
+  read again 30 seconds later no read or switch is sent, and its outputs
+  are UNDEF. `SET RST` and the web page's factory reset are never sent.
+  Nothing the matrix reports shows an output in use, so it restarts only
+  while each room that shows one of its outputs
+  (`routing.rooms.<room>.hdmi_switch`) is Off, and `generate` refuses
+  `reboot: nightly` on a matrix no room shows. A matrix whose telnet port
+  and web page have already stopped answering cannot take the command:
+  the nightly restart heads off such a lockup, and does not cure one.
 - A rule of Thermite's that was switched off in the runtime's own pages
   stayed off through every restart and install, and nothing reported it:
   the device it reads or drives just went quiet (a room showing "Source

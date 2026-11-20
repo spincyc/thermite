@@ -271,9 +271,11 @@ _TABLE = (
         readings that all hold while nothing uses it, each {"item", "is"},
         or {"item", "field", "is", "maxAge"} for a field of a diagnostics
         snapshot, with "unreadIsIdle": True where a missing snapshot is a
-        hang that the restart cures; oh_features.reboots adds, for a USB
-        matrix, that each room whose ports it switches is Off}""",
-         order=("heos", "ukm404_http", "vrroom_telnet")),
+        hang that the restart cures; "rooms": True (optional) for an HDMI
+        matrix that reports nothing of its use. oh_features.reboots adds,
+        for a USB matrix, that each room whose ports it switches is Off,
+        and with "rooms", that each room showing one of its outputs is Off}""",
+         order=("heos", "ukm404_http", "vrroom_telnet", "avpro_telnet")),
 
     # A module whose Items tell what its devices play, for what is playing
     # (oh_features.playing).

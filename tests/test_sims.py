@@ -19,6 +19,7 @@ import oh_control4 as control4  # noqa: E402
 import oh_matrix_sim as matrix_sim  # noqa: E402
 import oh_sony_sim as sony_sim  # noqa: E402
 from oh_conf import House  # noqa: E402
+from oh_integrations import avpro_telnet  # noqa: E402
 from oh_testing import controls, routing  # noqa: E402
 
 
@@ -97,6 +98,24 @@ class MatrixSimTest(unittest.TestCase):
         status, reply = post(server.address, matrix_sim.PATH, {"comhead": "get video status"})
         self.assertEqual((status, reply["comhead"]), (200, "get video status"))
         self.assertEqual(matrix.comheads(), ["get video status"])
+
+
+class AVProSimTest(unittest.TestCase):
+    def test_set_rbt_is_answered_then_nothing_until_it_says_its_listing_again(self):
+        matrix = matrix_sim.AVPro([2, 1, 1, 1])
+        matrix.restart_s = 0.2
+        heard: list[str] = []
+        matrix.tell = heard.extend
+        self.assertEqual(matrix.answer(matrix.parse_line("SET RBT")), {"comhead": "set rbt", "result": 1, "lines": ["RBT"]})
+        self.assertEqual(matrix.answer(matrix.parse_line("GET OUT0 VS"))["lines"], [])
+        self.assertEqual(matrix.answer(matrix.parse_line("SET OUT1 VS IN3"))["lines"], [])
+        deadline = time.monotonic() + 5
+        while not heard and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertEqual(heard[:1], ["OUT1 VS IN2"])
+        self.assertEqual(matrix.answer(matrix.parse_line("GET OUT0 VS"))["lines"][:1], ["OUT1 VS IN2"])
+        self.assertEqual((matrix.restarts, matrix.unknown), (1, []))
+        self.assertLessEqual(set(matrix.comheads()), avpro_telnet.COMHEADS)
 
 
 class SonySimTest(unittest.TestCase):

@@ -391,14 +391,23 @@ class AVPro(TelnetMatrix):
     real one answers to SET is not recorded). Either may carry the web
     page's address prefix (A00). It records GET as "get vs" and SET as "set
     vs"; it answers a SET it refuses, and any line it does not know, with
-    nothing."""
+    nothing. `SET RBT` ("set rbt") is answered `RBT`; for restart_s
+    seconds after, as its controller restarts, it answers no GET or SET,
+    and then it says its listing again on every connection, which it keeps
+    open, as the real one does."""
 
     INPUTS = OUTPUTS = 4
     ROUTE = re.compile(r"(?:A\d+ )?(GET|SET) OUT(\d+) VS(?: IN(\d+))?")
+    RESTART = re.compile(r"(?:A\d+ )?SET RBT")
 
     def __init__(self, routes: list[int] | None = None) -> None:
         super().__init__()
         self.routes = list(routes or [1] * self.OUTPUTS)
+        #: Seconds from SET RBT to answering again: the house's, firmware
+        #: 1.39, answered again 3.9 s after (2026-11-19).
+        self.restart_s = 4.0
+        self.restarts = 0
+        self.down_until = 0.0
 
     def listing(self) -> list[str]:
         """What it sends on connect."""
@@ -408,6 +417,8 @@ class AVPro(TelnetMatrix):
 
     def parse_line(self, line: str) -> dict:
         """The request a line makes."""
+        if self.RESTART.fullmatch(line):
+            return {"comhead": "set rbt"}
         match = self.ROUTE.fullmatch(line)
         if match is None:
             return {"comhead": line}
@@ -418,12 +429,22 @@ class AVPro(TelnetMatrix):
         return request
 
     def handlers(self) -> dict:
-        return {"get vs": self._get, "set vs": self._set}
+        return {"get vs": self._get, "set vs": self._set, "set rbt": self._restart}
 
     def _lines(self, outputs) -> list[str]:
         return [f"OUT{n} VS IN{self.routes[n - 1]}" for n in outputs]
 
+    def _restart(self, request: dict) -> dict:
+        self.restarts += 1
+        self.down_until = time.monotonic() + self.restart_s
+        timer = threading.Timer(self.restart_s, lambda: self.tell(self.listing()))
+        timer.daemon = True
+        timer.start()
+        return {"comhead": "set rbt", "result": 1, "lines": ["RBT"]}
+
     def _get(self, request: dict) -> dict:
+        if time.monotonic() < self.down_until:
+            return {"comhead": "get vs", "result": 1, "lines": []}
         output = request["output"]
         if "input" in request or not 0 <= output <= self.OUTPUTS:
             return {"comhead": "get vs", "result": 0, "lines": []}
@@ -431,6 +452,8 @@ class AVPro(TelnetMatrix):
         return {"comhead": "get vs", "result": 1, "lines": self._lines(outputs)}
 
     def _set(self, request: dict) -> dict:
+        if time.monotonic() < self.down_until:
+            return {"comhead": "set vs", "result": 1, "lines": []}
         output, input_ = request["output"], request.get("input")
         if not (1 <= output <= self.OUTPUTS and input_ is not None and 1 <= input_ <= self.INPUTS):
             return {"comhead": "set vs", "result": 0, "lines": []}

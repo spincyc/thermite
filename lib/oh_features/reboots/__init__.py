@@ -18,7 +18,10 @@ computer overnight is idle while the computer sleeps, which only the switch
 sees. A USB matrix shows nothing of its use, and its restart drops every
 keyboard and mouse on it, so it is idle only while each room whose device
 ports it switches (routing `usb`) is Off; one no room lists cannot opt in,
-and a port no room lists is not read. It
+and a port no room lists is not read. An HDMI matrix that reports nothing
+of its use (avpro_telnet) is idle likewise only while each room that shows
+one of its outputs (routing `hdmi_switch`) is Off; an output no room lists
+is not read. It
 commands the device's reboot Item, then waits for it to stop answering and
 answer again, up to 5 minutes, and pauses 2 minutes before the next. A
 device with a console (a USB matrix, whose network module keeps answering
@@ -100,10 +103,13 @@ def validate(data: dict) -> list[str]:
         elif provider(device) is None:
             problems.append(f"{where}.reboot: none of its integrations under control can restart it; "
                             f"these can: {', '.join(able)}")
-        elif device.get("id") and not provider(device).reboot(device)["idle"] and not rooms_off(data, device):
-            problems.append(f"{where}.reboot: nothing would show it idle; a USB matrix restarts nightly only "
-                            "while the rooms whose ports it switches (routing.rooms.<room>.usb) are Off, "
-                            "and no room lists it")
+        elif device.get("id") and not (spec := provider(device).reboot(device))["idle"] \
+                and not rooms_off(data, device, spec):
+            problems.append(f"{where}.reboot: nothing would show it idle; " + (
+                "an HDMI matrix restarts nightly only while the rooms that show its outputs "
+                "(routing.rooms.<room>.hdmi_switch) are Off" if spec.get("rooms") else
+                "a USB matrix restarts nightly only while the rooms whose ports it switches "
+                "(routing.rooms.<room>.usb) are Off") + ", and no room lists it")
     return problems
 
 
@@ -111,14 +117,22 @@ def rank(device: dict) -> int:
     return next((index for index, kinds in enumerate(ORDER) if device.get("kind") in kinds), len(ORDER))
 
 
-def rooms_off(data: dict, device: dict) -> list[dict]:
-    """Idle readings for a USB matrix: each room whose device ports it
-    switches is Off. Ports no room lists are not read."""
+def rooms_off(data: dict, device: dict, spec: dict | None = None) -> list[dict]:
+    """Idle readings for a matrix with none of its own: each room whose
+    device ports it switches (routing `usb`) is Off, and, when its reboot()
+    `spec` says `rooms`, each room that shows one of its outputs (routing
+    `hdmi_switch`). Ports and outputs no room lists are not read."""
     routed = data.get("routing")
     rooms = routed.get("rooms") if isinstance(routed, dict) else None
+    shown = bool(spec and spec.get("rooms"))
+
+    def serves(room: dict) -> bool:
+        usb, switch = room.get("usb"), room.get("hdmi_switch")
+        return (isinstance(usb, dict) and device["id"] in usb) or \
+            (shown and isinstance(switch, dict) and switch.get("device") == device["id"])
     return [{"item": routing.item_name(room), "is": routing.OFF}
-            for room, spec in (rooms if isinstance(rooms, dict) else {}).items()
-            if isinstance(spec, dict) and isinstance(spec.get("usb"), dict) and device["id"] in spec["usb"]]
+            for room, entry in (rooms if isinstance(rooms, dict) else {}).items()
+            if isinstance(entry, dict) and serves(entry)]
 
 
 def entry(house: House, device: dict) -> dict:
@@ -126,7 +140,7 @@ def entry(house: House, device: dict) -> dict:
     return {"id": device["id"], "nightly": device.get("reboot") == NIGHTLY,
             "item": spec["item"], "answers": list(spec["answers"]), "things": list(spec.get("things", ())),
             "signs": list(spec.get("signs", ())),
-            "idle": [dict(check) for check in spec["idle"]] + rooms_off(house.data, device),
+            "idle": [dict(check) for check in spec["idle"]] + rooms_off(house.data, device, spec),
             **({"console": dict(spec["console"])} if "console" in spec else {})}
 
 
