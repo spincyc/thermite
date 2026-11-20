@@ -753,7 +753,9 @@ def main(argv=None) -> int:
     parser.add_argument("--verify", action="store_true",
                         help="change nothing: check that the started runtime installed each repaired binding")
     parser.add_argument("addons", nargs="*", metavar="ADDON", help="the add-ons conf's addons.cfg lists (binding-http)")
-    args = parser.parse_args(argv)
+    # The add-ons follow the options that follow userdata, and Python 3.11's
+    # parse_args has already matched ADDON, empty, with userdata by then.
+    args = parser.parse_intermixed_args(argv)
     try:
         versions = json.loads(args.versions.read_text(encoding="utf-8"))
         wanted = repairs(versions, args.addons)
