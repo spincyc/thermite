@@ -94,8 +94,8 @@
   function hear(id) {
     const row = rows.get(id); if (!row || mode !== "listen" || !heard) return;
     const shown = heard.sessions.listen.status(id), state = stateOf(shown);
-    row.source.textContent = shown.playing ? shown.playing.replace(/^♪ /, "") : state === "unknown" || state === "unavailable" ? "Unknown" : "Nothing playing";
-    row.status.textContent = state === "unknown" ? WORDS.unknown : shown.short;
+    row.source.textContent = shown.playing ? shown.playing.replace(/^♪ /, "") : shown.input || (state === "unknown" || state === "unavailable" ? "Unknown" : "Nothing playing");
+    row.status.textContent = state === "unknown" ? WORDS.unknown : shown.input ? "Input selected" : shown.short;
     row.element.dataset.state = state;
   }
   function showLock(row, id) {

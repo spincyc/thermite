@@ -131,6 +131,8 @@
     // Assistant too; only the device itself knows it is silent
     // (audio.silent), and until it has read what tells, nobody knows.
     function stateOf(id) {
+      const feed = audio.inputFeed(id);
+      if (feed) return { playing: false, feed };
       const shown = heard(id);
       const quiet = shown ? audio.silent(id) : false;
       if (quiet !== false) return { playing: false, paused: false, title: null, unknown: quiet === null };
@@ -207,6 +209,8 @@
         const title = states[at].title;
         return { led: "ok", short: "Playing", spoken: "playing" + (title ? " " + title : ""), playing: "♪ " + (title || nameOf(ids[at], ids)) };
       }
+      const feed = states.find(state => state.feed);
+      if (feed) return { led: "ok", short: feed.feed, spoken: feed.feed, playing: null, input: feed.feed };
       if (states.length && states.every((state) => state.unknown)) {
         return states.some((state) => state.problem) ? { led: "bad", short: "Not answering", spoken: "not answering", playing: null }
           : { led: "off", short: "…", spoken: "reading", playing: null };
@@ -232,14 +236,15 @@
       const played = musicView(id);
       // Music Assistant keeps the library and the group; the device says it
       // plays nothing, or has not read yet whether it does.
-      const quiet = played ? audio.silent(id) : false, silent = quiet !== false;
+      const quiet = played ? audio.silent(id) : false;
+      const showPlayer = played && quiet === false && !own.feed;
       const ids = rooms[room];
       const extra = own.transport.filter((key) => !MUSIC_COVERS[key.id]);
       const transport = played ? MUSIC_KEYS.map(([key, label, icon]) => {
         if (key === "shuffle") return { id: key, label: played.shuffle.label, icon: icon, toggle: true, on: played.shuffle.on, pending: played.shuffle.pending, disabled: !played.shuffle.known };
         if (key === "repeat") return { id: key, label: played.repeat.label, icon: icon, toggle: true, on: played.repeat.value !== "off", mode: played.repeat.value, pending: played.repeat.pending, disabled: !played.repeat.known };
         if (key === "play_pause") {
-          return silent ? { id: key, label: "Play", icon: "play", play: true }
+          return !showPlayer ? { id: key, label: "Play", icon: "play", play: true }
             : { id: key, label: played.playLabel, icon: played.playing ? "pause" : "play", play: true };
         }
         return { id: key, label: label, icon: icon, disabled: !played.canSkip };
@@ -250,14 +255,14 @@
         speaker: { id: id, name: nameOf(id, ids), label: own.device.label, model: own.device.model, place: own.device.place },
         speakers: speakers(),
         source: played ? "music" : "device",
-        now: played && !silent ? played.now : own.now,
-        title: played && !silent ? played.title : own.track ? own.track.title : null,
-        line: played && !silent ? played.line : own.track ? own.track.line : null,
-        art: played && !silent ? played.art : null,
+        now: showPlayer ? played.now : own.now,
+        title: showPlayer ? played.title : own.track ? own.track.title : null,
+        line: showPlayer ? played.line : own.track ? own.track.line : null,
+        art: showPlayer ? played.art : null,
         // What the device says of the stream it plays: its service and format.
         badges: own.track ? [own.track.service, own.track.format].filter(Boolean) : [],
-        progress: played && !silent ? played.progress : null,
-        playing: quiet === true ? false : played && !silent ? played.playing : own.playing,
+        progress: showPlayer ? played.progress : null,
+        playing: quiet === true ? false : showPlayer ? played.playing : own.playing,
         transport: transport,
         volume: own.volume,
         muted: own.muted,
@@ -289,7 +294,7 @@
     function press(key) {
       if (driven()) {
         // On a silent TV input Play resumes Music Assistant's queue, not the TV's stream.
-        if (key === "play_pause") return music.playPause(audio.silent(chosen[room]) !== false);
+        if (key === "play_pause") return music.playPause(Boolean(audio.inputFeed(chosen[room])) || audio.silent(chosen[room]) !== false);
         if (key === "previous") return music.previous();
         if (key === "next") return music.next();
         if (key === "shuffle") return music.toggleShuffle();

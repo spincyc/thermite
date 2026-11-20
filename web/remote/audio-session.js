@@ -263,9 +263,30 @@
       try { return present(backend.snapshot(room).value); } catch (error) { return null; }
     }
 
+    // A selected physical input can report play and retain a track title
+    // while carrying a room source. Name the input independently of playback.
+    function inputFeed(id) {
+      if (connected === false) return null;
+      const input = (devices[id] || {}).input;
+      const feeds = house.rooms.filter(room => room.audio === id && room.audioFeed && room.audioFeed.input === input);
+      if (!feeds.length) return null;
+      const names = [];
+      for (const room of feeds) {
+        const read = backend.snapshot(room.id);
+        if (read.status !== "current" || read.unconfirmed) continue;
+        if (room.audioFeed.sources.includes(read.value)) names.push(house.sources[read.value].label);
+        else if (room.sources.includes(read.value)) return null; // A display-only source has its own silence rule.
+      }
+      const option = control(id).input.options.find(entry => entry[0] === input);
+      const label = (option ? option[1] : input) + " input";
+      return names.length === 1 ? names[0] + " · " + label : label;
+    }
+
     // The devices a route from the room feeds (their state's route).
     function routedFrom(room) {
-      return ids.filter((id) => ((page(id).state || {}).route || []).some((route) => route.room === room));
+      const feed = house.rooms.find(entry => entry.id === room && entry.audioFeed);
+      return ids.filter(id => (feed && feed.audio === id)
+        || ((page(id).state || {}).route || []).some(route => route.room === room));
     }
 
     // Whether its sound with no track named is none: true while its silent
@@ -303,7 +324,8 @@
         let group = places.find((entry) => entry.place === place);
         if (!group) places.push(group = { place: place, devices: [] });
         const track = page(id).track || {};
-        const playing = playingOf(id);
+        const feed = inputFeed(id);
+        const playing = feed ? false : playingOf(id);
         group.devices.push({ id: id, label: house.devices[id].label, name: label(id), current: id === current, playing: playing,
           title: playing && track.title ? valueOf(id, track.title) : null, locked: lockedBy(id).length > 0,
           problem: backend.problemOf ? backend.problemOf(id) : null });
@@ -366,19 +388,21 @@
       const facts = (audio.facts || []).map((fact) => ({ label: fact.label, value: valueOf(id, fact.item), unit: fact.unit }))
         .filter((fact) => fact.value !== null).map((fact) => ({ label: fact.label, text: reading(fact.value, fact.unit) }));
       const locked = lockedBy(id);
-      const track = trackView(id);
+      const feed = inputFeed(id);
+      const track = feed ? null : trackView(id);
       const from = input && own.input.options.find((option) => option[0] === input.value);
       return {
         device: { id: id, label: house.devices[id].label, name: label(id), model: house.devices[id].model, place: audio.place },
         connected: connected,
         problem: backend.problemOf ? backend.problemOf(id) : null,
         locked: locked.length ? { rooms: locked, text: "Locked by " + locked.join(", ") } : null,
-        playing: isPlaying,
+        feed: feed,
+        playing: feed ? false : isPlaying,
         track: track,
         // What heads the page: the title, else whether it plays (a TV's
         // sound, an input or a title kept from guests has none).
-        now: track ? track.title : isPlaying === null ? "Reading…"
-          : isPlaying ? "Playing" + (from ? " from " + from[1] : "") : "Nothing playing",
+        now: feed || (track ? track.title : isPlaying === null ? "Reading…"
+          : isPlaying ? "Playing" + (from ? " from " + from[1] : "") : "Nothing playing"),
         // Silence (a silent TV input, the input of a route of picture alone)
         // has nothing to play or pause, as the Sonos app has it.
         transport: (audio.transport || []).map((key) => key === "play_pause"
@@ -565,9 +589,10 @@
           changed();
         }
         else if (event.type === "problem" && ids.includes(event.device)) changed();
-        else if (event.type === "state" && routedFrom(event.room).length) {
-          routedFrom(event.room).forEach(heard);
-          changed();
+        else if (event.type === "state") {
+          const affected = routedFrom(event.room);
+          affected.forEach(heard);
+          if (affected.length) changed();
         }
         else if (event.type === "connection") { connected = event.connected; changed(); }
         else if (event.type === "access") changed();
@@ -609,6 +634,7 @@
       devices: devicesView,
       view: view,
       silent: silent,
+      inputFeed: inputFeed,
       select: select,
       selected: () => current,
       press: press,

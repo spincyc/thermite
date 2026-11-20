@@ -173,6 +173,24 @@ async function main() {
   await settle();
   out.silentTv.pressed = tv.musicBackend.sent.slice(-1);
 
+  out.wired = [];
+  for (const music of [true, false]) {
+    const wired = await remote({room: mixed, playing: owned, music});
+    wired.session.setMode('listen');
+    await wired.backend.choose(mixed, 'example_computer');
+    wired.backend.updateAudio(owned, owned + '_status', 'play');
+    wired.backend.updateAudio(owned, owned + '_title', 'Previous song');
+    wired.backend.updateDevice(owned, 'input', 'optical');
+    const view = wired.listen.view();
+    const result = {short: wired.listen.status(mixed).short, now: view.now, playing: view.playing, title: view.title};
+    const switching = wired.backend.choose(mixed, 'off');
+    result.pending = wired.listen.status(mixed).short;
+    await switching;
+    wired.backend.updateDevice(owned, 'input', 'wifi');
+    result.stream = wired.listen.status(mixed).short;
+    out.wired.push(result);
+  }
+
   // A front end without Listen lists no rooms of speakers alone.
   const plainSession = RemoteSession.create({backend: RemoteBackend.create(house, {backend: 'mock', latency: 4}), house});
   await plainSession.start();

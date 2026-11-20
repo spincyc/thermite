@@ -86,11 +86,22 @@ class Listen(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         env = {key: value for key, value in os.environ.items() if key != "THERMITE_REMOTE_HOUSE_FILE"}
+        data = house()
+        data["routing"]["rooms"][ROOM].update(audio_input="optical", audio_link={
+            "from": {"device": "example_display", "port": "optical"}, "transport": "optical"})
         run = subprocess.run([shutil.which("node"), str(AREA / "tests/listen_session_harness.js"), MINI, AMP, OWNED, ROOM],
-                             input=json.dumps(model()), text=True, env=env, capture_output=True, timeout=30)
+                             input=json.dumps(model(data)), text=True, env=env, capture_output=True, timeout=30)
         if run.returncode:
             raise AssertionError(run.stderr)
         cls.out = json.loads(run.stdout)
+
+    def test_wired_display_source_is_named_even_when_both_players_report_music(self):
+        for state in self.out["wired"]:
+            self.assertEqual(state["short"], "Computer · Optical input")
+            self.assertEqual(state["now"], state["short"])
+            self.assertEqual((state["playing"], state["title"]), (False, None))
+            self.assertEqual(state["pending"], "Optical input")
+            self.assertEqual(state["stream"], "Playing")
 
     def test_every_room_is_listed_with_the_modes_it_has(self):
         self.assertEqual([room[:3] + [room[4]] for room in self.out["rooms"]], [

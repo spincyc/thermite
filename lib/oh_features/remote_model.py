@@ -199,6 +199,9 @@ def build(house: House) -> dict:
                "display": display, "audio": audio, "devices": members,
                "speakers": speakers.pop(ident, []),
                "routeProblem": routing.problem_item_name(ident)}
+        if entry.get("audio_link") and entry.get("audio_input") and audio == entry.get("audio"):
+            row["audioFeed"] = {"input": entry["audio_input"], "sources": [
+                source for source in sources if routing.carried(entry, source) != "display"]}
         if physical != ident:
             row["room"] = physical
         out["rooms"].append(row)
