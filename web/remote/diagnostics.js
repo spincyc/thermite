@@ -66,7 +66,8 @@
         && (!variant || base && OWN(base.variants, variant)));
       return { room, source, ready, nodes: source && Array.isArray(source.nodes) ? source.nodes : [],
         audioNodes: source && Array.isArray(source.audioNodes) ? source.audioNodes : [],
-        audioEndpoints: source && Array.isArray(source.audioEndpoints) ? source.audioEndpoints : [] };
+        audioEndpoints: source && Array.isArray(source.audioEndpoints) ? source.audioEndpoints : [],
+        usb: Array.isArray(source?.usb) ? source.usb : [] };
     }
     function hops(path) {
       const carries = path.source && path.source.carries;
@@ -117,6 +118,11 @@
       const carries = chosen.source && chosen.source.carries;
       if (nodes.length && ["display", "audio"].includes(carries)) sections.path.push(row("Carries", carries === "display" ? "Display only" : "Audio only", "reported", { basis: "configured" }));
       if (!nodes.length) sections.path.push(row("Path", sourceId === "off" ? "Room is off" : "Source not reported", "not_reported", { basis: "configured" }));
+      for (const usb of chosen.usb) {
+        if (!usb || usb.host == null || !Array.isArray(usb.ports) || !usb.ports.length) continue;
+        sections.path.push(row("USB · " + (usb.label || usb.device), "HOST " + usb.host + " → DEVICE " + usb.ports.join(", "),
+          "reported", { basis: "configured", device: usb.device }));
+      }
       const activeReadings = readings(roomId, sourceId, routeContext);
       activeReadings.forEach(entry => {
         const { reading, node, maxAge } = entry, kind = kindOf(reading);
@@ -257,7 +263,7 @@
       });
       if (!blocks.length) blocks.push({ id: "", device: "", rows: [], quiet: ["Not reported"], times: [], unknown: false, stale: false });
       const stale = blocks.some(block => block.stale);
-      const summary = [id === "video" || id === "audio" ? counts.formats + " formats" : counts.reported + " reported",
+      const summary = [id === "video" || id === "audio" ? counts.formats + " formats" : counts.reported + (id === "path" ? " configured" : " reported"),
         counts.noSignal ? counts.noSignal + " no signal" : "", counts.silence ? counts.silence + " silent" : "",
         counts.unavailable ? counts.unavailable + " unavailable" : "", counts.awaiting ? counts.awaiting + " awaiting" : "",
         counts.unsupported ? counts.unsupported + " unobserved" : "", counts.absent && !counts.unavailable && !counts.awaiting ? counts.absent + " not reported" : "",

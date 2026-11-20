@@ -107,6 +107,22 @@ def path_nodes(path: dict) -> list[dict]:
     return path["nodes"] + path.get("audioNodes", []) + path.get("audioEndpoints", [])
 
 
+def _usb(house: House, room_id: str, source_id: str) -> list[dict]:
+    """The room's DEVICE ports assigned to this source's HOST on each matrix."""
+    config = house.data["routing"]
+    room = config["rooms"][room_id]
+    source = config["sources"][source_id]
+    only = (room.get("usb_only") or {}).get(source_id)
+    assignments = []
+    for matrix, ports in sorted((room.get("usb") or {}).items()):
+        moved = ports if only is None else only.get(matrix, [])
+        host = routing.usb_host(source, matrix, config["usb_off_host"])
+        if moved and host != config["usb_off_host"]:
+            assignments.append({"device": matrix, "label": house.label(house.by_id[matrix]),
+                                "host": host, "ports": sorted(moved)})
+    return assignments
+
+
 def _rooms(house: House) -> dict:
     """Configured route variants before passive observers are inserted."""
     config = house.data.get("routing") or {}
@@ -209,7 +225,7 @@ def validate(data: dict) -> list[str]:
 
 
 def manifest(house: House, conf: Conf) -> dict:
-    """Configured AV paths; a client selects a variant using confirmed readback.
+    """Configured AV paths and USB assignments; confirmed readback selects the AV variant.
     Built once per conf (Conf.derived)."""
     return conf.derived("remote_diagnostics", lambda: _manifest(house, conf))
 
@@ -228,10 +244,12 @@ def _manifest(house: House, conf: Conf) -> dict:
         description["label"] = house.label(devices[ident])
     rooms = _rooms(house)
     observers = (house.data.get("diagnostics") or {}).get("observers", [])
-    for room in rooms.values():
+    for room_id, room in rooms.items():
         if room.get("routeStateItem") and not conf.item(room["routeStateItem"]):
             del room["routeStateItem"]
-        for path in room["sources"].values():
+        for source_id, path in room["sources"].items():
+            if usb := _usb(house, room_id, source_id):
+                path["usb"] = usb
             for variant in variants(path):
                 for key in ("nodes", "audioNodes"):
                     if key not in variant:

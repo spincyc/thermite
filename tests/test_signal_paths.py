@@ -50,6 +50,35 @@ def paths(data):
 
 
 class SignalPaths(unittest.TestCase):
+    def test_usb_assignments_share_native_ports_with_topology_and_stay_out_of_av(self):
+        data = house_data()
+        data["devices"].extend([
+            {"id": ident, "name": name, "kind": "usb_matrix", "room": "desk"}
+            for ident, name in (("usb_a", "Desk matrix"), ("usb_b", "Shelf matrix"))])
+        config = data["routing"]
+        config["usb_off_host"] = 4
+        room = config["rooms"]["desk"]
+        room["usb"] = {"usb_b": [3], "usb_a": [2, 1]}
+        config["sources"]["pc"]["usb_host"] = {"usb_a": 3, "usb_b": 1}
+        house = House.unchecked(data)
+        conf = Conf()
+        sources = remote_diagnostics.manifest(house, conf)["rooms"]["desk"]["sources"]
+        self.assertEqual(sources["pc"]["usb"],
+                         [{"device": "usb_a", "label": "Desk matrix", "host": 3, "ports": [1, 2]},
+                          {"device": "usb_b", "label": "Shelf matrix", "host": 1, "ports": [3]}])
+        self.assertNotIn("usb", sources["player"])
+        self.assertFalse(any(node["device"].startswith("usb_") for node in remote_diagnostics.path_nodes(sources["pc"])))
+        topology = remote_topology.manifest(house, conf)
+        self.assertEqual(topology["routes"]["desk"]["pc"]["usb"], sources["pc"]["usb"])
+        self.assertEqual({(edge["from"], edge["to"], edge["toPort"]) for edge in topology["edges"] if edge["kind"] == "usb"},
+                         {("pc", "usb_a", 3), ("pc", "usb_b", 1)})
+
+        room["usb_only"] = {"pc": {"usb_a": [2]}}
+        restricted = remote_diagnostics.manifest(House.unchecked(data), Conf())["rooms"]["desk"]["sources"]["pc"]
+        self.assertEqual(restricted["usb"], [{**sources["pc"]["usb"][0], "ports": [2]}])
+        del config["sources"]["pc"]["usb_host"]["usb_a"]
+        self.assertNotIn("usb", remote_diagnostics.manifest(House.unchecked(data), Conf())["rooms"]["desk"]["sources"]["pc"])
+
     def test_optical_fork_keeps_hdmi_output_and_native_input_zero(self):
         data = house_data()
         room = data["routing"]["rooms"]["desk"]

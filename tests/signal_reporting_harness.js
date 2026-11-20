@@ -17,7 +17,9 @@ const { context } = scripts(), D = context.RemoteDiagnostics;
 const node = (device, role, extra = {}) => ({ device, label: device.charAt(0).toUpperCase() + device.slice(1), role, ...extra });
 const spec = (key, category = "video", extra = {}) => ({ item: "switch_signal", category, label: key, path: ["values", key], kind: "format", ...extra });
 const source = input => ({ label: input ? "Other source" : "Computer", carries: "both", nodes: [node("computer", "source"), node("switch", "switch", { input, output: 0 }), node("screen", "display")] });
-const fixture = () => ({ version: 1, rooms: { desk: { label: "Desk", sources: { a: source(0), b: source(1) } } }, devices: {
+const fixture = () => ({ version: 1, rooms: { desk: { label: "Desk", sources: {
+  a: { ...source(0), usb: [{ device: "usb_a", label: "Desk matrix", host: 3, ports: [1, 2] },
+    { device: "usb_b", label: "Shelf matrix", host: 1, ports: [3] }] }, b: source(1) } } }, devices: {
   switch: { items: ["switch_signal"], maxAgeSeconds: 15, readings: [
     spec("Input video", "video", { selector: { path: ["values", "input"], node: "input" }, unknown: ["---", "Unknown"], noSignal: ["no signal"] }),
     spec("Output video", "video", { port: { direction: "output", number: 0 }, unknown: ["---"] }),
@@ -107,6 +109,19 @@ test("unknown_audio_wiring_is_a_separate_endpoint_not_an_invented_cable", () => 
   assert(model.sections.path.some(row => row.label.includes("wiring unknown")));
   assert(model.sections.audio.some(row => row.device === "amp" && row.status === "unsupported"));
 });
+test("configured_path_lists_each_usb_matrix_without_claiming_signal_or_readback", () => {
+  const manifest = fixture();
+  const model = view({}, { manifest }), path = outline(model, "path");
+  assert.equal(path.summary, "5 configured");
+  assert.deepEqual(copy(path.blocks[0].rows.filter(row => row.label.startsWith("USB")).map(row => [row.label, row.value])),
+    [["USB · Desk matrix", "HOST 3 → DEVICE 1, 2"], ["USB · Shelf matrix", "HOST 1 → DEVICE 3"]]);
+  assert.equal(model.availability, "not_reported");
+  assert.deepEqual(copy(D.create(manifest).items("desk", "a")), ["switch_signal"]);
+  assert(![...model.sections.video, ...model.sections.audio].some(row => row.device?.startsWith("usb_")));
+  for (const source of ["off", "b"]) {
+    assert(!view({}, { manifest, source }).sections.path.some(row => row.label.startsWith("USB")));
+  }
+});
 test("untrusted_item_names_and_excess_reads_never_escape_the_allowlist", () => {
   const manifest = fixture(); manifest.devices.switch.items.push("../secret", "my_password");
   manifest.devices.switch.readings.push({ ...spec("bad"), item: "../secret" }, { ...spec("secret"), item: "my_password" });
@@ -185,9 +200,11 @@ function renderingCases() {
   const model = view({}, { envelope: { status: "unavailable", reason: "invalid_response" } });
   for (const width of [36, 100]) {
     const grid = new Grid(width, null, "base");
-    loaded.exports.signalContent(grid, width, { session: { diagnostics: () => model }, ui: { signalGroups: ["video", "audio"] }, now: 100000 });
+    loaded.exports.signalContent(grid, width, { session: { diagnostics: () => model }, ui: { signalGroups: ["video", "audio", "path"] }, now: 100000 });
     const text = grid.rows.map(row => row.map(cell => cell.ch).join("")).join("\n");
     assert(text.includes("Input video: Unavailable")); assert(text.replace(/\s+/g, " ").includes("No format telemetry"));
+    assert(text.includes("USB · Desk matrix") && text.includes("HOST 3 → DEVICE 1, 2"));
+    assert(text.includes("USB · Shelf matrix") && text.includes("HOST 1 → DEVICE 3"));
     assert(text.includes("unavailable"), "collapsed settings retain failures");
     assert(grid.rows.every(row => row.length === width));
   }

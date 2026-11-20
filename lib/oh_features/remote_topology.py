@@ -37,19 +37,6 @@ def _edge_id(kind: str, source: str, target: str, ports: dict) -> str:
     return kind + "-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 
-def _usb(config: dict, room: dict, source_id: str) -> list[dict]:
-    """Only configured USB assignments for this choice, never parked hosts."""
-    source = config.get("sources", {}).get(source_id, {})
-    only = (room.get("usb_only") or {}).get(source_id)
-    result = []
-    for matrix, ports in sorted((room.get("usb") or {}).items()):
-        moved = ports if only is None else only.get(matrix, [])
-        host = routing.usb_host(source, matrix, config["usb_off_host"])
-        if moved and host != config["usb_off_host"]:
-            result.append({"device": matrix, "host": host, "ports": sorted(moved)})
-    return result
-
-
 def manifest(house: House, conf: Conf) -> dict:
     """Public, deterministic topology of a validated house's configuration."""
     config = house.data.get("routing") or {}
@@ -86,7 +73,7 @@ def manifest(house: House, conf: Conf) -> dict:
 
     def route_path(path):
         result = {"label": path["label"], "nodes": copy.deepcopy(path["nodes"]), "carries": path["carries"]}
-        for key in ("audioNodes", "audioEndpoints"):
+        for key in ("audioNodes", "audioEndpoints", "usb"):
             if path.get(key):
                 result[key] = copy.deepcopy(path[key])
         if path.get("variants"):
@@ -113,11 +100,8 @@ def manifest(house: House, conf: Conf) -> dict:
                         if before.get("outputTransport"):
                             ports["transport"] = before["outputTransport"]
                         edge(kind, before["device"], after["device"], room_id, source_id, **ports)
-            usb = _usb(config, routed_rooms[room_id], source_id)
-            if usb:
-                route["usb"] = usb
-                for connection in usb:
-                    edge("usb", source_id, connection["device"], room_id, source_id, toPort=connection["host"])
+            for connection in route.get("usb", []):
+                edge("usb", source_id, connection["device"], room_id, source_id, toPort=connection["host"])
             routes[room_id][source_id] = route
 
     result = []
