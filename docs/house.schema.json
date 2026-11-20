@@ -324,6 +324,34 @@
               "before": {
                 "description": "the device id the signal goes on to",
                 "type": "string"
+              },
+              "after_port": {
+                "description": "the upstream output when that device pair has several connections",
+                "type": [
+                  "string",
+                  "number"
+                ]
+              },
+              "before_port": {
+                "description": "the downstream input when that device pair has several connections",
+                "type": [
+                  "string",
+                  "number"
+                ]
+              },
+              "after_zone": {
+                "description": "the upstream receiver zone when the device pair is ambiguous",
+                "type": [
+                  "string",
+                  "number"
+                ]
+              },
+              "before_zone": {
+                "description": "the downstream receiver zone when the device pair is ambiguous",
+                "type": [
+                  "string",
+                  "number"
+                ]
               }
             },
             "additionalProperties": false,
@@ -555,6 +583,51 @@
               "audio_input": {
                 "description": "the input of its audio device that its route feeds (optical, for a streaming amplifier on its HDMI switch's audio out); without it, any sound that device plays with no track named is taken to come from the route",
                 "type": "string"
+              },
+              "audio_link": {
+                "description": "the known physical audio branch to its audio device, independent of volume control",
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "description": "the device and output connector feeding the audio device",
+                    "type": "object",
+                    "properties": {
+                      "device": {
+                        "description": "the upstream device id",
+                        "type": "string"
+                      },
+                      "port": {
+                        "description": "the native output connector name or number",
+                        "type": [
+                          "string",
+                          "number"
+                        ]
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "device",
+                      "port"
+                    ]
+                  },
+                  "transport": {
+                    "description": "the cable's audio transport",
+                    "type": "string",
+                    "enum": [
+                      "hdmi",
+                      "optical",
+                      "coaxial",
+                      "analog",
+                      "arc",
+                      "earc"
+                    ]
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "from",
+                  "transport"
+                ]
               },
               "receiver": {
                 "description": "its receiver",

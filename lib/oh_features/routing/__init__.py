@@ -28,7 +28,9 @@ names one: a soundbar or streaming amplifier in a room it covers
 nested in those), or its own receiver or display. Without `audio` they drive
 its receiver, unless that is on a zone of its own (a receiver's volume is its
 main zone's), else its display: the first of those with a volume thermite
-drives, or nothing.
+drives, or nothing. An optional `audio_link` records the physical branch to
+that device: `from: {device, port}` and its `transport`. Without it, knowing
+the volume owner does not establish a cable or its upstream attachment.
 
 Rooms may take different zones of one receiver (`zone`). A source cabled to
 the receiver is on one of its inputs, which each zone can select, so any of
@@ -126,6 +128,7 @@ ACTIONS = ("on_actions", "off_actions")
 #: What a source's signal carries to a room (its `carries`): a picture
 #: alone, sound alone, or both, as for a source it leaves out.
 CARRIES = ("display", "audio", "both")
+SIGNAL_TRANSPORTS = ("hdmi", "optical", "coaxial", "analog", "arc", "earc")
 
 #: The shape of `routing`, declared (oh_shape): the checks of its key names
 #: below, and its part of the house-file reference page and schema, come
@@ -182,6 +185,11 @@ ROOM = {
     "audio_input": Key(TEXT, "the input of its audio device that its route feeds (optical, for a streaming "
                              "amplifier on its HDMI switch's audio out); without it, any sound that device plays "
                              "with no track named is taken to come from the route"),
+    "audio_link": Key(MAPPING, "the known physical audio branch to its audio device, independent of volume control", keys={
+        "from": Key(MAPPING, "the device and output connector feeding the audio device", required=True, keys={
+            "device": Key(TEXT, "the upstream device id", required=True),
+            "port": Key((TEXT, NUMBER), "the native output connector name or number", required=True)}),
+        "transport": Key(TEXT, "the cable's audio transport", required=True, choices=SIGNAL_TRANSPORTS)}),
     "receiver": Key(MAPPING, "its receiver", keys=STAGE),
     "display": Key(MAPPING, "its display", keys=DISPLAY),
     **_ACTIONS,
@@ -600,6 +608,8 @@ def validate(data: object) -> list[str]:
             problems += _carries_problems(f"{where}.carries", entry["carries"], offered)
         if "audio_input" in entry:
             problems += _audio_input_problems(where, entry, devices)
+        if "audio_link" in entry:
+            problems += _audio_link_problems(where, entry, devices, data, room)
         for key in sorted(unknown(ROOM, entry)):
             problems.append(f"{where}: unknown key '{key}'")
     problems += _wiring_problems(rooms_section)
@@ -680,6 +690,59 @@ def _audio_input_problems(where: str, entry: dict, devices: dict) -> list[str]:
         return [f"{where}.audio_input: {entry['audio_input']!r} is not an input of {device['id']} "
                 f"({', '.join(values)})"]
     return []
+
+
+def signal_port(value: object) -> bool:
+    """A native connector/zone identifier; booleans and fractional ports are not IDs."""
+    return ((isinstance(value, int) and not isinstance(value, bool) and value >= 0)
+            or (isinstance(value, str) and bool(value.strip()) and len(value) <= 128 and value.isprintable()))
+
+
+def _audio_link_problems(where: str, entry: dict, devices: dict, data: dict, room_id: str) -> list[str]:
+    """Explicit audio attachment must be on each source's applicable physical route."""
+    where += ".audio_link"
+    link = entry["audio_link"]
+    if not isinstance(link, dict) or set(link) != {"from", "transport"}:
+        return [f"{where}: must name from and transport only"]
+    origin = link["from"]
+    if not isinstance(origin, dict) or set(origin) != {"device", "port"}:
+        return [f"{where}.from: must name device and port only"]
+    problems = []
+    if "audio" not in entry:
+        problems.append(f"{where}: needs audio, the device the link feeds")
+    if _known(devices, origin["device"]) is None:
+        problems.append(f"{where}.from.device: must name a known device")
+    if origin["device"] == entry.get("audio"):
+        problems.append(f"{where}.from.device: cannot be the audio endpoint itself")
+    if not signal_port(origin["port"]):
+        problems.append(f"{where}.from.port: must be a nonempty connector name or a nonnegative integer")
+    if link["transport"] not in SIGNAL_TRANSPORTS:
+        problems.append(f"{where}.transport: must be one of {', '.join(SIGNAL_TRANSPORTS)}")
+    if entry.get("audio") and any(isinstance(stage := entry.get(role), dict) and stage.get("device") == entry["audio"]
+                                  for role in STAGES):
+        problems.append(f"{where}: audio is already a routing stage; its route describes that connection")
+    if problems:
+        return problems
+    from .. import remote_diagnostics
+
+    config = data["routing"]
+    unlinked = {key: value for key, value in entry.items() if key != "audio_link"}
+    rooms = {**config["rooms"], room_id: unlinked}
+    house = House.unchecked({**data, "routing": {**config, "rooms": rooms}})
+    try:
+        described = remote_diagnostics._rooms(house)
+    except (KeyError, TypeError, AttributeError, IndexError):
+        return problems  # The owning routing checks report malformed paths.
+    for source, original in described[room_id]["sources"].items():
+        for variant, path in [("normal", original), *(original.get("variants") or {}).items()]:
+            if path["carries"] == "display":
+                continue
+            chain = path.get("audioNodes", path["nodes"])
+            if not any(node["device"] == origin["device"] for node in chain):
+                problems.append(f"{where}.from.device: is not on {source}'s audio route ({variant})")
+            elif path.get("audioNodes") and origin["device"] != chain[-1]["device"]:
+                problems.append(f"{where}.from.device: must extend {source}'s existing split audio leg ({variant})")
+    return problems
 
 
 def _switch_inputs(room: dict) -> dict:

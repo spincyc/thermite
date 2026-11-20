@@ -27,6 +27,11 @@ Items, per device:
 - `<id>_input` (String): the input shown (INPUTS); commanded with one under
   control.
 - `<id>_picture_mode` (String): the picture mode, UNDEF in standby.
+- `<id>_video_signal` (String): a read-only timing snapshot from `signal ?`,
+  bracketed by actual input reads while on. A separate 30-second poll uses
+  only the existing connection, with a one-second actor budget; it does
+  not affect control health. Missing optional replies close the connection
+  so a late untagged answer cannot satisfy a later control read.
 - `<id>_key` (String, control only): a remote button id (KEYS) to press.
 - `<id>_problem` and `<id>_sony_adcp_commands` (control only;
   oh_integrations._commands): why the projector did not take the rule's
@@ -139,10 +144,20 @@ def render(device: dict, house: House, out: YamlFile) -> None:
     out.items[f"{ident}_input"] = _item(ident, "String", "Input", ["Control" if control else "Status", "Channel"],
                                         control, options=options_text(INPUTS), icon="video")
     out.items[f"{ident}_picture_mode"] = _item(ident, "String", "Picture Mode", ["Status", "Mode"], False)
+    out.items[f"{ident}_video_signal"] = _item(ident, "String", "Input video snapshot", ["Status"], False)
     if control:
         out.items[f"{ident}_key"] = {"type": "String", "label": "Remote Key", "groups": [ident],
                                      "tags": ["Control"], "autoupdate": False}
         _commands.render(device, out, NAME)
+
+
+def diagnostics(device: dict) -> dict:
+    """Selected-input timing from ADCP signal ?, not picture/HDR settings."""
+    item = f"{device['id']}_video_signal"
+    return {"kind": NAME, "items": [item], "maxAgeSeconds": 40, "readings": [
+        {"category": "video", "media": "video", "label": "Input video timing", "kind": "format", "item": item,
+         "path": ["values", "signal"], "unknown": ["Invalid"],
+         "selector": {"path": ["values", "input"], "node": "input"}}]}
 
 
 def problem(device: dict) -> str | None:

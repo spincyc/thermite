@@ -1231,9 +1231,13 @@ function signalContent(g, w, ctx) {
   let y = paragraph(g, 1, 0, w - 2, model.room.label + " \u00b7 " + (model.source ? model.source.label : "Source unknown"), "strong");
   if (model.route && model.route.length) y = paragraph(g, 1, y, w - 2, model.route.map((step) => step.label).join(" → "), "dim");
   if (model.audioRoute && model.audioRoute.length) y = paragraph(g, 1, y, w - 2, "Audio · " + model.audioRoute.map((step) => step.label).join(" → "), "dim");
-  if (model.pending) y = paragraph(g, 1, y, w - 2, "Switching to " + model.pending.label + "; readings still describe the confirmed source.", "tone.busy");
+  if (model.audioEndpoints && model.audioEndpoints.length) y = paragraph(g, 1, y, w - 2,
+    "Audio endpoint · " + model.audioEndpoints.map(step => step.label + (step.input ? " · input " + step.input : "")).join(", ") + " · wiring unknown", "dim");
+  if (model.routeReady === false) y = paragraph(g, 1, y, w - 2, "Awaiting confirmation of the physical route.", "tone.busy");
+  if (model.pending) y = paragraph(g, 1, y, w - 2, "Switching to " + model.pending.label + "; current formats await the confirmed route.", "tone.busy");
+  if (model.connected === false) y = paragraph(g, 1, y, w - 2, "Room updates unavailable; format attribution is unconfirmed.", "tone.busy");
   const view = globalThis.RemoteDiagnostics.outline(model, ctx.now);
-  if (view.blank) return paragraph(g, 1, y, w - 2, "Unavailable", "dim");
+  if (view.blank) return paragraph(g, 1, y, w - 2, model.reason || "Signal information unavailable", "dim");
   const open = signalGroups(ctx);
   // A row's label, then its value at the right edge after a leader, or on the row below.
   const pair = (x, label, value, style) => {
@@ -1249,14 +1253,15 @@ function signalContent(g, w, ctx) {
   };
   view.groups.forEach((group) => {
     const shown = open.includes(group.id);
-    const tally = shown ? "" : (group.count ? String(group.count) : "\u2014") + (group.stale ? " \u00b7 stale" : "");
+    const summary = shown ? "" : group.summary || (group.count ? String(group.count) : "\u2014");
+    const tally = length(summary) + length(group.title) + 6 <= w ? summary : "";
     const at = g.put(1, y, (shown ? "\u25be " : "\u25b8 ") + group.title, "section");
     const end = w - 1 - (tally ? length(tally) + 1 : 0);
     if (end - at > 2) g.put(at + 1, y, "\u2500".repeat(end - at - 1), "rule");
     if (tally) g.put(w - 1 - length(tally), y, tally, group.stale ? "tone.busy" : "dim");
     g.hit(0, y, w, 1, { kind: "signal-group", group: group.id, label: group.title + (shown ? ": close" : ": open") }, false);
     y += 1;
-    if (!shown) return;
+    if (!shown) { if (!tally) y = paragraph(g, 2, y, w - 4, summary, group.stale ? "tone.busy" : "dim"); return; }
     if (group.note) y = paragraph(g, 1, y, w - 2, group.note, "faint");
     group.blocks.forEach((block) => {
       const x = block.device ? 2 : 1;

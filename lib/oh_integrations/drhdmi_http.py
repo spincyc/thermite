@@ -63,6 +63,7 @@ def diagnostics(device: dict) -> dict:
         ("Reported EDID overflow flags", "edidoverflow")))
     return {"kind": NAME, "items": [item], "maxAgeSeconds": 15,
             "readings": [{"category": category, "label": label, "item": item, "path": ["values", field]}
+                         | {"kind": {"video": "link", "edid": "capability", "processing": "setting"}[category]}
                          for category, label, field in fields]}
 
 

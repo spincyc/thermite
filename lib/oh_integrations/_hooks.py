@@ -357,7 +357,20 @@ _TABLE = (
         diagnostics(device) -> {"items": the snapshot Items it reads,
         "readings": what each holds}, the read-only signal diagnostics the
         remote page shows for the device (oh_features.remote_diagnostics),
-        or None""", order=("denonmarantz_http", "bk808_http", "vrroom_http", "drhdmi_http")),
+        or None. Every enabled provider contributes; no provider hides another.
+        A snapshot is {version:1, observedAt:controller acquisition time in ms,
+        values:{...}}; invalid replies use status:'unavailable' and a bounded
+        reason code. A reading's path and selector.path are relative to that
+        entire envelope. selector.node names the expected input/output on the
+        path, and a missing selector is unknown association, never a match.
+        kind distinguishes format, link, capability, setting and metadata.
+        unknown, noSignal and silence list distinct provider sentinel values.
+        transports limits a reading to the named physical transport(s).
+        scalar reads an existing Item without inventing acquisition time: its
+        age and route association remain unknown. Reading an Item over REST
+        is not a new hardware measurement""", order=("denonmarantz_http", "bk808_http", "vrroom_telnet",
+                                                      "vrroom_http", "drhdmi_http", "sony_adcp", "avpro_telnet",
+                                                      "sonos", "wiim_http")),
     Hook("native_power_observation", FUNCTION, """
         native_power_observation(device) -> {"item": its power Item,
         "reported_at": the Item holding when the device itself reported

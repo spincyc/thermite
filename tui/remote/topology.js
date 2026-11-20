@@ -71,7 +71,7 @@ function sourceGroups(manifest, roomId) {
 
 const FIELDS = ["source", "matrix", "switch", "receiver", "observer", "display", "status"];
 const TITLES = { source: "Source", matrix: "Matrix", switch: "Switch", receiver: "Receiver", observer: "Observer", display: "Display", status: "Status", chain: "Chain" };
-const STATUS_ORDER = ["Reported", "Switching", "Configured", "Room off", "Unknown", "Live unavailable"];
+const STATUS_ORDER = ["Reported", "Route unconfirmed", "Switching", "Configured", "Room off", "Unknown", "Live unavailable"];
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 
 function status(routes, source, reading = {}, connected) {
@@ -84,8 +84,9 @@ function status(routes, source, reading = {}, connected) {
 
 function ports(node) {
   const out = [];
-  if (node.input != null) out.push("in " + plain(node.input));
+  if (node.input != null) out.push((node.inputKind === "selector" ? "input selector " : "in ") + plain(node.input));
   if (node.output != null) out.push("out " + plain(node.output));
+  if (node.wiring === "unknown") out.push("wiring unknown");
   if (node.zone != null) out.push("zone " + plain(node.zone));
   return out;
 }
@@ -111,7 +112,9 @@ function routeRows(manifest, roomId, reading, connected) {
   return Object.entries(routes).map(([id, route]) => {
     const stages = {};
     FIELDS.slice(1, -1).forEach(role => { stages[role] = route.nodes.filter(node => node.role === role); });
-    return { id, room: roomId, label: plain(route.label || id) + carried(route), route, stages, status: status(routes, id, reading, connected) };
+    const reported = status(routes, id, reading, connected);
+    return { id, room: roomId, label: plain(route.label || id) + carried(route), route, stages,
+      status: route.variants?.synced && reported === "Reported" ? "Route unconfirmed" : reported };
   });
 }
 
@@ -208,9 +211,15 @@ function content(g, width, ctx) {
   });
   if (!rows.length) line("No AV route is configured for this room.");
   if (preview) {
-    y += 1; line("Preview · " + preview.label, "strong");
+    y += 1; line("Preview · " + preview.label + (preview.route.variants?.synced ? " · configured own route" : ""), "strong");
     line(preview.route.nodes.map(node => plain(node.label) + (ports(node).length ? " [" + ports(node).join(" · ") + "]" : "")).join(" → "), "base");
     if (preview.route.audioNodes) line("Audio · " + preview.route.audioNodes.map(node => plain(node.label) + (ports(node).length ? " [" + ports(node).join(" · ") + "]" : "")).join(" → "), "base");
+    (preview.route.audioEndpoints || []).forEach(node => line("Audio endpoint · " + plain(node.label) + " · " + ports(node).join(" · "), "dim"));
+    if (preview.route.variants?.synced) {
+      line("Configured synced route · " + preview.route.variants.synced.nodes.map(node => plain(node.label)
+        + (ports(node).length ? " [" + ports(node).join(" · ") + "]" : "")).join(" → "), "base");
+      line("Use Signal & audio for the observed physical route.");
+    }
   }
   const audio = rows.filter(row => row.route.audioNodes && row.route.audioNodes.length);
   if (audio.length) {

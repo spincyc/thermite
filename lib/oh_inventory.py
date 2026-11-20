@@ -90,7 +90,11 @@ TOP = {
             MAPPING, "an observer and the two devices it sits between", keys={
                 "device": Key(TEXT, "the observer's device id", required=True),
                 "after": Key(TEXT, "the device id the signal comes from", required=True),
-                "before": Key(TEXT, "the device id the signal goes on to", required=True)}))}),
+                "before": Key(TEXT, "the device id the signal goes on to", required=True),
+                "after_port": Key((TEXT, NUMBER), "the upstream output when that device pair has several connections"),
+                "before_port": Key((TEXT, NUMBER), "the downstream input when that device pair has several connections"),
+                "after_zone": Key((TEXT, NUMBER), "the upstream receiver zone when the device pair is ambiguous"),
+                "before_zone": Key((TEXT, NUMBER), "the downstream receiver zone when the device pair is ambiguous")}))}),
 }
 
 
@@ -162,6 +166,10 @@ class Observer(TypedDict):
     device: str
     after: str
     before: str
+    after_port: NotRequired[str | int]
+    before_port: NotRequired[str | int]
+    after_zone: NotRequired[str | int]
+    before_zone: NotRequired[str | int]
 
 
 class Diagnostics(TypedDict, total=False):

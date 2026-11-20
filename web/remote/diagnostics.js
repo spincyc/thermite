@@ -1,197 +1,273 @@
-/* Read-only signal views shared by the browser and terminal. Paths are
- * configured wiring selected by confirmed room readback. A capability is
- * never promoted to a measured signal or a source's OS setting. */
+/* Read-only observations of configured signal paths. A capability, setting,
+ * track's metadata or successful Item read is never a measured format. */
 (function (global) {
   "use strict";
   const CATEGORIES = ["path", "video", "audio", "edid", "processing"];
   const OWN = (object, key) => Boolean(object) && Object.prototype.hasOwnProperty.call(object, key);
   const ITEM = /^[A-Za-z][A-Za-z0-9_]{0,160}$/;
   const SECRET = /(?:^|_)(?:pairing|password|passwd|passphrase|secret|token|psk|authorization|credential|auth)(?:_|$)/i; // lint: allow (an Item-name pattern, no credential)
-  const MAX_ITEMS = 12;
-  // The categories in the order both clients show them, each with its title
-  // and what its readings are not.
+  const MAX_ITEMS = 24;
   const GROUPS = [["video", "Current video"], ["audio", "Current audio"], ["path", "Configured path"],
     ["edid", "EDID capabilities", "Advertised support, not the current format."], ["processing", "Processing & settings"]];
-
+  const REASONS = { invalid_response: "Invalid device response", no_response: "No response", read_failed: "Snapshot could not be read",
+    route_changed: "Route changed during measurement", not_active: "Device is not active" };
+  const STATUS = { not_reported: "Not reported", unsupported: "No format telemetry", unavailable: "Unavailable",
+    no_signal: "No signal", silence: "Silence", awaiting_route: "Awaiting matching route", not_applicable: "Not on this media path" };
   function text(value) {
     return String(value == null ? "" : value).replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "").trim().slice(0, 180);
   }
-  function row(label, value, availability, extra) {
-    return Object.assign({ label: text(label), value: text(value), availability: availability, basis: "reported" }, extra || {});
+  const safeItem = name => ITEM.test(name) && !SECRET.test(name);
+  const scalar = value => typeof value === "string" || typeof value === "boolean" || typeof value === "number" && Number.isFinite(value);
+  const valueAt = (data, path) => path.reduce((value, key) => value && typeof value === "object" && OWN(value, key) ? value[key] : null, data);
+  const kindOf = reading => reading.kind || ({ video: "format", audio: "format", edid: "capability", processing: "setting" }[reading.category]);
+  const observed = status => ["reported", "no_signal", "silence"].includes(status);
+  function row(label, value, status, extra) {
+    return Object.assign({ label: text(label), value: text(value), status, availability: observed(status) ? "reported"
+      : status === "unavailable" ? "unavailable" : "not_reported", basis: "reported" }, extra || {});
   }
-  function unavailable(roomId, label, at) {
+  function unavailable(roomId, label, at, reason) {
     const sections = {};
-    CATEGORIES.forEach((category) => { sections[category] = [row("Signal information", "Unavailable", "unavailable")]; });
+    CATEGORIES.forEach(category => { sections[category] = [row("Signal information", "Unavailable", "unavailable")]; });
     return { room: { id: roomId, label: text(label || roomId) }, source: null, pending: null,
-      availability: "unavailable", updatedAt: at, route: [], sections: sections };
+      availability: "unavailable", reason: reason || "Unavailable · signal catalogue could not be read", updatedAt: at, route: [], sections };
+  }
+  function ports(node) {
+    return [node.input != null ? (node.inputKind === "selector" ? "input selector " : "input ") + text(node.input) : "", node.output != null ? "output " + text(node.output) : "",
+      node.zone != null && node.zone !== "main" ? "zone " + text(node.zone) : ""].filter(Boolean).join(" · ");
+  }
+  function copyNode(node) {
+    const copy = { device: node.device, label: text(node.label), role: node.role };
+    ["input", "output", "zone", "inputKind", "inputTransport", "outputTransport", "wiring"].forEach(key => { if (node[key] != null) copy[key] = text(node[key]); });
+    return copy;
   }
   function create(manifest) {
     if (!manifest || manifest.version !== 1 || !manifest.rooms || !manifest.devices) throw new Error("Invalid diagnostics manifest");
-    function route(roomId, sourceId) {
-      const room = OWN(manifest.rooms, roomId) ? manifest.rooms[roomId] : null;
-      const source = room && OWN(room.sources, sourceId) ? room.sources[sourceId] : null;
-      return { room: room, source: source, nodes: source && Array.isArray(source.nodes) ? source.nodes : [],
-        audioNodes: source && Array.isArray(source.audioNodes) ? source.audioNodes : [] };
+    function routeStateItem(roomId) {
+      const item = OWN(manifest.rooms, roomId) && manifest.rooms[roomId].routeStateItem;
+      return typeof item === "string" && safeItem(item) ? item : null;
     }
-    function readings(roomId, sourceId) {
-      const path = route(roomId, sourceId);
-      return path.nodes.concat(path.audioNodes.map(node => Object.assign({}, node, { audioOnly: true }))).flatMap((node) => {
+    // Lifecycle read before and after collection proves which same-source
+    // variant was observed; a source's name alone cannot identify that cable.
+    function context(roomId, sourceId, snapshot) {
+      if (!routeStateItem(roomId)) return { ready: true, key: "", variant: "" };
+      let data;
+      try { data = JSON.parse(snapshot && snapshot.value); } catch (_) { return { ready: false, key: "", variant: "" }; }
+      const valid = data && data.version === 1 && data.choice === sourceId && typeof data.synced === "boolean"
+        && Number.isSafeInteger(data.generation) && data.generation >= 0;
+      return { ready: Boolean(valid && data.pathReady === true && !data.fault),
+        key: valid ? JSON.stringify([sourceId, data.synced, data.generation]) : "", variant: valid && data.synced ? "synced" : "" };
+    }
+    function route(roomId, sourceId, routeContext) {
+      const room = OWN(manifest.rooms, roomId) ? manifest.rooms[roomId] : null;
+      const base = room && OWN(room.sources, sourceId) ? room.sources[sourceId] : null;
+      const variant = routeContext && routeContext.variant;
+      const source = base && variant && OWN(base.variants, variant) ? Object.assign({}, base, base.variants[variant]) : base;
+      const ready = !routeStateItem(roomId) || Boolean(routeContext && routeContext.ready
+        && (!variant || base && OWN(base.variants, variant)));
+      return { room, source, ready, nodes: source && Array.isArray(source.nodes) ? source.nodes : [],
+        audioNodes: source && Array.isArray(source.audioNodes) ? source.audioNodes : [],
+        audioEndpoints: source && Array.isArray(source.audioEndpoints) ? source.audioEndpoints : [] };
+    }
+    function hops(path) {
+      const carries = path.source && path.source.carries;
+      return path.nodes.map(node => ({ ...node, branch: "main", video: carries !== "audio", audio: carries !== "display" && !path.audioNodes.length }))
+        .concat(path.audioNodes.map(node => ({ ...node, branch: "audio", video: false, audio: true })),
+          path.audioEndpoints.map(node => ({ ...node, branch: "endpoint", video: false, audio: carries !== "display" })));
+    }
+    function hopKey(node) { return JSON.stringify([node.branch, node.device, node.input, node.output, node.zone]); }
+    function readings(roomId, sourceId, routeContext) {
+      const path = route(roomId, sourceId, routeContext);
+      return hops(path).flatMap(node => {
         const provider = OWN(manifest.devices, node.device) ? manifest.devices[node.device] : null;
         if (!provider || !Array.isArray(provider.items) || !Array.isArray(provider.readings)) return [];
-        return provider.readings.filter((reading) => {
+        return provider.readings.filter(reading => {
           if (!reading || !CATEGORIES.includes(reading.category) || reading.category === "path") return false;
-          if (node.audioOnly && reading.category !== "audio" && reading.media !== "audio") return false;
-          if (!ITEM.test(reading.item) || SECRET.test(reading.item) || !provider.items.includes(reading.item)) return false;
-          if (!Array.isArray(reading.path) || reading.path.length > 8) return false;
-          if (reading.zone && reading.zone !== node.zone) return false;
-          if (reading.port && node[reading.port.direction] !== reading.port.number) return false;
+          const kind = kindOf(reading);
+          // Link/EDID/processing observations matter on an HDMI audio branch
+          // too. Only a format belonging to the other media path is excluded.
+          if (kind === "format" && (reading.category === "video" && !node.video || reading.category === "audio" && !node.audio)) return false;
+          if (!node.audio && reading.media === "audio" || !node.video && reading.media === "video" && kind === "format") return false;
+          const transport = reading.port?.direction === "input" ? node.inputTransport
+            : reading.port?.direction === "output" ? node.outputTransport : node.outputTransport || node.inputTransport;
+          if (Array.isArray(reading.transports) && transport && !reading.transports.includes(transport)) return false;
+          if (!safeItem(reading.item) || !provider.items.includes(reading.item)) return false;
+          if (!reading.scalar && (!Array.isArray(reading.path) || reading.path.length > 8)) return false;
+          if (reading.zone != null && String(reading.zone) !== String(node.zone)) return false;
+          if (reading.port && String(node[reading.port.direction]) !== String(reading.port.number)) return false;
           return true;
-        }).map((reading) => ({ reading: reading, node: node, maxAge: provider.maxAgeSeconds || 15 }));
+        }).map(reading => ({ reading, node, maxAge: reading.maxAgeSeconds || provider.maxAgeSeconds || 15 }));
       });
     }
-    function items(roomId, sourceId) {
-      const names = [...new Set(readings(roomId, sourceId).map((entry) => entry.reading.item))];
+    function items(roomId, sourceId, routeContext) {
+      const names = [...new Set(readings(roomId, sourceId, routeContext).map(entry => entry.reading.item))];
       if (names.length > MAX_ITEMS) throw new Error("Too many diagnostics snapshots");
       return names;
     }
-    function project(roomId, sourceId, snapshots, at, pendingId, acquiredAfter) {
-      const chosen = route(roomId, sourceId);
+    function project(roomId, sourceId, snapshots, at, pendingId, acquiredAfter, routeContext) {
+      const chosen = route(roomId, sourceId, routeContext);
       const sections = { path: [], video: [], audio: [], edid: [], processing: [] };
-      const nodes = chosen.nodes.map((node) => {
-        const copy = { device: node.device, label: text(node.label), role: node.role };
-        ["input", "output", "zone"].forEach((key) => { if (node[key] != null) copy[key] = text(node[key]); });
-        return copy;
-      });
-      const audioNodes = chosen.audioNodes.map(node => ({ device: node.device, label: text(node.label), role: node.role,
-        ...(node.input != null ? { input: text(node.input) } : {}), ...(node.output != null ? { output: text(node.output) } : {}) }));
-      nodes.forEach((node) => {
-        const ports = [node.input != null ? "input " + node.input : "", node.output != null ? "output " + node.output : "",
-          node.zone && node.zone !== "main" ? "zone " + node.zone : ""].filter(Boolean).join(" · ");
-        sections.path.push(row(node.role, node.label + (ports ? " · " + ports : ""), "reported", { basis: "configured", device: node.device }));
-      });
-      audioNodes.forEach(node => {
-        const ports = [node.input != null ? "input " + node.input : "", node.output != null ? "output " + node.output : ""].filter(Boolean).join(" · ");
-        sections.path.push(row("Audio " + node.role, node.label + (ports ? " · " + ports : ""), "reported", { basis: "configured", device: node.device }));
-      });
-      // A path that carries a picture or sound alone says so (routing's carries).
-      const carries = chosen.source ? chosen.source.carries : null;
-      if (nodes.length && (carries === "display" || carries === "audio")) {
-        sections.path.push(row("Carries", carries === "display" ? "Display only" : "Audio only", "reported", { basis: "configured" }));
+      const nodes = chosen.nodes.map(copyNode), audioNodes = chosen.audioNodes.map(copyNode), audioEndpoints = chosen.audioEndpoints.map(copyNode);
+      const pending = chosen.room && OWN(chosen.room.sources, pendingId) ? { id: pendingId, label: text(chosen.room.sources[pendingId].label) }
+        : pendingId === "off" ? { id: "off", label: "Off" } : null;
+      function pathRows(chain, prefix) {
+        chain.forEach(node => sections.path.push(row(prefix + node.role, node.label + (ports(node) ? " · " + ports(node) : ""), "reported",
+          { basis: "configured", device: node.device })));
       }
+      pathRows(nodes, ""); pathRows(audioNodes, "Audio "); pathRows(audioEndpoints, "Audio endpoint · wiring unknown · ");
+      const carries = chosen.source && chosen.source.carries;
+      if (nodes.length && ["display", "audio"].includes(carries)) sections.path.push(row("Carries", carries === "display" ? "Display only" : "Audio only", "reported", { basis: "configured" }));
       if (!nodes.length) sections.path.push(row("Path", sourceId === "off" ? "Room is off" : "Source not reported", "not_reported", { basis: "configured" }));
-      const activeReadings = readings(roomId, sourceId);
-      activeReadings.forEach((entry) => {
-        const reading = entry.reading;
+      const activeReadings = readings(roomId, sourceId, routeContext);
+      activeReadings.forEach(entry => {
+        const { reading, node, maxAge } = entry, kind = kindOf(reading);
         const snapshot = OWN(snapshots, reading.item) ? snapshots[reading.item] : null;
         let data = null;
-        if (snapshot && typeof snapshot.value === "string" && snapshot.value.length <= 65536) {
-          try { data = JSON.parse(snapshot.value); } catch (_) { /* canonical unavailable below */ }
+        if (snapshot && typeof snapshot.value === "string" && snapshot.value.length <= 65536 && !reading.scalar) {
+          try { data = JSON.parse(snapshot.value); } catch (_) { /* invalid response below */ }
         }
         const envelope = data && data.version === 1 && data.values && typeof data.values === "object" && !Array.isArray(data.values);
-        let value = envelope ? data : null;
-        reading.path.forEach((key) => { value = value && typeof value === "object" && OWN(value, key) ? value[key] : null; });
-        const scalar = typeof value === "string" || (typeof value === "number" && Number.isFinite(value)) || typeof value === "boolean";
-        const valid = scalar && text(value) && !["NULL", "UNDEF"].includes(text(value));
+        const value = reading.scalar ? snapshot && snapshot.value : envelope ? valueAt(data, reading.path) : null;
+        const valid = scalar(value) && text(value) && !["NULL", "UNDEF"].includes(text(value));
         const observedAt = data && Number.isFinite(data.observedAt) && data.observedAt > 0 && data.observedAt <= at + 5000 ? data.observedAt : null;
         const age = observedAt == null ? null : Math.max(0, (at - observedAt) / 1000);
-        const priorSource = Boolean(envelope) && Number.isFinite(acquiredAfter) && acquiredAfter > 0
-          && (observedAt == null || observedAt <= acquiredAfter);
-        const extra = { device: entry.node.device, detail: text(entry.node.label), observedAt: observedAt,
-          ageSeconds: age, stale: priorSource || age == null || age > entry.maxAge };
-        let availability = valid ? "reported" : envelope ? "not_reported" : "unavailable";
-        let shown = valid ? value : envelope ? "Not reported" : "Unavailable";
-        if (valid && reading.options) {
-          if (OWN(reading.options, String(value))) shown = reading.options[String(value)];
-          else { shown = "Not reported"; availability = "not_reported"; }
+        const beforeChange = Number.isFinite(acquiredAfter) && acquiredAfter > 0 && (observedAt == null || observedAt <= acquiredAfter);
+        const extra = { device: node.device, detail: text(node.label), hop: hopKey(node), ports: ports(node), kind,
+          provider: text(reading.provider || ""), observedAt, maxAgeSeconds: maxAge, ageSeconds: age,
+          stale: age == null || age > maxAge, basis: reading.scalar ? "item" : "reported" };
+        let status = valid ? "reported" : envelope ? "not_reported" : "unavailable", shown = valid ? text(value) : "";
+        const matches = values => Array.isArray(values) && values.some(candidate => text(candidate).toLowerCase() === text(value).toLowerCase());
+        if (valid && matches(reading.unknown)) { status = "not_reported"; shown = ""; }
+        if (valid && matches(reading.noSignal)) { status = "no_signal"; shown = "No signal"; }
+        if (valid && matches(reading.silence)) { status = "silence"; shown = "Silence"; }
+        if (status === "reported" && reading.options) {
+          if (OWN(reading.options, String(value))) shown = text(reading.options[String(value)]);
+          else { status = "not_reported"; shown = ""; }
         }
-        if (priorSource) {
-          shown = "Awaiting fresh report";
-          availability = "not_reported";
-          extra.detail = text(entry.node.label + " · acquired before the source changed");
+        if (data && data.status === "unavailable" || snapshot && snapshot.reason) { status = "unavailable"; shown = ""; }
+        if (status === "unavailable") extra.reason = REASONS[data && data.reason] || REASONS[snapshot && snapshot.reason]
+          || (data && data.status === "unavailable" || snapshot && snapshot.reason ? "Device snapshot unavailable"
+            : snapshot && snapshot.value && !["NULL", "UNDEF"].includes(snapshot.value) ? REASONS.invalid_response : "No device snapshot");
+        const selector = reading.selector;
+        const selected = selector && envelope && Array.isArray(selector.path) ? valueAt(data, selector.path) : null;
+        const matchesRoute = !selector || scalar(selected) && node[selector.node] != null && String(selected) === String(node[selector.node]);
+        if ((observed(status) || !snapshot && kind === "format") && (kind === "format" && (pending || !chosen.ready || beforeChange || node.wiring === "unknown" || reading.scalar && !reading.selector) || !matchesRoute)) {
+          extra.unassociatedValue = shown;
+          status = "awaiting_route"; shown = "";
+          extra.reason = pending ? "Source is switching" : !chosen.ready ? "Route is not confirmed"
+            : reading.scalar && !reading.selector ? "Device report has no route association or measurement time"
+            : !matchesRoute ? "Reported input does not confirm this path" : node.wiring === "unknown" ? "Audio wiring is not configured" : "Sample predates the route change";
         }
-        sections[reading.category].push(row(reading.label, shown, availability, extra));
+        sections[reading.category].push(row(reading.label, shown || STATUS[status], status, extra));
       });
-      if (!sections.video.length) sections.video.push(row("Current video signal", "Not reported", "not_reported"));
-      if (!sections.audio.length) sections.audio.push(row("Current audio signal", "Not reported", "not_reported"));
-      if (!activeReadings.some((entry) => entry.reading.category === "edid" && entry.reading.port && entry.reading.port.direction === "input")) {
-        sections.edid.push(row("Source advertised EDID", "Not reported", "not_reported"));
-      }
-      if (!activeReadings.some((entry) => entry.reading.category === "edid" && entry.reading.port && entry.reading.port.direction === "output")) {
-        sections.edid.push(row("Destination EDID capabilities", "Not reported", "not_reported"));
-      }
-      // Device-reported HDMI formats and EDIDs do not reveal these OS settings.
+      // Every applicable hop has a current-format entry, including devices
+      // whose integrations expose only settings or no diagnostics at all.
+      hops(chosen).forEach(node => {
+        ["video", "audio"].forEach(category => {
+          if (!node[category] || activeReadings.some(entry => hopKey(entry.node) === hopKey(node) && entry.reading.category === category && kindOf(entry.reading) === "format")) return;
+          const label = node.role === "source" ? "Output " + category + " format" : node.role === "display" || node.role === "audio" ? "Received " + category + " format" : "Input / output " + category + " format";
+          sections[category].push(row(label, STATUS.unsupported, "unsupported", { device: node.device, hop: hopKey(node), ports: ports(node), kind: "format" }));
+        });
+      });
+      ["video", "audio"].forEach(category => {
+        if (!sections[category].length) sections[category].push(row("Current " + category + " signal", sourceId === "off" ? "Room is off"
+          : carries === (category === "video" ? "audio" : "display") ? STATUS.not_applicable : STATUS.not_reported,
+        sourceId === "off" || carries === (category === "video" ? "audio" : "display") ? "not_applicable" : "not_reported"));
+      });
+      if (!activeReadings.some(entry => entry.reading.category === "edid" && entry.reading.port && entry.reading.port.direction === "input")) sections.edid.push(row("Source-facing EDID", "Not reported", "not_reported"));
+      if (!activeReadings.some(entry => entry.reading.category === "edid" && entry.reading.port && entry.reading.port.direction === "output")) sections.edid.push(row("Destination EDID capabilities", "Not reported", "not_reported"));
       sections.processing.push(row("Source OS video settings (HDR / match range)", "Not reported", "not_reported"));
       sections.processing.push(row("Source OS audio settings", "Not reported", "not_reported"));
-      if (nodes.some((node) => node.role === "display")) sections.processing.push(row("Display HDMI input settings", "Not reported", "not_reported"));
-      const pending = chosen.room && OWN(chosen.room.sources, pendingId) ? { id: pendingId, label: text(chosen.room.sources[pendingId].label) } : null;
-      const measured = ["video", "audio", "edid", "processing"].flatMap((category) => sections[category]).filter((row) => row.device);
+      const order = hops(chosen).map(hopKey);
+      Object.values(sections).forEach(entries => entries.sort((a, b) => (a.hop ? order.indexOf(a.hop) : order.length) - (b.hop ? order.indexOf(b.hop) : order.length)));
+      activeReadings.forEach(entry => {
+        const same = sections[entry.reading.category].filter(value => value.hop === hopKey(entry.node) && value.label === text(entry.reading.label));
+        if (same.length > 1) same.forEach(value => { if (value.provider) value.label += " (" + value.provider + ")"; });
+      });
+      const measured = ["video", "audio"].flatMap(category => sections[category]).filter(entry => entry.kind === "format");
       return { room: { id: roomId, label: text(chosen.room ? chosen.room.label : roomId) },
-        source: chosen.source ? { id: sourceId, label: text(chosen.source.label) } : null, pending: pending,
-        availability: measured.some((row) => row.availability === "reported") ? "reported"
-          : measured.some((row) => row.availability === "unavailable") ? "unavailable" : "not_reported",
-        updatedAt: at, route: nodes, ...(audioNodes.length ? { audioRoute: audioNodes } : {}), sections: sections };
+        source: chosen.source ? { id: sourceId, label: text(chosen.source.label) } : null, pending,
+        availability: measured.some(entry => entry.availability === "reported" && !entry.stale) ? "reported"
+          : measured.some(entry => entry.availability === "unavailable") ? "unavailable" : "not_reported",
+        routeReady: chosen.ready, routeKey: routeContext && routeContext.key || "", updatedAt: at, route: nodes,
+        ...(audioNodes.length ? { audioRoute: audioNodes } : {}), ...(audioEndpoints.length ? { audioEndpoints } : {}), sections };
     }
-    return { items: items, project: project };
-  }
-  // What a reading with no value says: one of three texts, never the value sent.
-  function silence(entry) {
-    return entry.availability === "unavailable" ? "Unavailable"
-      : entry.value === "Awaiting fresh report" ? "Awaiting fresh report" : "Not reported";
+    return { items, project, routeStateItem, context };
   }
   function ago(seconds) {
-    return seconds < 120 ? Math.floor(seconds) + "s ago" : seconds < 7200 ? Math.floor(seconds / 60) + " min ago"
-      : Math.floor(seconds / 3600) + " h ago";
+    return seconds < 120 ? Math.floor(seconds) + "s ago" : seconds < 7200 ? Math.floor(seconds / 60) + " min ago" : Math.floor(seconds / 3600) + " h ago";
   }
-  /* A model arranged for a narrow column, the same in the browser and the
-   * terminal. Each category is a group; its readings stand under the device
-   * that reports them, whose age is told once (`age`, the oldest of them, and
-   * `stale`) rather than on every row. Readings without a value are not rows:
-   * `quiet` names them in one line for each of the three things they say, or
-   * says that alone where a device reports nothing or a group holds nothing
-   * else. `count` is a group's readings that have a value. A model in which
-   * nothing could be read (unavailable() above) is `blank`, with no groups. */
+  // Pending and connection context changes immediately, independently of a
+  // potentially slow snapshot read. Keep the cached observation immutable.
+  function contextualize(model, pending, connected, at = Date.now()) {
+    if (!model) return model;
+    const formats = ["video", "audio"].flatMap(category => model.sections[category] || []).filter(entry => entry.kind === "format");
+    const fresh = entry => observed(entry.status || entry.availability) && !entry.stale && Number.isFinite(entry.observedAt)
+      && at - entry.observedAt <= (entry.maxAgeSeconds || 15) * 1000;
+    const availability = connected === false ? "unavailable" : pending ? "not_reported" : formats.some(fresh) ? "reported"
+      : formats.some(entry => entry.availability === "unavailable") ? "unavailable" : !formats.length && model.availability === "unavailable" ? "unavailable" : "not_reported";
+    const copy = { ...model, pending, connected, availability };
+    if (!pending && connected !== false) return copy;
+    copy.sections = Object.fromEntries(Object.entries(model.sections).map(([category, entries]) => [category, entries.map(entry => {
+      if (entry.kind !== "format" || !observed(entry.status || entry.availability)) return entry;
+      return { ...entry, status: "awaiting_route", availability: "not_reported", value: STATUS.awaiting_route, unassociatedValue: entry.value,
+        reason: pending ? "Source is switching" : "Room updates are unavailable" };
+    })]));
+    return copy;
+  }
   function outline(model, now) {
-    const sections = model && model.sections || {};
-    const names = {};
-    (model && model.route || []).concat(model && model.audioRoute || []).forEach((node) => { names[node.device] = text(node.label); });
-    const every = CATEGORIES.flatMap((category) => sections[category] || []);
-    if (!every.length || every.every((entry) => entry.availability === "unavailable" && !entry.device)) return { blank: true, groups: [] };
+    const sections = model && model.sections || {}, names = {};
+    (model && model.route || []).concat(model && model.audioRoute || [], model && model.audioEndpoints || []).forEach(node => { names[node.device] = text(node.label); });
+    const every = CATEGORIES.flatMap(category => sections[category] || []);
+    if (!every.length || every.every(entry => entry.availability === "unavailable" && !entry.device)) return { blank: true, groups: [] };
     const groups = GROUPS.map(([id, title, note]) => {
-      const entries = sections[id] || [];
-      const blocks = [];
-      entries.forEach((entry) => {
-        const configured = entry.basis === "configured";
-        const device = configured ? "" : entry.device || "";
-        let block = blocks.find((candidate) => candidate.id === device);
-        if (!block) {
-          block = { id: device, device: device ? names[device] || text(device) : "", rows: [], silent: {}, times: [], unknown: false, stale: false };
-          blocks.push(block);
-        }
+      const blocks = [], counts = { reported: 0, formats: 0, noSignal: 0, silence: 0, unavailable: 0, unsupported: 0, awaiting: 0, absent: 0 };
+      (sections[id] || []).forEach(entry => {
+        const configured = entry.basis === "configured", device = configured ? "" : entry.device || "", key = configured ? "" : entry.hop || device;
+        let block = blocks.find(candidate => candidate.id === key);
+        if (!block) { block = { id: key, device: device ? (names[device] || text(device)) + (entry.ports ? " · " + entry.ports : "") : "",
+          rows: [], quiet: [], times: [], unknown: false, stale: false }; blocks.push(block); }
         const label = text(id === "path" ? String(entry.label).charAt(0).toUpperCase() + String(entry.label).slice(1) : entry.label);
-        if (entry.availability !== "reported") {
-          (block.silent[silence(entry)] = block.silent[silence(entry)] || []).push(label);
+        const status = entry.status || entry.availability;
+        if (!observed(status)) {
+          if (entry.unassociatedValue) {
+            if (Number.isFinite(entry.observedAt)) block.times.push(entry.observedAt);
+            else block.unknown = true;
+            block.stale ||= Boolean(entry.stale) || !Number.isFinite(entry.observedAt)
+              || Number.isFinite(entry.maxAgeSeconds) && now - entry.observedAt > entry.maxAgeSeconds * 1000;
+          }
+          if (status === "unavailable") counts.unavailable++;
+          else if (status === "unsupported") counts.unsupported++;
+          else if (status === "awaiting_route") counts.awaiting++;
+          else counts.absent++;
+          const value = entry.value || STATUS[status] || STATUS.not_reported;
+          block.quiet.push(label + ": " + value + (entry.reason ? " · " + text(entry.reason) : "")
+            + (entry.unassociatedValue ? " · device reports " + text(entry.unassociatedValue) : ""));
           return;
         }
         const known = Number.isFinite(entry.observedAt);
-        const stale = !configured && (Boolean(entry.stale) || !known);
+        const stale = !configured && (Boolean(entry.stale) || !known || Number.isFinite(entry.maxAgeSeconds) && now - entry.observedAt > entry.maxAgeSeconds * 1000);
         if (!configured && known) block.times.push(entry.observedAt);
         if (!configured && !known) block.unknown = true;
-        block.stale = block.stale || stale;
-        block.rows.push({ label: label, value: text(entry.value), stale: stale });
+        block.stale ||= stale;
+        counts.reported++;
+        if (status === "no_signal") counts.noSignal++;
+        if (status === "silence") counts.silence++;
+        if (entry.kind === "format" && status === "reported" && !stale) counts.formats++;
+        block.rows.push({ label, value: text(entry.value), stale, status: stale ? "stale" : status, kind: entry.kind });
       });
-      if (!blocks.length) blocks.push({ id: "", device: "", rows: [], silent: { "Not reported": [] }, times: [], unknown: false, stale: false });
-      return { id: id, title: title, note: note || "", count: blocks.reduce((sum, block) => sum + block.rows.length, 0),
-        stale: blocks.some((block) => block.stale),
-        blocks: blocks.map((block) => {
-          const said = Object.keys(block.silent);
-          // The heading names a group's one reading, and a device's name all of its own.
-          const alone = block.id ? !block.rows.length && said.length === 1 : entries.length < 2;
-          const age = block.unknown ? "age unknown" : block.times.length ? ago(Math.max(0, (now - Math.min(...block.times)) / 1000)) : "";
-          return { device: block.device, age: age && block.stale ? "stale · " + age : age, stale: block.stale, rows: block.rows,
-            quiet: said.map((name) => alone ? name : name + ": " + block.silent[name].join(", ")) };
-        }) };
+      if (!blocks.length) blocks.push({ id: "", device: "", rows: [], quiet: ["Not reported"], times: [], unknown: false, stale: false });
+      const stale = blocks.some(block => block.stale);
+      const summary = [id === "video" || id === "audio" ? counts.formats + " formats" : counts.reported + " reported",
+        counts.noSignal ? counts.noSignal + " no signal" : "", counts.silence ? counts.silence + " silent" : "",
+        counts.unavailable ? counts.unavailable + " unavailable" : "", counts.awaiting ? counts.awaiting + " awaiting" : "",
+        counts.unsupported ? counts.unsupported + " unobserved" : "", counts.absent && !counts.unavailable && !counts.awaiting ? counts.absent + " not reported" : "",
+        stale ? "stale" : ""].filter(Boolean).join(" · ");
+      return { id, title, note: note || "", count: counts.reported, summary, stale, blocks: blocks.map(block => {
+        const age = block.unknown ? "age unknown" : block.times.length ? ago(Math.max(0, (now - Math.min(...block.times)) / 1000)) : "";
+        return { device: block.device, age: age && block.stale ? "stale · " + age : age, stale: block.stale, rows: block.rows, quiet: block.quiet };
+      }) };
     });
-    return { blank: false, groups: groups };
+    return { blank: false, groups };
   }
-  global.RemoteDiagnostics = { create: create, unavailable: unavailable, outline: outline, MAX_ITEMS: MAX_ITEMS };
+  global.RemoteDiagnostics = { create, unavailable, outline, contextualize, MAX_ITEMS };
 })(globalThis);

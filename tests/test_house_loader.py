@@ -275,9 +275,9 @@ class Constructed(unittest.TestCase):
                 if count := len(re.findall(call, text)):
                     found[name] = count
         self.assertEqual(bare, {}, "a House comes from House.load(path); House(mapping) validates again")
-        # Two validators, which run while the mapping is being checked, and
+        # Validators (including physical audio links), which run while the mapping is being checked, and
         # the gateway's planner, which is handed its contract's mapping.
-        self.assertEqual(unchecked, {"lib/oh_features/remote_diagnostics.py": 1, "lib/oh_features/routing/__init__.py": 2,
+        self.assertEqual(unchecked, {"lib/oh_features/remote_diagnostics.py": 1, "lib/oh_features/routing/__init__.py": 3,
                                      "lib/oh_room_policy/plan.py": 1})
 
 

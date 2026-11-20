@@ -74,8 +74,8 @@ READS = True
 INPUTS = OUTPUTS = 4
 READBACK_INPUTS = tuple(str(number) for number in range(1, INPUTS + 1))
 #: All that the rule ever sends, named as lib/oh_matrix_sim's stand-in
-#: records it: the routing read, the switch and the restart.
-COMHEADS = frozenset({"get vs", "set vs", "set rbt"})
+#: records it: routing, restart and optional read-only diagnostic queries.
+COMHEADS = frozenset({"get vs", "set vs", "set rbt", "get vid fmt inf", "get sig sta", "get hpd"})
 #: What the reboot Item is commanded with (oh_features.reboots.COMMAND).
 REBOOT = "reboot"
 RULE = "automation/js/avpro_telnet.js"
@@ -124,6 +124,11 @@ def validate(device: dict) -> list[str]:
 
 
 def render(device: dict, house: House, out: YamlFile) -> None:
+    out.items[f"{device['id']}_signal"] = {
+        "type": "String", "label": "Native HDMI diagnostic replies", "groups": [device["id"]],
+        "tags": ["Status"], "autoupdate": False,
+        "metadata": {"stateDescription": {"config": {"readOnly": True}}},
+    }
     for output in range(1, OUTPUTS + 1):
         out.items[switch_item(device, output)] = {
             "type": "Number",
@@ -142,6 +147,22 @@ def render(device: dict, house: House, out: YamlFile) -> None:
         "metadata": {"commandDescription": {"config": {"options": f"{REBOOT}=Reboot"}}},
     }
     _commands.render(device, out, NAME)
+
+
+def diagnostics(device: dict) -> dict:
+    """Bounded native replies; components are not decoded without wire evidence."""
+    item = f"{device['id']}_signal"
+    readings = []
+    for direction, count in (("input", INPUTS), ("output", OUTPUTS)):
+        fields = (("format", "video format"), ("presence", "signal status")) if direction == "input" else (
+            ("presence", "signal status"), ("hpd", "hot-plug status"))
+        for port in range(1, count + 1):
+            for key, label in fields:
+                readings.append({"category": "processing", "kind": "metadata", "item": item,
+                                 "label": f"{direction.title()} {port} {label} reply (unparsed)",
+                                 "path": ["values", direction, str(port), key],
+                                 "port": {"direction": direction, "number": port}})
+    return {"kind": NAME, "items": [item], "maxAgeSeconds": 40, "readings": readings}
 
 
 def problem(device: dict) -> str | None:

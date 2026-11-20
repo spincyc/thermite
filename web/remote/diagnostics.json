@@ -11,6 +11,7 @@
       "readings": [
         {
           "category": "edid",
+          "kind": "capability",
           "label": "Input 1 presented EDID",
           "item": "example_matrix_input_signal",
           "path": [
@@ -21,10 +22,13 @@
           "port": {
             "direction": "input",
             "number": 1
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "edid",
+          "kind": "capability",
           "label": "Input 2 presented EDID",
           "item": "example_matrix_input_signal",
           "path": [
@@ -35,10 +39,13 @@
           "port": {
             "direction": "input",
             "number": 2
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "edid",
+          "kind": "capability",
           "label": "Input 3 presented EDID",
           "item": "example_matrix_input_signal",
           "path": [
@@ -49,10 +56,13 @@
           "port": {
             "direction": "input",
             "number": 3
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "edid",
+          "kind": "capability",
           "label": "Input 4 presented EDID",
           "item": "example_matrix_input_signal",
           "path": [
@@ -63,10 +73,13 @@
           "port": {
             "direction": "input",
             "number": 4
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "edid",
+          "kind": "capability",
           "label": "Input 5 presented EDID",
           "item": "example_matrix_input_signal",
           "path": [
@@ -77,10 +90,13 @@
           "port": {
             "direction": "input",
             "number": 5
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "edid",
+          "kind": "capability",
           "label": "Input 6 presented EDID",
           "item": "example_matrix_input_signal",
           "path": [
@@ -91,10 +107,13 @@
           "port": {
             "direction": "input",
             "number": 6
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "edid",
+          "kind": "capability",
           "label": "Input 7 presented EDID",
           "item": "example_matrix_input_signal",
           "path": [
@@ -105,10 +124,13 @@
           "port": {
             "direction": "input",
             "number": 7
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "edid",
+          "kind": "capability",
           "label": "Input 8 presented EDID",
           "item": "example_matrix_input_signal",
           "path": [
@@ -119,12 +141,15 @@
           "port": {
             "direction": "input",
             "number": 8
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 1 sink connection",
           "item": "example_matrix_output_signal",
+          "kind": "link",
           "path": [
             "values",
             "connected",
@@ -133,12 +158,15 @@
           "port": {
             "direction": "output",
             "number": 1
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 1 scaler setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "scaler",
@@ -147,12 +175,15 @@
           "port": {
             "direction": "output",
             "number": 1
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 1 HDR processing setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "hdr",
@@ -161,12 +192,15 @@
           "port": {
             "direction": "output",
             "number": 1
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 1 HDCP setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "hdcp",
@@ -175,12 +209,15 @@
           "port": {
             "direction": "output",
             "number": 1
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 2 sink connection",
           "item": "example_matrix_output_signal",
+          "kind": "link",
           "path": [
             "values",
             "connected",
@@ -189,12 +226,15 @@
           "port": {
             "direction": "output",
             "number": 2
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 2 scaler setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "scaler",
@@ -203,12 +243,15 @@
           "port": {
             "direction": "output",
             "number": 2
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 2 HDR processing setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "hdr",
@@ -217,12 +260,15 @@
           "port": {
             "direction": "output",
             "number": 2
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 2 HDCP setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "hdcp",
@@ -231,12 +277,15 @@
           "port": {
             "direction": "output",
             "number": 2
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 3 sink connection",
           "item": "example_matrix_output_signal",
+          "kind": "link",
           "path": [
             "values",
             "connected",
@@ -245,12 +294,15 @@
           "port": {
             "direction": "output",
             "number": 3
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 3 scaler setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "scaler",
@@ -259,12 +311,15 @@
           "port": {
             "direction": "output",
             "number": 3
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 3 HDR processing setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "hdr",
@@ -273,12 +328,15 @@
           "port": {
             "direction": "output",
             "number": 3
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 3 HDCP setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "hdcp",
@@ -287,12 +345,15 @@
           "port": {
             "direction": "output",
             "number": 3
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 4 sink connection",
           "item": "example_matrix_output_signal",
+          "kind": "link",
           "path": [
             "values",
             "connected",
@@ -301,12 +362,15 @@
           "port": {
             "direction": "output",
             "number": 4
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 4 scaler setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "scaler",
@@ -315,12 +379,15 @@
           "port": {
             "direction": "output",
             "number": 4
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 4 HDR processing setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "hdr",
@@ -329,12 +396,15 @@
           "port": {
             "direction": "output",
             "number": 4
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 4 HDCP setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "hdcp",
@@ -343,12 +413,15 @@
           "port": {
             "direction": "output",
             "number": 4
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 5 sink connection",
           "item": "example_matrix_output_signal",
+          "kind": "link",
           "path": [
             "values",
             "connected",
@@ -357,12 +430,15 @@
           "port": {
             "direction": "output",
             "number": 5
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 5 scaler setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "scaler",
@@ -371,12 +447,15 @@
           "port": {
             "direction": "output",
             "number": 5
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 5 HDR processing setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "hdr",
@@ -385,12 +464,15 @@
           "port": {
             "direction": "output",
             "number": 5
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 5 HDCP setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "hdcp",
@@ -399,12 +481,15 @@
           "port": {
             "direction": "output",
             "number": 5
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 6 sink connection",
           "item": "example_matrix_output_signal",
+          "kind": "link",
           "path": [
             "values",
             "connected",
@@ -413,12 +498,15 @@
           "port": {
             "direction": "output",
             "number": 6
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 6 scaler setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "scaler",
@@ -427,12 +515,15 @@
           "port": {
             "direction": "output",
             "number": 6
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 6 HDR processing setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "hdr",
@@ -441,12 +532,15 @@
           "port": {
             "direction": "output",
             "number": 6
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 6 HDCP setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "hdcp",
@@ -455,12 +549,15 @@
           "port": {
             "direction": "output",
             "number": 6
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 7 sink connection",
           "item": "example_matrix_output_signal",
+          "kind": "link",
           "path": [
             "values",
             "connected",
@@ -469,12 +566,15 @@
           "port": {
             "direction": "output",
             "number": 7
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 7 scaler setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "scaler",
@@ -483,12 +583,15 @@
           "port": {
             "direction": "output",
             "number": 7
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 7 HDR processing setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "hdr",
@@ -497,12 +600,15 @@
           "port": {
             "direction": "output",
             "number": 7
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 7 HDCP setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "hdcp",
@@ -511,12 +617,15 @@
           "port": {
             "direction": "output",
             "number": 7
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 8 sink connection",
           "item": "example_matrix_output_signal",
+          "kind": "link",
           "path": [
             "values",
             "connected",
@@ -525,12 +634,15 @@
           "port": {
             "direction": "output",
             "number": 8
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 8 scaler setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "scaler",
@@ -539,12 +651,15 @@
           "port": {
             "direction": "output",
             "number": 8
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 8 HDR processing setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "hdr",
@@ -553,12 +668,15 @@
           "port": {
             "direction": "output",
             "number": 8
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
         },
         {
           "category": "processing",
           "label": "Output 8 HDCP setting",
           "item": "example_matrix_output_signal",
+          "kind": "setting",
           "path": [
             "values",
             "hdcp",
@@ -567,7 +685,19 @@
           "port": {
             "direction": "output",
             "number": 8
-          }
+          },
+          "provider": "bk808_http",
+          "maxAgeSeconds": 15
+        }
+      ],
+      "providers": [
+        {
+          "kind": "bk808_http",
+          "items": [
+            "example_matrix_input_signal",
+            "example_matrix_output_signal"
+          ],
+          "maxAgeSeconds": 15
         }
       ],
       "label": "Example Matrix (HDMI matrix)"
@@ -590,6 +720,7 @@
               "label": "Example Tv",
               "role": "display",
               "input": "hdmi1",
+              "inputKind": "selector",
               "zone": "main"
             }
           ],
@@ -608,6 +739,7 @@
               "label": "Example Matrix (HDMI matrix)",
               "role": "matrix",
               "input": 1,
+              "inputKind": "port",
               "output": 1
             },
             {
@@ -615,6 +747,7 @@
               "label": "Example Tv",
               "role": "display",
               "input": "hdmi2",
+              "inputKind": "selector",
               "zone": "main"
             }
           ],
@@ -638,6 +771,7 @@
               "label": "Example Matrix (HDMI matrix)",
               "role": "matrix",
               "input": 1,
+              "inputKind": "port",
               "output": 2
             },
             {
@@ -645,6 +779,7 @@
               "label": "Example Display",
               "role": "display",
               "input": "hdmi2",
+              "inputKind": "selector",
               "zone": "main"
             }
           ],

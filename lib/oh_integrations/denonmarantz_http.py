@@ -202,7 +202,13 @@ def diagnostics(device: dict) -> dict | None:
         return None
     items = [f"{device['id']}_{kind}_signal" for kind in SIGNAL_FIELDS]
     readings = [{"category": category, "label": label, "item": f"{device['id']}_{kind}_signal",
-                 "path": ["values", field], "zone": "main", "media": kind}
+                 "path": ["values", field], "zone": "main", "media": kind,
+                 "kind": "format" if field in {"signal", "fs", "hdmisigin", "hdmisigout"} else "setting",
+                 "unknown": ["---", "Unknown"],
+                 # AppCommand0300 does not report the selected source. Never
+                 # attach its main-zone format to a particular logical input.
+                 **({"selector": {"path": ["values", "input"], "node": "input"}}
+                    if field in {"signal", "fs", "hdmisigin", "hdmisigout"} else {})}
                 for kind, (_, fields) in SIGNAL_FIELDS.items() for field, (category, label) in fields.items()]
     return {"kind": NAME, "items": items, "maxAgeSeconds": SIGNAL_POLL + 5, "readings": readings}
 

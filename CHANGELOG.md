@@ -7,6 +7,18 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Signal & audio follows explicit audio forks (`audio_link`), keeps known
+  audio endpoints visible when their wiring is unknown, and follows the
+  confirmed synced route even when the source name stays the same. Passive
+  observers can qualify ports and zones; ambiguous device pairs are refused.
+  Every hop reports its measurement coverage. Formats, link status, EDID
+  capabilities, settings and track metadata have distinct meanings. Missing
+  telemetry, malformed replies, no signal, silence, stale data and readings
+  from a different input no longer collapse into one "Unavailable" label.
+  Values without acquisition times stay age unknown, and old readings cannot
+  become current after switching routes or losing the connection.
+  Native VRROOM and projector observations share their existing control
+  connection; the WiiM's track metadata never claims a measured optical format.
 - A routed room may say what a source's signal carries to it
   (`routing.rooms.<room>.carries.<source>`): `display` for a picture alone
   (a computer whose sound stays with it), `audio` for sound alone, both

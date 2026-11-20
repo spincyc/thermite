@@ -30,17 +30,22 @@
         if (!ID.test(source) || !route || !Array.isArray(route.nodes) || route.nodes.length > 32) throw new Error("The topology map is unavailable.");
         function readNodes(nodes) { return nodes.map(node => {
           if (!node || !seen.has(node.device)) throw new Error("The topology map is unavailable.");
-          return { device: node.device, label: text(node.label) || node.device, role: text(node.role), input: port(node.input), output: port(node.output), zone: port(node.zone) };
+          return { device: node.device, label: text(node.label) || node.device, role: text(node.role), input: port(node.input), output: port(node.output), zone: port(node.zone),
+            inputKind: text(node.inputKind), inputTransport: text(node.inputTransport), outputTransport: text(node.outputTransport), wiring: text(node.wiring) };
         }); }
-        const path = readNodes(route.nodes);
-        if (route.audioNodes != null && (!Array.isArray(route.audioNodes) || route.audioNodes.length > 32)) throw new Error("The topology map is unavailable.");
-        const audioNodes = readNodes(route.audioNodes || []);
-        const usb = (Array.isArray(route.usb) ? route.usb : []).filter(entry => entry && seen.has(entry.device)).map(entry => ({
-          device: entry.device, host: port(entry.host), ports: (Array.isArray(entry.ports) ? entry.ports : []).map(port).filter(Boolean)
-        }));
-        // What the source's signal carries to the room: display, audio or both.
-        const carries = ["display", "audio"].includes(route.carries) ? route.carries : "both";
-        routes[room][source] = { label: text(route.label) || source, nodes: path, usb, carries, ...(audioNodes.length ? { audioNodes } : {}) };
+        function readRoute(value) {
+          if (!value || !Array.isArray(value.nodes) || value.nodes.length > 32) throw new Error("The topology map is unavailable.");
+          for (const key of ["audioNodes", "audioEndpoints"]) if (value[key] != null && (!Array.isArray(value[key]) || value[key].length > 32)) throw new Error("The topology map is unavailable.");
+          const usb = (Array.isArray(value.usb) ? value.usb : []).filter(entry => entry && seen.has(entry.device)).map(entry => ({
+            device: entry.device, host: port(entry.host), ports: (Array.isArray(entry.ports) ? entry.ports : []).map(port).filter(Boolean)
+          }));
+          return { label: text(value.label) || source, nodes: readNodes(value.nodes), usb,
+            carries: ["display", "audio"].includes(value.carries) ? value.carries : "both",
+            ...(value.audioNodes?.length ? { audioNodes: readNodes(value.audioNodes) } : {}),
+            ...(value.audioEndpoints?.length ? { audioEndpoints: readNodes(value.audioEndpoints) } : {}) };
+        }
+        routes[room][source] = readRoute(route);
+        if (route.variants?.synced) routes[room][source].variants = { synced: readRoute({ ...route, ...route.variants.synced }) };
       }
     }
     const edgeIds = new Set();
@@ -49,7 +54,8 @@
           || !["video", "audio", "usb"].includes(edge.kind) || !Array.isArray(edge.rooms) || !Array.isArray(edge.sources)) throw new Error("The topology map is unavailable.");
       edgeIds.add(edge.id);
       return { id: text(edge.id), from: edge.from, to: edge.to, kind: edge.kind, fromPort: port(edge.fromPort), toPort: port(edge.toPort),
-        rooms: edge.rooms.filter(id => roomIds.has(id)), sources: edge.sources.filter(id => ID.test(id)) };
+        rooms: edge.rooms.filter(id => roomIds.has(id)), sources: edge.sources.filter(id => ID.test(id)),
+        transport: text(edge.transport), toPortKind: text(edge.toPortKind), fromZone: port(edge.fromZone), toZone: port(edge.toZone) };
     });
     return { version: 1, nodes, rooms, routes, edges };
   }
@@ -61,7 +67,10 @@
     return chain.some((node, index) => {
       const next = chain[index + 1];
       return next && node.device === edge.from && next.device === edge.to
-        && node.output === edge.fromPort && next.input === edge.toPort;
+        && node.output === edge.fromPort && next.input === edge.toPort
+        && (!edge.fromZone || edge.fromZone === node.zone) && (!edge.toZone || edge.toZone === next.zone)
+        && (!edge.transport || !node.outputTransport || edge.transport === node.outputTransport)
+        && (!edge.transport || !next.inputTransport || edge.transport === next.inputTransport);
     });
   }
 
@@ -72,21 +81,23 @@
       const confirmed = states[roomId] && states[roomId].value;
       for (const [sourceId, route] of Object.entries(model.routes[roomId] || {})) {
         if (source && source !== sourceId) continue;
-        paths.push({ room: roomId, source: sourceId, route, confirmed: confirmed === sourceId });
+        const variants = route.variants?.synced;
+        paths.push({ room: roomId, source: sourceId, route, variant: variants ? "own" : "", confirmed: confirmed === sourceId && !variants });
+        if (variants) paths.push({ room: roomId, source: sourceId, route: variants, variant: "synced", confirmed: false });
       }
     }
     const edges = model.edges.filter(edge => room || source ? paths.some(path => carries(edge, path.route)) : true)
       .map(edge => ({ ...edge, confirmed: paths.some(path => path.confirmed && carries(edge, path.route)) }));
     const included = new Set(edges.flatMap(edge => [edge.from, edge.to]));
-    paths.forEach(path => path.route.nodes.concat(path.route.audioNodes || []).forEach(node => included.add(node.device)));
-    const active = new Set(paths.filter(path => path.confirmed).flatMap(path => path.route.nodes.concat(path.route.audioNodes || []).map(node => node.device)));
+    paths.forEach(path => path.route.nodes.concat(path.route.audioNodes || [], path.route.audioEndpoints || []).forEach(node => included.add(node.device)));
+    const active = new Set(paths.filter(path => path.confirmed).flatMap(path => path.route.nodes.concat(path.route.audioNodes || [], path.route.audioEndpoints || []).map(node => node.device)));
     return { nodes: model.nodes.filter(node => included.has(node.id)).map(node => ({ ...node, confirmed: active.has(node.id) })), edges, paths };
   }
 
   function layout(model, view, vertical = false) {
-    const ranks = new Map(), levels = { source: 0, matrix: 1, switch: 1, receiver: 2, observer: 3, display: 4 };
+    const ranks = new Map(), levels = { source: 0, matrix: 1, switch: 1, receiver: 2, observer: 3, display: 4, audio: 4 };
     for (const sources of Object.values(model.routes)) for (const route of Object.values(sources)) {
-      route.nodes.concat(route.audioNodes || []).forEach(node => { if (own(levels, node.role)) ranks.set(node.device, levels[node.role]); });
+      route.nodes.concat(route.audioNodes || [], route.audioEndpoints || [], route.variants?.synced?.nodes || [], route.variants?.synced?.audioNodes || []).forEach(node => { if (own(levels, node.role)) ranks.set(node.device, levels[node.role]); });
       route.usb.forEach(entry => ranks.set(entry.device, 1));
     }
     const columns = Array.from({ length: 5 }, () => []);
@@ -166,19 +177,21 @@
   }
 
   function nativePorts(node) {
-    return [node.input ? "in " + node.input : "", node.output ? "out " + node.output : "", node.zone ? "zone " + node.zone : ""].filter(Boolean).join(" · ");
+    return [node.input ? (node.inputKind === "selector" ? "input selector " : "in ") + node.input : "", node.output ? "out " + node.output : "", node.wiring === "unknown" ? "wiring unknown" : "", node.zone ? "zone " + node.zone : ""].filter(Boolean).join(" · ");
   }
 
   function videoRows(model, view, states = {}, connected) {
     return view.paths.map(path => {
       const roles = {};
       for (const role of ["matrix", "switch", "receiver", "observer", "display"]) roles[role] = path.route.nodes.filter(node => node.role === role);
-      roles.audio = (path.route.audioNodes || []).filter(node => node.role !== "source");
-      const status = routeStatus(model, path.room, path.source, states[path.room], connected);
+      roles.audio = (path.route.audioNodes || []).filter(node => node.role !== "source").concat(path.route.audioEndpoints || []);
+      let status = routeStatus(model, path.room, path.source, states[path.room], connected);
+      if (path.variant && status.label === "Reported") status = { label: "Route unconfirmed", detail: "The source is reported; use Signal & audio for the observed physical route." };
       const room = model.rooms.find(entry => entry.id === path.room)?.label || path.room;
       const sort = { room, source: path.route.label, status: status.label };
       for (const [role, nodes] of Object.entries(roles)) sort[role] = nodes.map(node => compactLabel(model, node) + " " + nativePorts(node)).join(" → ");
-      return { id: path.room + ":" + path.source, room: path.room, source: path.source, roomLabel: room, sourceLabel: path.route.label,
+      return { id: path.room + ":" + path.source + (path.variant ? ":" + path.variant : ""), room: path.room, source: path.source, roomLabel: room,
+        sourceLabel: path.route.label + (path.variant ? " · " + path.variant + " route" : ""),
         sourceNode: path.route.nodes[0], roles, status, sort, path };
     });
   }
@@ -372,8 +385,9 @@
     const list = element("ul", { class: "route-list" });
     view.paths.forEach(path => {
       const row = element("li", { class: "route-row" });
-      row.append(element("h3", {}, roomLabel(path.room) + " · " + path.route.label + (carriesLabel(path.route) ? " · " + carriesLabel(path.route) : "")), element("p", {}, path.route.nodes.map(node => node.label + (nativePorts(node) ? " [" + nativePorts(node) + "]" : "")).join(" → ")));
+      row.append(element("h3", {}, roomLabel(path.room) + " · " + path.route.label + (path.variant ? " · configured " + path.variant + " route" : "") + (carriesLabel(path.route) ? " · " + carriesLabel(path.route) : "")), element("p", {}, path.route.nodes.map(node => node.label + (nativePorts(node) ? " [" + nativePorts(node) + "]" : "")).join(" → ")));
       if (path.route.audioNodes) row.appendChild(element("p", {}, "Configured audio · " + path.route.audioNodes.map(node => node.label + (nativePorts(node) ? " [" + nativePorts(node) + "]" : "")).join(" → ")));
+      (path.route.audioEndpoints || []).forEach(node => row.appendChild(element("p", {}, "Audio endpoint · " + node.label + " · " + nativePorts(node))));
       path.route.usb.forEach(usb => row.appendChild(element("p", {}, "Configured USB · " + deviceLabel(usb.device) + " HOST " + usb.host + " · DEVICE ports " + usb.ports.join(", "))));
       list.appendChild(row);
     });

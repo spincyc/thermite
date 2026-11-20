@@ -4,7 +4,9 @@ This is configuration, not discovered wiring or live state. Video paths come
 from diagnostics, including its local-source bypasses and passive observers.
 Ports retain their native numbering: an edge's fromPort is the preceding
 device's configured output, and toPort is the following device's input.
-Unknown ports are omitted rather than inferred from a model or receiver zone.
+Control selectors carry toPortKind=selector; they are not verified connector
+numbers. Unknown ports are omitted rather than inferred from a receiver zone.
+Audio endpoints without an explicit attachment have no invented cable edge.
 
 USB edges describe only known source-to-matrix host cables. A route's usb
 entries identify the matrix's device ports assigned to that source, respecting
@@ -71,7 +73,8 @@ def manifest(house: House, conf: Conf) -> dict:
             "devices": [node["id"] for node in nodes if node["room"] == location],
         })
 
-    routes, edges = {}, {}
+    routes: dict = {}
+    edges: dict = {}
 
     def edge(kind, source, target, room, choice, **ports):
         ident = _edge_id(kind, source, target, ports)
@@ -81,20 +84,35 @@ def manifest(house: House, conf: Conf) -> dict:
         edges[ident]["rooms"].add(room)
         edges[ident]["sources"].add(choice)
 
+    def route_path(path):
+        result = {"label": path["label"], "nodes": copy.deepcopy(path["nodes"]), "carries": path["carries"]}
+        for key in ("audioNodes", "audioEndpoints"):
+            if path.get(key):
+                result[key] = copy.deepcopy(path[key])
+        if path.get("variants"):
+            result["variants"] = {key: route_path(value) for key, value in path["variants"].items()}
+        return result
+
     for room_id, room in sorted(paths.items()):
         routes[room_id] = {}
         for source_id, path in sorted(room["sources"].items()):
-            route = {"label": path["label"], "nodes": copy.deepcopy(path["nodes"]), "carries": path["carries"]}
-            if path.get("audioNodes"):
-                route["audioNodes"] = copy.deepcopy(path["audioNodes"])
-            for kind, chain in (("video", path["nodes"]), ("audio", path.get("audioNodes", []))):
-                for before, after in zip(chain, chain[1:], strict=False):
-                    ports = {}
-                    if before.get("output") is not None:
-                        ports["fromPort"] = before["output"]
-                    if after.get("input") is not None:
-                        ports["toPort"] = after["input"]
-                    edge(kind, before["device"], after["device"], room_id, source_id, **ports)
+            route = route_path(path)
+            for variant in remote_diagnostics.variants(path):
+                for kind, chain in (("video", variant["nodes"]), ("audio", variant.get("audioNodes", []))):
+                    for before, after in zip(chain, chain[1:], strict=False):
+                        ports = {}
+                        if before.get("output") is not None:
+                            ports["fromPort"] = before["output"]
+                        if after.get("input") is not None:
+                            ports["toPort"] = after["input"]
+                            if after.get("inputKind") == "selector":
+                                ports["toPortKind"] = "selector"
+                        for key, node in (("fromZone", before), ("toZone", after)):
+                            if node.get("zone") is not None:
+                                ports[key] = node["zone"]
+                        if before.get("outputTransport"):
+                            ports["transport"] = before["outputTransport"]
+                        edge(kind, before["device"], after["device"], room_id, source_id, **ports)
             usb = _usb(config, routed_rooms[room_id], source_id)
             if usb:
                 route["usb"] = usb

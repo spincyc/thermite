@@ -770,6 +770,7 @@
     this.diagnosticsModel = null;
     this.diagnosticsTimeout = config.diagnosticsTimeout || 8000;
     this.diagnosticsGeneration = 0;
+    this.diagnosticsRoutes = Object.create(null);
     this.activityRetryDelay = 1000;
     this.activityNoticed = false;
     const remote = this.view === "remote";
@@ -926,23 +927,42 @@
     }
     const generation = ++this.diagnosticsGeneration;
     const loading = this.diagnosticsModel ? Promise.resolve(this.diagnosticsModel) : this.diagnosticsLoading;
-    return loading.then((model) => {
+    return loading.then(async (model) => {
       if (generation !== this.diagnosticsGeneration) return null;
       if (!model || this.stopped) return global.RemoteDiagnostics.unavailable(roomId, findRoom(this.house, roomId).label, this.now());
       this.cancelReads("diagnostics");
-      const names = model.items(roomId, sourceId);
+      const current = () => generation === this.diagnosticsGeneration && !this.stopped;
+      const read = async item => {
+        try { return { value: await this.diagnosticsRequest("/rest/items/" + item + "/state"), receivedAt: this.now() }; }
+        catch (_) { return { reason: "read_failed" }; }
+      };
+      const routeItem = model.routeStateItem(roomId);
+      const before = model.context(roomId, sourceId, routeItem ? await read(routeItem) : null);
+      if (!current()) return null;
+      const previous = this.diagnosticsRoutes[roomId];
+      if (routeItem) this.diagnosticsRoutes[roomId] = { key: before.key || previous?.key || "",
+        since: !before.ready || previous && previous.key !== before.key ? this.now() : previous ? previous.since : 0 };
+      const since = Math.max(acquiredAfter || 0, this.diagnosticsRoutes[roomId]?.since || 0);
       const snapshots = Object.create(null);
+      // The exact selected route, and the existing bounded pool. No format
+      // is attributed to a guessed same-source variant while it is unsettled.
+      let names;
+      try { names = before.ready ? model.items(roomId, sourceId, before) : []; }
+      catch (_) { return global.RemoteDiagnostics.unavailable(roomId, findRoom(this.house, roomId).label, this.now(), "Signal catalogue exceeds the supported Item limit"); }
       let index = 0;
       const worker = async () => {
-        while (index < names.length && !this.stopped && generation === this.diagnosticsGeneration) {
+        while (index < names.length && current()) {
           const item = names[index++];
-          try { snapshots[item] = { value: await this.diagnosticsRequest("/rest/items/" + item + "/state"), receivedAt: this.now() }; }
-          catch (_) { /* canonical unavailable in projection, never raw errors */ }
+          snapshots[item] = await read(item);
         }
       };
-      return Promise.all(Array.from({ length: Math.min(BACKGROUND_READS, names.length) }, worker))
-        .then(() => generation === this.diagnosticsGeneration && !this.stopped
-          ? model.project(roomId, sourceId, snapshots, this.now(), pendingId, acquiredAfter) : null);
+      await Promise.all(Array.from({ length: Math.min(BACKGROUND_READS, names.length) }, worker));
+      if (!current()) return null;
+      const after = model.context(roomId, sourceId, routeItem ? await read(routeItem) : null);
+      if (!current()) return null;
+      const stable = before.ready && after.ready && before.key === after.key;
+      if (routeItem && !stable) this.diagnosticsRoutes[roomId] = { key: after.key || before.key, since: this.now() };
+      return model.project(roomId, sourceId, snapshots, this.now(), pendingId, since, { ...before, ready: stable });
     });
   };
 

@@ -485,6 +485,25 @@ FACTS = ("cpu_temperature", "board_temperature", "firmware", "update", "internet
 QUIET = {"cpu_temperature", "board_temperature", "remote_battery"}
 
 
+def diagnostics(device: dict) -> dict | None:
+    """Selected input and track metadata, not a measurement of optical PCM.
+
+    getMetaInfo documents current track metadata. Its rates are not proof
+    of the format received at a physical input. Existing scalar Items also
+    carry no device acquisition time, so clients must show their age unknown.
+    """
+    if not (uses(device, PHASE, NAME) or uses(device, "control", NAME)):
+        return None
+    ident = device["id"]
+    readings = [{"item": f"{ident}_input", "label": "Selected input", "category": "processing", "kind": "setting",
+                 "scalar": True, "media": "audio"}]
+    readings.extend({"item": f"{ident}_{suffix}", "label": label, "category": "processing", "kind": "metadata",
+                     "scalar": True, "media": "audio", "unit": UNITS[suffix]}
+                    for suffix, label in (("sample_rate", "Track metadata sample rate"),
+                                          ("bit_depth", "Track metadata bit depth")))
+    return {"kind": NAME, "items": [reading["item"] for reading in readings], "readings": readings}
+
+
 def audio(device: dict) -> dict | None:
     """Its audio page beside its remote() (oh_integrations audio()): None
     unless controlled."""

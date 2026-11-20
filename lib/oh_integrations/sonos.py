@@ -248,6 +248,23 @@ def remote(device: dict) -> dict | None:
             "volume": {"item": f"{ident}_volume", **VOLUME}}
 
 
+def diagnostics(device: dict) -> dict | None:
+    """Native TV codec facts, with no invented acquisition timestamp.
+
+    The binding exposes scalar Items. Reading them does not establish when
+    the speaker measured them; silence and a missing signal are distinct.
+    """
+    if not (uses(device, PHASE, NAME) or uses(device, "control", NAME)) or device.get("model") != "Arc":
+        return None
+    ident = device["id"]
+    return {"kind": NAME, "items": [f"{ident}_codec", f"{ident}_line_in"], "readings": [
+        {"item": f"{ident}_codec", "label": "TV input audio format", "category": "audio", "kind": "format",
+         "scalar": True, "media": "audio", "noSignal": ["noSignal"], "silence": ["silence"],
+         "unknown": ["Unknown"]},
+        {"item": f"{ident}_line_in", "label": "TV audio connection", "category": "processing", "kind": "link",
+         "scalar": True, "media": "audio"}]}
+
+
 def audio(device: dict) -> dict | None:
     """Its audio page beside its remote() (oh_integrations audio()): None
     unless controlled. An Arc whose TV audio format is TV_SILENT plays

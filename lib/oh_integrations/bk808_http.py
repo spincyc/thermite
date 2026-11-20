@@ -113,13 +113,14 @@ def fields(device: dict) -> dict[str, dict]:
 def diagnostics(device: dict) -> dict:
     """Read-back EDIDs and output settings; these are not negotiated video."""
     input_item, output_item = f"{device['id']}_input_signal", f"{device['id']}_output_signal"
-    readings = [{"category": "edid", "label": f"Input {port} presented EDID", "item": input_item,
+    readings = [{"category": "edid", "kind": "capability", "label": f"Input {port} presented EDID", "item": input_item,
                  "path": ["values", "edid", str(port)], "port": {"direction": "input", "number": port}}
                 for port in range(1, INPUTS + 1)]
     for port in range(1, OUTPUTS + 1):
         for key, label in (("connected", "sink connection"), ("scaler", "scaler setting"),
                            ("hdr", "HDR processing setting"), ("hdcp", "HDCP setting")):
             readings.append({"category": "processing", "label": f"Output {port} {label}", "item": output_item,
+                             "kind": "link" if key == "connected" else "setting",
                              "path": ["values", key, str(port)], "port": {"direction": "output", "number": port}})
     return {"kind": NAME, "items": [input_item, output_item], "maxAgeSeconds": 15, "readings": readings}
 

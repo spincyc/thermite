@@ -102,7 +102,7 @@ class Rendering(unittest.TestCase):
         data = house()
         out = YamlFile(())
         vrroom_telnet.render(SWITCH, House(data), out)
-        self.assertEqual(set(out.items), {"example_switch_input", "example_switch_reboot", "example_switch_problem",
+        self.assertEqual(set(out.items), {"example_switch_input", "example_switch_reboot", "example_switch_problem", "example_switch_telnet_signal",
                                           "example_switch_vrroom_telnet_commands"})
         self.assertTrue(all(item.get("autoupdate", False) is False and "channel" not in item for item in out.items.values()))
         files = vrroom_telnet.files([SWITCH], House(data))

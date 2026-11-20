@@ -465,6 +465,10 @@
         return;
       }
       if (event.type === "connection") {
+        if (event.connected) {
+          Object.keys(signalConfirmed).forEach(id => { signalSince[id] = now(); });
+          if (signalOpen) refreshDiagnostics();
+        }
         // Not a passing message: view() says it for as long as it lasts.
         emit({ type: "change" });
         announce(event.connected ? "Connected to thermite again" : "Not connected to thermite");
@@ -500,6 +504,9 @@
       states[event.room] = event.state;
       const choice = picked[event.room];
       if (choice && choice.value !== Remote.showing(event.state)) delete picked[event.room];
+      // Even a cancelled A → pending B → A may have changed the hardware.
+      // Samples must be acquired again after either end of that transition.
+      if (before && before.pending !== event.state.pending) signalSince[event.room] = now();
       rememberSignalSource(event.room, event.state);
       if (signalOpen && signalRoom === event.room && differs(before, event.state)) refreshDiagnostics();
       emit({ type: "change" });
@@ -1117,7 +1124,11 @@
       const id = roomId || (current && current.id);
       const view = signalViews[id];
       const state = states[id];
-      return view && state && view.confirmedValue === state.value && view.acquiredAfter === (signalSince[id] || 0) ? view.model : null;
+      if (!view || !state || view.confirmedValue !== state.value
+          || !state.pending && view.acquiredAfter !== (signalSince[id] || 0)) return null;
+      const choice = roomsById[id].options.find(option => option.id === state.pending);
+      const pending = choice ? { id: choice.id, label: choice.label } : null;
+      return global.RemoteDiagnostics ? global.RemoteDiagnostics.contextualize(view.model, pending, connected(), now()) : view.model;
     }
 
     function refreshDiagnostics() {

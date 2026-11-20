@@ -33,6 +33,7 @@ function clean(value) {
   return value.replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '').trim().slice(0, 192);
 }
 function finish(values) { return JSON.stringify({version:1, observedAt:Date.now(), values:values}); }
+function invalid() { return JSON.stringify({version:1, observedAt:Date.now(), values:{}, status:'unavailable', reason:'invalid_response'}); }
 """
 
 
@@ -43,11 +44,11 @@ def json_snapshot(fields: list[str] | dict[str, dict], *, required: str) -> str:
     as code N, never confused with a configured value or a known capability.
     """
     schema = json.dumps(fields, separators=(",", ":"))
-    return "|" + r"""(function () { try {
-""" + _JS + "\nif (typeof input !== 'string' || input.length > 65536) return 'UNDEF';\n" + \
+    return "|" + r"""(function () {
+""" + _JS + "\ntry {\nif (typeof input !== 'string' || input.length > 65536) return invalid();\n" + \
         f"var data = JSON.parse(input), schema = {schema};\n" + r"""
 if (!data || typeof data !== 'object' || Array.isArray(data) ||
-    !Object.prototype.hasOwnProperty.call(data, REQUIRED)) return 'UNDEF';
+    !Object.prototype.hasOwnProperty.call(data, REQUIRED)) return invalid();
 var values = {};
 if (Array.isArray(schema)) {
   schema.forEach(function (key) {
@@ -67,8 +68,8 @@ if (Array.isArray(schema)) {
     values[key] = ports;
   });
 }
-return Object.keys(values).length ? finish(values) : 'UNDEF';
-} catch (_) { return 'UNDEF'; } })()
+return Object.keys(values).length ? finish(values) : invalid();
+} catch (_) { return invalid(); } })()
 """.replace("REQUIRED", json.dumps(required))
 
 
@@ -79,10 +80,10 @@ def xml_snapshot(method: str, fields: list[str]) -> str:
     Reject DTDs, entity declarations, duplicate known fields and incomplete
     envelopes; no raw XML or unknown response fields reach an Item.
     """
-    return "|" + r"""(function () { try {
-""" + _JS + f"\nvar method = {json.dumps(method)}, fields = {json.dumps(fields)};\n" + r"""
+    return "|" + r"""(function () {
+""" + _JS + f"\ntry {{\nvar method = {json.dumps(method)}, fields = {json.dumps(fields)};\n" + r"""
 if (typeof input !== 'string' || input.length > 65536 || /<!/i.test(input) ||
-    !/^\s*(?:<\?xml[^?]*\?>\s*)?<rx\s*>[\s\S]*<\/rx\s*>\s*$/.test(input)) return 'UNDEF';
+    !/^\s*(?:<\?xml[^?]*\?>\s*)?<rx\s*>[\s\S]*<\/rx\s*>\s*$/.test(input)) return invalid();
 function decode(value) {
   return value.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, function (_, name) {
     var named = {amp:'&', lt:'<', gt:'>', quot:'"', apos:"'"};
@@ -95,21 +96,21 @@ var command, commands = /<cmd\b[^>]*>([\s\S]*?)<\/cmd\s*>/g, found = null;
 while ((command = commands.exec(input)) !== null) {
   var name = /<name\s*>([^<]*)<\/name\s*>/.exec(command[1]);
   if (!name || name[1].trim() !== method) continue;
-  if (found !== null) return 'UNDEF';
+  if (found !== null) return invalid();
   found = command[1];
 }
-if (found === null) return 'UNDEF';
+if (found === null) return invalid();
 var list = /<list\s*>([\s\S]*?)<\/list\s*>/.exec(found);
-if (!list) return 'UNDEF';
+if (!list) return invalid();
 var param, params = /<param\b([^>]*)>([^<]*)<\/param\s*>/g, values = {}, seen = {};
 while ((param = params.exec(list[1])) !== null) {
   var key = /\bname\s*=\s*(["'])([^"']*)\1/.exec(param[1]);
   if (!key || fields.indexOf(key[2]) < 0) continue;
-  if (Object.prototype.hasOwnProperty.call(seen, key[2])) return 'UNDEF';
+  if (Object.prototype.hasOwnProperty.call(seen, key[2])) return invalid();
   seen[key[2]] = true;
   var control = /\bcontrol\s*=\s*(["'])([^"']*)\1/.exec(param[1]);
   if (control && control[2] === '1') values[key[2]] = clean(decode(param[2]));
 }
-return Object.keys(values).length ? finish(values) : 'UNDEF';
-} catch (_) { return 'UNDEF'; } })()
+return Object.keys(values).length ? finish(values) : invalid();
+} catch (_) { return invalid(); } })()
 """

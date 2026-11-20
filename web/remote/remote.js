@@ -710,9 +710,13 @@
         : source ? source.label : confirmed === "off" ? "Off" : "Source unknown"));
       if (model.route && model.route.length) panel.appendChild(node("p", { class: "signal__route" }, model.route.map((step) => step.label).join(" → ")));
       if (model.audioRoute && model.audioRoute.length) panel.appendChild(node("p", { class: "signal__route" }, "Audio · " + model.audioRoute.map((step) => step.label).join(" → ")));
-      if (model.pending) panel.appendChild(node("p", { class: "info__note" }, "Switching to " + model.pending.label + "; readings still describe the confirmed source."));
+      if (model.audioEndpoints && model.audioEndpoints.length) panel.appendChild(node("p", { class: "signal__route" },
+        "Audio endpoint · " + model.audioEndpoints.map(step => step.label + (step.input ? " · input " + step.input : "")).join(", ") + " · wiring unknown"));
+      if (model.routeReady === false) panel.appendChild(node("p", { class: "info__note" }, "Awaiting confirmation of the physical route."));
+      if (model.pending) panel.appendChild(node("p", { class: "info__note" }, "Switching to " + model.pending.label + "; current formats await the confirmed route."));
+      if (model.connected === false) panel.appendChild(node("p", { class: "info__note" }, "Room updates unavailable; format attribution is unconfirmed."));
       if (view.blank) {
-        panel.appendChild(node("p", { class: "info__note" }, "Unavailable"));
+        panel.appendChild(node("p", { class: "info__note" }, model.reason || "Signal information unavailable"));
         return;
       }
       view.groups.forEach((group) => panel.appendChild(signalGroup(group)));
@@ -738,7 +742,7 @@
       node("summary", { class: "signal__summary" }, [
         node("h4", { class: "info__title" }, group.title),
         node("span", { class: "signal__tally" + (group.stale ? " signal__stale" : "") },
-          (group.count ? String(group.count) : "\u2014") + (group.stale ? " \u00b7 stale" : ""))
+          group.summary || (group.count ? String(group.count) : "\u2014"))
       ]),
       group.note ? node("p", { class: "info__note" }, group.note) : null
     ].concat(group.blocks.map((block) => node("div", { class: "signal__block" }, [

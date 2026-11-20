@@ -21,7 +21,11 @@ CONTROLLERS = {"hdmi_matrix", "hdmi_switch", "usb_matrix"}
 def manifest(house: House, conf: Conf) -> dict:
     """Safe descriptions of controlled AV devices, routing and its controllers."""
     items = {}
-    snapshots = {name for description in providers(house).values() for name in description.get("items", [])}
+    # Existing scalar facts can appear in both views. Only aggregate signal
+    # snapshots are excluded: their periodic JSON timestamps are not activity.
+    snapshots = {name for description in providers(house).values()
+                 for name in set(description.get("items", []))
+                 - {reading["item"] for reading in description.get("readings", []) if reading.get("scalar")}}
     active = []
     volumes = {}
     for device in house.devices:

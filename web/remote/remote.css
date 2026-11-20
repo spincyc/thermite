@@ -389,7 +389,7 @@ body[data-stale] :is([data-led], .target) .led {
 .signal__group[open] > .signal__summary::before { transform: translateY(-2px) rotate(45deg); }
 .signal__summary .info__title { flex: 1; margin: 0; }
 .signal__summary:hover .info__title { color: var(--ink); }
-.signal__tally { color: var(--ink-muted); font-size: 11px; }
+.signal__tally { max-width: 55%; color: var(--ink-muted); font-size: 11px; text-align: right; overflow-wrap: anywhere; }
 /* Open, the rows say it themselves. */
 .signal__group[open] .signal__tally { display: none; }
 .signal__group > .info__note { margin: 0 0 var(--space-2); }

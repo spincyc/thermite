@@ -40,8 +40,11 @@ not from a recorded session: beyond `get insel` answered `insel 1 4`, no
 answer has been recorded word for word. So the rule takes an answer only by its pattern, skips any
 other line while it waits, and counts no answer by the deadline as unknown.
 
-The VRROOM's web API (vrroom_http, under observe) still reports what telnet
-does not: the signals, +5 V, hot-plug and eARC.
+The read-only `<id>_telnet_signal` snapshot collects the documented native
+video/audio status strings on the same connection. Its separate bounded
+poll never opens a connection or changes routing health. The web API
+(vrroom_http, under observe) supplies additional +5 V, hot-plug and eARC
+observations when it is available.
 
 Its command list sends notices to "the current open IP connection", one, so
 nothing else connects to it: the rule holds oh_conf.RULE_SENDS, and the
@@ -82,14 +85,46 @@ READBACK_INPUTS = tuple(str(number) for number in INPUTS)
 #: within a second.
 POLL_S = 10
 #: All that the rule ever sends, named as lib/oh_matrix_sim's stand-in
-#: records it: the input read and switch, the notice setting and the reboot.
-COMHEADS = frozenset({"get insel", "set insel", "get ipinterrupt", "set ipinterrupt", "set reboot"})
+#: records it: routing, setup/reboot and optional native status reads.
+COMHEADS = frozenset({"get insel", "set insel", "get ipinterrupt", "set ipinterrupt", "set reboot", "get status", "get opmode"})
 #: What a new connection sends to set itself up: it moves no input.
 SETUP_COMHEADS = frozenset({"get ipinterrupt", "set ipinterrupt"})
 #: What the reboot Item is commanded with.
 REBOOT = "reboot"
 RULE = "automation/js/vrroom_telnet.js"
 SOURCE = Path(__file__).resolve().parent / "vrroom_telnet.js"
+
+
+def diagnostics(device: dict) -> dict:
+    """FW 0.63 native status: RX paths are processing paths, not sockets."""
+    item = f"{device['id']}_telnet_signal"
+    readings = []
+    for output in range(2):
+        selector = {"path": ["values", f"portseltx{output}"], "node": "input"}
+        for category, label, key, kind in (
+                ("video", "input video", f"RX{output}", "format"),
+                ("video", "output video", f"TX{output}", "format"),
+                ("audio", "output audio", f"AUD{output}", "format"),
+                ("edid", "sink capabilities", f"SINK{output}", "capability"),
+                ("processing", "source name", f"SPD{output}", "metadata")):
+            entry: dict = {"category": category, "label": f"TX{output} {label}", "item": item,
+                           "path": ["values", key], "kind": kind,
+                           "port": {"direction": "output", "number": output}}
+            if key.startswith(("TX", "AUD", "SINK")):
+                entry["transports"] = ["hdmi"]
+            if category in {"video", "audio"}:
+                entry["media"] = category
+            if kind in {"format", "metadata"}:
+                entry["selector"] = selector
+                entry["noSignal"] = ["no signal"]
+                entry["unknown"] = ["no info", "n/a"]
+            readings.append(entry)
+    # AUDOUT can be sourced from eARC. Without its source selector it is a
+    # device report, not evidence for the active HDMI/optical signal path.
+    readings.append({"category": "processing", "label": "HDMI audio output report", "item": item,
+                     "path": ["values", "AUDOUT"], "kind": "metadata", "noSignal": ["no signal"],
+                     "transports": ["hdmi"], "unknown": ["no info", "n/a"]})
+    return {"kind": NAME, "items": [item], "maxAgeSeconds": 40, "readings": readings}
 
 
 def input_item(device: dict) -> str:
@@ -131,6 +166,11 @@ def validate(device: dict) -> list[str]:
 
 
 def render(device: dict, house: House, out: YamlFile) -> None:
+    out.items[f"{device['id']}_telnet_signal"] = {
+        "type": "String", "label": "Native HDMI signal snapshot", "groups": [device["id"]],
+        "tags": ["Status"], "autoupdate": False,
+        "metadata": {"stateDescription": {"config": {"readOnly": True}}},
+    }
     out.items[input_item(device)] = {
         "type": "Number",
         "label": "TX0 input",
