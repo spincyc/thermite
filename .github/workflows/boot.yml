@@ -57,9 +57,11 @@ jobs:
           python-version: "3.12"
       # The driver uses the runner image's Chrome and its Node.js (22 or
       # later, for its WebSocket) and installs nothing.
-      - run: node --version && google-chrome --version
+      - run: node --version && "${CHROME_BIN:?}" --version
       - run: python -m pip install -r requirements.txt
-      - run: make check-browser PYTHON=python
+      # The image also puts a standalone Chromium snapshot on PATH. Use the
+      # packaged Chrome whose version the job printed above.
+      - run: THERMITE_CHROMIUM="${CHROME_BIN:?}" make check-browser PYTHON=python
         env:
           # Without a browser the check skips itself; here that would be a
           # night in which nothing was checked.

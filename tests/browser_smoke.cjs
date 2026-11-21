@@ -103,14 +103,16 @@ function launch(binary, profile) {
     "--disable-gpu", "--mute-audio", "--hide-scrollbars", "--js-flags=--max-old-space-size=256",
     "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
     ...(process.env.THERMITE_CHROMIUM_ARGS || "").split(" ").filter(Boolean), "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
-  let said = "";
+  let first = "", recent = "";
   const address = new Promise((resolve, reject) => {
     child.stderr.on("data", (chunk) => {
-      said = (said + chunk).slice(-4000);
-      const found = /DevTools listening on (ws:\/\/\S+)/.exec(said);
+      // A crash can print a long register dump after the startup error.
+      if (first.length < 1600) first = (first + chunk).slice(0, 1600);
+      recent = (recent + chunk).slice(-4000);
+      const found = /DevTools listening on (ws:\/\/\S+)/.exec(recent);
       if (found) resolve(found[1]);
     });
-    child.once("exit", (code) => reject(new Error("Chromium ended before it listened (status " + code + "): " + said.slice(-300))));
+    child.once("close", (code, signal) => reject(new Error(binary + " ended before it listened (" + (signal || "status " + code) + "): " + first.trim())));
     child.once("error", reject);
   });
   return { child, address: within(address, START_MS, "starting Chromium"), exited: new Promise((resolve) => child.once("exit", resolve)) };
