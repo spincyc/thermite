@@ -56,27 +56,33 @@ def working_runtime(root: Path, extra: bytes = b"") -> tuple[Path, dict]:
     return root, oh_release.manifest(root)
 
 
-def wait_for(condition, timeout: float = 20) -> None:
-    deadline = time.monotonic() + timeout
-    while not condition():
+def wait_for_phase(process: subprocess.Popen, ready: Path, phase: str) -> None:
+    deadline = time.monotonic() + 20
+    while not (ready.is_file() and ready.read_text() == phase + "\n"):
+        if process.poll() is not None:
+            raise AssertionError(f"fixture driver exited with {process.returncode} before {phase}")
         if time.monotonic() > deadline:
-            raise AssertionError("timed out waiting for the fixture child")
+            raise AssertionError(f"timed out waiting for fixture child phase {phase}")
         time.sleep(0.02)
 
 
 CHILD = r"""
-import pathlib, sys, time
+import pathlib, signal, sys, time
 ready, release, marker = map(pathlib.Path, sys.argv[1:4])
-try:
-    ready.write_text("waiting\n")
-    time.sleep(60)
-except KeyboardInterrupt:
-    ready.write_text("cleaning\n")
-    deadline = time.monotonic() + 30
-    while not release.exists() and time.monotonic() < deadline:
-        time.sleep(0.02)
-    marker.write_text("child cleanup completed\n")
-    sys.exit(130)
+# Queue Ctrl-C before publishing readiness so it can arrive on either side
+# of sigwait. The real host phase must inherit a usable interrupt handler.
+interrupt = {signal.SIGINT}
+inherited_mask = signal.pthread_sigmask(signal.SIG_BLOCK, interrupt)
+if signal.SIGINT in inherited_mask or signal.getsignal(signal.SIGINT) != signal.default_int_handler:
+    sys.exit("fixture child inherited a blocked or ignored SIGINT")
+ready.write_text("waiting\n")
+signal.sigwait(interrupt)
+ready.write_text("cleaning\n")
+deadline = time.monotonic() + 30
+while not release.exists() and time.monotonic() < deadline:
+    time.sleep(0.02)
+marker.write_text("child cleanup completed\n")
+sys.exit(130)
 """
 
 DRIVER = r"""
@@ -103,10 +109,11 @@ class Interrupts(fixtures.ApplicationFixture):
         store = self.root / "store"
         process = subprocess.Popen([sys.executable, "-B", str(driver), str(AREA / "lib"), str(store), str(child),
                                     str(ready), str(release), str(marker), str(report)], start_new_session=True)
+        self.addCleanup(process.wait, timeout=5)
         self.addCleanup(lambda: process.poll() is None and os.killpg(process.pid, signal.SIGKILL))
-        wait_for(lambda: ready.is_file() and ready.read_text() == "waiting\n")
+        wait_for_phase(process, ready, "waiting")
         os.killpg(process.pid, signal.SIGINT)  # what a terminal's Ctrl-C sends the foreground group
-        wait_for(lambda: ready.read_text() == "cleaning\n")
+        wait_for_phase(process, ready, "cleaning")
         time.sleep(0.6)  # subprocess.run would have killed the child 0.25 s into its cleanup
         self.assertIsNone(process.poll())
         self.assertFalse(marker.exists())
