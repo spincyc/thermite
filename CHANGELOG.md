@@ -7,6 +7,10 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A room can set `edid_by_source` for individual HDMI matrix sources.
+  Its EDID stays on the source's input while the room uses that feed,
+  including when another room selects the same source. When the room
+  leaves, the remaining viewer's EDID or the configured idle EDID returns.
 - A room with separate HDMI matrix outputs for its screen and receiver can
   set `hdmi_audio_scaler` by source. Selecting a computer can now send
   audio-only to the receiver while the screen keeps its own video route.

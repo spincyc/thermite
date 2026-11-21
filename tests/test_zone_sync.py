@@ -105,6 +105,16 @@ def den(rooms, data):
     rooms[DEN] = {"hdmi_output": 3, "sources": [COMPUTER, DISC], "display": {"device": "example_den_tv", "input": "hdmi1"}}
 
 
+def capped(rooms, data, plain=False, watchers=(LOUNGE,)):
+    """Some rooms cap only the computer. The independent Den also watches it."""
+    den(rooms, data)
+    for room in watchers:
+        rooms[room]["edid_by_source"] = {COMPUTER: "4k60-444-hdr-7.1ch"}
+    data["routing"]["edid"]["idle"] = "8k-frl12-hdr-7.1ch"
+    if plain:
+        rooms[LOUNGE].pop("usb_unused")
+
+
 def rendered_table(data):
     """The TABLE routing.js is rendered with, as the runtime receives it."""
     text = oh_render.render(House(data))[routing.RULE]
@@ -490,15 +500,22 @@ class Runtime(unittest.TestCase):
         tables = {"lifecycle": rendered_table(house()),
                   "plain": rendered_table(house(lambda rooms, _: rooms[LOUNGE].pop("usb_unused"))),
                   "shared": rendered_table(house(shared)),
+                  "capped": rendered_table(house(capped)),
+                  "cappedPlain": rendered_table(house(lambda rooms, data: capped(rooms, data, plain=True))),
+                  "sharedCaps": rendered_table(house(lambda rooms, data: capped(rooms, data, watchers=(CINEMA, DEN)))),
+                  "sharedCapsPlain": rendered_table(house(lambda rooms, data: capped(rooms, data, plain=True,
+                                                                                     watchers=(CINEMA, DEN)))),
                   "preserve": rendered_table(house(lambda rooms, data: shared(rooms, data, idle="preserve")))}
         self.assertIn("lifecycle", tables["lifecycle"])
         self.assertNotIn("lifecycle", tables["plain"])
+        self.assertIn("lifecycle", tables["capped"])
+        self.assertNotIn("lifecycle", tables["cappedPlain"])
         result = subprocess.run([shutil.which("node"), str(AREA / "tests/zone_sync_harness.js"),
                                  str(routing.SOURCE), str(routing.SOURCE.with_name("lifecycle.js"))],
                                 input=json.dumps(tables), capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         report = json.loads(result.stdout)
-        self.assertEqual((report["passed"], report["failed"]), (23, 0))
+        self.assertEqual((report["passed"], report["failed"]), (29, 0))
 
 
 if __name__ == "__main__":

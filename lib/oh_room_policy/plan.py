@@ -145,9 +145,12 @@ def expected_plan(house, room: str, choice: str) -> Plan:
     source = config["sources"].get(choice, {})
     claim = []
     if choice != "off" and not local_stage and not local_switch and edid and source.get("hdmi_input") is not None:
-        name = edid["inputs"].get(str(source["hdmi_input"]))
+        number = str(source["hdmi_input"])
+        name = edid["inputs"].get(number)
         if name and raw["hdmi"] in edid["outputs"]:
-            claim = [[name, edid["outputs"][raw["hdmi"]]]]
+            output = raw["hdmi"]
+            preset = edid.get("overrides", {}).get(number, {}).get(output, edid["outputs"][output])
+            claim = [[name, preset]]
     # A synced route claims no EDID: the follower shows its leader's output.
     unsynced = claim if synced else []
     effects = effects + ([] if synced else claim)

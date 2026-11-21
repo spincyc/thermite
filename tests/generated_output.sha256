@@ -276,7 +276,7 @@ de7cd8904353720fbe5d6d68bd16a944afd09844186fe9b9b0a58df779cee23a  bk808_cec.cont
 
 92bff9d913cd889236fc7b2d1434c6a159295a8cfb541df20d9b17c123df31df  bk808_cec.control/conf/automation/js/bk808_cec.js
 
-31371b2c37b3e3183460e2ce41566bd7057ee58d28432d99b20f50fb717c8f89  bk808_cec.control/conf/automation/js/routing.js
+02eb7c822095814d0b97471833df2fe8086b8b3864aa86aa5ff662d832d04105  bk808_cec.control/conf/automation/js/routing.js
 
 5a3029b43af45bf7eacbc3cb6c9312e25dafba0aace20616426d3fe9e968c0f2  bk808_cec.control/conf/html/remote/access.html
 
@@ -644,7 +644,7 @@ d2f9233ce671c26d5a8b70597635133e9821ec769ed3b5553e66879e9e99c7ec  drhdmi_http.ob
 
 4989723987b5b9f3c545856d0fcce06556785661ae189473389a4db9540e4a5d  example/conf/automation/js/pyatv_http_example_player.js
 
-1d081f8e7943c1a41a254edfc007a4cbad7d9bddf6cfb3979f9f7c7d2ebdd4a9  example/conf/automation/js/routing.js
+75312f22b4fd76c252b9a424941c44858813383442e912bacb44016933f86ec6  example/conf/automation/js/routing.js
 
 59c00f759da175b186fd924e78a0a1673bb1fcd59a11feb5a74ed8a12764e454  example/conf/automation/js/sony_ip_control_example_display.js
 
@@ -978,7 +978,7 @@ c6107ba4361bfdbebc693d3e1c3edbf79b840026645fabb910e300f74e644656  routed/conf/au
 
 446aa80e31ada56999e65e98213309080eb2ef22b9bf45d952fbcaebfbe1a880  routed/conf/automation/js/reboots.js
 
-66bdae9aeda7767aa9613f72f44aac8e04cc60116266ef178ad6e5b083bddced  routed/conf/automation/js/routing.js
+f0ce76c0af591176b487f1a3b54bdcc9b0296cabe872b722c74d116b9b318b8e  routed/conf/automation/js/routing.js
 
 2b5b11b981a86356c9553b2c80f1cde7e9a15c9adcbb2720615d208792c9c9bc  routed/conf/automation/js/sony_ip_control_example_den_tv.js
 

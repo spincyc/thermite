@@ -16,7 +16,10 @@ a source or Off does there (`on_actions`, `off_actions`: a curtain and
 lights, say), which dedicated sources explicitly enter standby on Off
 (`sleep_sources`), and, under
 `edid`, whether a source's input follows the EDID of the room display it is
-turned on in. A room whose sound leaves the matrix on an output of its own
+turned on in. A room can name an EDID for an individual matrix source in
+`edid_by_source`. That EDID takes precedence while the room uses its own
+matrix feed, including when another room selects the same source.
+A room whose sound leaves the matrix on an output of its own
 (`hdmi_audio_output`) may name, by source, what that output's scaler does
 while the room shows the source (`hdmi_audio_scaler`: audio-only for a
 computer whose picture its receiver need not convert); every other choice,
@@ -187,6 +190,9 @@ ROOM = {
                          each=Key(TEXT, "a source")),
     "edid": Key(TEXT, "the EDID its output gives the sources shown on it, under routing.edid: one of the matrix's "
                       "EDID names"),
+    "edid_by_source": Key(MAPPING, "the EDID each named matrix source presents while this room uses its own feed, "
+                                   "even when another room selects the same source", by="source",
+                          each=Key(TEXT, "one of the HDMI matrix's EDID names")),
     "audio": Key(TEXT, "the device its Volume and Mute drive: a soundbar or streaming amplifier in a room it "
                        "covers, or its own receiver or display"),
     "carries": Key(MAPPING, "what a source's signal carries to it where that is not both picture and sound: "
@@ -506,6 +512,7 @@ def validate(data: object) -> list[str]:
     usb_ports: dict[tuple[str, object], str] = {}
     switch_rooms: dict[object, str] = {}
     staged: dict[tuple, str] = {}
+    source_edids: dict[str, tuple[str, str]] = {}
     for room, entry in rooms_section.items():
         where = f"routing.rooms.{room}"
         if isinstance(entry, dict) and "room" in entry:
@@ -606,6 +613,31 @@ def validate(data: object) -> list[str]:
         if "hdmi_audio_scaler" in entry:
             problems += _audio_scaler_problems(f"{where}.hdmi_audio_scaler", entry, offered, sources, routing,
                                                devices, hdmi is not None)
+        if "edid_by_source" in entry:
+            at = f"{where}.edid_by_source"
+            overrides = entry["edid_by_source"]
+            if not fed:
+                problems.append(f"{at}: needs hdmi_output")
+            if routing.get("edid") is None:
+                problems.append(f"{at}: needs routing.edid")
+            if not isinstance(overrides, dict) or not overrides:
+                problems.append(f"{at}: must map sources to EDID names")
+            else:
+                for source, name in overrides.items():
+                    definition = sources.get(source)
+                    if (source not in offered or source in local or not isinstance(definition, dict)
+                            or "hdmi_input" not in definition):
+                        problems.append(f"{at}.{source}: '{source}' is not an offered HDMI matrix source")
+                        continue
+                    if edid_names is None:
+                        continue  # routing.edid or the matrix already has a problem
+                    if not isinstance(name, str) or name not in edid_names:
+                        problems.append(f"{at}.{source}: {name!r} is not an EDID name of {routing['hdmi_matrix']}")
+                        continue
+                    other, previous = source_edids.setdefault(source, (room, name))
+                    if edid_names[previous] != edid_names[name]:
+                        problems.append(f"{at}.{source}: {name!r} conflicts with {previous!r} in room {other}; "
+                                        "a matrix input presents one EDID to every viewer")
         if "edid" in entry and not fed:
             problems.append(f"{where}.edid: only applies with an hdmi_output")
         elif "edid" in entry:
@@ -1353,8 +1385,9 @@ def after(house: House, room: str, choice: str) -> list[list]:
 def edid_table(house: House) -> dict | None:
     """What routing.js needs to follow the displays' EDIDs, or None without
     routing.edid: the EDID Item of each source's input, the EDID code each
-    room's HDMI output gives its sources (a copy of its display unless the
-    room names one), and the code of an input no room shows (None: left)."""
+    room's HDMI output gives its sources, and the code of an input no room
+    shows (None: left). Source overrides are indexed by input number, then
+    by output Item, and take precedence while that output shows the input."""
     routing = house.data["routing"]
     edid = routing.get("edid")
     if edid is None:
@@ -1362,7 +1395,7 @@ def edid_table(house: House) -> dict | None:
     device = house.by_id[routing["hdmi_matrix"]]
     module = switcher(device)
     rooms = routing["rooms"].values()
-    return {
+    table = {
         "inputs": {str(s["hdmi_input"]): module.edid_item(device, s["hdmi_input"])
                    for s in routing["sources"].values() if "hdmi_input" in s},
         "outputs": {module.switch_item(device, e["hdmi_output"]):
@@ -1370,6 +1403,15 @@ def edid_table(house: House) -> dict | None:
                     if "hdmi_output" in e},
         "idle": module.EDID[edid["idle"]] if "idle" in edid else None,
     }
+    overrides: dict[str, dict[str, int]] = {}
+    for entry in rooms:
+        for source, name in entry.get("edid_by_source", {}).items():
+            number = str(routing["sources"][source]["hdmi_input"])
+            item = module.switch_item(device, entry["hdmi_output"])
+            overrides.setdefault(number, {})[item] = module.EDID[name]
+    if overrides:
+        table["overrides"] = overrides
+    return table
 
 
 #: Seconds routing.js holds a room's Source after a choice while its

@@ -12,6 +12,7 @@ const tests = [];
 function test(name, fn) { tests.push([name, fn]); }
 
 const CINEMA = 'example_cinema', LOUNGE = 'example_lounge';
+const DEN = 'example_den';
 const COMPUTER = 'example_computer', DISC = 'example_disc', GAME = 'example_game';
 const OUT1 = 'example_matrix_output1_input', OUT2 = 'example_matrix_output2_input';
 const ZONE2 = 'example_avr_zone2_input', MAIN = 'example_avr_main_input';
@@ -21,6 +22,7 @@ const PLAYER = 'example_player', PLAYER_POWER = 'example_player_power';
 const SYNCED = choice => `${choice}@${CINEMA}`;
 // Everything off: outputs parked, stages off on their matrix feeds.
 const OFF = { [OUT1]: '8', [OUT2]: '8', example_usb_device1_host: '4', example_usb_device2_host: '4',
+  example_matrix_output3_input: '8', example_den_tv_power: 'OFF', example_den_tv_input: 'hdmi1',
   example_avr_main_power: 'OFF', [MAIN]: 'BD', example_avr_zone2_power: 'OFF', [ZONE2]: 'AUX2',
   example_screen_power: 'OFF', example_screen_input: 'hdmi1', example_tv_power: 'OFF', example_tv_input: 'hdmi2',
   [PLAYER_POWER]: 'OFF' };
@@ -560,6 +562,118 @@ test('(16) a follower that claimed the source before its leader showed it hands 
     assert.equal(w.state(ZONE2), 'BD', table);
     assert.deepEqual(edids(w).slice(2), [[EDID1, '40']], `${table}: synced, the leader's code is back`);
     assert.equal(w.state(EDID1), '40', table);
+  }
+});
+
+// The Lounge requires code 24 for the computer, and normally copies output
+// 2 (41). The independent Den copies output 3 (42). Idle is code 36.
+test('a source override survives another room choosing the same input, even before matrix readback', () => {
+  for (const table of ['capped', 'cappedPlain']) {
+    const w = load(TABLES[table]);
+    w.command(LOUNGE, COMPUTER);
+    w.command(DEN, COMPUTER);
+    w.settle();
+    assert.equal(w.source(LOUNGE), COMPUTER, table);
+    assert.equal(w.source(DEN), COMPUTER, table);
+    assert.equal(w.state(EDID1), '24', table);
+    // A later room must never momentarily negotiate the faster display's copy.
+    assert(edids(w).every(([item, code]) => item !== EDID1 || code === '24'), table);
+    w.clear();
+    w.command(DEN, COMPUTER); w.settle();
+    assert.equal(w.state(EDID1), '24', table);
+    assert.deepEqual(edids(w), [], table);
+  }
+});
+
+test('leaving a capped source restores the other viewer, then the idle EDID, without capping another source', () => {
+  for (const table of ['capped', 'cappedPlain']) {
+    const w = load(TABLES[table]);
+    w.command(DEN, COMPUTER); w.settle();
+    assert.equal(w.state(EDID1), '42', table);
+    w.command(LOUNGE, COMPUTER); w.settle();
+    assert.equal(w.state(EDID1), '24', table);
+    w.clear();
+    w.command(LOUNGE, DISC); w.settle();
+    assert.equal(w.state(EDID1), '42', table);
+    assert.equal(w.state(EDID2), '41', table);
+    assert.equal(w.source(DEN), COMPUTER, table);
+    w.command(DEN, 'off'); w.settle();
+    assert.equal(w.state(EDID1), '36', table);
+    assert.equal(w.state(EDID2), '41', table);
+  }
+});
+
+test('a departing cap owns the source until the matrix confirms that output has switched away', () => {
+  for (const table of ['capped', 'cappedPlain']) {
+    for (const nextChoice of [DISC, 'off']) {
+      const w = load(TABLES[table]);
+      w.command(LOUNGE, COMPUTER); w.settle();
+      w.clear();
+      w.command(LOUNGE, nextChoice);
+      w.command(DEN, COMPUTER);
+      assert.equal(w.state(OUT2), '1', table);
+      assert(!edids(w).some(([item, code]) => item === EDID1 && code !== '24'), table);
+      w.settle();
+      assert.equal(w.state(EDID1), '42', table);
+      const detached = w.log.indexOf(`apply ${OUT2}=${nextChoice === DISC ? '2' : '8'}`);
+      const handover = w.log.indexOf(`send ${EDID1}=42`);
+      assert(detached >= 0 && handover > detached, `${table} ${nextChoice}: ${w.log.join(', ')}`);
+    }
+  }
+});
+
+test('the capped follower drops its own claim while synced and takes it back when the leader leaves', () => {
+  for (const table of ['capped', 'cappedPlain']) {
+    const w = load(TABLES[table]);
+    w.command(LOUNGE, COMPUTER); w.settle();
+    assert.equal(w.state(EDID1), '24', table);
+    w.command(CINEMA, COMPUTER); w.settle();
+    assert.equal(w.state(ZONE2), 'BD', table);
+    assert.equal(w.state(EDID1), '40', table);
+    w.command(DEN, COMPUTER); w.settle();
+    assert.equal(w.state(EDID1), '42', table);
+    w.command(CINEMA, DISC); w.settle();
+    assert.equal(w.state(ZONE2), 'AUX2', table);
+    assert.equal(w.state(EDID1), '24', table);
+    assert.equal(w.state(EDID2), '40', table);
+  }
+});
+
+test('passive output readback itself sends no EDID, and a later choice respects the observed watcher', () => {
+  for (const table of ['capped', 'cappedPlain']) {
+    const w = load(TABLES[table]);
+    w.apply(OUT2, '1'); w.settle();
+    assert.deepEqual(edids(w), [], table);
+    w.command(DEN, COMPUTER); w.settle();
+    assert.equal(w.state(EDID1), '42', 'the room with its TV and receiver off does not hold the cap');
+    w.clear();
+    w.apply('example_tv_power', 'ON');
+    w.apply('example_avr_zone2_power', 'ON'); w.settle();
+    assert.equal(w.source(LOUNGE), COMPUTER, table);
+    assert.deepEqual(edids(w), [], table);
+    w.command(DEN, COMPUTER); w.settle();
+    assert.equal(w.state(EDID1), '24', table);
+  }
+});
+
+test('compatible independent watchers keep the override until the last of them leaves', () => {
+  for (const table of ['sharedCaps', 'sharedCapsPlain']) {
+    const w = load(TABLES[table]);
+    w.command(CINEMA, COMPUTER); w.settle();
+    w.command(LOUNGE, COMPUTER); w.settle();
+    assert.equal(w.state(ZONE2), 'BD', table);
+    w.command(LOUNGE, 'off'); w.settle();
+    assert.equal(w.state(EDID1), '24', table);
+    w.command(DEN, COMPUTER); w.settle();
+    w.command(CINEMA, 'off'); w.settle();
+    assert.equal(w.state(EDID1), '24', table);
+    w.advance(60000);
+    w.clear();
+    w.command(LOUNGE, COMPUTER); w.settle();
+    assert.equal(w.state(EDID1), '24', table);
+    assert.deepEqual(edids(w), [], table);
+    w.command(DEN, 'off'); w.settle();
+    assert.equal(w.state(EDID1), '41', table);
   }
 });
 

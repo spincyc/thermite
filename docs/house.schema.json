@@ -571,6 +571,14 @@
                 "description": "the EDID its output gives the sources shown on it, under routing.edid: one of the matrix's EDID names",
                 "type": "string"
               },
+              "edid_by_source": {
+                "description": "the EDID each named matrix source presents while this room uses its own feed, even when another room selects the same source",
+                "type": "object",
+                "additionalProperties": {
+                  "description": "one of the HDMI matrix's EDID names",
+                  "type": "string"
+                }
+              },
               "audio": {
                 "description": "the device its Volume and Mute drive: a soundbar or streaming amplifier in a room it covers, or its own receiver or display",
                 "type": "string"

@@ -349,7 +349,7 @@ class Check:
             for number in self.edid["inputs"]:
                 if self.edid["idle"] is not None:
                     hdmi.set_edid(int(number), self.edid["idle"])
-            hdmi.set_edid(source, self.code(room))
+            hdmi.set_edid(source, self.code(room, source))
         for ident, matrix in self.sims.items():
             if ident != self.routing["hdmi_matrix"] and ident not in self.switches:
                 for port in range(1, self.modules[ident].ports(self.devices[ident])[1] + 1):
@@ -460,12 +460,24 @@ class Check:
         them nor, when no room does, the idle code."""
         hdmi = self.sims[self.routing["hdmi_matrix"]]
         codes: dict[str, set[int]] = {}
-        for item, code in self.edid["outputs"].items():
-            ident, port = self.ports[item]
-            codes.setdefault(str(self.sims[ident].get(port)), set()).add(code)
+        overrides: dict[str, set[int]] = {}
+        for room, raw in self.table.items():
+            output = raw["hdmi"]
+            if output is None:
+                continue
+            ident, port = self.ports[output]
+            number = str(self.sims[ident].get(port))
+            choice = self.chosen.get(room)
+            if choice and self.synced(room, choice):
+                continue
+            codes.setdefault(number, set()).add(self.edid["outputs"][output])
+            preset = self.edid.get("overrides", {}).get(number, {}).get(output)
+            if preset is not None:
+                overrides.setdefault(number, set()).add(preset)
         wrong = {}
         for number, item in self.edid["inputs"].items():
-            want = codes.get(number) or ({self.edid["idle"]} if self.edid["idle"] is not None else None)
+            want = overrides.get(number) or codes.get(number) or (
+                {self.edid["idle"]} if self.edid["idle"] is not None else None)
             got = hdmi.edid(int(number))
             if want is not None and got not in want:
                 wrong[item] = (sorted(want), got)
@@ -615,8 +627,11 @@ class Check:
             return {} if got == code else {item: (code, got)}
         return self.wait_for(f"{what}: EDID", wrong)
 
-    def code(self, room: str) -> int | None:
-        return self.edid["outputs"][self.table[room]["hdmi"]] if self.edid else None
+    def code(self, room: str, number: int) -> int | None:
+        if self.edid is None:
+            return None
+        output = self.table[room]["hdmi"]
+        return self.edid.get("overrides", {}).get(str(number), {}).get(output, self.edid["outputs"][output])
 
     def number(self, source: str) -> int | None:
         """The source's matrix input (None for one cabled to a room alone)."""
@@ -793,11 +808,17 @@ class Check:
         number = self.number(source)
         sync = self.table[second].get("sync")
         follows = bool(sync) and sync["leader"] == first and source in sync["choices"]
+        first_code = self.code(first, number)
+        follower = self.table[first].get("sync")
+        first_syncs = follower and follower["leader"] == second and source in follower["choices"]
+        active_overrides = self.edid.get("overrides", {}).get(str(number), {})
+        shared = self.code(second, number)
+        if follows or (not first_syncs and self.table[first]["hdmi"] in active_overrides):
+            shared = first_code
         for room, choice, code, what in (
-                (first, source, self.code(first), "the first room to choose it"),
-                (second, source, self.code(first), "a follower synced with it claims none") if follows else
-                (second, source, self.code(second), "the last room to choose it wins"),
-                (second, routing.OFF, self.code(first), "handed back when that room turns off"),
+                (first, source, first_code, "the first room to choose it"),
+                (second, source, shared, "the EDID while both rooms show it"),
+                (second, routing.OFF, first_code, "handed back when that room turns off"),
                 (first, routing.OFF, self.edid["idle"], "the idle EDID once no room shows it")):
             self.command(self.table[room]["item"], choice)
             self.expect_routed(what, {room: choice})

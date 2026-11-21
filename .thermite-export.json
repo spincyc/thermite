@@ -483,6 +483,7 @@
     "tests/test_deploy.py",
     "tests/test_device_verb.py",
     "tests/test_docs_export.py",
+    "tests/test_edid_by_source.py",
     "tests/test_entry.py",
     "tests/test_export_manifest.py",
     "tests/test_generated_output.py",
