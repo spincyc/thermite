@@ -93,7 +93,7 @@ function load(options = {}) {
   vm.runInContext(source.replace('const TABLE = null;', 'const TABLE = ' + JSON.stringify(table) + ';'), context);
   posted.length = 0; calls.length = 0; logs.length = 0;
   const command = (id, value, eventSource) => rules[`routing_${id}_command`].execute({ receivedCommand: value, eventSource });
-  return { sent, posted, logs, calls, routes, command, context, deps: () => deps, legacy: event => onLegacy(event), planner: () => real };
+  return { sent, posted, logs, calls, routes, command, context, item, deps: () => deps, legacy: event => onLegacy(event), planner: () => real };
 }
 
 // Sources a command can carry: what openHAB's REST API makes of the
@@ -270,6 +270,26 @@ test('a readback problem forwards only an input the room declares it reads back'
   // Anything else the device says is left out, whatever it looks like.
   for (const value of ['3', 'hdmi2', 'tv', '<html>']) assert.equal(problem(value).reported, null, value);
   assert.deepEqual([problem(null).reason, problem(null).reported], ['unavailable', null]);
+});
+
+test('an HDMI switch the master matrix does not feed names itself when it does not answer', () => {
+  const r = load();
+  r.item('den_tv_power').state = 'ON'; r.item('den_tv_input').state = 'hdmi4';
+  const output = r.item('den_matrix_output4_input', 'UNDEF');
+  const check = { device: 'den_matrix', label: 'den.matrix', model: 'AC-MX-44X', action: 'read selected input' };
+  const room = { hdmi: null, stages: [{ power: 'den_tv_power', input: 'den_tv_input', feed: 'hdmi4', readback: {} }],
+    switch: { item: 'den_matrix_output4_input', matrix: null, readback: { 1: 'shield', 2: 'apple_tv' } },
+    inputs: { shield: [['den_tv_input', 'hdmi4']], apple_tv: [['den_tv_input', 'hdmi4']] },
+    diagnosis: { item: 'loc_den_source_problem', reported: ['1', '2', '3', '4'],
+      checks: { den_matrix_output4_input: check } } };
+  assert.equal(r.context.shown(room), 'UNDEF');
+  assert.deepEqual(room.readbackProblem, { version: 1, ...check, item: 'den_matrix_output4_input',
+    reason: 'unavailable', reported: null });
+  room.readbackProblem = null; output.state = '3';
+  assert.equal(r.context.shown(room), 'UNDEF');
+  assert.deepEqual([room.readbackProblem.reason, room.readbackProblem.reported], ['unsupported_input', '3']);
+  room.readbackProblem = null; output.state = '2';
+  assert.equal(r.context.shown(room), 'apple_tv'); assert.equal(room.readbackProblem, null);
 });
 
 test('the planner logs through the script console', () => {

@@ -14,6 +14,11 @@ rollback. The unified deployment workflow uses a separate committed private site
   had been given a new session every 30 seconds, and an AC-MX-44X locked up
   (TCP 23 closing at once) after about 900 of them.
 
+- A room whose HDMI switch the master matrix does not feed, such as an
+  AVPro output in front of a TV, names that switch when it does not
+  answer. The remote then says which device has no current report, not
+  "waiting for device diagnostics".
+
 - A room can set `edid_by_source` for individual HDMI matrix sources.
   Its EDID stays on the source's input while the room uses that feed,
   including when another room selects the same source. When the room
