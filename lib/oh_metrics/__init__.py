@@ -534,7 +534,7 @@ def unobserved(house: House, conf=None) -> list[tuple[str, str]]:
     stopped answering: (device, integration) for an integration a device
     lists under control with no signal of its own (signals()), and
     (device, "") for a device with an address and no signal at all.
-    `thermite validate` prints each, and prometheus.yml's header lists them."""
+    `thermite check house` prints each, and prometheus.yml's header lists them."""
     conf = conf if conf is not None else _build(house)
     found, _ = probes(house, conf)
     out: list[tuple[str, str]] = []

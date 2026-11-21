@@ -41,6 +41,8 @@ EXAMPLES = (
     ("thermite cameras streams --none", "stop native WebRTC sessions while keeping status and snapshots"),
     ("thermite cameras configure --homebridge /var/lib/homebridge/config.json --protect-token-file var/protect-token",
      "reuse the existing console login and an explicitly supplied mode-0600 Protect token"),
+    ("thermite cameras list --runtime-url https://thermite.example:8443 --token-file var/api-token",
+     "read them from a runtime elsewhere, over HTTPS, with a mode-0600 API token"),
 )
 
 
@@ -163,9 +165,9 @@ def homebridge_login(path: Path, host: str) -> tuple[str, str]:
 
 
 def runtime(arguments):
-    if not arguments.url:
+    if not arguments.runtime_url:
         return pair.openhab(False)
-    url = urllib.parse.urlsplit(arguments.url)
+    url = urllib.parse.urlsplit(arguments.runtime_url)
     if url.scheme not in {"http", "https"} or not url.hostname or url.username or url.password or url.query or url.fragment:
         raise CameraError("runtime URL must be an HTTP(S) origin without credentials")
     try:
@@ -174,8 +176,8 @@ def runtime(arguments):
         loopback = False
     if url.scheme != "https" and not loopback:
         raise CameraError("use HTTPS for a remote runtime so console credentials stay encrypted")
-    token = private_text(arguments.runtime_token_file) if arguments.runtime_token_file else None
-    return oh_sandbox.Http(arguments.url, token=token, allow_write=True)
+    token = private_text(arguments.token_file) if arguments.token_file else None
+    return oh_sandbox.Http(arguments.runtime_url, token=token, allow_write=True)
 
 
 def status(http, house: House) -> list[dict]:
@@ -216,8 +218,9 @@ def main(argv: list[str] | None = None) -> int:
                           ("streams", "enable or stop native camera WebRTC sessions")):
         command = oh_cli.action(actions, name, summary, examples=EXAMPLES)
         oh_cli.add_house(command)
-        oh_cli.add_target(command, "production", "url", default="production")
-        command.add_argument("--runtime-token-file", type=Path, metavar="FILE", help="a mode-0600 API token for --url")
+        oh_cli.add_target(command, "production", "runtime-url", default="production")
+        oh_cli.add_token_file(command, "a mode-0600 file holding the runtime's API token, for --runtime-url")
+        oh_cli.add_renamed(command, "--runtime-token-file", "--token-file")
         if name == "list":
             oh_cli.add_json(command)
         elif name == "configure":
@@ -265,7 +268,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             rows = status(runtime(arguments), house)
             if arguments.json:
-                print(json.dumps({"cameras": rows}, indent=2))
+                oh_cli.emit({"cameras": rows})
             else:
                 for row in rows:
                     print(f"{row['label']}: connected {row['states']['online']}, motion {row['states']['motion']}, recording {row['states']['recording']}")

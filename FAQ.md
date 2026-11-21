@@ -22,7 +22,7 @@ Generation and validation send no device commands. Try controls with `thermite r
 
 ### Where are passwords kept?
 
-Outside the house file and Git, in private service and client stores. Site passwords are stored as hashes; terminal clients keep revocable tokens in owned private files. `thermite lint` scans source and configuration for accidentally embedded credentials.
+Outside the house file and Git, in private service and client stores. Site passwords are stored as hashes; terminal clients keep revocable tokens in owned private files. `thermite check lint` scans source and configuration for accidentally embedded credentials.
 
 ### Can I change the colors?
 

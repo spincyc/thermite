@@ -55,6 +55,7 @@ class ApplicationFixture(unittest.TestCase):
         self.real_run = update.run
         self.python = application.PYTHON
         self.packaged = self.new
+        self.host_help = "usage: thermite upgrade [--yes]\n  --yes  approve the whole run up front\n"
 
     def program(self, name):
         root = self.root / name
@@ -105,6 +106,8 @@ class ApplicationFixture(unittest.TestCase):
             root = Path(args[0]).parents[1] / "runtime"
             release = oh_release.manifest(root)
             return json.dumps({"root": str(root), "digest": release["digest"], "application": release["application"]})
+        if args[1] in ("upgrade", "install") and "--help" in args:
+            return self.host_help
         if args[1] == "init":
             oh_init.initialize(self.site, program=self.packaged, upgrade=True)
         elif args[1] in ("upgrade", "install"):

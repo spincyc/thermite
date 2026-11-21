@@ -103,6 +103,10 @@ class TerminalWithoutSite(unittest.TestCase):
     """login, logout and status reach a gateway as thermite tui does, with no
     private site; the server's subcommands still need one."""
 
+    def setUp(self):
+        self.enterContext(patch.dict(os.environ))
+        os.environ.pop("THERMITE_URL", None)
+
     def run_access(self, argv):
         import oh_paths
         output, error = io.StringIO(), io.StringIO()
@@ -148,6 +152,28 @@ class TerminalWithoutSite(unittest.TestCase):
                 patch.object(client, "status", return_value={}) as status_call:
             self.assertEqual(self.run_access(["status"])[0], 0)
         status_call.assert_called_once_with("https://thermite.example:13601", rooms=[])
+
+    def test_thermite_url_comes_after_url_and_before_the_installed_gateway(self):
+        from oh_access import client
+        from oh_cli import tui
+        profile = {"url": "https://thermite.example:13601", "ca_file": "/site/tls-cert.pem"}
+        cases = ((["status"], "ssh://ann@192.0.2.60/srv/site", "https://192.0.2.60:16301"),
+                 (["status"], "https://other.example:16400", "https://other.example:16400"),
+                 (["status", "--url", "192.0.2.50:13700"], "https://other.example:16400", "https://192.0.2.50:13700"))
+        for argv, variable, url in cases:
+            with self.subTest(argv=argv, variable=variable), \
+                    patch.dict(os.environ, {"THERMITE_URL": variable}), \
+                    patch.object(tui, "installed_profile", return_value=profile), \
+                    patch.object(tui, "default_port", return_value=16301), \
+                    patch.object(client, "status", return_value={}) as status_call:
+                self.assertEqual(self.run_access(argv)[0], 0)
+            status_call.assert_called_once_with(url, rooms=[])
+        with patch.dict(os.environ, {"THERMITE_URL": "http://192.0.2.60"}), \
+                patch.object(client, "logout") as logout:
+            status, _, error = self.run_access(["logout"])
+        self.assertEqual(status, 2)
+        self.assertIn("THERMITE_URL=http://192.0.2.60: plain http only reaches this computer", error)
+        logout.assert_not_called()
 
     def test_a_wrong_address_is_refused_before_anything_is_sent(self):
         from oh_access import client

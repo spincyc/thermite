@@ -34,7 +34,7 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
-from typing import NamedTuple, Sequence
+from typing import IO, NamedTuple, Sequence
 
 from oh_paths import PROGRAM as PROGRAM_ROOT, SITE as AREA
 from oh_release import VERSION
@@ -54,12 +54,24 @@ GROUPS = (
     ("program", "this program"),
 )
 
+#: Verb.reach: what --url may name for it. LOCAL verbs work on this
+#: computer's files or change this host, and take no --url. SSH verbs read or
+#: act on a running installation: the dispatcher runs them on the server
+#: --url ssh://... names (over_ssh()). GATEWAY verbs talk to an HTTPS
+#: gateway, which --url https://... names.
+LOCAL, SSH, GATEWAY = "local", "ssh", "gateway"
+#: The environment variable that names a server when a verb is given no
+#: target switch: as --url, for each verb whose reach its kind suits.
+URL_VARIABLE = "THERMITE_URL"
+
+
 class Verb(NamedTuple):
     group: str
     summary: str
     #: Whether it runs on the selected private site, so the dispatcher first
     #: checks that site suits this application (oh_paths.require_compatible).
     site: bool = True
+    reach: str = LOCAL
 
 
 #: verb: Verb. The summaries are what `thermite --help` lists.
@@ -67,39 +79,64 @@ VERBS = {
     "init": Verb("house", "create a private site, or pin an installed application upgrade", site=False),
     "check": Verb("house", "validate, build and lint the selected configuration; write nothing"),
     "generate": Verb("house", "write conf/ and metrics/ from the house file, and deploy/'s systemd units"),
-    "validate": Verb("house", "check the house file, and that what it generates agrees with it"),
-    "lint": Verb("house", "refuse credentials in Git, and docs naming a missing make target"),
     "test": Verb("test", "boot conf/ on a test runtime; test routing and the controls end to end"),
     "sandbox": Verb("test", f"run a thermite sandbox from a copy of conf/ on {SANDBOX_URL.split('//')[1]}"),
     "install": Verb("production", "install thermite on this host, with one approval for the whole run", site=False),
     "upgrade": Verb("production", "update the application, native services and HTTPS gateway together", site=False),
     "uninstall": Verb("production", "stop thermite here and remove its units; --purge deletes its state"),
     "rollback": Verb("production", "install the commit deployed before the current one, or another"),
-    "revert": Verb("production", "go back to the version, and state, the last upgrade set aside"),
-    "status": Verb("production", "what is deployed and running here, against this checkout"),
-    "history": Verb("production", "this host's deploys, numbered, the latest last"),
-    "health": Verb("production", "read-only: every Thing ONLINE in the runtime"),
+    "status": Verb("production", "what is deployed and running here, against this checkout", reach=SSH),
+    "history": Verb("production", "this host's deploys, numbered, the latest last", reach=SSH),
+    "logs": Verb("production", "every Thermite service's log, merged by time; --since and --until pick a range",
+                 site=False, reach=SSH),
+    "bugreport": Verb("production", "collect versions, status, history, logs and system facts into one archive",
+                      site=False, reach=SSH),
     "dhcp-reservations": Verb("devices", "list the UniFi DHCP reservations the house file needs"),
     "matrix-settings": Verb("devices", "show matrix settings that differ from the house file; --apply sets them"),
     "control4": Verb("devices", "export the Control4 project read-only and compare it"),
     "discover": Verb("devices", "scan the LAN read-only and compare it with the house file"),
-    "pair": Verb("devices", "pair a TV with runtime, or check the Sony TVs' pairing"),
-    "device": Verb("devices", "everything about one device: what it is, what watches it, what holds now"),
-    "reboot": Verb("devices", "restart a device now as the nightly reboots do, or list how each went"),
-    "cameras": Verb("devices", "read camera status, or configure native Protect bridges privately"),
+    "pair": Verb("devices", "pair a TV with runtime, or check the Sony TVs' pairing", reach=SSH),
+    "device": Verb("devices", "everything about one device: what it is, what watches it, what holds now", reach=SSH),
+    "reboot": Verb("devices", "restart a device now as the nightly reboots do, or list how each went", reach=SSH),
+    "cameras": Verb("devices", "read camera status, or configure native Protect bridges privately", reach=SSH),
     "apple-tv": Verb("devices", "run the Apple TV helper runtime calls"),
     "ir-profile": Verb("devices", "validate verified IR keys or print an iTach packet without transmitting"),
-    "remote": Verb("use", "the house remote in a terminal"),
-    "tui": Verb("use", "the house remote in a terminal on any computer, from its HTTPS gateway", site=False),
-    "handheld": Verb("use", "handheld remotes: the bridge to the house, enrolling and forgetting them", site=False),
+    "remote": Verb("use", "the house remote in a terminal", reach=GATEWAY),
+    "tui": Verb("use", "the house remote in a terminal on any computer, from its HTTPS gateway", site=False,
+                reach=GATEWAY),
+    "handheld": Verb("use", "handheld remotes: the bridge to the house, enrolling and forgetting them", site=False,
+                     reach=GATEWAY),
     # Its server subcommands check the site themselves (oh_cli.access).
-    "access": Verb("use", "site login, local identity bootstrap, HTTPS service and room policies", site=False),
+    "access": Verb("use", "site login, local identity bootstrap, HTTPS service and room policies", site=False,
+                   reach=GATEWAY),
     "theme": Verb("use", "the flaming bowl mark and color themes: show, check, export", site=False),
     "docs": Verb("use", "build the docs site, or export it to the thermite repository", site=False),
-    "version": Verb("program", "thermite's version, and runtime's: pinned, and running here", site=False),
+    "version": Verb("program", "thermite's version, and runtime's: pinned, and running here", site=False,
+                    reach=SSH),
     "package": Verb("program", "build a privacy-checked portable application wheel", site=False),
     "iso": Verb("program", "build a bootable installer for a dedicated Thermite machine", site=False),
     "completion": Verb("program", "print a completion script for bash, zsh or fish", site=False),
+}
+
+
+class Retired(NamedTuple):
+    #: The command line that replaces it, as its warning names it.
+    instead: str
+    site: bool = True
+    reach: str = LOCAL
+
+
+#: verb: Retired, for the verbs another one absorbed. Each still runs as it
+#: did, for one release, after a warning on stderr; `thermite --help`, the
+#: completion scripts and the docs list only VERBS. A rollback and a revert
+#: run the reinstated version's own `health --production --installation`
+#: (oh_install.changeover.health), which older versions know by that name
+#: alone: health stays until no supported version predates status --runtime.
+RETIRED = {
+    "validate": Retired("thermite check house"),
+    "lint": Retired("thermite check lint"),
+    "health": Retired("thermite status --runtime", reach=SSH),
+    "revert": Retired("thermite rollback --restore-state"),
 }
 
 
@@ -113,7 +150,11 @@ STANDARD_SWITCHES = (
     ("--apply", "send changes to live devices (without it: only show them)"),
     ("--timeout SECONDS", "how long to wait"),
     ("--house FILE", "the house file (default: instance/devices.yaml)"),
-    ("--production | --sandbox | --url URL", "which runtime: this host's, the sandbox's, or one at URL"),
+    ("--production | --sandbox | --url URL", "this host, the sandbox, or a server: ssh://HOST runs it there, "
+     "https://HOST is its gateway"),
+    ("--token-file FILE", "a file holding the runtime's API token"),
+    ("--state-dir DIR", "the runtime's state (default: runtime/ in instance/host.yaml's root)"),
+    ("--yes", "approve it up front, unattended: ask nothing"),
     ("--theme NAME|FILE", "the colors: a built-in theme's name or a theme file"),
     ("--dark | --light", "which of the theme's two modes"),
 )
@@ -151,7 +192,7 @@ Examples = Sequence[tuple[str, str]]
 
 def module_name(verb: str) -> str:
     """oh_cli.dhcp_reservations for dhcp-reservations."""
-    if verb not in VERBS:
+    if verb not in VERBS and verb not in RETIRED:
         raise ValueError(f"{verb} is not a {PROGRAM} verb")
     return f"{__name__}.{verb.replace('-', '_')}"
 
@@ -352,7 +393,7 @@ def parser_of(verb: str) -> argparse.ArgumentParser:
 
 def command(verb: str, description: str, examples: Examples, notes: str = "") -> argparse.ArgumentParser:
     """The parser of `thermite VERB`."""
-    if verb not in VERBS:
+    if verb not in VERBS and verb not in RETIRED:
         raise ValueError(f"{verb} is not a {PROGRAM} verb")
     parser = Parser(prog=f"{PROGRAM} {verb}", description=description.rstrip("\n"),
                     epilog=epilog(examples, notes), formatter_class=Help)
@@ -419,10 +460,67 @@ def add_conf(parser: argparse.ArgumentParser, default: Path | None = AREA / "con
                         help="the runtime conf directory (default: conf/)")
 
 
+def add_yes(parser: argparse.ArgumentParser, what: str) -> None:
+    """--yes: the run's one question answered yes before it is asked."""
+    parser.add_argument("--yes", action="store_true",
+                        help=f"approve {what} up front, unattended: nothing reads standard input")
+
+
+def add_token_file(parser: argparse.ArgumentParser, what: str = "file holding the runtime's API token") -> None:
+    parser.add_argument("--token-file", type=Path, metavar="FILE", help=what)
+
+
+#: What --state-dir names, where a verb gives no other help.
+STATE_DIR = "the runtime state (default: runtime/ in instance/host.yaml's root, /srv/thermite)"
+
+
+def add_state_dir(parser: argparse.ArgumentParser, what: str = STATE_DIR) -> None:
+    """--state-dir DIR, as `state_dir`, and --state, its spelling before."""
+    parser.add_argument("--state-dir", type=Path, metavar="DIR", help=what)
+    add_renamed(parser, "--state", "--state-dir")
+
+
+def add_state_file(parser: argparse.ArgumentParser, what: str, default: Path | None = None) -> None:
+    """--state-file FILE, as `state_file`, and --state, its spelling before."""
+    parser.add_argument("--state-file", type=Path, default=default, metavar="FILE", help=what)
+    add_renamed(parser, "--state", "--state-file")
+
+
+def renamed(prog: str, old: str, new: str) -> None:
+    """Say, on stderr, that `old` is spelled `new` now."""
+    print(f"{prog}: {old} is now {new}; {old} goes in the next release", file=sys.stderr)
+
+
+class _Renamed(argparse.Action):
+    """A switch's spelling before the one that replaced it (add_renamed)."""
+
+    def __init__(self, option_strings, dest, target: argparse.Action, **kwargs):
+        super().__init__(option_strings, target.dest, nargs=target.nargs, const=target.const,
+                         type=target.type,  # type: ignore[arg-type]  # the target's, which argparse took
+                         choices=target.choices, metavar=target.metavar, default=argparse.SUPPRESS,
+                         help=argparse.SUPPRESS)
+        self.target = target
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        new = max(self.target.option_strings, key=len)
+        renamed(parser.prog, option_string or self.option_strings[0], new)
+        self.target(parser, namespace, values, new)
+
+
+def add_renamed(parser: argparse.ArgumentParser, old: str, new: str) -> None:
+    """`old`, the spelling switch `new` (added already) had before: taken
+    for one release, with a warning, and left out of the help."""
+    target = next(action for action in parser._actions if new in action.option_strings)
+    parser.add_argument(old, action=_Renamed, target=target)
+
+
 TARGETS = {
     "production": "production runtime on this host",
     "sandbox": f"the sandbox, {SANDBOX_URL} (thermite sandbox)",
-    "url": f"runtime at URL, e.g. http://thermite.example:{HTTP_PORT}",
+    SSH: f"run it on a server instead, over ssh: ssh://[USER@]HOST[:PORT][/SITE] (default: {URL_VARIABLE} when it "
+         "names one), SITE being the site's path there, below /~/ for one in its home",
+    GATEWAY: f"a Thermite gateway: https://HOST[:PORT] (default: {URL_VARIABLE} when it names one)",
+    "runtime-url": f"advanced: the runtime's REST API at URL, e.g. http://127.0.0.1:{HTTP_PORT}, with --token-file",
     "mock": "the remote page's mock backend, which sends nothing",
 }
 
@@ -433,10 +531,12 @@ def add_target(parser: argparse.ArgumentParser, *where: str, default: str | None
     ones in `where`); without a default one of them is required. `meaning`
     replaces a switch's help where it picks something other than a runtime."""
     group = parser.add_mutually_exclusive_group(required=default is None)
+    verb = parser.prog.split()[1] if len(parser.prog.split()) > 1 else ""
     for name in where:
-        text = (meaning or {}).get(name, TARGETS[name]) + (" (default)" if name == default else "")
-        if name == "url":
-            group.add_argument("--url", metavar="URL", help=text)
+        known = TARGETS[VERBS[verb].reach if name == "url" and verb in VERBS else name]
+        text = (meaning or {}).get(name, known) + (" (default)" if name == default else "")
+        if name in ("url", "runtime-url"):
+            group.add_argument(f"--{name}", metavar="URL", help=text)
         else:
             group.add_argument(f"--{name}", action="store_true", help=text)
 
@@ -518,6 +618,154 @@ def usage_error(message: str) -> int:
     return 2
 
 
+def refuse_url(verb: str, url: str) -> int:
+    """Exit status 2, and why `thermite VERB --url URL` cannot reach URL."""
+    reach = VERBS[verb].reach
+    if reach == LOCAL:
+        why = (f"{verb} works on this computer and takes no --url; on a server, run "
+               f"`ssh HOST {PROGRAM} {verb}` there")
+    elif reach == SSH:
+        why = (f"{verb} reads the server's own state, which no gateway serves: name the server as "
+               f"--url ssh://[USER@]HOST[:PORT][/SITE], not {url}")
+    else:
+        why = f"{verb} talks to a Thermite gateway: name it as --url https://HOST[:PORT], not {url}"
+    print(f"{PROGRAM} {verb}: {why}", file=sys.stderr)
+    return 2
+
+
+#: The switches that pick where a verb acts (add_target and the remotes').
+TARGET_SWITCHES = ("--production", "--sandbox", "--url", "--runtime-url", "--mock", "--native")
+#: Runs on the server as its operator's login shell would not: ssh runs a
+#: command without the login profile, where ~/.local/bin (thermite install
+#: puts the owner command there) is often not on PATH.
+# Unset there: a THERMITE_URL in the server's own environment would send
+# the command on again.
+REMOTE_SHELL = f'unset {URL_VARIABLE}; PATH="$HOME/.local/bin:$PATH"; export PATH; exec thermite "$@"'
+
+
+def _switches(words: Sequence[str]) -> list[str]:
+    """The words before a lone --: the ones that may be switches."""
+    words = list(words)
+    return words[:words.index("--")] if "--" in words else words
+
+
+def named_url(words: Sequence[str]) -> tuple[str | None, list[str]]:
+    """(the URL --url names in words, or None; words without it)."""
+    words, url, out, index = list(words), None, [], 0
+    end = len(_switches(words))
+    while index < len(words):
+        word = words[index]
+        if index < end and word == "--url" and index + 1 < end:
+            url, index = words[index + 1], index + 2
+            continue
+        if index < end and word.startswith("--url="):
+            url, index = word.split("=", 1)[1], index + 1
+            continue
+        out.append(word)
+        index += 1
+    return url, out
+
+
+def ssh_target(url: str) -> tuple[list[str], str | None]:
+    """(ssh's switches and destination, the site's path on the server or
+    None) for ssh://[USER@]HOST[:PORT][/SITE]. A path below /~/ is the
+    server's home directory's (where ssh starts); any other is absolute."""
+    import urllib.parse
+    parts = urllib.parse.urlsplit(url)
+    try:
+        port = parts.port
+    except ValueError:
+        port = -1
+    if (parts.scheme != "ssh" or not parts.hostname or parts.password or parts.query or parts.fragment
+            or port == -1 or parts.hostname.startswith("-") or (parts.username or "").startswith("-")):
+        raise ValueError(f"--url {url} is not ssh://[USER@]HOST[:PORT][/SITE]")
+    destination = f"{parts.username}@{parts.hostname}" if parts.username else parts.hostname
+    path = urllib.parse.unquote(parts.path)
+    site = None if path in ("", "/") else path[3:] if path.startswith("/~/") else path
+    return [*(["-p", str(port)] if port else []), destination], site or None
+
+
+def over_ssh(verb: str, words: Sequence[str], url: str, stdout: IO[bytes] | None = None) -> int:
+    """Run `thermite VERB WORDS` on the server url names, over ssh, with
+    its output (or with `stdout`, its standard output there) and exit
+    status as this command's own."""
+    try:
+        target, site = ssh_target(url)
+    except ValueError as exc:
+        return usage_error(str(exc))
+    remote = [verb, *(["--config", site] if site else []), *words]
+    terminal = stdout is None and sys.stdin.isatty() and sys.stdout.isatty()
+    argv = ["ssh", "-t" if terminal else "-T", *target[:-1], "--", target[-1],
+            shlex.join(["sh", "-c", REMOTE_SHELL, PROGRAM, *remote])]
+    _trace.debug("run %s", shlex.join(argv))
+    sys.stdout.flush()
+    try:
+        status = subprocess.call(argv, stdout=stdout)
+    except FileNotFoundError:
+        print(f"{PROGRAM} {verb}: --url {url} needs ssh, and there is none on PATH", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        return 130
+    if status == 255:
+        # ssh's own failure: the server was not reached, or refused the login.
+        print(f"{PROGRAM} {verb}: ssh could not run it on {target[-1]} (exit status 255)", file=sys.stderr)
+        return 2
+    return status
+
+
+#: Verbs whose --url named the runtime's REST API before --runtime-url did:
+#: for one release, a --url that is not ssh:// is still taken as that.
+RUNTIME_URL_BEFORE = frozenset({"cameras"})
+
+
+def named_server() -> str | None:
+    """THERMITE_URL as a gateway verb's default --url: an https://... one as
+    it is, and the host an ssh://[USER@]HOST... one names, whose gateway is
+    on its usual port; None without one."""
+    value = os.environ.get(URL_VARIABLE, "").strip()
+    if not value.startswith("ssh://"):
+        return value or None
+    try:
+        target, _ = ssh_target(value)
+    except ValueError:
+        return None
+    return target[-1].rpartition("@")[2]
+
+
+def reached(verb: str, words: Sequence[str]) -> tuple[int | None, list[str]]:
+    """(the exit status of `thermite VERB WORDS` where --url, or
+    THERMITE_URL, sends it to another server, else None; the words to run
+    it with here). A URL that its reach cannot use is refused."""
+    words = list(words)
+    switches = _switches(words)
+    if "-h" in switches or "--help" in switches:
+        return None, words
+    retired = verb not in VERBS
+    reach = (RETIRED[verb] if retired else VERBS[verb]).reach
+    url, rest = named_url(words)
+    if retired:
+        # Unchanged for its last release: only ssh:// is new to it.
+        return (over_ssh(verb, rest, url) if url and url.startswith("ssh://") and reach == SSH else None), words
+    if url is None and reach == SSH and not any(word.split("=", 1)[0] in TARGET_SWITCHES for word in switches):
+        variable = os.environ.get(URL_VARIABLE, "").strip()
+        if variable.startswith("ssh://"):
+            url = variable
+    if url is None:
+        return None, words
+    if reach == SSH and verb in RUNTIME_URL_BEFORE and not url.startswith("ssh://"):
+        print(f"{PROGRAM} {verb}: --url names a server now, and --runtime-url the runtime's REST API; --url {url} "
+              "is taken as --runtime-url until the next release", file=sys.stderr)
+        end = len(switches)
+        return None, [("--runtime-url" if word == "--url" and index < end else
+                       "--runtime-url=" + word.split("=", 1)[1] if word.startswith("--url=") and index < end else word)
+                      for index, word in enumerate(words)]
+    if reach == LOCAL or (reach == SSH) != url.startswith("ssh://"):
+        return refuse_url(verb, url), words
+    if verb == "bugreport":
+        from oh_cli import bugreport
+        return bugreport.fetch(rest, url), words
+    return (over_ssh(verb, rest, url) if reach == SSH else None), words
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     saved = (sys.stdout, dataclasses.replace(switches), os.environ.get("NO_COLOR"))
@@ -553,15 +801,21 @@ def _main(argv: list[str]) -> int:
         return _main([*argv[1:], *pulled, "--help"])
     if first.startswith("-"):
         return usage_error(f"{first} goes after a verb: {PROGRAM} VERB {first}")
-    if first not in VERBS:
+    if first not in VERBS and first not in RETIRED:
         close = difflib.get_close_matches(first, list(VERBS), n=1)
         return usage_error(f"no verb {first!r}" + (f"; did you mean {close[0]}?" if close else ""))
+    if first in RETIRED:
+        print(f"{PROGRAM} {first}: {RETIRED[first].instead} replaces it; {PROGRAM} {first} goes in the next release",
+              file=sys.stderr)
+    elsewhere, words = reached(first, [*pulled, *argv[1:]])
+    if elsewhere is not None:
+        return elsewhere
     global _site_check
     # Checked once the verb's switches parse (Parser.parse_args), so that its
     # help, and a wrong switch, need no compatible site.
-    _site_check = VERBS[first].site
+    _site_check = (VERBS.get(first) or RETIRED[first]).site
     try:
-        return importlib.import_module(module_name(first)).main([*pulled, *argv[1:]])
+        return importlib.import_module(module_name(first)).main(words)
     except Exception as exc:
         inventory = sys.modules.get("oh_inventory")
         if inventory is None or not isinstance(exc, inventory.ConfigError):
@@ -577,4 +831,11 @@ def run(program: str, argv: list[str]) -> int:
     """bin/thermite's entry point, as `program` (its file name) with `argv`."""
     global _whole_process
     _whole_process = True
-    return main(argv)
+    try:
+        return main(argv)
+    except BrokenPipeError:
+        # The reader stopped early (thermite logs | head), having read what
+        # it wanted: no traceback, and none at exit for the unflushed rest.
+        with contextlib.suppress(OSError, ValueError):
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return 0

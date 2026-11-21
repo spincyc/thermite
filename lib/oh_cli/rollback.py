@@ -1,6 +1,8 @@
-"""Install an earlier site commit, as one install transaction.
+"""Install an earlier site commit, as one install transaction; or, with
+--restore-state, go back to the version and the state the last install or
+upgrade set aside.
 
-    thermite rollback --config DIR [COMMIT] [-n | --dry-run]
+    thermite rollback --config DIR [-n | --dry-run] [--json] [--yes] [--restore-state | COMMIT]
 """
 
 from __future__ import annotations
@@ -8,12 +10,13 @@ from __future__ import annotations
 import os
 import shlex
 import sys
+from typing import Callable
 
 import oh_cli
 import oh_deploy as deploy
-from oh_cli import AREA
+from oh_cli import AREA, revert
 from oh_install import changeover, manifest, runner, steps
-from oh_install.system import System
+from oh_install.system import UNATTENDED, System
 
 DESCRIPTION = """\
 Install an earlier site commit on this host as one install transaction:
@@ -29,8 +32,28 @@ The site's branch does not move: the next thermite install or upgrade
 installs HEAD again. To keep the earlier configuration, revert the site to
 it in a new commit. The commit must pin the application release that runs
 this command; for one pinned by another release, or to bring back the
-state as it was before the last upgrade, see thermite revert and
+state as it was before the last upgrade, see --restore-state and
 docs/installation.md#update-or-remove. Runtime data stays as it is.
+
+--restore-state instead puts back the version that ran before the last
+install or upgrade committed, as one install transaction of its own: its
+files, units, native-port filter and confinement, and its state in runtime/
+and access/ exactly as that upgrade set it aside. Everything written since
+that upgrade is lost: accounts, pairings, credentials, the gateway's
+identity changes, monitoring data. It says so and asks you to type the
+installation root before anything stops. Inside the transaction the site's
+branch goes back to the commit before the upgrade's pin commit, so that the
+previous version checks its health with its own application; once it
+commits, ~/.local/bin/thermite selects the previous application's command
+again. It needs the site at that upgrade's pin commit with nothing
+uncommitted, and is refused after an uninstall, a clean install or another
+restore. (thermite revert did this before.)
+
+--yes gives the run's one approval up front, for an unattended rollback: the
+root commands run under sudo -n, nothing reads standard input, and any
+other question is answered no. It is refused with --restore-state, which
+asks you to type the installation root. --dry-run only reads: it reports
+what it would do, and with --json prints that as one JSON object.
 """
 
 NOTES = """\
@@ -39,7 +62,9 @@ exit status:
   1  declined, refused before anything stopped, a check failed, or an earlier
      transaction was finished or closed instead of rolling back
   2  nothing to roll back to, an unknown commit, one that pins another
-     application release, or no installed version
+     application release, or no installed version; with --restore-state,
+     also the site not at the upgrade's commit or with uncommitted changes,
+     or the previous application environment gone
   3  rolled back: the version that ran runs again and its health passes
   4  rolled back, but its health does not pass; it keeps running
   5  the rollback did not finish: Thermite stays stopped; run thermite rollback again
@@ -50,6 +75,11 @@ EXAMPLES = (
     ("thermite rollback -n", "what installing the commit deployed before the current one would do"),
     ("thermite rollback", "install the commit deployed before the current one"),
     ("thermite rollback 3d22e36", "install that commit (thermite history lists them)"),
+    ("thermite rollback -n --restore-state", "what going back to the version and state before the last upgrade "
+                                             "would do"),
+    ("thermite rollback --restore-state", "go back to it, after typing the installation root; state written "
+                                          "since is lost"),
+    ("thermite rollback -n --json", "the plan, as one JSON object"),
 )
 
 
@@ -69,7 +99,9 @@ def target(entries: list[dict], record: dict, commit: str | None) -> tuple[str, 
     return full, next((entry for entry in reversed(entries) if entry["commit"] == full), None)
 
 
-def roll_back(system: System, commit: str | None, dry_run: bool) -> int:
+def roll_back(system: System, commit: str | None, dry_run: bool, plan: dict | None = None) -> int:
+    """Roll back, or with `dry_run` show what that would do; a dry run given
+    `plan` (a --json report) fills it in instead of showing the steps."""
     if not dry_run:
         found = changeover.resolve(AREA, system, "rollback")
         if found is not None:
@@ -82,8 +114,8 @@ def roll_back(system: System, commit: str | None, dry_run: bool) -> int:
         raise deploy.DeployError(
             f"{wanted[:12]} pins another application release than {head.head[:12]} does; installing it needs that "
             f"release: revert the site to it in a new commit (`git -C {shlex.quote(str(AREA))} revert --no-edit "
-            f"{wanted[:12]}..HEAD`), then thermite install, or thermite revert to the version before the last "
-            "upgrade")
+            f"{wanted[:12]}..HEAD`), then thermite install, or thermite rollback --restore-state to the version "
+            "before the last upgrade")
     try:
         installed = manifest.installed(system, context.installation.root)
     except manifest.ManifestError as exc:
@@ -100,6 +132,13 @@ def roll_back(system: System, commit: str | None, dry_run: bool) -> int:
                f"{wanted[:12]}" + (f", deploy #{entry['number']} of {entry['deployed_at']}" if entry else "")
                + f", {'would do' if dry_run else 'step by step'}:")
     preflight = [steps.Preconditions(context), steps.Committed(context, head=head.head)]
+    if dry_run and plan is not None:
+        code, checked = runner.plan(preflight, system)
+        prepared, preparation, transaction = changeover.plan(
+            system, changeover.install_work(context, None, verb="rollback"), first=len(preflight) + 1)
+        plan.update(steps=[*checked, *preparation], transaction=transaction, commit=wanted,
+                    deploy={"number": entry["number"], "deployed_at": entry["deployed_at"]} if entry else None)
+        return prepared or code
     code = runner.run(preflight, system, AREA, dry_run=dry_run)
     if dry_run:
         return changeover.preview(context, system, changeover.install_work(context, None, verb="rollback"),
@@ -115,20 +154,43 @@ def roll_back(system: System, commit: str | None, dry_run: bool) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = oh_cli.command("rollback", DESCRIPTION, EXAMPLES, NOTES)
-    parser.add_argument("commit", nargs="?", metavar="COMMIT",
-                        help="the commit to install (default: the one deployed before the current one)")
+    which = parser.add_mutually_exclusive_group()
+    which.add_argument("commit", nargs="?", metavar="COMMIT",
+                       help="the commit to install (default: the one deployed before the current one)")
+    which.add_argument("--restore-state", action="store_true",
+                       help="go back to the version, and the state, the last install or upgrade set aside; "
+                            "what was written since is lost")
     oh_cli.add_dry_run(parser)
+    oh_cli.add_json(parser)
+    oh_cli.add_yes(parser, "the rollback")
     args = parser.parse_args(argv)
     if os.geteuid() == 0:
         print("thermite rollback: run it as your user; it asks once before rolling back", file=sys.stderr)
         return 2
+    if args.json and not args.dry_run:
+        print("thermite rollback: --json reports what a dry run would do: give it with -n/--dry-run",
+              file=sys.stderr)
+        return 2
+    if args.yes and args.restore_state:
+        print("thermite rollback: --yes cannot approve --restore-state, which asks you to type the installation "
+              "root", file=sys.stderr)
+        return 2
     system = System()
+    report = {"verb": "rollback", "restore_state": args.restore_state, "dry_run": True} if args.json else None
+    # A restore runs as thermite revert did: its transaction and its scope
+    # keep the verb "revert", which earlier releases read.
+    verb = "revert" if args.restore_state else "rollback"
+    body: Callable[[], int] = ((lambda: revert.revert(system, args.dry_run, plan=report)) if args.restore_state
+                               else (lambda: roll_back(system, args.commit, args.dry_run, plan=report)))
+    approval = UNATTENDED.set(args.yes)
     try:
-        return changeover.scoped(AREA, system, "rollback", lambda: roll_back(system, args.commit, args.dry_run),
-                                 dry_run=args.dry_run)
+        return changeover.reported(report, lambda: changeover.scoped(AREA, system, verb, body,
+                                                                     dry_run=args.dry_run))
     except (deploy.DeployError, ValueError, OSError) as exc:
         print(f"thermite rollback: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
-        system.say(f"\nInterrupted. Run {changeover.command(AREA, 'rollback')} again.")
+        system.say(f"\nInterrupted. Run {changeover.command(AREA, verb)} again.")
         return changeover.INTERRUPTED
+    finally:
+        UNATTENDED.reset(approval)

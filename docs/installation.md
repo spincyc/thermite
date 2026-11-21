@@ -150,11 +150,11 @@ rules that the runtime has disabled. The runtime keeps a rule's disabled
 flag through restarts and installs and logs nothing for it, so a rule
 switched off from the runtime's own pages would otherwise leave its device
 quiet, with no error anywhere. Rules made in those pages are left as they
-are. Between installs, `thermite health --production` fails on a disabled
-Thermite rule and names it.
+are. Between installs, `thermite status` fails on a disabled Thermite rule
+and names it.
 
-The run ends with a read-only check, `thermite health --production
---installation --settle 120`, and commits only when it passes: a failing
+The run ends with a read-only check, `thermite status --installation
+--settle 120`, and commits only when it passes: a failing
 check rolls the install back. The check gives what the start has not finished
 up to two minutes. Things still initializing then are reported as warnings,
 not failures, as offline devices always are; missing add-ons or monitoring
@@ -310,6 +310,16 @@ grep -h 'received command' /srv/thermite/runtime/logs/events.log | tail -n 20
 zgrep -h 1a2b3c4d /srv/thermite/runtime/logs/events.log.*.gz
 ```
 
+`thermite logs` prints openhab.log and every other Thermite service's
+journal as one list, merged by time, with secrets as `***`: `thermite logs
+--since 1h`, `thermite logs runtime gateway -f`, `thermite logs events
+--since today`. It reads what the `thermite` and `systemd-journal` groups
+let you read and names on stderr a source it cannot. `thermite bugreport`
+collects the last day of those logs, with what `thermite version`,
+`status` and `history` say and the system's facts, into one archive for a
+bug report; addresses and device names stay in it, so review it before
+sharing it.
+
 The installer creates this layout. A host that needs another location sets
 `root: /absolute/path` in `instance/host.yaml`; `runtime/` and `access/` are
 always its children. Unit files, `/etc/thermite`, the owner's
@@ -357,7 +367,7 @@ On a fresh clone with no local credentials, it can recover the installed
 service's token after verifying it against the local runtime, under the same
 install approval. No account is reset. If no usable service copy remains,
 restore the private site backup or supply an existing private credential with
-`--runtime-token-file PATH`. See [using a fresh clone](packaging.md#use-a-fresh-clone-on-an-existing-host).
+`--token-file FILE`. See [using a fresh clone](packaging.md#use-a-fresh-clone-on-an-existing-host).
 Log out and back in after the installer adds you to the service group.
 
 For newly initialized native userdata, preparation builds the OSGi cache
@@ -453,14 +463,19 @@ with the gateway's service descriptor, deletes them.
 Use System (F10 in the terminal) for deliberate access to openHAB, Grafana
 and Prometheus. Local-only tools remain local and provide
 SSH forwarding instructions. System's configured version is not a health
-check; the following commands report live deployment and device health.
+check; this command reports live deployment and device health.
 
 ```sh
 thermite status --config "$HOME/thermite-site"
-thermite health --config "$HOME/thermite-site" --production
 ```
 
-Health reports real device availability; fictional example addresses will
+From another computer, `thermite status --url ssh://HOST` runs it on the
+server over SSH, as do `history`, `logs`, `bugreport`, `device`, `pair`,
+`reboot` and `cameras`; `THERMITE_URL=ssh://HOST` in the environment makes
+that server the default (`ssh://USER@HOST:PORT/SITE` names the login, the
+port and the site directory there).
+
+Its runtime checks report real device availability; fictional example addresses will
 not establish a healthy house. Pair and verify equipment before relying on
 automation; `thermite pair --help` lists supported pairing steps.
 
@@ -617,9 +632,10 @@ site: only the server's own commands do. On the server they trust its
 installed gateway certificate. Other computers need the server's URL and a
 copy of `tls-cert.pem`, passed once with `--ca-file`: `thermite tui --url URL
 --ca-file FILE` opens the terminal remote there (with no `--url` it opens
-`https://thermite:13601`; with `--config DIR` it uses that site's
-`gateway.port` and installed address), and `thermite access login`, `logout`
-and `status` take the same switches.
+the server `THERMITE_URL` names, an https URL or the host of an `ssh://`
+one; else, with `--config DIR`, that site's installed gateway; else
+`https://thermite:13601`), and `thermite access login`, `logout` and
+`status` take the same switches.
 
 ## Guest access over plain HTTP
 
@@ -748,7 +764,7 @@ again. NFS needs no login.
 Arch or `nfs-common` on Ubuntu (an NFS share) with Thermite's other
 packages; the [ISO](iso.md) ships them. The mount units, the gate and the
 installed logins are Thermite's like its other units: an install transaction
-sets them aside and a rollback or `thermite revert` puts them back; removing
+sets them aside and its rollback, or `thermite rollback --restore-state`, puts them back; removing
 a share from `host.yaml` unmounts it and removes its unit and login at the
 next install, and `thermite uninstall` removes them all. A mount point that
 `/etc/fstab` or another unit already mounts is refused, untouched: remove
@@ -767,7 +783,7 @@ its id in the house file, so that nothing has to be found first:
 - **What watches it**: each reading that says whether it answers (a Thing's
   status, a control port, the reads of its own rule, a ping), each health
   check built on one and when a room needs that check. A device nothing
-  watches is told so plainly, as `thermite validate` notes it.
+  watches is told so plainly, as `thermite check house` notes it.
 - **What holds now**: each reading's value and its age, each check's state
   and whether a room needs it now, the alerts about it, the problem its
   rules last met and when it last read clear, the commands its rules took
@@ -992,13 +1008,14 @@ engine runs as root from the copy pinned at begin,
    release, `access/releases/<id>`) and monitoring; then `thermite.target`
    starts.
 6. **Verify**: monitoring answers, any of Thermite's rules the runtime has
-   disabled is switched back on, and `thermite health --production
-   --installation` passes. Device warnings are reported and never fail it;
+   disabled is switched back on, and `thermite status --installation`
+   passes. Device warnings are reported and never fail it;
    when it fails, nothing is committed and the upgrade rolls back.
 7. **Commit**: the engine records the new version in
    `/etc/thermite/installed.json` and enables `thermite.target`. The version
    before it stays set aside in `/srv/thermite/.transaction/<id>/` until the
-   next transaction commits; `thermite revert` puts it back.
+   next transaction commits; `thermite rollback --restore-state` puts it
+   back.
 
 Only after the commit does `~/.local/bin/thermite` switch to the new
 application. Thermite is down from the stop until the target starts again:
@@ -1078,7 +1095,8 @@ the rollback is the only undo.
 | 130 | Interrupted: see [an interrupted upgrade](#an-interrupted-upgrade). |
 
 After exit status 4, fix what health reports, then check again with
-`thermite health --production --installation`. When the site could not be
+`thermite status --installation` (`thermite health --production
+--installation` on a release from before `status` took it over). When the site could not be
 reset (it moved on, or has uncommitted changes), the upgrade says so and
 prints the `git revert` that pins the version that runs.
 
@@ -1098,17 +1116,17 @@ deploy history, old backups and the gateway's identity stay.
 
 ### Go back
 
-Two commands go back, each as its own install transaction with the exit
-statuses above:
+`thermite rollback` goes back two ways, each as its own install transaction
+with the exit statuses above:
 
 ```sh
 thermite rollback --config "$HOME/thermite-site" --dry-run
 thermite rollback --config "$HOME/thermite-site" [COMMIT]
-thermite revert --config "$HOME/thermite-site" --dry-run
-thermite revert --config "$HOME/thermite-site"
+thermite rollback --config "$HOME/thermite-site" --restore-state --dry-run
+thermite rollback --config "$HOME/thermite-site" --restore-state
 ```
 
-`thermite rollback` installs an earlier site commit: by default the one
+Without `--restore-state` it installs an earlier site commit: by default the one
 deployed before the current one (`thermite history` lists them). It installs
 that commit as `thermite install` installs HEAD, with its boot test, units,
 images, native-port filter and gateway; the state stays as it is, and the
@@ -1119,8 +1137,9 @@ the application release that runs the command; one pinned by another
 release is refused with exit status 2, and so is one from before the site's
 version-2 manifest ([retired site schema](packaging.md#retired-site-schema)).
 
-`thermite revert` puts back the version the last install or upgrade set
-aside, with its state as it was then. That means its files, units, filter
+`thermite rollback --restore-state` (a revert; `thermite revert` before)
+puts back the version the last install or upgrade set aside, with its state
+as it was then. That means its files, units, filter
 and confinement, its `runtime/` and `access/` trees, and the runtime token,
 Grafana password, runtime credentials and gateway profile in the site's
 `var/`. Everything Thermite wrote since that commit is lost: accounts,

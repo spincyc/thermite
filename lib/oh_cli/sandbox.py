@@ -107,7 +107,7 @@ pairing:
 EXAMPLES = (
     ("thermite sandbox fetch", "the pinned JRE and distribution, once"),
     ("thermite sandbox start --fresh", "a read-only sandbox on an empty userdata"),
-    ("thermite sandbox logs -f", "follow its openhab.log"),
+    ("thermite logs --sandbox -f", "follow its openhab.log"),
     ("thermite sandbox reload", "after thermite generate: the running sandbox picks up conf/"),
     ("thermite sandbox stop", "stop it"),
 )
@@ -204,8 +204,8 @@ def _start(args, rt, inst) -> int:
     level = lib.start_level(inst)
     if level is not None and level < 100:
         print(f"note    start level {level}; 100 follows once add-ons are installed and every Thing has an "
-              f"initialised handler (bin/thermite sandbox status, logs -f)")
-    print(f"ready   {inst.url}  (logs: bin/thermite sandbox logs -f)")
+              f"initialised handler (bin/thermite sandbox status, bin/thermite logs --sandbox -f)")
+    print(f"ready   {inst.url}  (logs: bin/thermite logs --sandbox -f)")
     if args.live:
         address = deploy.lan_address()
         print(f"live    {'http://' + address + ':' + str(inst.http_port) if address else 'this host, port ' + str(inst.http_port)}"
@@ -229,23 +229,36 @@ def cmd_status(args) -> int:
     inst = lib.sandbox_instance()
     pgid = lib.running_pgid(inst)
     if not pgid:
-        print("sandbox: stopped")
+        if args.json:
+            oh_cli.emit({"running": False, "url": inst.url, "log": str(inst.openhab_log)})
+        else:
+            print("sandbox: stopped")
         return 3
     token = lib.read_token(inst.token_file) if inst.token_file.exists() else None
     code, root = lib.Http(inst.url).try_get_json("/rest/")
     version = (root or {}).get("runtimeInfo", {}).get("version") if code == 200 else None
-    print(f"sandbox: running (process group {pgid}, {len(lib.group_members(pgid))} processes)")
-    print(f"url:     {inst.url}  REST {'ok, runtime ' + str(version) if version else 'not answering (' + str(code) + ')'}")
     mode = lib.read_mode(inst)
     address = deploy.lan_address() if mode == lib.LIVE else None
+    level = lib.start_level(inst)
+    if args.json:
+        oh_cli.emit({"running": True, "process_group": pgid, "processes": len(lib.group_members(pgid)),
+                     "url": inst.url, "rest": {"status": code, "version": version},
+                     "mode": mode, "lan_url": f"http://{address}:{inst.http_port}" if address else None,
+                     "start_level": level, "token_file": str(inst.token_file) if token else None,
+                     "log": str(inst.openhab_log)})
+        return 0 if version else 1
+    print(f"sandbox: running (process group {pgid}, {len(lib.group_members(pgid))} processes)")
+    print(f"url:     {inst.url}  REST {'ok, runtime ' + str(version) if version else 'not answering (' + str(code) + ')'}")
     print(f"mode:    {describe(mode)}" + (f"; from the LAN: http://{address}:{inst.http_port}" if address else ""))
-    print(f"level:   {lib.start_level(inst)}")
+    print(f"level:   {level}")
     print(f"token:   {inst.token_file if token else 'none'}")
     print(f"logs:    {inst.openhab_log}")
     return 0 if version else 1
 
 
 def cmd_logs(args) -> int:
+    print(f"{oh_cli.PROGRAM} sandbox logs: {oh_cli.PROGRAM} logs --sandbox replaces it; "
+          f"{oh_cli.PROGRAM} sandbox logs goes in the next release", file=sys.stderr)
     inst = lib.sandbox_instance(userdata=args.userdata)
     path = inst.openhab_log
     if not path.exists() and not args.follow:
@@ -321,13 +334,16 @@ def main(argv=None) -> int:
     p.set_defaults(func=cmd_stop)
 
     p = oh_cli.action(sub, "status", "report whether the sandbox runs and REST answers (exit 3 if stopped)",
-                      examples=(("thermite sandbox status", "process group, URL, mode, start level, token, log"),))
+                      examples=(("thermite sandbox status", "process group, URL, mode, start level, token, log"),
+                                ("thermite sandbox status --json", "the same as one JSON object")))
+    oh_cli.add_json(p)
     p.set_defaults(func=cmd_status)
 
-    p = oh_cli.action(sub, "logs", "show userdata/logs/openhab.log", examples=(
+    p = oh_cli.action(sub, "logs", "show userdata/logs/openhab.log (retired: thermite logs --sandbox)", examples=(
+        ("thermite logs --sandbox", "what replaces it"),
         ("thermite sandbox logs", "the last 50 lines"),
         ("thermite sandbox logs -f", "and keep following it"),
-        ("thermite sandbox logs -f --userdata /srv/thermite/runtime/userdata", "production's log, in the runtime state"),
+        ("thermite sandbox logs -f --userdata DIR", "the log of a sandbox started with --userdata DIR"),
     ))
     p.add_argument("-f", "--follow", action="store_true", help="keep following the log")
     p.add_argument("-n", "--lines", type=int, default=50, metavar="N", help="lines to show first (default: 50)")

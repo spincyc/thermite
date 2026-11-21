@@ -39,8 +39,8 @@ for _module in REGISTRY:
 PHASES = ("observe", "control")
 
 #: Names devices.yaml may already use for integrations not implemented yet,
-#: by phase. They validate but render nothing, which thermite validate and
-#: thermite generate say of each one a device lists (planned()). A name
+#: by phase. They validate but render nothing, which thermite check house
+#: and thermite generate say of each one a device lists (planned()). A name
 #: moves from here to REGISTRY when its module exists.
 PLANNED = {
     "observe": frozenset(),

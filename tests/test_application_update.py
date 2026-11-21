@@ -63,6 +63,29 @@ class ApplicationUpdate(fixtures.ApplicationFixture):
         self.assertEqual(child[8:], ("--clean", "--restart-runtime", "--runtime-token-file", str(token)))
         self.assertFalse(any("fetch" in args for args in self.calls))
 
+    def test_yes_reaches_a_host_phase_that_takes_it(self):
+        for operation in ("upgrade", "install"):
+            with self.subTest(operation=operation):
+                self.calls.clear()
+                self.assertEqual(self.apply(operation, source=self.source, host_args=("--yes",)), 0)
+                asked = [args for args in self.calls if args[1:2] == (operation,)]
+                self.assertEqual(asked[0][2:], ("--config", str(self.site), "--help"), "before the pin")
+                self.assertEqual(asked[1][-1], "--yes")
+
+    def test_yes_stops_before_the_pin_where_the_selected_release_predates_it(self):
+        self.host_help = "usage: thermite upgrade [--dry-run]\n  --dry-run  say what it would do\n"
+        said = []
+        with self.assertRaisesRegex(application.Unattended, "predates upgrade --yes"):
+            self.apply(source=self.source, host_args=("--yes",), say=said.append)
+        self.assertFalse(any("--_host-phase" in args or args[1:2] == ("init",) for args in self.calls))
+        self.assertFalse(any(line.startswith("Resume: ") for line in said), "the same command would stop again")
+        self.assertEqual(transaction.clean(self.repo), self.before)
+        self.assertEqual(self.launcher.resolve(), self.old / "bin/thermite")
+
+    def test_without_yes_nothing_asks_the_release_what_it_takes(self):
+        self.assertEqual(self.apply(source=self.source), 0)
+        self.assertFalse(any("--help" in args for args in self.calls))
+
     def test_install_current_verified_release_does_not_fetch_or_need_source_git(self):
         self.assertEqual(self.apply("install", program=self.new), 0)
         self.assertFalse(any("clone" in args or "fetch" in args for args in self.calls))

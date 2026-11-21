@@ -34,7 +34,11 @@ if either finds anything:
 EXAMPLES = (("thermite lint", "scan the area's files Git has or would add, and check the docs' make targets"),)
 
 
-def secret_scan() -> int:
+PROGRAM = "thermite lint"
+
+
+def secret_scan() -> dict:
+    """{"files": how many were scanned, "findings": [what each found]}."""
     argv = ["git", "-C", str(AREA), "ls-files", "-co", "--exclude-standard", "--", "."]
     oh_trace.run(argv)
     try:
@@ -44,28 +48,46 @@ def secret_scan() -> int:
     listed = git.stdout.splitlines() if git.returncode == 0 else []
     if not listed:
         listed = secrets.walk(AREA)
-    problems = secrets.scan(AREA, listed)
-    for problem in problems:
-        print(f"thermite lint: {problem}", file=sys.stderr)
-    print(f"secret scan: {len(listed)} files, {len(problems)} findings")
-    return 1 if problems else 0
+    return {"files": len(listed), "findings": secrets.scan(AREA, listed)}
 
 
-def doc_targets() -> int:
+def doc_targets() -> dict | None:
+    """{"documents": how many were read, "stale": [each target the Makefile
+    lacks]}, or None where there is nothing to check."""
     # Configuration-only sites have no Makefile or application command wrappers.
     import oh_paths
     if not (AREA / "Makefile").exists() and oh_paths.private(AREA):
-        return 0
+        return None
     documents = [AREA / "README.md", AREA / "FAQ.md", *sorted((AREA / "docs").glob("*.md")),
                  *sorted((AREA / "site/pages").glob("*.md"))]
     documents = [d for d in documents if d.exists()]
-    problems = oh_docs.stale_targets(AREA / "Makefile", documents)
-    for problem in problems:
-        print(f"thermite lint: {problem}", file=sys.stderr)
-    print(f"make targets in the docs: {len(documents)} documents, {len(problems)} stale")
-    return 1 if problems else 0
+    return {"documents": len(documents), "stale": oh_docs.stale_targets(AREA / "Makefile", documents)}
+
+
+def checked() -> dict:
+    """Both checks' reports: {"secret_scan": ..., "doc_targets": ...}."""
+    return {"secret_scan": secret_scan(), "doc_targets": doc_targets()}
+
+
+def status(report: dict) -> int:
+    targets = report["doc_targets"]
+    return 1 if report["secret_scan"]["findings"] or (targets and targets["stale"]) else 0
+
+
+def said(report: dict, program: str = PROGRAM) -> None:
+    """The report as text: each finding on stderr, each check's count on stdout."""
+    scan, targets = report["secret_scan"], report["doc_targets"]
+    for problem in scan["findings"]:
+        print(f"{program}: {problem}", file=sys.stderr)
+    print(f"secret scan: {scan['files']} files, {len(scan['findings'])} findings")
+    if targets is not None:
+        for problem in targets["stale"]:
+            print(f"{program}: {problem}", file=sys.stderr)
+        print(f"make targets in the docs: {targets['documents']} documents, {len(targets['stale'])} stale")
 
 
 def main(argv: list[str] | None = None) -> int:
     oh_cli.command("lint", DESCRIPTION, EXAMPLES).parse_args(argv)
-    return max(secret_scan(), doc_targets())
+    report = checked()
+    said(report)
+    return status(report)

@@ -1,10 +1,10 @@
 """Handheld remotes: the bridge to the house, and enrolling remotes.
 
-    thermite handheld serve [--url URL] [--ca-file FILE] [--mock] [--port DEVICE | --listen PATH] [--state FILE]
-    thermite handheld enroll --name NAME [--port DEVICE] [--base-port DEVICE] [--state FILE]
-    thermite handheld enroll --simulator --name NAME [--key-file FILE] [--mac MAC] [--state FILE]
-    thermite handheld list [--state FILE] [--json]
-    thermite handheld forget NAME [--port DEVICE] [--state FILE]
+    thermite handheld serve [--url URL] [--ca-file FILE] [--mock] [--port DEVICE | --listen PATH] [--state-file FILE]
+    thermite handheld enroll --name NAME [--port DEVICE] [--base-port DEVICE] [--state-file FILE]
+    thermite handheld enroll --simulator --name NAME [--key-file FILE] [--mac MAC] [--state-file FILE]
+    thermite handheld list [--state-file FILE] [--json]
+    thermite handheld forget NAME [--port DEVICE] [--state-file FILE]
 
 serve resolves the gateway as thermite tui does (oh_cli.tui) and runs
 handheld/main.js; enroll and forget speak the remote's console lines
@@ -64,8 +64,10 @@ instead and writes its key file. list shows the enrolled remotes and forget
 removes one. The state file holds the remotes' keys: it is private (mode
 0600) and keys are never printed.
 
-Without --url serve opens {tui.DEFAULT_URL}, as thermite tui does, and
-trusts the gateway's certificate the same way (thermite help tui).
+Without --url serve opens the gateway thermite tui does: THERMITE_URL
+where it names a server, else the selected site's installed gateway, else
+{tui.DEFAULT_URL}; it trusts the gateway's certificate the same way
+(thermite help tui).
 """
 
 NOTES = """\
@@ -359,7 +361,7 @@ def ask_remote(device: str | None) -> tuple[str, dict]:
 
 
 def cmd_serve(arguments) -> int:
-    state = arguments.state or state_file()
+    state = arguments.state_file or state_file()
     environment = dict(os.environ)
     environment.pop("THERMITE_REMOTE_HOUSE_FILE", None)
     environment.pop("THERMITE_REMOTE_TOKEN_FILE", None)
@@ -367,7 +369,7 @@ def cmd_serve(arguments) -> int:
         backend = ["--mock"]
     else:
         try:
-            url = tui.gateway(arguments.url)
+            url = tui.resolve(arguments.url)
         except ValueError as exc:
             raise Problem(str(exc)) from None
         try:
@@ -412,7 +414,7 @@ def checked_name(name: str) -> str:
 
 def cmd_enroll(arguments) -> int:
     name = checked_name(arguments.name)
-    path = arguments.state or state_file()
+    path = arguments.state_file or state_file()
     data = load(path)
     key = secrets.token_bytes(32)
     if arguments.simulator:
@@ -462,7 +464,7 @@ def cmd_enroll(arguments) -> int:
 
 
 def cmd_list(arguments) -> int:
-    path = arguments.state or state_file()
+    path = arguments.state_file or state_file()
     data = load(path)
     rows = []
     for entry in data["remotes"]:
@@ -497,7 +499,7 @@ def cmd_list(arguments) -> int:
 
 
 def cmd_forget(arguments) -> int:
-    path = arguments.state or state_file()
+    path = arguments.state_file or state_file()
     data = load(path)
     entry = find(data, arguments.name)
     if entry is None:
@@ -532,16 +534,14 @@ def parser() -> argparse.ArgumentParser:
 
     serve = oh_cli.action(commands, "serve", "run the bridge between the base and the house",
                           examples=[example for example in EXAMPLES if " serve" in example[0]])
-    serve.add_argument("--url", metavar="URL",
-                       help=f"the gateway: https://HOST:PORT, HOST:PORT or HOST (default: {tui.DEFAULT_URL}, "
-                            "or a selected site's gateway.port)")
+    serve.add_argument("--url", metavar="URL", help=tui.URL_HELP)
     serve.add_argument("--ca-file", type=Path, metavar="FILE",
                        help=f"trust this copy of the server's {tui.AUTHORITY}; remembered for that address")
     serve.add_argument("--mock", action="store_true", help="the remote page's mock house, which sends nothing")
     where = serve.add_mutually_exclusive_group()
     where.add_argument("--port", metavar="DEVICE", help="the base's USB serial port (default: the one that answers)")
     where.add_argument("--listen", metavar="PATH", help="a Unix socket for a simulated base to connect to")
-    serve.add_argument("--state", type=Path, metavar="FILE", help=state_help)
+    oh_cli.add_state_file(serve, state_help)
 
     enroll = oh_cli.action(commands, "enroll", "enroll a remote, or a simulated one",
                            examples=[example for example in EXAMPLES if " enroll" in example[0]])
@@ -555,18 +555,18 @@ def parser() -> argparse.ArgumentParser:
                         help="with --simulator: where to write its key (default: NAME.key beside the state file)")
     enroll.add_argument("--mac", metavar="MAC",
                         help="with --simulator: its MAC (default: the locally administered one ending 00:01)")
-    enroll.add_argument("--state", type=Path, metavar="FILE", help=state_help)
+    oh_cli.add_state_file(enroll, state_help)
 
     listing = oh_cli.action(commands, "list", "list the enrolled remotes and the base",
                             examples=[example for example in EXAMPLES if " list" in example[0]])
-    listing.add_argument("--state", type=Path, metavar="FILE", help=state_help)
+    oh_cli.add_state_file(listing, state_help)
     oh_cli.add_json(listing)
 
     forget = oh_cli.action(commands, "forget", "forget an enrolled remote",
                            examples=[example for example in EXAMPLES if " forget" in example[0]])
     forget.add_argument("name", metavar="NAME", help="the remote's name (thermite handheld list)")
     forget.add_argument("--port", metavar="DEVICE", help="also erase the enrolment on the remote connected by USB here")
-    forget.add_argument("--state", type=Path, metavar="FILE", help=state_help)
+    oh_cli.add_state_file(forget, state_help)
     return parser
 
 
@@ -580,8 +580,8 @@ def main(argv: list[str] | None = None) -> int:
             options.error("--simulator takes no --port or --base-port")
         if not arguments.simulator and (arguments.key_file or arguments.mac):
             options.error("--key-file and --mac are for --simulator")
-    if getattr(arguments, "state", None) is not None:
-        arguments.state = Path(arguments.state).expanduser().absolute()
+    if getattr(arguments, "state_file", None) is not None:
+        arguments.state_file = Path(arguments.state_file).expanduser().absolute()
     try:
         return {"serve": cmd_serve, "enroll": cmd_enroll, "list": cmd_list, "forget": cmd_forget}[arguments.command](arguments)
     except Problem as problem:

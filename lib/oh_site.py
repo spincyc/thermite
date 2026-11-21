@@ -349,7 +349,7 @@ def house_reference() -> str:
 
 def house_schema() -> dict:
     """The house file as JSON Schema, from the same declaration: key names
-    and kinds of value, which is less than `thermite validate` checks."""
+    and kinds of value, which is less than `thermite check house` checks."""
     import oh_inventory
     import oh_shape
 

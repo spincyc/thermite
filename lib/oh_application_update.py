@@ -103,8 +103,18 @@ class UnknownRevision(ValueError):
     """The official source has no single commit the abbreviation names."""
 
 
+class Unattended(ValueError):
+    """--yes was given and the selected release's host phase does not take it."""
+
+
 def run(*argv: str | Path, capture: bool = False) -> str:
     return transaction.run(*argv, capture=capture)
+
+
+def takes(command: Path, operation: str, site: Path, switch: str) -> bool:
+    """Whether the candidate's `thermite OPERATION` lists `switch` in its help."""
+    shown = run(command, operation, "--config", site, "--help", capture=True)
+    return re.search(rf"(?<![\w-]){re.escape(switch)}(?![\w-])", shown) is not None
 
 
 def host(*argv: str | Path) -> None:
@@ -159,7 +169,7 @@ def retain_launcher(store: Path, previous: tuple[bytes, int]) -> Path:
 def retain(store: Path, current: Path, previous: str | tuple | None, say: Callable[[str], None]) -> None:
     """Retention after the owner command moved to `current`: that
     environment and the one the command selected before stay (thermite
-    revert runs it); older environments with their records and source
+    rollback --restore-state runs it); older environments with their records and source
     checkouts go. Nothing goes when the previous command was not one of
     this store's, and an environment no record names is left alone."""
     if not isinstance(previous, str):
@@ -185,12 +195,12 @@ def retain(store: Path, current: Path, previous: str | tuple | None, say: Callab
             shutil.rmtree(checkout, ignore_errors=True)
         removed += 1
     if removed:
-        say(f"Removed {removed} older application environment(s); the previous one stays for thermite revert.")
+        say(f"Removed {removed} older application environment(s); the previous one stays for thermite rollback --restore-state.")
 
 
 def select(home: Path, command: Path) -> Path:
     """Point the owner command at `command`, an environment's own launcher,
-    in one replacement (thermite revert selects the previous one). A
+    in one replacement (thermite rollback --restore-state selects the previous one). A
     launcher that is not a symlink is refused, as an update refuses it."""
     launcher = home / ".local/bin/thermite"
     previous = launcher_state(launcher)
@@ -427,7 +437,7 @@ def refuse_older(reason: str | None, site: Path, digest: str) -> None:
             pinned = "?"
         raise Downgrade(f"refusing to pin release {digest[:12]} over the site's newer release {str(pinned)[:12]}: "
                         f"{reason}. The newer release may already have migrated state, such as the identity schema, "
-                        "that an older one cannot read. thermite revert puts back the version before the last "
+                        "that an older one cannot read. thermite rollback --restore-state puts back the version before the last "
                         "upgrade with its state (docs/installation.md#go-back); otherwise restore state the older "
                         "release can read, then rerun with --allow-downgrade.")
 
@@ -551,6 +561,12 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
                 refuse_older(older(store, site_root, site, release["digest"], commit,
                                    [source] if source_head is not None else []), site, release["digest"])
             command = environment / "bin/thermite"
+            # A release from before its verb took --yes would refuse the
+            # switch only after the pin commit, and leave that commit behind.
+            if "--yes" in forwarded and not takes(command, operation, site, "--yes"):
+                raise Unattended(f"release {release['digest'][:12]} predates {operation} --yes, so its host phase "
+                                 f"cannot run unattended. The site and this host are unchanged; run thermite "
+                                 f"{operation} at a terminal, without --yes")
             with stage("Pin it in the site"):
                 transaction.site_update(command, site, expected_head=site_head)
             committed = transaction.clean(site_root)
@@ -580,7 +596,7 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
                 finally:
                     temporary.unlink(missing_ok=True)
                 retain(store, environment, previous_launcher, say)
-        except (Downgrade, UnknownRevision):
+        except (Downgrade, UnknownRevision, Unattended):
             raise
         except Transacted as outcome:
             say(outcome.message)

@@ -7,6 +7,53 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- `thermite logs` prints every Thermite service's log as one list, merged
+  by time: the runtime's openhab.log with its rotations, and each other
+  service's journal. `--since` and `--until` take `1h`, `today` or
+  `2026-11-21 14:00`; components (`runtime`, `gateway`, `events` ...),
+  `--level`, `--grep`, `-f` and `--json` narrow and shape it, and secrets
+  print as `***`. `thermite logs --sandbox` replaces `thermite sandbox logs`.
+- `thermite bugreport` collects what `thermite version`, `status` and
+  `history` say, the last day of logs and the system's facts into one
+  owner-only archive, with secrets as `***`.
+- A command that reads the running installation (`status`, `history`,
+  `logs`, `bugreport`, `device`, `pair`, `reboot`, `cameras`, `version`)
+  runs on a server with `--url ssh://[USER@]HOST[:PORT][/SITE]`, over SSH,
+  with its output and exit status here. `THERMITE_URL` names that server by
+  default. `tui`, `remote`, `handheld` and `access` take it as their
+  gateway, an https URL as it is or the host of an `ssh://` one, and
+  `thermite tui` then opens a selected site's installed gateway before
+  `https://thermite:13601`.
+- The verbs say the same thing the same way:
+  - `thermite check [house|build|lint]` replaces `thermite validate`
+    (`check house`) and `thermite lint` (`check lint`). It runs every step
+    it is given, even after one finds a problem, unless the house file is
+    invalid.
+  - `thermite status` takes in `thermite health`. Plain status adds the
+    runtime's checks (Things ONLINE, Items not NULL or UNDEF, thermite's
+    rules enabled, add-ons) and the installed gateway's services to its
+    problems, so a Thing that is not ONLINE makes it exit 1. `status
+    --runtime` (with `--sandbox` or `--runtime-url URL` for another
+    runtime) and `status --installation` run the checks alone, as health
+    did; the installer's last check is `status --installation`.
+  - `thermite rollback --restore-state` replaces `thermite revert`.
+  - A device is a positional DEVICE: `matrix-settings DEVICE` replaces
+    `--device ID`; `pair` with no DEVICE lists every Sony TV's pairing and
+    `pair DEVICE --status` reads one (`--check` before).
+  - `--state` is `--state-dir` for `status` and `history` and
+    `--state-file` for `remote`, `tui` and `handheld`;
+    `--runtime-token-file` is `--token-file` for `install`, `upgrade` and
+    `cameras`; `cameras --url` is `--runtime-url`.
+  - `--yes` gives `upgrade`, `uninstall` and `rollback` their one approval
+    up front; it is refused with `--purge` and `--restore-state`, which ask
+    you to type the installation root. An upgrade whose selected release
+    predates `--yes` in its host phase stops before the pin commit, with
+    the site and host unchanged.
+  - `--json` is new on `check`, `matrix-settings`, `reboot`, `pair` and
+    `sandbox status`, and on `uninstall -n` and `rollback -n`; every
+    `--json` prints one line.
+  - The old verbs and spellings warn on stderr and work until the next
+    release.
 - A WiiM speaker that follows another in a multiroom group reports what
   its group's leader plays in the metrics (Listening, Speakers and What
   played), not idle. A follower reads stopped while its leader plays.

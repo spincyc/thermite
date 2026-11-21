@@ -128,7 +128,8 @@ class Lock(Site):
         with self.scope("revert"):
             holder = scope.running(self.var)
             self.assertEqual((holder.verb, holder.pid), ("revert", os.getpid()))
-            self.assertEqual(str(holder), f"thermite revert (process {os.getpid()}, since {holder.since})")
+            self.assertEqual(str(holder),
+                             f"thermite rollback --restore-state (process {os.getpid()}, since {holder.since})")
             self.assertEqual(changeover.in_progress(self.site), holder)
         self.assertIsNone(scope.running(self.var))
 

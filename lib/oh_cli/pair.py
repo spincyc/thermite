@@ -1,12 +1,14 @@
-"""Pair a TV with thermite, or check the Sony TVs' pairing.
+"""Pair a TV with thermite, or read the Sony TVs' pairing.
 
     thermite pair DEVICE [CODE] [--production | --sandbox]
                      what the device needs, by its integration in the house
                      file: a Sony TV's PIN (asked for once the TV shows it,
                      and sent through thermite), or an Android TV's pairing
                      code
-    thermite pair --check [DEVICE] [--production | --sandbox]
+    thermite pair [--production | --sandbox] [--json]
                      whether each Sony TV is paired with thermite
+    thermite pair DEVICE --status [--production | --sandbox] [--json]
+                     whether that Sony TV is paired with thermite
 """
 
 from __future__ import annotations
@@ -41,7 +43,8 @@ Pair a device with thermite, as its integration in the house file
     Items, as the Pairing page does, then asks for the digits and sends
     them back. thermite keeps the TV's registration in its own userdata;
     the PIN is never shown, logged or put in Git. With CODE it sends four
-    digits the TV shows already. --check reads each TV's pairing status.
+    digits the TV shows already. Without DEVICE it reads each Sony TV's
+    pairing instead, and DEVICE --status that TV's alone.
   - an Android TV or Google TV under androidtv_googletv control, with
     --sandbox: the binding reaches a TV only once the TV trusts its
     certificate, kept in the sandbox's userdata/androidtv/. Stand at the
@@ -61,7 +64,9 @@ EXAMPLES = (
     ("thermite pair DEVICE 1234", "send the PIN the TV shows already"),
     ("thermite pair DEVICE --sandbox", "ask an Android TV to show a pairing code"),
     ("thermite pair DEVICE A1B2C3 --sandbox", "send the code it shows; wait for it to come ONLINE"),
-    ("thermite pair --check", "whether every Sony TV is paired with production"),
+    ("thermite pair", "whether every Sony TV is paired with production"),
+    ("thermite pair DEVICE --status --sandbox", "whether that Sony TV is paired with the sandbox"),
+    ("thermite pair --json", "every Sony TV's pairing as JSON"),
 )
 
 NOTES = """\
@@ -73,6 +78,12 @@ exit status:
   2  the house file is invalid, no such device, thermite could not be
      reached or has no such Items, the sandbox is not running, or the
      device pairs elsewhere
+
+--json:
+  Without DEVICE, or with --status, one object: target (production or
+  sandbox), paired (whether every TV read is), and tvs, one entry for each
+  Sony TV: id, label, paired, and its state and problem as thermite reports
+  them, or error where its Items could not be read.
 """
 
 #: How long an Android TV's Thing may take to come ONLINE after its code.
@@ -261,6 +272,28 @@ def check(devices: list[dict], http: sandbox.Http, log=print) -> int:
             status = 1
     return status
 
+def report(devices: list[dict], http: sandbox.Http) -> tuple[list[dict], int]:
+    """(each TV's pairing for --json, the exit status check() gives, or 2
+    where a TV's Items could not be read)."""
+    entries, status = [], 0
+    for device in devices:
+        entry: dict = {"id": device["id"], "label": device.get("name") or device["id"]}
+        try:
+            state = item_state(http, _pairing.status_item(device))
+            problem = item_state(http, sony_ip_control.problem(device))
+        except OpenHABError as exc:
+            entries.append({**entry, "paired": False, "error": str(exc)})
+            status = 2
+            continue
+        fault = None if problem in ("NULL", "UNDEF") else problem
+        paired = state == "paired" and fault is None
+        entries.append({**entry, "paired": paired, "state": _pairing.STATES.get(state, state).lower(),
+                        "problem": fault})
+        if not paired:
+            status = max(status, 1)
+    return entries, status
+
+
 def thing_status(http: sandbox.Http, uid: str) -> tuple[str | None, str]:
     """(status, its description) of a Thing; (None, why) if thermite has none."""
     code, thing = http.try_get_json(f"/rest/things/{urllib.parse.quote(uid, safe=':')}")
@@ -353,7 +386,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("code", nargs="?", metavar="CODE",
                         help="the code the device shows: a Sony TV's four digits, an Android TV's six letters "
                              "and digits (omit to ask the device for them)")
-    oh_cli.add_check(parser, "a Sony TV's pairing (DEVICE's, or any one's)")
+    parser.add_argument("--status", action="store_true",
+                        help="read DEVICE's pairing instead of pairing it (without DEVICE: every Sony TV's)")
+    oh_cli.add_renamed(parser, "--check", "--status")
+    oh_cli.add_json(parser)
     oh_cli.add_target(parser, "production", "sandbox", default="production", meaning={
         "production": "production thermite on this host, with the API token bin/thermite install saved",
         "sandbox": "the sandbox, and its Android TV pairings",
@@ -364,20 +400,26 @@ def main(argv: list[str] | None = None) -> int:
 
     house = House.load(args.house)
     known = tvs(house)
-    if args.check:
+    if args.status or args.device is None:
         if args.code is not None:
-            parser.error("--check takes one DEVICE at most")
+            parser.error("--status takes one DEVICE at most")
         wanted = [args.device] if args.device else list(known)
         unknown = [ident for ident in wanted if ident not in known]
         if unknown:
             return error(f"not a TV under {sony_ip_control.NAME} control: {', '.join(unknown)} "
                          f"(those are: {', '.join(known) or 'none'})")
         try:
-            return check([known[ident] for ident in wanted], openhab(args.sandbox))
+            http = openhab(args.sandbox)
+            if not args.json:
+                return check([known[ident] for ident in wanted], http)
+            entries, status = report([known[ident] for ident in wanted], http)
         except OpenHABError as exc:
             return error(str(exc))
-    if args.device is None:
-        parser.error("name the DEVICE to pair, or --check")
+        oh_cli.emit({"target": "sandbox" if args.sandbox else "production",
+                     "paired": all(entry["paired"] for entry in entries), "tvs": entries})
+        return status
+    if args.json:
+        parser.error("--json reads the pairing: without DEVICE, or with --status")
     devices = house.by_id
     device = devices.get(args.device)
     how = kinds(device) if device else set()

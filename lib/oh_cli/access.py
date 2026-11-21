@@ -83,7 +83,8 @@ as user.reset_admin by a local principal.""",
     for name in TERMINAL:
         sub = oh_cli.action(commands, name, {"login": "log this terminal into a site", "logout": "revoke this terminal's site credential", "status": "read this terminal's current site identity and policies"}[name], examples=[("thermite access " + name + " --url https://thermite.example:13601" + (" --user operator" if name == "login" else ""), "use this site's private terminal credential")])
         sub.add_argument("--url", metavar="URL", help="the gateway as https://HOST:PORT, HOST:PORT or HOST, as thermite tui "
-                         f"takes it (default: a selected site's installed gateway, else https://thermite:{oh_ports.ACCESS_PORT})")
+                         f"takes it (default: {oh_cli.URL_VARIABLE} when it names a server, else a selected site's "
+                         f"installed gateway, else https://thermite:{oh_ports.ACCESS_PORT})")
         if name == "login":
             sub.add_argument("--user", required=True, help="site username")
             sub.add_argument("--ca-file", type=Path, help="trusted private CA certificate file")
@@ -105,9 +106,8 @@ as user.reset_admin by a local principal.""",
             from oh_cli import tui
             # The gateway and its trust as thermite tui finds them, so both
             # use the one credential saved for that address.
-            profile = tui.installed_profile()
             try:
-                args.url = tui.gateway(args.url or (profile["url"] if profile else None))
+                args.url = tui.resolve(args.url)
             except ValueError as exc:
                 raise AccessError(str(exc)) from None
             if args.command == "login":

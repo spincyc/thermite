@@ -44,6 +44,46 @@ exit status:
 """
 
 
+PROGRAM = "thermite validate"
+
+
+def invalid(error: inventory.ConfigError) -> dict:
+    """The report on a house file that cannot be checked (status invalid)."""
+    return {"devices": 0, "items": 0, "notes": [], "problems": error.problems or [str(error)],
+            "status": "invalid", "things": 0}
+
+
+def checked(house: House) -> dict:
+    """The report on a house file that loaded: its conf/, built in memory,
+    against it (status ok or problems). A ConfigError other than the
+    build's disagreement with the house goes to the caller."""
+    devices = len(house.devices)
+    try:
+        built, problems = render.build(house), []
+    except render.Disagreement as error:
+        built, problems = error.conf, error.problems
+    things, items, _ = render.objects(built)
+    notes = [metrics.unobserved_text(*found) for found in metrics.unobserved(house, built)]
+    return {"devices": devices, "items": len(items), "notes": notes, "problems": problems,
+            "status": "ok" if not problems else "problems", "things": len(things)}
+
+
+def status(report: dict) -> int:
+    return {"ok": 0, "problems": 1}.get(report["status"], 2)
+
+
+def said(report: dict, program: str = PROGRAM) -> None:
+    """The report as text: problems and notes on stderr, the count on stdout."""
+    problems, notes = report["problems"], report["notes"]
+    for problem in problems:
+        print(f"{program}: {problem}", file=sys.stderr)
+    for note in notes:
+        print(f"{program}: note: {note}", file=sys.stderr)
+    print(f"house file: {report['devices']} devices, conf: {report['things']} Things, "
+          f"{report['items']} Items, {len(problems)} problems"
+          + (f", {len(notes)} note{'s' if len(notes) > 1 else ''}" if notes else ""))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = oh_cli.command("validate", __doc__.splitlines()[0], EXAMPLES, NOTES)
     oh_cli.add_house(parser)
@@ -54,25 +94,11 @@ def main(argv: list[str] | None = None) -> int:
     except inventory.ConfigError as error:
         if not arguments.json:
             raise
-        oh_cli.emit({"devices": 0, "items": 0, "notes": [], "problems": error.problems or [str(error)],
-                     "status": "invalid", "things": 0})
+        oh_cli.emit(invalid(error))
         return 2
-    devices = len(house.devices)
-    try:
-        built, problems = render.build(house), []
-    except render.Disagreement as error:
-        built, problems = error.conf, error.problems
-    things, items, _ = render.objects(built)
-    notes = [metrics.unobserved_text(*found) for found in metrics.unobserved(house, built)]
+    report = checked(house)
     if arguments.json:
-        oh_cli.emit({"devices": devices, "items": len(items), "notes": notes, "problems": problems,
-                     "status": "ok" if not problems else "problems", "things": len(things)})
+        oh_cli.emit(report)
     else:
-        for problem in problems:
-            print(f"thermite validate: {problem}", file=sys.stderr)
-        for note in notes:
-            print(f"thermite validate: note: {note}", file=sys.stderr)
-        print(f"house file: {devices} devices, conf: {len(things)} Things, "
-              f"{len(items)} Items, {len(problems)} problems"
-              + (f", {len(notes)} note{'s' if len(notes) > 1 else ''}" if notes else ""))
-    return 1 if problems else 0
+        said(report)
+    return status(report)

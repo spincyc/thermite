@@ -121,7 +121,7 @@ class InstalledInstall(unittest.TestCase):
             self.assertEqual(steps.BootTest(self.context).actions(self.host)[0].argv, self.command("test", "boot"))
             actions = steps.Deploy(self.context).actions(self.host)
             self.assertEqual([action.argv for action in actions],
-                             [self.command("generate", "--check"), self.command("validate"), self.command("lint"),
+                             [self.command("generate", "--check"), self.command("check", "house"), self.command("check", "lint"),
                               self.deployment(), self.handoff()])
             # The write is the owner's and the handoff root's; neither asks,
             # holds the terminal or has an approved form of its own.
@@ -129,11 +129,18 @@ class InstalledInstall(unittest.TestCase):
             self.assertTrue(all(action.approved_argv is None and not action.terminal and not action.show_output
                                 for action in actions))
             self.assertEqual([action.argv for action in steps.Verify(self.context).actions(self.host)],
-                             [self.command("health", "--production", "--installation", "--settle", "120"),
-                              self.command("status")])
+                             [self.command("status", "--production", "--installation", "--settle", "120"),
+                              self.command("status", "--production", "--no-runtime-checks")])
             verification = steps.Verify(self.context).actions(self.host)
             self.assertTrue(verification[0].show_output)
             self.assertFalse(verification[0].terminal)
+        # An owner's THERMITE_URL names a server for the owner's own commands,
+        # never for the ones the installer runs on this host.
+        with patch.dict(os.environ, {oh_cli.URL_VARIABLE: "ssh://thermite.example"}), \
+                patch.object(oh_cli, "over_ssh", side_effect=AssertionError("sent over ssh")):
+            for action in verification:
+                words = list(action.argv[action.argv.index("status") + 1:])
+                self.assertEqual(oh_cli.reached("status", words), (None, words))
 
     def test_a_conf_that_pairs_is_checked_as_root_before_the_write(self):
         pairing = {"automation/js/sony_ip_control.js": "// pairing rule\n",
@@ -187,7 +194,8 @@ class InstalledInstall(unittest.TestCase):
             self.assertFalse(command.root)
             status = steps.Verify(self.context).actions(self.host)[-1]
             self.assertEqual(status.argv[:3], ("sg", "thermite", "-c"))
-            self.assertEqual(tuple(shlex.split(status.argv[-1])), self.command("status"))
+            self.assertEqual(tuple(shlex.split(status.argv[-1])),
+                             self.command("status", "--production", "--no-runtime-checks"))
             self.host.which.return_value = None
             *_, fallback, handoff = steps.Deploy(self.context).actions(self.host)
             self.assertTrue(fallback.root)
@@ -196,7 +204,7 @@ class InstalledInstall(unittest.TestCase):
             self.assertEqual((handoff.argv, handoff.root), (self.handoff(), True))
             status = steps.Verify(self.context).actions(self.host)[-1]
             self.assertTrue(status.root)
-            self.assertEqual(status.argv, ("-u", "owner", *self.command("status")))
+            self.assertEqual(status.argv, ("-u", "owner", *self.command("status", "--production", "--no-runtime-checks")))
 
     def test_source_checkout_uses_the_same_configuration_checks_as_an_installed_site(self):
         with patch.object(oh_paths, "PROGRAM", self.program):
@@ -207,7 +215,8 @@ class InstalledInstall(unittest.TestCase):
         with patch.object(oh_paths, "PROGRAM", self.program):
             *checks, write, handoff = steps.Deploy(self.context).actions(self.host)
         self.assertEqual([check.argv for check in checks], [("bin/thermite", "generate", "--check"),
-                                                          ("bin/thermite", "validate"), ("bin/thermite", "lint")])
+                                                          ("bin/thermite", "check", "house"),
+                                                          ("bin/thermite", "check", "lint")])
         self.assertEqual([check.argv[1:] for check in checks], installed_checks)
         self.assertTrue(all(check.approved_argv is None and not check.terminal for check in checks))
         # The write is the same file of the running application for both.

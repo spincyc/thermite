@@ -331,7 +331,7 @@ def print_human(report: dict) -> None:
             print("RESULT: installation ready" + (f"; {warnings} device warning(s)" if warnings else "")
                   + (f"; warning: {len(disabled)} rule(s) disabled" if disabled else "")
                   + (f"; warning: {pending} Thing(s) still initializing; recheck with "
-                     "thermite health --production" if pending else ""))
+                     "thermite status --runtime" if pending else ""))
         return
     th = report["things"]
     print(f"runtime {report['openhab_version']} at {report['url']}")
@@ -398,7 +398,12 @@ def sandbox(args) -> None:
 
 def main(argv=None) -> int:
     parser = oh_cli.command("health", DESCRIPTION, EXAMPLES, NOTES)
-    oh_cli.add_target(parser, "production", "sandbox", "url")
+    # Not add_target: health is retired, and its --url is the runtime's REST
+    # API as it was, which add_target now spells --runtime-url.
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("--production", action="store_true", help=oh_cli.TARGETS["production"])
+    target.add_argument("--sandbox", action="store_true", help=oh_cli.TARGETS["sandbox"])
+    target.add_argument("--url", metavar="URL", help=f"runtime at URL, e.g. http://thermite.example:{oh_ports.HTTP_PORT}")
     parser.add_argument("--revision", help=argparse.SUPPRESS)
     parser.add_argument("--token-file", type=Path, metavar="FILE", help="file holding a runtime API token")
     mode = parser.add_mutually_exclusive_group()

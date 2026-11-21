@@ -1012,7 +1012,7 @@ class Deploy(Step):
         # application does. The full unit suite is a developer/release gate;
         # repeating it here delays deployment and can expire sudo credentials.
         checks = ([Command(application(self.context, *args)) for args in
-                  (("generate", "--check"), ("validate",), ("lint",))]
+                  (("generate", "--check"), ("check", "house"), ("check", "lint"))]
                   if self.context.prepared is None else [])
         # The owner writes the commit's files through the thermite group.
         # Root is asked only for what the owner cannot do: before the
@@ -1979,7 +1979,7 @@ class Token(Step):
         except (OSError, ValueError):
             raise ValueError("Cannot safely read the saved runtime credential; check its private file custody.") from None
         if any(ord(character) < 33 or ord(character) > 126 for character in value):
-            raise ValueError("The saved runtime credential is malformed; use --runtime-token-file PATH for explicit recovery.")
+            raise ValueError("The saved runtime credential is malformed; use --token-file FILE for explicit recovery.")
         return value
 
     def startup_remaining(self, system: System, *, deadline: float | None = None) -> float | None:
@@ -2126,7 +2126,7 @@ class Token(Step):
                             pass  # An unreadable managed record is not permission to replace it.
                     system.say(f"   {exc}")
                     if exc.code in ("existing_users", "credentials", "retired"):
-                        system.say("   Advanced recovery: rerun with --runtime-token-file PATH to import an existing private runtime credential.")
+                        system.say("   Advanced recovery: rerun with --token-file FILE to import an existing private runtime credential.")
                     return 1
             except (OSError, ValueError):
                 system.say("   runtime access setup could not complete safely; check private credential custody and rerun")
@@ -2149,7 +2149,7 @@ class Token(Step):
         code = runner.perform(action, system, self.context.area)
         if code != 0:
             system.say("   Could not recover usable access from this installation. Restore the site's private var/ backup, "
-                       "or rerun with --runtime-token-file PATH to import an existing runtime credential.")
+                       "or rerun with --token-file FILE to import an existing runtime credential.")
             return code or 1
         token = self.saved(system)
         problem = self.problem(system, token, deadline=deadline)
@@ -2528,9 +2528,13 @@ class Verify(Step):
             program = oh_release.resolve(self.context.var / "application-releases",
                                          self.context.application["digest"], self.context.application["version"])
             prefix = (sys.executable, str(program / "bin/thermite"), "--config", str(self.context.area))
-        return [Command((*prefix, "health", "--production", "--installation", "--settle", str(self.settle), *addons, *revision),
-                        show_output=True),
-                operator_command(self.context, system, (*prefix, "status", *revision))]
+        # The readiness above is the runtime's check; the plain status after
+        # it reports what is deployed and leaves that check out. --production
+        # keeps both on this host whatever THERMITE_URL names.
+        return [Command((*prefix, "status", "--production", "--installation", "--settle", str(self.settle), *addons,
+                         *revision), show_output=True),
+                operator_command(self.context, system, (*prefix, "status", "--production", "--no-runtime-checks",
+                                                        *revision))]
 
 
 # --------------------------------------------------------------------------
@@ -2654,9 +2658,9 @@ class StartTarget(Step):
 
 
 class Health(Verify):
-    """The gate an install transaction commits on: health --production
-    --installation, whose exit status counts configuration errors, missing
-    add-ons and failed monitoring, never device warnings.
+    """The gate an install transaction commits on: status --installation,
+    whose exit status counts configuration errors, missing add-ons and
+    failed monitoring, never device warnings.
     Any exit status but 0 stops the run, as in every step, so the
     transaction rolls back: changeover.run commits only after a run in
     which all steps passed."""

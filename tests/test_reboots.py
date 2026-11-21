@@ -348,6 +348,33 @@ class Command(unittest.TestCase):
         self.assertEqual(err.getvalue(), "thermite reboot: not a device thermite can restart: example_tv "
                                          "(those are: example_receiver, example_small_receiver, example_switch)\n")
 
+    def test_the_list_and_a_restart_as_json(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "devices.yaml"
+            path.write_text(yaml.safe_dump(house()))
+
+            def verb(http, *argv):
+                out, err = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), \
+                        mock.patch.object(cli.pair, "openhab", return_value=http):
+                    code = cli.main([*argv, "--house", str(path), "--json"])
+                self.assertEqual((err.getvalue(), out.getvalue().count("\n")), ("", 1))
+                return code, json.loads(out.getvalue())
+            last = {"at": "2026-11-14T09:00:42.000Z", "by": "schedule", "outcome": "back", "seconds": 18}
+            self.assertEqual(verb(FakeOpenHAB(state(example_switch=last))), (0, {"devices": [
+                {"id": "example_receiver", "label": "Marantz CINEMA 60", "nightly": True, "time": "03:00", "last": None},
+                {"id": "example_small_receiver", "label": "Marantz CINEMA 30", "nightly": False, "time": None,
+                 "last": None},
+                {"id": "example_switch", "label": "HDFury VRROOM", "nightly": True, "time": "03:00", "last": last}]}))
+            skipped = {"at": now(30), "by": "command", "outcome": "skipped", "detail": "example_switch_signal RX0 is 1080p"}
+            http = FakeOpenHAB(state(example_switch=last), state(example_switch=skipped))
+            self.assertEqual(verb(http, "example_switch"), (1, {
+                "device": "example_switch", "outcome": "skipped", "detail": skipped["detail"], "seconds": None,
+                "at": skipped["at"], "timed_out": False}))
+            self.assertEqual(http.commands, [("POST", "/rest/items/house_reboot", "example_switch")])
+            self.assertEqual(verb(FakeOpenHAB("NULL"), "example_receiver", "--timeout", "0"),
+                             (1, {"device": "example_receiver", "timed_out": True, "timeout": 0.0}))
+
 
 if __name__ == "__main__":
     unittest.main()

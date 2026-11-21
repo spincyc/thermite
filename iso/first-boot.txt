@@ -21,7 +21,6 @@ authority file each browser or terminal client must trust once. Inspect the
 result with:
 
   thermite status --config "$HOME/thermite-site"
-  thermite health --config "$HOME/thermite-site" --production
 
 The house starts empty. Add your rooms and equipment to
 instance/devices.yaml, check and commit them, and deploy again:

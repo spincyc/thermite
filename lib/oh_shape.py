@@ -152,7 +152,7 @@ def rows(keys: dict[str, Key], prefix: str = "") -> list[tuple[str, Key]]:
 
 def schema(key: Key) -> dict:
     """The key as JSON Schema (draft 2020-12): names and kinds, which is
-    less than thermite validate checks."""
+    less than thermite check house checks."""
     kinds = [JSON[kind] for kind in key.kinds()] + (["null"] if key.empty else [])
     out: dict = {"description": key.doc, "type": kinds[0] if len(kinds) == 1 else kinds}
     if key.choices:

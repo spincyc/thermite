@@ -1,7 +1,7 @@
 """Install thermite on this host, or show what that would do.
 
     thermite install --config DIR [--dry-run] [--clean | --yes] [--restart-runtime]
-                     [--native-timeout SECONDS] [--allow-downgrade]
+                     [--token-file FILE] [--native-timeout SECONDS] [--allow-downgrade]
 """
 
 from __future__ import annotations
@@ -104,8 +104,7 @@ def main(argv: list[str] | None = None) -> int:
                              "other question is answered no")
     parser.add_argument("--restart-runtime", action="store_true",
                         help="restart runtime once after deployment, then run normal readiness checks")
-    parser.add_argument("--runtime-token-file", type=Path,
-                        help="advanced: import an existing internal runtime API token from your private file")
+    add_token_file(parser)
     parser.add_argument("--source", type=Path, help="use a clean application checkout for this deployment")
     parser.add_argument("--revision", help="application Git revision to deploy from --source")
     parser.add_argument("--native-timeout", type=steps.native_timeout_argument, metavar="SECONDS",
@@ -116,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--_host-phase", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--_run-approved", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--_site-before", help=argparse.SUPPRESS)
-    arguments = parser.parse_args(argv)
+    arguments = parser.parse_args(host_phase(argv))
     if os.geteuid() == 0:
         print("thermite install: run it as your user; it asks once before applying the installation", file=sys.stderr)
         return 2
@@ -129,6 +128,26 @@ def main(argv: list[str] | None = None) -> int:
         return run(System(), arguments)
     finally:
         UNATTENDED.reset(approval)
+
+
+def add_token_file(parser: argparse.ArgumentParser) -> None:
+    """--token-file FILE, as `runtime_token_file`, and --runtime-token-file,
+    its spelling before, for thermite install and thermite upgrade."""
+    parser.add_argument("--token-file", type=Path, metavar="FILE", dest="runtime_token_file",
+                        help="advanced: import an existing internal runtime API token from your private file")
+    oh_cli.add_renamed(parser, "--runtime-token-file", "--token-file")
+
+
+def host_phase(argv: list[str] | None) -> list[str] | None:
+    """`argv`, with a host phase's --runtime-token-file read as --token-file
+    without the warning: the application workflow hands it on by that
+    spelling, the one every release it may hand over to reads
+    (oh_application_update.apply)."""
+    if argv is None or "--_host-phase" not in argv:
+        return argv
+    old = "--runtime-token-file"
+    return ["--token-file" if word == old else "--token-file" + word[len(old):] if word.startswith(old + "=")
+            else word for word in argv]
 
 
 def rerun(verb: str) -> str:

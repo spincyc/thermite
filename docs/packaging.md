@@ -217,7 +217,7 @@ commands with the site's pinned release, verified from
 damaged retained release is refused. `--dry-run` shows a provisional host
 plan only when the site pins the release that is running it.
 
-To go back after a commit, `thermite revert` puts back the version the last
+To go back after a commit, `thermite rollback --restore-state` puts back the version the last
 install or upgrade set aside, with its state, and `thermite rollback`
 installs an earlier site commit that pins the running release; see
 [go back](installation.md#go-back). Do not bootstrap a new authority, reset

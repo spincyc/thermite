@@ -2022,7 +2022,7 @@ def production_url(host: dict, address: str = "127.0.0.1") -> str:
 
 def token_file(name: str) -> Path:
     """Where, relative to the area, bin/thermite install saves the API token
-    of production on host `name`, and bin/thermite health --production reads it."""
+    of production on host `name`, and bin/thermite status reads it."""
     return Path("var") / name / "api-token"
 
 

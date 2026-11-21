@@ -48,7 +48,7 @@ What holds now: each reading's value and how long ago it was read, each
 check's state and whether a room needs it now, the alerts about it, the
 problem its rules last met, the commands they took and what routing failed
 at it. This is read from the installation's Prometheus on this host
-(127.0.0.1, GET only, no credentials), as thermite health --production
+(127.0.0.1, GET only, no credentials), as thermite status --runtime
 reads it. On a host without the monitoring services it says that this part
 needs the installation. While Prometheus does not answer, or has no check
 results, what holds now is unknown and is said so: never fine.
@@ -489,7 +489,7 @@ def installation() -> tuple[dict | None, bool]:
 
 def now(facts: Known, host: dict | None, installed: bool, timeout: float, *, get=None) -> dict:
     """What holds now, from the installation's Prometheus on loopback: the
-    reader thermite health --production uses (oh_deploy.http_get), GET only
+    reader thermite status --runtime uses (oh_deploy.http_get), GET only
     and with no credentials."""
     ident = facts.device["id"]
     if host is None or not installed:
@@ -503,7 +503,7 @@ def now(facts: Known, host: dict | None, installed: bool, timeout: float, *, get
     except Unanswered as error:
         return {"state": UNREACHABLE, "url": base, "text": (
             f"Prometheus on this host did not answer ({error}), so what holds now is unknown: no reading, "
-            "check or alert can be shown, and none of them is known to be fine. thermite health --production "
+            "check or alert can be shown, and none of them is known to be fine. thermite status --runtime "
             "says what the monitoring services are doing.")}
     cleared = None
     if any(sample.value == 1 for sample in find(read, "thermite_device_problem", device=ident)):
@@ -541,7 +541,7 @@ def look_next(facts: Known, host: dict | None, here: bool) -> list[dict]:
                  "open": f"{deploy.production_url(host, address)}/settings/things/{urllib.parse.quote(uid, safe=':')}"}
                 for uid in things]
     out.append({"what": "Every Thing's status in the runtime, with its reason",
-                "run": "thermite health --production"})
+                "run": "thermite status --runtime"})
     if any(entry["id"] == ident for entry in reboots.table(facts.house)["devices"]):
         out.append({"what": "Restart it as the nightly reboots do", "run": f"thermite reboot {ident}"})
     out.append({"what": "What the log lines' fields mean", "read": "docs/installation.md, Trace a command"})

@@ -218,7 +218,7 @@ class Loader(unittest.TestCase):
             for name, (content, problem) in shapes.items():
                 path = Path(scratch) / "devices.yaml"
                 path.write_text(json.dumps(content))
-                for argv in (["validate", "--house"], ["generate", "--check", "--house"],
+                for argv in (["check", "house", "--house"], ["generate", "--check", "--house"],
                              ["dhcp-reservations", "--house"]):
                     with self.subTest(shape=name, verb=argv[0]):
                         code, err = run(*argv, str(path))
@@ -230,7 +230,7 @@ class Loader(unittest.TestCase):
         with tempfile.TemporaryDirectory() as scratch:
             path = Path(scratch) / "devices.yaml"
             path.write_text(json.dumps({**EXAMPLE, "devices": [{**EXAMPLE["devices"][0], "model": 900}]}))
-            for argv in (["reboot"], ["pair", "--check"], ["matrix-settings"], ["cameras", "list"]):
+            for argv in (["reboot"], ["pair"], ["matrix-settings"], ["cameras", "list"]):
                 with self.subTest(verb=argv[0]), \
                         mock.patch.object(socket, "socket", side_effect=AssertionError("opened a connection")):
                     code, err = run(*argv, "--house", str(path))

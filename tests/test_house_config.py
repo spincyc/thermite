@@ -65,7 +65,7 @@ class Loading(Scratch):
     def test_every_house_verb_exits_2_naming_the_file(self):
         broken = self.house("version: 1\nrooms: {\n")
         invalid = self.house({**EXAMPLE, "devices": [{**EXAMPLE["devices"][0], "model": 900}]}, "invalid.yaml")
-        for argv in (["generate", "--check", "--house"], ["validate", "--house"], ["dhcp-reservations", "--house"]):
+        for argv in (["generate", "--check", "--house"], ["check", "house", "--house"], ["dhcp-reservations", "--house"]):
             for path in (self.root / "missing.yaml", broken, invalid):
                 with self.subTest(argv=argv, path=path.name):
                     code, _, err = run(*argv, str(path))
@@ -164,8 +164,8 @@ class Validate(Scratch):
 
     def test_it_builds_what_the_house_generates_and_reads_or_writes_no_conf(self):
         house = self.house(EXAMPLE)
-        code, out, _ = run("validate", "--house", str(house), "--json")
-        report = json.loads(out)
+        code, out, _ = run("check", "house", "--house", str(house), "--json")
+        report = json.loads(out)["house"]
         self.assertEqual((code, report["status"], report["problems"]), (0, "ok", []))
         built = oh_render.build(House(copy.deepcopy(EXAMPLE)))
         self.assertEqual((report["devices"], report["things"], report["items"]),
@@ -174,13 +174,13 @@ class Validate(Scratch):
         self.assertEqual([path.name for path in self.root.iterdir()], ["devices.yaml"])
         # The switch went with the conf/ it named.
         with contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as exit_:
-            oh_cli.main(["validate", "--house", str(house), "--conf", str(self.root / "conf")])
+            oh_cli.main(["check", "house", "--house", str(house), "--conf", str(self.root / "conf")])
         self.assertEqual(exit_.exception.code, 2)
         self.assertIn("--conf", err.getvalue())
         themed = self.house({**EXAMPLE, "theme": "no-such-theme"}, "themed.yaml")
-        code, out, _ = run("validate", "--house", str(themed), "--json")
-        self.assertEqual((code, json.loads(out)["status"]), (2, "invalid"))
-        self.assertTrue(json.loads(out)["problems"][0].startswith("theme:"))
+        code, out, _ = run("check", "house", "--house", str(themed), "--json")
+        self.assertEqual((code, json.loads(out)["house"]["status"]), (2, "invalid"))
+        self.assertTrue(json.loads(out)["house"]["problems"][0].startswith("theme:"))
 
     def test_a_build_that_disagrees_with_the_house_is_its_problem_and_generate_writes_none_of_it(self):
         house, conf = self.house(EXAMPLE), self.root / "conf"
@@ -188,12 +188,13 @@ class Validate(Scratch):
                     "instance/devices.yaml"]
         things = len(oh_render.objects(oh_render.build(House(copy.deepcopy(EXAMPLE))))[0])
         with self.stranger():
-            code, out, _ = run("validate", "--house", str(house), "--json")
-            self.assertEqual((code, json.loads(out)["status"], json.loads(out)["problems"]), (1, "problems", problems))
+            code, out, _ = run("check", "house", "--house", str(house), "--json")
+            report = json.loads(out)["house"]
+            self.assertEqual((code, report["status"], report["problems"]), (1, "problems", problems))
             # Counted with the Thing that is the problem: the report is of what was built.
-            self.assertEqual(json.loads(out)["things"], things + 1)
-            code, out, err = run("validate", "--house", str(house))
-            self.assertEqual((code, err.splitlines()[0]), (1, f"thermite validate: {problems[0]}"))
+            self.assertEqual(report["things"], things + 1)
+            code, out, err = run("check", "house", "--house", str(house))
+            self.assertEqual((code, err.splitlines()[0]), (1, f"thermite check: {problems[0]}"))
             self.assertIn(" 1 problems", out)
             code, out, err = run("generate", "--house", str(house), "--conf", str(conf), "--root", str(self.root))
         self.assertEqual((code, out), (2, ""))
@@ -204,26 +205,28 @@ class Validate(Scratch):
 
     def test_a_device_nothing_watches_is_named_in_a_note_that_is_no_problem(self):
         house = self.house(EXAMPLE)
-        code, out, err = run("validate", "--house", str(house))
+        code, out, err = run("check", "house", "--house", str(house))
         note = ("example_computer: it has an address and nothing reads whether it answers; list network_ping under "
                 "its controls.observe to have it pinged")
         self.assertEqual(code, 0, err)
-        self.assertEqual(err, f"thermite validate: note: {note}\n")
+        self.assertEqual(err, f"thermite check: note: {note}\n")
         self.assertTrue(out.endswith(" 0 problems, 1 note\n"), out)
-        code, out, _ = run("validate", "--house", str(house), "--json")
-        self.assertEqual((code, json.loads(out)["status"], json.loads(out)["notes"]), (0, "ok", [note]))
+        code, out, _ = run("check", "house", "--house", str(house), "--json")
+        report = json.loads(out)["house"]
+        self.assertEqual((code, report["status"], report["notes"]), (0, "ok", [note]))
         pinged = copy.deepcopy(EXAMPLE)
         next(device for device in pinged["devices"]
              if device["id"] == "example_computer")["controls"] = {"observe": ["network_ping"]}
-        code, out, _ = run("validate", "--house", str(self.house(pinged, "pinged.yaml")), "--json")
+        code, out, _ = run("check", "house", "--house", str(self.house(pinged, "pinged.yaml")), "--json")
+        report = json.loads(out)["house"]
         # Its own build has the ping Thing, whatever conf/ a site still holds: no problem, and no note.
-        self.assertEqual((code, json.loads(out)["status"], json.loads(out)["notes"]), (0, "ok", []))
-        self.assertEqual(json.loads(out)["things"], len(oh_render.objects(oh_render.build(House(copy.deepcopy(EXAMPLE))))[0]) + 1)
+        self.assertEqual((code, report["status"], report["notes"]), (0, "ok", []))
+        self.assertEqual(report["things"], len(oh_render.objects(oh_render.build(House(copy.deepcopy(EXAMPLE))))[0]) + 1)
 
 
 class Planned(Scratch):
     """An integration name thermite holds for later is valid and renders
-    nothing: validate and generate both say so of each one a device lists."""
+    nothing: check house and generate both say so of each one a device lists."""
 
     def planned(self):
         data = copy.deepcopy(EXAMPLE)
@@ -266,9 +269,9 @@ class Planned(Scratch):
         self.assertEqual(oh_render.objects(oh_render.build(House(self.planned())))[:2],
                          oh_render.objects(oh_render.build(House(copy.deepcopy(EXAMPLE))))[:2])
 
-    def test_validate_names_each_one_in_a_note_that_is_no_problem(self):
-        code, out, err = run("validate", "--house", str(self.house(self.planned())))
-        self.assertEqual((code, err), (0, self.notes("validate")))
+    def test_check_house_names_each_one_in_a_note_that_is_no_problem(self):
+        code, out, err = run("check", "house", "--house", str(self.house(self.planned())))
+        self.assertEqual((code, err), (0, self.notes("check")))
         self.assertTrue(out.endswith(" 0 problems, 2 notes\n"), out)
 
 
@@ -377,16 +380,16 @@ class Dispatch(unittest.TestCase):
         refused = mock.patch.object(oh_paths, "require_compatible", side_effect=oh_paths.SiteError("wrong site"))
         err = io.StringIO()
         with refused as check, contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
-            for argv in (["validate", "-h"], ["help", "validate"], ["validate", "--house", "x", "--help"]):
+            for argv in (["check", "-h"], ["help", "check"], ["check", "house", "--house", "x", "--help"]):
                 with self.subTest(argv=argv), self.assertRaises(SystemExit) as exit_:
                     oh_cli.main(argv)
                 self.assertEqual(exit_.exception.code, 0)
             with self.assertRaises(SystemExit) as exit_:
-                oh_cli.main(["validate", "--no-such-switch"])
+                oh_cli.main(["check", "--no-such-switch"])
             self.assertEqual(exit_.exception.code, 2)
             check.assert_not_called()
             with self.assertRaises(SystemExit) as exit_:
-                oh_cli.main(["validate"])
+                oh_cli.main(["check"])
             self.assertEqual(exit_.exception.code, 2)
             self.assertIn("thermite: wrong site", err.getvalue())
             check.assert_called_once()
@@ -429,7 +432,8 @@ class Reports(Scratch):
         self.assertEqual(len(out.splitlines()), 1)
 
     def test_status_exits_1_on_drift_or_runtime_down_and_has_json(self):
-        args = SimpleNamespace(state=self.root, revision=None, json=True)
+        # The runtime's own checks are tests/test_status_verb.py's.
+        args = SimpleNamespace(state_dir=self.root, revision=None, json=True, no_runtime_checks=True)
         record = {"commit": "a" * 40, "subject": "s", "conf": {}}
         patches = (mock.patch.object(status.deploy, "read_record", return_value=record),
                    mock.patch.object(status.deploy, "resolve", return_value="a" * 40),

@@ -57,8 +57,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     found = report(args.timeout)
     if args.json:
-        json.dump(found, sys.stdout, indent=2)
-        print()
+        oh_cli.emit(found)
         return 0
     commit = f" ({found['commit'][:12]}{', modified' if found['modified'] else ''})" if found["commit"] else ""
     openhab = found["openhab"]

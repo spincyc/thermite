@@ -8,12 +8,15 @@ the Example Lounge's picture leaves the matrix on output 1 for its TV and
 its sound on output 2 for its receiver. The JavaScript runs the production
 routing.js and lifecycle planner (tests/audio_scaler_harness.js).
 """
+import contextlib
 import copy
+import io
 import json
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -235,6 +238,92 @@ class Matrix(unittest.TestCase):
         self.assertIn(f"example_matrix (Example Matrix, 192.0.2.20): output 2 scaler left to the routing ({LOUNGE})",
                       lines)
         self.assertEqual([sim.scaler(output) for output in range(1, 9)], [3, 4, 3, 3, 3, 3, 3, 3])
+
+
+class MatrixSettingsVerb(unittest.TestCase):
+    """thermite matrix-settings [DEVICE] against a stand-in BK-808 at the
+    matrix's documentation address."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.path = Path(temporary.name) / "devices.yaml"
+        self.path.write_text(json.dumps(house()), encoding="utf-8")
+        self.sim = oh_matrix_sim.BK808()
+        self.addresses = []
+
+        def request(address, body):
+            self.addresses.append(address)
+            return self.sim.answer(json.loads(body))
+        self.enterContext(mock.patch.object(instr, "request", request))
+        self.enterContext(mock.patch.object(matrix_settings, "PAUSE", 0))
+
+    def run_verb(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = matrix_settings.main([*argv, "--house", str(self.path)])
+        return code, out.getvalue(), err.getvalue()
+
+    def differing(self):
+        return [what for what, _ in bk808_http.plan(matrix(house()), oh_matrix_sim.BK808.default_status(),
+                                                    frozenset({2}))]
+
+    def test_device_is_a_positional_and_the_old_switch_warns_and_does_the_same(self):
+        code, out, err = self.run_verb("example_matrix")
+        self.assertEqual((code, err), (1, ""))
+        self.assertEqual(out.splitlines()[:2], [
+            f"example_matrix (Example Matrix, 192.0.2.20): output 2 scaler left to the routing ({LOUNGE})",
+            f"example_matrix (Example Matrix, 192.0.2.20): {len(self.differing())} setting(s) differ"])
+        self.assertEqual(self.run_verb(), (code, out, err))
+        self.assertEqual(self.run_verb("--device", "example_matrix"), (
+            code, out, "thermite matrix-settings: --device is now DEVICE; --device goes in the next release\n"))
+        self.assertEqual(self.run_verb("example_matrix", "--address", "192.0.2.21")[1].splitlines()[0],
+                         f"example_matrix (Example Matrix, 192.0.2.21): output 2 scaler left to the routing ({LOUNGE})")
+        self.assertEqual(self.addresses[-1], "192.0.2.21")
+
+    def test_device_named_twice_or_an_address_without_one_is_a_wrong_switch(self):
+        for argv, said in ((("example_matrix", "--device", "example_matrix"), "give only DEVICE"),
+                           (("--address", "192.0.2.21"), "--address needs DEVICE")):
+            with self.subTest(argv=argv), self.assertRaises(SystemExit) as refused, \
+                    contextlib.redirect_stderr(io.StringIO()) as err:
+                matrix_settings.main([*argv, "--house", str(self.path)])
+            self.assertEqual(refused.exception.code, 2)
+            self.assertIn(said, err.getvalue())
+        self.assertEqual(self.addresses, [])
+        self.assertEqual(self.run_verb("example_tv"),
+                         (2, "", "thermite matrix-settings: no device example_tv has settings to apply\n"))
+        code, out, err = self.run_verb("example_tv", "--json")
+        self.assertEqual((code, json.loads(out), err), (2, {"apply": False, "devices": [], "status": "failed",
+                                                            "error": "no device example_tv has settings to apply"}, ""))
+
+    def test_json_names_what_differs_and_with_apply_what_took(self):
+        code, out, err = self.run_verb("--json")
+        self.assertEqual((code, err), (1, ""))
+        self.assertEqual(json.loads(out), {"apply": False, "status": "problems", "devices": [
+            {"device": "example_matrix", "address": "192.0.2.20", "routed": {"2": LOUNGE},
+             "differ": self.differing(), "outcome": "differs"}]})
+        code, out, err = self.run_verb("example_matrix", "--apply", "--json")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(json.loads(out), {"apply": True, "status": "ok", "devices": [
+            {"device": "example_matrix", "address": "192.0.2.20", "routed": {"2": LOUNGE},
+             "differ": self.differing(), "set": self.differing(), "refused": [], "not_taken": [],
+             "outcome": "applied"}]})
+        code, out, err = self.run_verb("--json")
+        self.assertEqual((code, json.loads(out)["devices"][0]["outcome"]), (0, "matches"))
+
+    def test_json_says_a_matrix_that_does_not_answer(self):
+        def silent(address, body):
+            raise OSError("connection refused")
+        with mock.patch.object(instr, "request", silent):
+            code, out, err = self.run_verb("--json")
+            self.assertEqual((code, err), (2, ""))
+            self.assertEqual(json.loads(out), {"apply": False, "status": "failed", "devices": [
+                {"device": "example_matrix", "address": "192.0.2.20", "routed": {"2": LOUNGE},
+                 "outcome": "no answer", "error": "no usable answer: connection refused"}]})
+            self.assertEqual(self.run_verb(), (2, f"example_matrix (Example Matrix, 192.0.2.20): output 2 scaler "
+                                                  f"left to the routing ({LOUNGE})\n",
+                                               "thermite matrix-settings: example_matrix: no usable answer: "
+                                               "connection refused\n"))
 
 
 class RoutingCheck(unittest.TestCase):

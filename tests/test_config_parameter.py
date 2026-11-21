@@ -1,5 +1,7 @@
 """Config selection happens before module imports, and means the site in every verb."""
 import argparse
+import contextlib
+import io
 import os
 from pathlib import Path
 import re
@@ -82,16 +84,19 @@ class ConfigParameter(unittest.TestCase):
         self.assertEqual(oh_paths.select_args(args), args)
         self.assertNotIn("THERMITE_SITE", os.environ)
 
-    def test_check_validates_builds_and_lints_stops_at_the_first_failure_and_never_generates(self):
-        from oh_cli import check, generate, validate, lint
-        for codes, expected, ran in (((0, 0, 0), 0, (1, 1, 1)), ((1, 0, 0), 1, (1, 0, 0)), ((0, 2, 0), 2, (1, 1, 0)),
-                                     ((0, 0, 1), 1, (1, 1, 1))):
+    def test_check_runs_every_step_whatever_one_found_and_never_generates(self):
+        from oh_cli import check, generate, lint, validate
+        house = {"devices": 0, "items": 0, "notes": [], "problems": [], "status": "ok", "things": 0}
+        for codes, expected in (((0, 0, 0), 0), ((1, 0, 0), 1), ((0, 2, 0), 2), ((0, 0, 1), 1)):
             with self.subTest(codes=codes), patch.object(generate, "main") as generated, \
-                    patch.object(validate, "main", return_value=codes[0]) as validated, \
-                    patch.object(check, "built", return_value=codes[1]) as built, \
-                    patch.object(lint, "main", return_value=codes[2]) as scanned:
+                    patch.object(validate, "checked", return_value={**house, "status": ("ok", "problems")[codes[0]]}) \
+                    as validated, \
+                    patch.object(check, "built", return_value=({"conf": 0, "metrics": 0, "units": 0}, codes[1])) as built, \
+                    patch.object(lint, "checked", return_value={"secret_scan": {"files": 0, "findings": ["x"] * codes[2]},
+                                                                "doc_targets": None}) as scanned, \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(check.main([]), expected)
-                self.assertEqual((validated.call_count, built.call_count, scanned.call_count), ran)
+                self.assertEqual((validated.call_count, built.call_count, scanned.call_count), (1, 1, 1))
                 # The verb that writes conf/, metrics/ and deploy/ is not run, with --prune or without.
                 generated.assert_not_called()
 

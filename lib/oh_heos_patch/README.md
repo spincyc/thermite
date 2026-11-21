@@ -226,7 +226,7 @@ it, and nobody installs it by hand. It is part of the install transaction
 The installed manifest records the repair among its pins
 (`repair_binding_heos`, with the content digest). Everything it installs lies inside
 userdata, which the transaction sets aside and puts back whole: a rollback or
-`thermite revert` returns the runtime to exactly what ran before, cache
+`thermite rollback --restore-state` returns the runtime to exactly what ran before, cache
 included, and an uninstall leaves or removes it with userdata. A house that
 drops the binding loses the bundle and the override at its next install.
 `thermite test boot` prepares its test runtime the same way, so a house with

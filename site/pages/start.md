@@ -31,7 +31,7 @@ python3 -m venv ~/.venvs/thermite
 thermite init ~/my-thermite-site
 cd ~/my-thermite-site
 thermite generate
-thermite validate
+thermite check house
 thermite remote --mock
 ```
 
@@ -70,11 +70,11 @@ After editing the house file:
 
 ```sh
 thermite generate
-thermite validate
+thermite check house
 thermite test boot
 ```
 
-`thermite validate` runs every check `thermite generate` runs, on the house file alone: it builds the configuration in memory, writes nothing and reads no `conf/`, so whether the files on disk are current is `thermite generate --check`'s to say. It also names, in a note that is no problem, a device nothing watches: one an interface commands with no reading of whether it answers, so no alert could say it stopped, or one that has an address and no reading at all, which `network_ping` under its `observe` gives it. Both verbs name, in a note too, an interface a device lists that thermite does not have yet: the name is accepted and nothing is generated for it. `thermite generate --prune` removes files an earlier generate wrote that nothing generates now. The boot check loads the generated configuration in an isolated openHAB runtime and reports what loads. Follow the [server installation guide](installation.html) to prepare the host, commit your private site and deploy it. `thermite install --dry-run` shows the planned installation steps. `thermite status` reports the running services and their addresses.
+`thermite check house` runs every check `thermite generate` runs, on the house file alone: it builds the configuration in memory, writes nothing and reads no `conf/`, so whether the files on disk are current is `thermite generate --check`'s to say. It also names, in a note that is no problem, a device nothing watches: one an interface commands with no reading of whether it answers, so no alert could say it stopped, or one that has an address and no reading at all, which `network_ping` under its `observe` gives it. Both verbs name, in a note too, an interface a device lists that thermite does not have yet: the name is accepted and nothing is generated for it. `thermite generate --prune` removes files an earlier generate wrote that nothing generates now. The boot check loads the generated configuration in an isolated openHAB runtime and reports what loads. Follow the [server installation guide](installation.html) to prepare the host, commit your private site and deploy it. `thermite install --dry-run` shows the planned installation steps. `thermite status` reports the running services and their addresses.
 
 ## Connect and use it
 
@@ -91,7 +91,8 @@ To sign the terminal in to an account, first run `thermite access login --config
 /path/to/private-site --user admin`. Any other computer with thermite
 installed runs `thermite tui`, which needs no private site and opens
 `https://thermite:13601` (`--url` names another server, and `HOST:PORT` a
-gateway moved off 13601); pass a copy of that
+gateway moved off 13601; `THERMITE_URL` in the environment names it for
+every command); pass a copy of that
 authority file once with `--ca-file`. Use the same `--url` and `--ca-file`
 with `thermite access login` to sign in there. Guests control
 unlocked rooms; signed-in accounts add camera snapshots and live video;
@@ -103,7 +104,7 @@ an alarm integration.
 ## Keep it running
 
 - `thermite upgrade --config DIR` updates the application and all managed services.
-- `thermite health --production` reports device health.
+- `thermite status` reports what is deployed and running and the devices' health; `thermite logs` prints every service's log, merged by time.
 - `thermite device ID` shows everything about one device: what it is, what watches it and what holds now.
 - `thermite history` lists deployments; `thermite rollback` restores the previous one.
 - `thermite version` shows application and runtime versions.

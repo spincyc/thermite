@@ -340,7 +340,7 @@ class Rollback(Fixture):
         message = str(raised.exception)
         self.assertIn(f"{EARLIER[:12]} pins another application release than {AFTER[:12]} does", message)
         self.assertIn(f"`git -C {self.site} revert --no-edit {EARLIER[:12]}..HEAD`", message)
-        self.assertIn("thermite revert", message)
+        self.assertIn("thermite rollback --restore-state", message)
         self.manifest.assert_not_called()
         self.transaction.assert_not_called()
 
@@ -403,7 +403,7 @@ class Rollback(Fixture):
         roll_back.assert_not_called()
         code, error, roll_back = self.main()
         self.assertEqual(code, 0)
-        roll_back.assert_called_once_with(self.system, "3d22e36", True)
+        roll_back.assert_called_once_with(self.system, "3d22e36", True, plan=None)
         code, error, _ = self.main(deploy.DeployError("the history holds no deploy before it"))
         self.assertEqual((code, error), (2, "thermite rollback: the history holds no deploy before it\n"))
         code, error, _ = self.main(KeyboardInterrupt())

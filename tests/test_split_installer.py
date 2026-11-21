@@ -267,7 +267,8 @@ class SplitInstaller(unittest.TestCase):
             self.assertEqual(steps.application(checkout, "lint"), ("bin/thermite", "lint"))
             self.assertEqual(steps.BootTest(checkout).actions(self.system)[0].argv[-2:], ("test", "boot"))
             *checks, write, handoff = steps.Deploy(checkout).actions(self.system)
-            self.assertEqual([check.argv[-1] for check in checks], ["--check", "validate", "lint"])
+            self.assertEqual([check.argv[-2:] for check in checks],
+                             [("generate", "--check"), ("check", "house"), ("check", "lint")])
             self.assertEqual(write.argv[-3:], ("deploy", checkout.head, "install"))
         self.assertEqual(steps.configuration_steps(checkout), [])
 

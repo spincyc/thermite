@@ -51,6 +51,11 @@ SIGNALS = (signal.SIGHUP, signal.SIGTERM)
 #: The scopes this process holds, by the site's var.
 _held: dict[Path, "Scope"] = {}
 
+#: How the owner command of a transaction's verb is spelled now, where that
+#: differs from the verb its record and scope keep: earlier releases read
+#: those, and know a revert by that name.
+SPELLED = {"revert": "rollback --restore-state"}
+
 
 class InProgress(Exception):
     """Another run holds the site's scope; this one must change nothing."""
@@ -75,7 +80,7 @@ class Holder:
     since: str | None = None
 
     def __str__(self) -> str:
-        who = f"thermite {self.verb}" if self.verb else "another thermite command"
+        who = f"thermite {SPELLED.get(self.verb, self.verb)}" if self.verb else "another thermite command"
         details = [f"process {self.pid}"] if self.pid else []
         if self.since:
             details.append(f"since {self.since}")

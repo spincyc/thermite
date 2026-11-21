@@ -105,6 +105,28 @@ def staged(system: System, title: str, action: Action, area: Path, *, done: Sequ
     return code
 
 
+def plan(steps: Sequence[Step], system: System, *, first: int = 1) -> tuple[int, list[dict]]:
+    """What run(dry_run=True) reports, as data for --json: each step's
+    number, title, what its check found and, unless it found a problem or
+    is done, the actions it would run. 1 when a check found a problem."""
+    status, found = 0, []
+    for number, step in enumerate(steps, first):
+        _NEXT.set(number + 1)
+        check = step.check(system)
+        entry: dict = {"number": number, "title": step.title, "done": check.done, "detail": check.detail,
+                       "problem": check.problem, "actions": []}
+        found.append(entry)
+        if check.problem:
+            status = 1
+            continue
+        if check.done and not step.always:
+            continue
+        for action in step.actions(system):
+            entry["actions"].append({"argv": list(action.argv), "root": action.root} if isinstance(action, Command)
+                                    else {"task": action.shown(), "interactive": action.interactive})
+    return status, found
+
+
 def run(steps: Sequence[Step], system: System, area: Path, *, dry_run: bool = False, first: int = 1,
         rerun: str = RERUN, root_confirmed: bool = False) -> int:
     """0 once every step is done. A dry run only reads: it reports each

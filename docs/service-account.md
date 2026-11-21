@@ -64,7 +64,7 @@ alone (0600), made the first time and kept after that. Userdata's
 password, and no service is given the file: read it with `sudo cat` when you
 want the console. Leave the file as it is. The installed manifest records
 it, like every root file of Thermite's, and a changed or missing one refuses
-the next transaction. `thermite revert` to a release from before it takes
+the next transaction. `thermite rollback --restore-state` to a release from before it takes
 the file away as it puts that release's userdata back, and the next upgrade
 makes a new one. A developer sandbox and the boot check keep the
 distribution's password on purpose: their consoles are loopback listeners on
@@ -246,7 +246,6 @@ getent passwd thermite
 getent group thermite
 id -nG
 thermite status
-thermite health --production
 ```
 
 The account and group entries should show 9001 (`getent passwd thermite-node`

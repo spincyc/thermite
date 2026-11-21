@@ -1,4 +1,4 @@
-"""Documented `make` targets must exist (bin/thermite lint).
+"""Documented `make` targets must exist (bin/thermite check lint).
 
 Every `make TARGET` the docs cite in code (an inline code span or a fenced
 block) must name a target the Makefile defines; prose such as "make sure"

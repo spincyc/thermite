@@ -1,12 +1,10 @@
 """This host's deploys, numbered, the latest last.
 
-    thermite history [--last N] [--details] [--json] [--state DIR]
+    thermite history [--last N] [--details] [--json] [--state-dir DIR]
 """
 
 from __future__ import annotations
 
-import json
-import sys
 from pathlib import Path
 
 import oh_cli
@@ -40,7 +38,7 @@ EXAMPLES = (
     ("thermite history --last 1 --details", "what the latest one changed, reloaded and activated"),
     ("thermite history --last 0", "every one"),
     ("thermite history --json", "the same, as JSON"),
-    ("thermite history --state /tmp/state", "the deploys of a runtime state somewhere else"),
+    ("thermite history --state-dir /tmp/state", "the deploys of a runtime state somewhere else"),
 )
 
 BOOT = {True: "passed", False: "not passed", None: "?"}
@@ -123,8 +121,7 @@ def show(layout: deploy.State, last: int, as_json: bool, with_details: bool = Fa
     entries = deploy.deploys(layout)
     shown = entries[-last:] if last else entries
     if as_json:
-        json.dump(shown, sys.stdout, indent=2)
-        print()
+        oh_cli.emit(shown)
         return 0
     if not entries:
         print(f"no deploys yet ({layout.history} does not exist or is empty)")
@@ -143,10 +140,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--details", action="store_true",
                         help="also what each deploy changed, reloaded, backed up and activated")
     oh_cli.add_json(parser)
-    parser.add_argument("--state", type=Path, metavar="DIR",
-                        help="the runtime state (default: runtime/ in instance/host.yaml's root, /srv/thermite)")
+    oh_cli.add_state_dir(parser)
     args = parser.parse_args(argv)
     if args.last < 0:
         parser.error("--last takes 0 or more")
-    layout = deploy.State(args.state) if args.state else deploy.state(deploy.load(AREA)[1])
+    layout = deploy.State(args.state_dir) if args.state_dir else deploy.state(deploy.load(AREA)[1])
     return show(layout, args.last, args.json, args.details)

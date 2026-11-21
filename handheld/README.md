@@ -30,15 +30,16 @@ handheld keep it.
 ## Commands
 
 ```sh
-thermite handheld serve [--url URL] [--ca-file FILE] [--mock] [--port DEVICE | --listen PATH] [--state FILE]
-thermite handheld enroll --name NAME [--port DEVICE] [--base-port DEVICE]
-thermite handheld enroll --simulator --name NAME [--key-file FILE] [--mac MAC]
-thermite handheld list [--json]
-thermite handheld forget NAME [--port DEVICE]
+thermite handheld serve [--url URL] [--ca-file FILE] [--mock] [--port DEVICE | --listen PATH] [--state-file FILE]
+thermite handheld enroll --name NAME [--port DEVICE] [--base-port DEVICE] [--state-file FILE]
+thermite handheld enroll --simulator --name NAME [--key-file FILE] [--mac MAC] [--state-file FILE]
+thermite handheld list [--state-file FILE] [--json]
+thermite handheld forget NAME [--port DEVICE] [--state-file FILE]
 ```
 
 `serve` finds the gateway and trusts it as `thermite tui` does: without
-`--url` it opens `https://thermite:13601`. Guests control unlocked rooms
+`--url` it opens the server `THERMITE_URL` names, else the selected site's
+installed gateway, else `https://thermite:13601`. Guests control unlocked rooms
 without a login; after `thermite access login` for the same address, that
 account is used. `--mock` uses the remote page's mock house, which sends
 nothing. Without `--port` it uses the Espressif USB port in

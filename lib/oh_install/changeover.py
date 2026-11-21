@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import io
 import json
 import os
 from pathlib import Path
@@ -83,10 +84,13 @@ DOING = {"install": "installing", "upgrade": "upgrading", "uninstall": "uninstal
 NAMES = {"clean": "Clean install", "purge": "Purge", "revert": "Revert"}
 
 
+SPELLED = scope.SPELLED
+
+
 def command(site: Path, verb: str = "upgrade") -> str:
     """The owner command, for this site; each resolves an unfinished
     transaction before anything else."""
-    return f"thermite {verb} --config {shlex.quote(str(site))}"
+    return f"thermite {SPELLED.get(verb, verb)} --config {shlex.quote(str(site))}"
 
 
 def scoped(site: Path, system: System, verb: str, body: Callable[[], int | None], *, dry_run: bool = False):
@@ -723,9 +727,8 @@ def previous_application(installed: dict | None) -> str | None:
     return installed["application"]["current"] if installed is not None else None
 
 
-def preview(context: steps.Context, system: System, work: Work, *, first: int) -> int:
-    """What a dry run shows: the preparation's checks, then the transaction."""
-    code = runner.run(work.preparation, system, context.area, dry_run=True, first=first)
+def outline(work: Work) -> str:
+    """What a dry run says the transaction itself would do."""
     titles = ", ".join(step.title for step in work.switching)
     pull = "pull the pinned images, " if work.pull else ""
     confirm = f"ask you to type {work.confirm.path}, " if work.confirm else ""
@@ -733,9 +736,43 @@ def preview(context: steps.Context, system: System, work: Work, *, first: int) -
               work.reinstate else "put the kept version back, move the site back to it and start it; verify its health "
               "with its own application" if work.reinstate
               else "nothing new is installed")
-    system.say(f"Then, as one install transaction: {pull}check the room to set the installed version aside, "
-               f"{confirm}begin, guard the boot, stop Thermite and set it aside; {switch}; and commit. Any failure "
-               "from begin on rolls back in the same run and starts the installed version again.")
+    return (f"Then, as one install transaction: {pull}check the room to set the installed version aside, "
+            f"{confirm}begin, guard the boot, stop Thermite and set it aside; {switch}; and commit. Any failure "
+            "from begin on rolls back in the same run and starts the installed version again.")
+
+
+def preview(context: steps.Context, system: System, work: Work, *, first: int) -> int:
+    """What a dry run shows: the preparation's checks, then the transaction."""
+    code = runner.run(work.preparation, system, context.area, dry_run=True, first=first)
+    system.say(outline(work))
+    return code
+
+
+def plan(system: System, work: Work, *, first: int) -> tuple[int, list[dict], dict]:
+    """preview() as data, for --json: its status, the preparation's steps
+    (runner.plan) and the transaction."""
+    code, found = runner.plan(work.preparation, system, first=first)
+    return code, found, {
+        "kind": work.kind, "pull": work.pull, "reinstate": work.reinstate,
+        "confirm": str(work.confirm.path) if work.confirm else None,
+        "switching": [step.title for step in work.switching],
+        "verification": [step.title for step in work.verification], "summary": outline(work)}
+
+
+def reported(report: dict | None, body: Callable[[], int]) -> int:
+    """What `body()` returns. Given `report`, a --json dry run's, what it
+    says is kept in the report instead of printed, and the report is
+    printed as one JSON object once it returns."""
+    if report is None:
+        return body()
+    said = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(said):
+            code = body()
+    except BaseException:
+        sys.stderr.write(said.getvalue())
+        raise
+    oh_cli.emit({"steps": [], "transaction": None, **report, "status": code, "said": said.getvalue().splitlines()})
     return code
 
 
@@ -1028,6 +1065,7 @@ def rolled_back(system: System, transaction: Transaction) -> int:
         system.say(f"Rolled back: transaction {transaction.id} is undone and the version that ran before is back, "
                    "but its health check does not pass (above); the engine says so above when it did not even "
                    f"start. It is left as it is: fix what health reports (systemctl start {oh_units.TARGET} if it "
+                   # The owner command is the version before now, which may predate status --installation.
                    "did not start), then run thermite health --production --installation to check again.")
     return ROLLED_BACK if healthy else UNHEALTHY
 

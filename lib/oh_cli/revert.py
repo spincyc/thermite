@@ -190,7 +190,9 @@ def refusal(context: steps.Context, system: System) -> tuple[str | None, dict | 
     return None, record
 
 
-def revert(system: System, dry_run: bool) -> int:
+def revert(system: System, dry_run: bool, plan: dict | None = None) -> int:
+    """Revert, or with `dry_run` show what that would do; a dry run given
+    `plan` (a --json report) fills it in instead of showing the steps."""
     if not dry_run:
         found = changeover.resolve(AREA, system, "revert")
         if found is not None:
@@ -222,6 +224,10 @@ def revert(system: System, dry_run: bool) -> int:
             f"This revert loses everything written under {root} since transaction {kept.id}: accounts, pairings, "
             "credentials, history, monitoring data. Until it commits a rollback keeps all of it."),
         then={"select": str(command)})
+    if dry_run and plan is not None:
+        code, found, transaction = changeover.plan(system, work, first=1)
+        plan.update(steps=found, transaction=transaction, reverts=kept.id, commit=before)
+        return code
     if dry_run:
         return changeover.preview(context, system, work, first=1)
     if not runner.confirm_run(system, "revert", f"Run {changeover.command(AREA, 'revert')} again."):

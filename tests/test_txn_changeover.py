@@ -107,7 +107,7 @@ class Host:
         if argv[-3:-2] == ("rolled-back",) and argv[-4].endswith("lib/oh_install/writes.py"):
             self.log.append("history " + json.loads(argv[-1])["transaction"])
             return 0
-        if argv[-5:] == ("health", "--production", "--installation", "--settle", "120"):
+        if argv[-5:] == ("status", "--production", "--installation", "--settle", "120"):
             self.log.append("health")
             return self.gate
         self.log.append(" ".join(argv))

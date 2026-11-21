@@ -149,6 +149,7 @@ class Scratch(unittest.TestCase):
         self.environment = {"XDG_CONFIG_HOME": str(self.root / "config"), "XDG_CACHE_HOME": str(self.root / "cache"),
                             "XDG_STATE_HOME": str(self.root / "state")}
         self.enterContext(mock.patch.dict(os.environ, self.environment))
+        os.environ.pop(oh_cli.URL_VARIABLE, None)
         self.state = self.root / "state/thermite/handheld/state.json"
 
     def run_main(self, *argv):
@@ -178,13 +179,34 @@ class Command(Scratch):
             self.assertIn(action, out)
 
     def test_action_help_names_the_switches(self):
-        for action, switches in (("serve", ("--url", "--ca-file", "--mock", "--port", "--listen", "--state")),
-                                 ("enroll", ("--name", "--port", "--base-port", "--simulator", "--key-file", "--mac")),
-                                 ("list", ("--json",)), ("forget", ("NAME", "--port"))):
+        for action, switches in (("serve", ("--url", "--ca-file", "--mock", "--port", "--listen", "--state-file")),
+                                 ("enroll", ("--name", "--port", "--base-port", "--simulator", "--key-file", "--mac",
+                                             "--state-file")),
+                                 ("list", ("--json", "--state-file")), ("forget", ("NAME", "--port", "--state-file"))):
             status, out, _ = self.run_main(action, "--help")
             self.assertEqual(status, 0)
             for switch in switches:
                 self.assertIn(switch, out, action)
+
+    def test_every_action_takes_state_file_and_the_old_state_with_a_warning(self):
+        other = self.root / "elsewhere/state.json"
+        status, _, err = self.run_main("enroll", "--simulator", "--name", "sim", "--state-file", str(other))
+        self.assertEqual((status, err), (0, ""))
+        self.assertFalse(self.state.exists())
+        status, out, err = self.run_main("list", "--json", "--state-file", str(other))
+        self.assertEqual((status, err), (0, ""))
+        self.assertEqual([remote["name"] for remote in json.loads(out)["remotes"]], ["sim"])
+        status, old, err = self.run_main("list", "--json", "--state", str(other))
+        self.assertEqual((status, old), (0, out))
+        self.assertIn("thermite handheld list: --state is now --state-file; --state goes in the next release", err)
+        status, _, err = self.run_main("forget", "sim", "--state", str(other))
+        self.assertEqual(status, 0, err)
+        self.assertIn("thermite handheld forget: --state is now --state-file", err)
+        self.assertEqual(json.loads(other.read_text())["remotes"], [])
+        for action in ("serve", "enroll", "list", "forget"):
+            with self.subTest(action=action):
+                _, help_text, _ = self.run_main(action, "--help")
+                self.assertNotIn("--state FILE", help_text)
 
     def test_completion_offers_the_actions(self):
         out = io.StringIO()
@@ -415,7 +437,7 @@ class Usb(Scratch):
 class Serve(Scratch):
     def serve(self, *argv):
         process = subprocess.Popen([sys.executable, str(AREA / "bin/thermite"), "handheld", "serve", "--mock",
-                                    "--state", str(self.state), *argv],
+                                    "--state-file", str(self.state), *argv],
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                    env={**os.environ, **self.environment})
 
@@ -530,6 +552,27 @@ class Gateway(Scratch):
         model = Path(launched["environment"]["THERMITE_REMOTE_HOUSE_FILE"])
         self.assertEqual(model.read_bytes(), CONTENT)
         self.assertNotIn("THERMITE_REMOTE_TOKEN_FILE", launched["environment"])
+
+    def test_serve_without_url_opens_the_server_thermite_url_names(self):
+        launched = {}
+        os.environ[oh_cli.URL_VARIABLE] = "ssh://ann@192.0.2.60"
+        with mock.patch.object(tui, "installed_profile", return_value=None), \
+                mock.patch.object(tui, "trust", return_value=(None, "the system's")) as trust, \
+                mock.patch.object(tui, "fetch", return_value=CONTENT), \
+                mock.patch.object(handheld.shutil, "which", return_value="/usr/bin/node"), \
+                mock.patch.object(handheld.os, "execve", side_effect=lambda *args: launched.update(argv=args[1])):
+            status, _, err = self.run_main("serve", "--listen", str(self.root / "base.sock"))
+            self.assertEqual(status, 0, err)
+            url = "https://192.0.2.60:" + str(tui.default_port())
+            trust.assert_called_once_with(url, None)
+            self.assertEqual(launched["argv"][2:4], ["--url", url])
+            status, _, err = self.run_main("serve", "--url", "192.0.2.50", "--listen", str(self.root / "base.sock"))
+            self.assertEqual(status, 0, err)
+            self.assertEqual(launched["argv"][2:4], ["--url", "https://192.0.2.50:" + str(tui.default_port())])
+        os.environ[oh_cli.URL_VARIABLE] = "http://192.0.2.60"
+        status, _, err = self.run_main("serve")
+        self.assertEqual(status, 2)
+        self.assertIn("thermite handheld: THERMITE_URL=http://192.0.2.60: plain http", err)
 
     def test_a_gateway_that_cannot_be_read_stops_before_node(self):
         with mock.patch.object(tui, "trust", return_value=(None, "the system's")), \

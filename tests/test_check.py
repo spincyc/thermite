@@ -6,7 +6,9 @@ own check (oh_render.build), taken from the Conf in memory.
 """
 from __future__ import annotations
 
+import contextlib
 import copy
+import io
 import json
 import os
 import subprocess
@@ -22,9 +24,11 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA))
 sys.path.insert(0, str(AREA / "lib"))
 
+import oh_cli  # noqa: E402
 import oh_inventory as inventory  # noqa: E402
 import oh_paths  # noqa: E402
 import oh_render as render  # noqa: E402
+from oh_cli import check, lint, validate  # noqa: E402
 from oh_conf import Conf, House  # noqa: E402
 from oh_integrations import sony_ip_control as sony  # noqa: E402
 from tests import test_generated_output  # noqa: E402
@@ -121,6 +125,191 @@ class Agreement(unittest.TestCase):
             render.render(House(copy.deepcopy(EXAMPLE)))
 
 
+def run(*argv: str) -> tuple[int, str, str]:
+    """thermite ARGV in this process: (exit status, stdout, stderr)."""
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), \
+            mock.patch.object(oh_paths, "require_compatible"):
+        code = oh_cli.main(list(argv))
+    return code, out.getvalue(), err.getvalue()
+
+
+def called(main, *argv: str) -> tuple[int, str, str]:
+    """A verb's main(ARGV), called as is: (exit status, stdout, stderr)."""
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = main(list(argv))
+    return code, out.getvalue(), err.getvalue()
+
+
+HOUSE = str(AREA / "instance/devices.yaml")
+OK = {"devices": 1, "items": 2, "notes": [], "problems": [], "status": "ok", "things": 1}
+PROBLEMS = {**OK, "problems": ["conf/yaml/more.yaml: Thing http:url:stranger: 'stranger' is not a device id"],
+            "status": "problems"}
+BUILT = {"conf": 3, "metrics": 2, "units": 1}
+UNBUILT = {"error": "instance/host.yaml: unknown setting state_root; nothing can be generated", "problems": []}
+CLEAN = {"secret_scan": {"files": 4, "findings": []}, "doc_targets": {"documents": 2, "stale": []}}
+FOUND = {"secret_scan": {"files": 4, "findings": ["notes.txt:1: a credential-looking line"]},
+         "doc_targets": {"documents": 2, "stale": ["README.md: make no-such-target: the Makefile has no such target"]}}
+
+
+class Steps(unittest.TestCase):
+    """Which steps thermite check runs, in what order, and its exit status:
+    each step's own report stands in for the step."""
+
+    def steps(self, house=OK, build=(BUILT, 0), linted=CLEAN):
+        ran: list[str] = []
+
+        def step(name, value):
+            def stand_in(*_):
+                ran.append(name)
+                return value
+            return stand_in
+        scope = contextlib.ExitStack()
+        self.addCleanup(scope.close)
+        scope.enter_context(mock.patch.object(validate, "checked", side_effect=step("house", house)))
+        scope.enter_context(mock.patch.object(check, "built", side_effect=step("build", build)))
+        scope.enter_context(mock.patch.object(lint, "checked", side_effect=step("lint", linted)))
+        return ran
+
+    def test_each_step_named_runs_once_and_always_in_the_same_order(self):
+        for argv, expected in (([], ["house", "build", "lint"]), (["lint"], ["lint"]), (["build"], ["build"]),
+                               (["lint", "house"], ["house", "lint"]), (["build", "house", "build"], ["house", "build"]),
+                               (["house", "build", "lint"], ["house", "build", "lint"])):
+            with self.subTest(argv=argv):
+                ran = self.steps()
+                code, out, err = run("check", *argv)
+                self.assertEqual((code, err), (0, ""))
+                self.assertEqual(ran, expected)
+
+    def test_a_step_that_is_not_one_is_a_wrong_switch(self):
+        ran = self.steps()
+        with self.assertRaises(SystemExit) as refused, contextlib.redirect_stderr(io.StringIO()) as err:
+            check.main(["generate"])
+        self.assertEqual(refused.exception.code, 2)
+        self.assertIn("invalid choice: 'generate'", err.getvalue())
+        self.assertEqual(ran, [])
+
+    def test_every_step_runs_whatever_the_one_before_found_and_the_worst_is_the_exit_status(self):
+        for house, build, linted, expected in ((OK, (BUILT, 0), CLEAN, 0), (PROBLEMS, (BUILT, 0), CLEAN, 1),
+                                               (OK, (UNBUILT, 2), CLEAN, 2), (OK, (BUILT, 0), FOUND, 1),
+                                               (PROBLEMS, (UNBUILT, 2), FOUND, 2)):
+            with self.subTest(house=house["status"], build=build[1], lint=linted is FOUND):
+                ran = self.steps(house, build, linted)
+                code, out, _ = run("check")
+                self.assertEqual(code, expected)
+                self.assertEqual(ran, ["house", "build", "lint"])
+                ran.clear()
+                code, out, _ = run("check", "--json")
+                self.assertEqual(code, expected)
+                self.assertEqual(json.loads(out), {"house": house, "build": build[0], "lint": linted,
+                                                   "status": ("ok", "problems", "invalid")[expected]})
+
+    def test_each_step_says_what_it_said_as_its_own_verb_under_check_s_name(self):
+        self.steps(PROBLEMS, (UNBUILT, 2), FOUND)
+        code, out, err = run("check")
+        self.assertEqual(code, 2)
+        self.assertEqual(out.splitlines(), [
+            "house file: 1 devices, conf: 1 Things, 2 Items, 1 problems",
+            "secret scan: 4 files, 1 findings",
+            "make targets in the docs: 2 documents, 1 stale"])
+        self.assertEqual(err.splitlines(), [
+            f"thermite check: {PROBLEMS['problems'][0]}",
+            f"thermite check: {UNBUILT['error']}",
+            f"thermite check: {FOUND['secret_scan']['findings'][0]}",
+            f"thermite check: {FOUND['doc_targets']['stale'][0]}"])
+
+    def test_json_holds_only_the_steps_it_ran_and_prints_nothing_else(self):
+        self.steps(PROBLEMS, (BUILT, 0), FOUND)
+        for argv, keys in (([], {"house", "build", "lint", "status"}), (["lint"], {"lint", "status"}),
+                           (["house", "build"], {"house", "build", "status"})):
+            with self.subTest(argv=argv):
+                code, out, err = run("check", "--json", *argv)
+                self.assertEqual((code, err, out.count("\n")), (1, "", 1))
+                self.assertEqual(set(json.loads(out)), keys)
+
+    def test_no_doc_targets_to_check_is_null_and_no_problem(self):
+        with mock.patch.object(lint, "secret_scan", return_value={"files": 2, "findings": []}), \
+                mock.patch.object(lint, "doc_targets", return_value=None):
+            self.assertEqual(run("check", "lint"), (0, "secret scan: 2 files, 0 findings\n", ""))
+            code, out, _ = run("check", "lint", "--json")
+        self.assertEqual((code, json.loads(out)), (0, {"lint": {"secret_scan": {"files": 2, "findings": []},
+                                                                "doc_targets": None}, "status": "ok"}))
+
+
+class Retired(unittest.TestCase):
+    """thermite validate and thermite lint: thermite check house and
+    thermite check lint now, and each runs as before after a warning."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+    def house(self, data: dict) -> str:
+        path = self.root / "devices.yaml"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        return str(path)
+
+    @staticmethod
+    def warning(verb: str) -> str:
+        return (f"thermite {verb}: {oh_cli.RETIRED[verb].instead} replaces it; thermite {verb} goes in the next "
+                "release\n")
+
+    def test_validate_warns_and_runs_as_before_and_check_house_says_the_same(self):
+        broken = self.house({**EXAMPLE, "housing": {}})
+        for argv in ((), ("--json",)):
+            for house, expected in ((HOUSE, 0), (broken, 2)):
+                with self.subTest(argv=argv, house=house):
+                    retired = run("validate", "--house", house, *argv)
+                    checked = run("check", "house", "--house", house, *argv)
+                    self.assertEqual(retired[0], expected)
+                    self.assertTrue(retired[2].startswith(self.warning("validate")), retired[2])
+                    said = retired[2][len(self.warning("validate")):]
+                    if not argv and expected == 0:
+                        self.assertEqual(called(validate.main, "--house", house), (expected, retired[1], said))
+                    if argv:
+                        self.assertEqual(json.loads(checked[1]),
+                                         {"house": json.loads(retired[1]),
+                                          "status": "ok" if expected == 0 else "invalid"})
+                        self.assertEqual((checked[0], checked[2], said), (expected, "", ""))
+                    else:
+                        self.assertEqual(checked, (expected, retired[1], said.replace("thermite validate: ",
+                                                                                       "thermite check: ")))
+
+    def test_what_the_house_file_generates_disagreeing_is_a_problem_of_validate_and_of_check(self):
+        with stranger():
+            retired = run("validate", "--house", HOUSE)
+            checked = run("check", "house", "build", "--house", HOUSE)
+            built = run("check", "build", "--json", "--house", HOUSE)
+        self.assertEqual(retired[0], 1)
+        problem = ("conf/yaml/sony_ip_control.yaml: Thing http:url:stranger: 'stranger' is not a device id in "
+                   "instance/devices.yaml")
+        self.assertIn(f"thermite validate: {problem}\n", retired[2])
+        self.assertEqual(checked[0], 1)
+        self.assertEqual(checked[1], retired[1])
+        self.assertEqual(checked[2].splitlines()[-2:], [
+            f"thermite check: {problem}",
+            "thermite check: what the house file generates disagrees with it, in 1 place; nothing done"])
+        self.assertEqual((built[0], json.loads(built[1])), (1, {
+            "build": {"error": "what the house file generates disagrees with it, in 1 place; nothing done",
+                      "problems": [problem]}, "status": "problems"}))
+
+    def test_lint_warns_and_runs_as_before_and_check_lint_says_the_same(self):
+        for linted, expected in ((CLEAN, 0), (FOUND, 1)):
+            with self.subTest(expected=expected), \
+                    mock.patch.object(lint, "secret_scan", return_value=linted["secret_scan"]), \
+                    mock.patch.object(lint, "doc_targets", return_value=linted["doc_targets"]):
+                retired = run("lint")
+                direct = called(lint.main)
+                checked = run("check", "lint")
+                self.assertEqual(retired[0], expected)
+                self.assertEqual(retired, (direct[0], direct[1], self.warning("lint") + direct[2]))
+                self.assertEqual(checked, (direct[0], direct[1], direct[2].replace("thermite lint: ", "thermite check: ")))
+                self.assertEqual(direct[1], f"secret scan: 4 files, {expected} findings\n"
+                                            f"make targets in the docs: 2 documents, {expected} stale\n")
+
+
 class Site(unittest.TestCase):
     """The verb itself, on a checkout without a descriptor whose ignored
     conf/ holds what an earlier release and its owner left there."""
@@ -187,7 +376,7 @@ class Site(unittest.TestCase):
             "(`thermite --help` lists the verbs)\n"))
         self.assertEqual(self.files(), before)
 
-    def test_a_host_file_it_cannot_use_stops_it_before_the_lint(self):
+    def test_a_host_file_it_cannot_use_stops_the_build_and_the_lint_still_runs(self):
         host = json.loads((self.site / "instance/host.yaml").read_text(encoding="utf-8"))
         (self.site / "instance/host.yaml").write_text(json.dumps({**host, "state_root": "/mnt/example"}), encoding="utf-8")
         before = self.files()
@@ -196,7 +385,11 @@ class Site(unittest.TestCase):
         self.assertEqual(done.stderr.splitlines()[-1][:len("thermite check: ")], "thermite check: ")
         self.assertIn("instance/host.yaml: unknown setting state_root", done.stderr)
         self.assertTrue(done.stderr.rstrip().endswith("; nothing can be generated"), done.stderr)
-        self.assertNotIn("secret scan", done.stdout)
+        self.assertNotIn("build: ", done.stdout)
+        self.assertIn("secret scan: ", done.stdout)
+        self.assertEqual(self.files(), before)
+        linted = self.thermite("check", "lint")
+        self.assertEqual(linted.returncode, 0, linted.stderr)
         self.assertEqual(self.files(), before)
 
     def test_a_house_file_with_a_problem_stops_it_first(self):

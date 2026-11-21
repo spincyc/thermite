@@ -126,7 +126,6 @@ Commission the native stack interactively as the owner:
 thermite install --config "$SITE" --dry-run
 thermite install --config "$SITE"
 thermite status
-thermite health --production
 ```
 
 Review the dry plan and each privileged command. Complete actual native
@@ -224,7 +223,7 @@ state. An empty or damaged wheelhouse
 the install before anything of Thermite stops, naming the directory. Stop the
 worker's container behind systemd's back (`sudo podman stop
 thermite-access-worker`, then `sudo systemctl stop
-thermite-access-worker.service`) and confirm `thermite health --production`
+thermite-access-worker.service`) and confirm `thermite status`
 fails with `gateway: thermite-access-worker.service is inactive`.
 
 Run the real HTTP and terminal acceptance helpers.

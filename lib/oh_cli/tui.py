@@ -1,6 +1,6 @@
 """Run the house remote in a terminal against a Thermite gateway, from any computer.
 
-    thermite tui [--url URL] [--ca-file FILE] [--room ID] [--pair] [--theme NAME|FILE] ...
+    thermite tui [--url URL] [--ca-file FILE] [--room ID] [--pair] [--theme NAME|FILE] [--state-file FILE] ...
 
 It needs no private site: the gateway serves the house's model, and
 thermite remote's launch path (oh_cli.remote.launch) runs tui/remote/main.js.
@@ -53,14 +53,17 @@ the gateway serves the house's rooms and controls. It needs Node.js; the
 first run installs the pinned blessed into ~/.cache/thermite/tui-remote
 ($XDG_CACHE_HOME) with npm ci.
 
-Without --url it opens {DEFAULT_URL}: most homes run their
-Thermite server on a computer named {HOST}. --url names the gateway as
-https://HOST:PORT, or as HOST:PORT or HOST, which mean https (on port
-{oh_ports.ACCESS_PORT} without one). With a private site selected (--config DIR),
-the HTTPS port its instance/host.yaml sets, gateway.port, replaces
-{oh_ports.ACCESS_PORT} in both. Plain http reaches only this computer: localhost,
-127.0.0.1 or [::1]. A site's plain-HTTP Guest port serves browsers on its
-guest network, not this remote; pointed at one, it says so.
+--url names the gateway as https://HOST:PORT, or as HOST:PORT or HOST,
+which mean https (on port {oh_ports.ACCESS_PORT} without one). Without --url it opens
+{oh_cli.URL_VARIABLE} where that names a server: an https URL, or the HOST of an
+ssh://[USER@]HOST URL, which then means https on port {oh_ports.ACCESS_PORT} as a bare
+HOST does. Without either it opens the selected site's installed gateway,
+else {DEFAULT_URL}: most homes run their Thermite server on a computer
+named {HOST}. With a private site selected (--config DIR), the HTTPS port
+its instance/host.yaml sets, gateway.port, replaces {oh_ports.ACCESS_PORT} in all of
+these. Plain http reaches only this computer: localhost, 127.0.0.1 or
+[::1]. A site's plain-HTTP Guest port serves browsers on its guest
+network, not this remote; pointed at one, it says so.
 
 Guests control unlocked rooms without a login. After thermite access login
 for the same address, that account's personal credential is used.
@@ -141,14 +144,52 @@ def default_url() -> str:
     return f"https://{HOST}:{default_port()}"
 
 
-def gateway(value: str | None) -> str:
-    """The gateway's origin from --url: a bare HOST or HOST:PORT is https,
-    on default_port() when it names none; raises ValueError."""
+def named_server() -> tuple[str | None, str | None]:
+    """THERMITE_URL's gateway as gateway() reads it (oh_cli.named_server()),
+    and the source to name in an error; (None, None) without one."""
+    named = oh_cli.named_server()
+    if not named:
+        return None, None
+    variable = os.environ.get(oh_cli.URL_VARIABLE, "").strip()
+    if variable.startswith("ssh://") and ":" in named:
+        # urlsplit took the brackets off an IPv6 address; a bare HOST needs them.
+        named = f"[{named}]"
+    return named, f"{oh_cli.URL_VARIABLE}={variable}"
+
+
+def chosen(value: str | None) -> tuple[str | None, str | None]:
+    """The gateway to open, as gateway() reads it, and where it came from:
+    --url, then THERMITE_URL (oh_cli.named_server(): an https URL, or the
+    HOST of an ssh:// one, which is then https on default_port() as a bare
+    HOST is), then the selected site's installed gateway; (None, None) for
+    default_url()."""
+    if value:
+        return value, None
+    named, source = named_server()
+    if named:
+        return named, source
+    profile = installed_profile()
+    if profile:
+        return profile["url"], f"the installed gateway {profile['url']}"
+    return None, None
+
+
+def resolve(value: str | None) -> str:
+    """The gateway's origin from --url, or the default chosen() finds;
+    raises ValueError naming where a wrong one came from."""
+    return gateway(*chosen(value))
+
+
+def gateway(value: str | None, source: str | None = None) -> str:
+    """The gateway's origin from --url (or from source, where the value came
+    from instead): a bare HOST or HOST:PORT is https, on default_port() when
+    it names none; raises ValueError."""
     text = (value or default_url()).strip()
+    given = source or (f"--url {value}" if value else f"the default {text}")
     bare = "://" not in text
     if bare:
         text = "https://" + text
-    wrong = ValueError(f"--url {value}: give the gateway as https://HOST:PORT, HOST:PORT or HOST")
+    wrong = ValueError(f"{given}: give the gateway as https://HOST:PORT, HOST:PORT or HOST")
     try:
         parsed = urlsplit(text)
         host, port = parsed.hostname, parsed.port
@@ -160,11 +201,11 @@ def gateway(value: str | None) -> str:
     scheme = parsed.scheme.lower()
     if scheme == "http":
         if host not in LOOPBACK:
-            raise ValueError(f"--url {value}: plain http only reaches this computer (localhost, 127.0.0.1 "
+            raise ValueError(f"{given}: plain http only reaches this computer (localhost, 127.0.0.1 "
                              f"or [::1]); a gateway on {host} needs https")
         return f"http://{'[' + host + ']' if ':' in host else host}" + (f":{port}" if port not in (None, 80) else "")
     if scheme != "https":
-        raise ValueError(f"--url {value}: a gateway is https, not {scheme}")
+        raise ValueError(f"{given}: a gateway is https, not {scheme}")
     if bare and port is None:
         port = default_port()
     from oh_access import client
@@ -349,17 +390,21 @@ def remember(url: str, ca: str) -> None:
         print(f"thermite tui: could not remember {ca} for {url}; pass --ca-file again next time", file=sys.stderr)
 
 
+#: --url's help in thermite tui, thermite handheld serve and thermite access.
+URL_HELP = (f"the gateway: https://HOST:PORT, HOST:PORT or HOST (default: {oh_cli.URL_VARIABLE} when it names "
+            f"a server, else a selected site's installed gateway, else {DEFAULT_URL}, on that site's "
+            "gateway.port where it sets one)")
+
+
 def parser() -> argparse.ArgumentParser:
     parser = oh_cli.command("tui", DESCRIPTION, EXAMPLES, TRUST + "\n" + remote.NOTES + "\n" + EXIT)
-    parser.add_argument("--url", metavar="URL",
-                        help=f"the gateway: https://HOST:PORT, HOST:PORT or HOST (default: {DEFAULT_URL}, "
-                             "or a selected site's gateway.port)")
+    parser.add_argument("--url", metavar="URL", help=URL_HELP)
     parser.add_argument("--ca-file", type=Path, metavar="FILE",
                         help=f"trust this copy of the server's {AUTHORITY}; remembered for that address")
     remote.add_view(parser, "thermite")
-    parser.add_argument("--state", type=Path, metavar="FILE",
-                        help="where the last room, volume mode, theme mode, motion and log visibility are kept "
-                             "(default: ~/.local/state/thermite/tui-remote/state.json, under $XDG_STATE_HOME)")
+    oh_cli.add_state_file(parser, "where the last room, volume mode, theme mode, motion and log visibility are "
+                                  "kept (default: ~/.local/state/thermite/tui-remote/state.json, under "
+                                  "$XDG_STATE_HOME)")
     return parser
 
 
@@ -369,7 +414,7 @@ def main(argv: list[str] | None = None) -> int:
     if oh_cli.switches.quiet:
         options.error("--quiet would hide the remote itself")
     try:
-        url = gateway(arguments.url)
+        url = resolve(arguments.url)
     except ValueError as exc:
         options.error(str(exc))
     import oh_brand as brand
@@ -392,7 +437,7 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.ca_file is not None and ca:
         remember(url, ca)
     where = build()
-    state = arguments.state or state_file()
+    state = arguments.state_file or state_file()
 
     def prepare(node: str) -> tuple[list[str], dict]:
         from oh_access import client

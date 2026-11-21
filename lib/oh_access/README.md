@@ -158,7 +158,7 @@ The independent-settings migration replaces the authentication switch
 Guest sees the cameras until an Admin turns that on. The principals migration replaces roles and room grants with one
 `admin` flag: accounts holding the reserved Admin role become admins and all
 others become Members; custom roles, Viewer and room grants are dropped.
-A rollback of the upgrade, or `thermite revert` after it, puts the whole
+A rollback of the upgrade, or `thermite rollback --restore-state` after it, puts the whole
 matching copy back with the prior release. Do not mix an older
 database with newer signing keys or a different site identity.
 

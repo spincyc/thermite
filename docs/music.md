@@ -108,8 +108,8 @@ services: it is part of `thermite.target` and runs in `thermite.slice`.
   library database and save its settings.
 - The image has no health check, and the unit adds none. The install waits up
   to 10 minutes for Music Assistant to run (an upgrade may migrate its library
-  first) with its API on loopback alone. `thermite health --production` and
-  `thermite status` check the same, and that its streams answer.
+  first) with its API on loopback alone. `thermite status` checks the same, and
+  that its streams answer.
 
 ## Ports
 
@@ -153,7 +153,7 @@ from 319 to 1023 before the service it belongs to does.
 A new Music Assistant migrates its library database and settings on its first
 start, and has no way back. When `versions.json` pins a new image, the install
 transaction copies `runtime/music/` aside before Music Assistant starts, so a
-failed upgrade's rollback, or `thermite revert`, puts back the state the older
+failed upgrade's rollback, or `thermite rollback --restore-state`, puts back the state the older
 image wrote. The room the upgrade checks for includes that copy; while the pin
 stays the same, the state stays in place and is not copied.
 

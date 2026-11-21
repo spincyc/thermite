@@ -1,6 +1,6 @@
 """Restart a device now, or show how each device's last reboot went.
 
-    thermite reboot [DEVICE]
+    thermite reboot [DEVICE] [--json]
                      restart DEVICE as the nightly reboots do and wait for
                      it to answer again; without DEVICE, each device
                      thermite can restart and its last reboot
@@ -29,11 +29,17 @@ need not have `reboot: nightly` in the house file; it needs an integration
 under control that can restart it without cutting its power. Without
 DEVICE, each such device: whether it restarts nightly, and its last
 reboot.
+
+With --json, one JSON object instead: without DEVICE, `devices`, each with
+its id, label, whether it restarts nightly, at what time, and its last
+reboot as the rule reports it (null before any); with DEVICE, the outcome
+the rule reports, or `timed_out` when it reports none in time.
 """
 
 EXAMPLES = (
     ("thermite reboot", "each device thermite can restart, and its last reboot"),
     ("thermite reboot DEVICE", "restart it now; wait until it answers again"),
+    ("thermite reboot --json", "the list, as JSON"),
 )
 
 NOTES = """\
@@ -82,17 +88,34 @@ def outcome(last: dict) -> str:
     return text + (f", {at.astimezone():%Y-%m-%d %H:%M}" if at else "")
 
 
-def listing(house: House, http, log=print) -> int:
+def entries(house: House, http) -> list[dict]:
+    """Each device thermite can restart: its id, label, whether it restarts
+    nightly and when (null if not), and its last reboot (null before any)."""
     last = report(http)
+    out = []
     for entry in reboots.table(house)["devices"]:
         device = next(d for d in house.devices if d["id"] == entry["id"])
-        how = f"nightly at {reboots.time_of(house.data)}" if entry["nightly"] else "on command only"
-        done = f"last: {outcome(last[entry['id']])}" if isinstance(last.get(entry["id"]), dict) else "not restarted yet"
-        log(f"{house.label(device)} ({entry['id']}): {how}; {done}")
+        nightly = bool(entry["nightly"])
+        out.append({"id": entry["id"], "label": house.label(device), "nightly": nightly,
+                    "time": reboots.time_of(house.data) if nightly else None,
+                    "last": last[entry["id"]] if isinstance(last.get(entry["id"]), dict) else None})
+    return out
+
+
+def listing(house: House, http, log=print) -> int:
+    for entry in entries(house, http):
+        how = f"nightly at {entry['time']}" if entry["nightly"] else "on command only"
+        done = f"last: {outcome(entry['last'])}" if entry["last"] is not None else "not restarted yet"
+        log(f"{entry['label']} ({entry['id']}): {how}; {done}")
     return 0
 
 
-def restart(house: House, ident: str, http, timeout: float, log=print, clock=time.monotonic, sleep=time.sleep) -> int:
+def restart(house: House, ident: str, http, timeout: float, log=print, clock=time.monotonic, sleep=time.sleep,
+            record: dict | None = None) -> int:
+    """Restart `ident` and wait for the rule's outcome. `record`, if
+    given, gets the --json report: the outcome, or timed_out."""
+    record = {} if record is None else record
+    record["device"] = ident
     device = next(d for d in house.devices if d["id"] == ident)
     asked = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=1)
     pair.command(http, reboots.ITEM, ident)
@@ -103,9 +126,11 @@ def restart(house: House, ident: str, http, timeout: float, log=print, clock=tim
         at = when(last) if isinstance(last, dict) else None
         if at and at >= asked and last.get("outcome") != "rebooting":
             log(f"{ident}: {outcome(last)}")
+            record.update({key: last.get(key) for key in ("outcome", "detail", "seconds", "at")}, timed_out=False)
             return 0 if last.get("outcome") == "back" else 1
         if clock() >= deadline:
             log(f"{ident}: no outcome within {timeout:g} s; thermite reboot lists it once there is one")
+            record.update(timed_out=True, timeout=timeout)
             return 1
         sleep(POLL)
 
@@ -115,6 +140,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("device", nargs="?", metavar="DEVICE", help="the device's id in the house file")
     oh_cli.add_house(parser)
     oh_cli.add_timeout(parser, TIMEOUT, "the device to answer again")
+    oh_cli.add_json(parser)
     args = parser.parse_args(argv)
 
     house = House.load(args.house)
@@ -125,6 +151,14 @@ def main(argv: list[str] | None = None) -> int:
         return error("no device in the house file has an integration that can restart it")
     try:
         http = pair.openhab(False)
+        if args.json:
+            if args.device is None:
+                oh_cli.emit({"devices": entries(house, http)})
+                return 0
+            record: dict = {}
+            code = restart(house, args.device, http, args.timeout, log=lambda *_: None, record=record)
+            oh_cli.emit(record)
+            return code
         if args.device is None:
             return listing(house, http)
         return restart(house, args.device, http, args.timeout)

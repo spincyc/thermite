@@ -1,6 +1,6 @@
 """Run the house remote in a terminal (tui/remote/) on the pinned blessed.
 
-    thermite remote [--url URL | --sandbox | --mock] [--pair] [--room ID] [--theme NAME|FILE] ...
+    thermite remote [--url URL | --sandbox | --mock] [--pair] [--room ID] [--theme NAME|FILE] [--state-file FILE] ...
     thermite remote --setup
 """
 
@@ -44,7 +44,9 @@ It runs the page's own house.js, remotes.js,
 backend.js, session.js and pair.js from web/remote/ under node, so both
 front ends drive thermite the same way (tui/remote/README.md).
 
-By default it uses the authenticated site: THERMITE_SITE_URL, the installed
+By default it uses the authenticated site: THERMITE_SITE_URL, THERMITE_URL
+where it names a server (an https URL, or the HOST of an ssh://[USER@]HOST
+URL, which then means https on the site's HTTPS port), the installed
 gateway's verified address, or https://localhost on the site's HTTPS port
 (instance/host.yaml's gateway.port, 13601 by default). --native uses a
 runtime directly instead, without login: a testing mode, for a runtime with
@@ -161,6 +163,14 @@ def target(arguments: argparse.Namespace) -> list[str]:
     if not native_mode(arguments):
         if os.environ.get("THERMITE_SITE_URL"):
             return ["--url", os.environ["THERMITE_SITE_URL"]]
+        from oh_cli import tui
+
+        named, source = tui.named_server()
+        if named:
+            try:
+                return ["--url", tui.gateway(named, source)]
+            except ValueError as exc:
+                raise RemoteModelError(str(exc)) from None
         from oh_access import client
         profile = client.deployment(AREA)
         if profile:
@@ -198,7 +208,7 @@ def main_js(node: str, build: Path, state: Path, backend: list[str], arguments: 
 
 def node_argv(arguments: argparse.Namespace, node: str = "node", build: Path = BUILD) -> list[str]:
     backend = target(arguments) + (["--native"] if native_mode(arguments) else [])
-    return main_js(node, build, arguments.state, backend, arguments)
+    return main_js(node, build, arguments.state_file, backend, arguments)
 
 
 def palette(spec: str | None, house: Path = oh_cli.HOUSE):
@@ -233,9 +243,8 @@ def parser() -> argparse.ArgumentParser:
     parser.add_argument("--latency", type=int, metavar="MS", help="mock only: how long a choice takes (default 600)")
     parser.add_argument("--matrix-down", action="store_true",
                         help="mock only: start with the HDMI matrix not answering")
-    parser.add_argument("--state", type=Path, default=STATE, metavar="FILE",
-                        help="where the last room, volume mode, theme mode, motion and log visibility are kept "
-                             "(default var/tui-remote/state.json)")
+    oh_cli.add_state_file(parser, "where the last room, volume mode, theme mode, motion and log visibility are "
+                                  "kept (default var/tui-remote/state.json)", default=STATE)
     return parser
 
 

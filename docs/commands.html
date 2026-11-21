@@ -39,11 +39,11 @@
 <h1 id="commands">Commands</h1>
 <p>One program, <code>thermite</code>, with a verb for each job. Every verb answers <code>--help</code> (or <code>thermite help VERB</code>) with what it does, its switches and examples; this page is that help, word for word.</p>
 <h2 id="house">The house file, and what is generated from it</h2>
-<table class="verbs"><tbody><tr><td><a href="#init"><code>thermite init</code></a></td><td>create a private site, or pin an installed application upgrade</td></tr><tr><td><a href="#check"><code>thermite check</code></a></td><td>validate, build and lint the selected configuration; write nothing</td></tr><tr><td><a href="#generate"><code>thermite generate</code></a></td><td>write conf/ and metrics/ from the house file, and deploy/&#x27;s systemd units</td></tr><tr><td><a href="#validate"><code>thermite validate</code></a></td><td>check the house file, and that what it generates agrees with it</td></tr><tr><td><a href="#lint"><code>thermite lint</code></a></td><td>refuse credentials in Git, and docs naming a missing make target</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#init"><code>thermite init</code></a></td><td>create a private site, or pin an installed application upgrade</td></tr><tr><td><a href="#check"><code>thermite check</code></a></td><td>validate, build and lint the selected configuration; write nothing</td></tr><tr><td><a href="#generate"><code>thermite generate</code></a></td><td>write conf/ and metrics/ from the house file, and deploy/&#x27;s systemd units</td></tr></tbody></table>
 <h2 id="test">Test on a test runtime, never production</h2>
 <table class="verbs"><tbody><tr><td><a href="#test"><code>thermite test</code></a></td><td>boot conf/ on a test runtime; test routing and the controls end to end</td></tr><tr><td><a href="#sandbox"><code>thermite sandbox</code></a></td><td>run a thermite sandbox from a copy of conf/ on 127.0.0.1:13616</td></tr></tbody></table>
 <h2 id="production">Production runtime on this host</h2>
-<table class="verbs"><tbody><tr><td><a href="#install"><code>thermite install</code></a></td><td>install thermite on this host, with one approval for the whole run</td></tr><tr><td><a href="#upgrade"><code>thermite upgrade</code></a></td><td>update the application, native services and HTTPS gateway together</td></tr><tr><td><a href="#uninstall"><code>thermite uninstall</code></a></td><td>stop thermite here and remove its units; --purge deletes its state</td></tr><tr><td><a href="#rollback"><code>thermite rollback</code></a></td><td>install the commit deployed before the current one, or another</td></tr><tr><td><a href="#revert"><code>thermite revert</code></a></td><td>go back to the version, and state, the last upgrade set aside</td></tr><tr><td><a href="#status"><code>thermite status</code></a></td><td>what is deployed and running here, against this checkout</td></tr><tr><td><a href="#history"><code>thermite history</code></a></td><td>this host&#x27;s deploys, numbered, the latest last</td></tr><tr><td><a href="#health"><code>thermite health</code></a></td><td>read-only: every Thing ONLINE in the runtime</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#install"><code>thermite install</code></a></td><td>install thermite on this host, with one approval for the whole run</td></tr><tr><td><a href="#upgrade"><code>thermite upgrade</code></a></td><td>update the application, native services and HTTPS gateway together</td></tr><tr><td><a href="#uninstall"><code>thermite uninstall</code></a></td><td>stop thermite here and remove its units; --purge deletes its state</td></tr><tr><td><a href="#rollback"><code>thermite rollback</code></a></td><td>install the commit deployed before the current one, or another</td></tr><tr><td><a href="#status"><code>thermite status</code></a></td><td>what is deployed and running here, against this checkout</td></tr><tr><td><a href="#history"><code>thermite history</code></a></td><td>this host&#x27;s deploys, numbered, the latest last</td></tr><tr><td><a href="#logs"><code>thermite logs</code></a></td><td>every Thermite service&#x27;s log, merged by time; --since and --until pick a range</td></tr><tr><td><a href="#bugreport"><code>thermite bugreport</code></a></td><td>collect versions, status, history, logs and system facts into one archive</td></tr></tbody></table>
 <h2 id="devices">The house&#x27;s devices</h2>
 <table class="verbs"><tbody><tr><td><a href="#dhcp-reservations"><code>thermite dhcp-reservations</code></a></td><td>list the UniFi DHCP reservations the house file needs</td></tr><tr><td><a href="#matrix-settings"><code>thermite matrix-settings</code></a></td><td>show matrix settings that differ from the house file; --apply sets them</td></tr><tr><td><a href="#control4"><code>thermite control4</code></a></td><td>export the Control4 project read-only and compare it</td></tr><tr><td><a href="#discover"><code>thermite discover</code></a></td><td>scan the LAN read-only and compare it with the house file</td></tr><tr><td><a href="#pair"><code>thermite pair</code></a></td><td>pair a TV with runtime, or check the Sony TVs&#x27; pairing</td></tr><tr><td><a href="#device"><code>thermite device</code></a></td><td>everything about one device: what it is, what watches it, what holds now</td></tr><tr><td><a href="#reboot"><code>thermite reboot</code></a></td><td>restart a device now as the nightly reboots do, or list how each went</td></tr><tr><td><a href="#cameras"><code>thermite cameras</code></a></td><td>read camera status, or configure native Protect bridges privately</td></tr><tr><td><a href="#apple-tv"><code>thermite apple-tv</code></a></td><td>run the Apple TV helper runtime calls</td></tr><tr><td><a href="#ir-profile"><code>thermite ir-profile</code></a></td><td>validate verified IR keys or print an iTach packet without transmitting</td></tr></tbody></table>
 <h2 id="use">Front ends, themes and docs</h2>
@@ -61,8 +61,6 @@ the house file, and what is generated from it:
   init                 create a private site, or pin an installed application upgrade
   check                validate, build and lint the selected configuration; write nothing
   generate             write conf/ and metrics/ from the house file, and deploy/&#x27;s systemd units
-  validate             check the house file, and that what it generates agrees with it
-  lint                 refuse credentials in Git, and docs naming a missing make target
 
 test on a test runtime, never production:
   test                 boot conf/ on a test runtime; test routing and the controls end to end
@@ -73,10 +71,10 @@ production runtime on this host:
   upgrade              update the application, native services and HTTPS gateway together
   uninstall            stop thermite here and remove its units; --purge deletes its state
   rollback             install the commit deployed before the current one, or another
-  revert               go back to the version, and state, the last upgrade set aside
   status               what is deployed and running here, against this checkout
   history              this host&#x27;s deploys, numbered, the latest last
-  health               read-only: every Thing ONLINE in the runtime
+  logs                 every Thermite service&#x27;s log, merged by time; --since and --until pick a range
+  bugreport            collect versions, status, history, logs and system facts into one archive
 
 the house&#x27;s devices:
   dhcp-reservations    list the UniFi DHCP reservations the house file needs
@@ -113,7 +111,10 @@ switches that mean the same in every verb that has them:
   --timeout SECONDS                 how long to wait
   --house FILE                      the house file (default: instance/devices.yaml)
   --production | --sandbox | --url URL
-                                    which runtime: this host&#x27;s, the sandbox&#x27;s, or one at URL
+                                    this host, the sandbox, or a server: ssh://HOST runs it there, https://HOST is its gateway
+  --token-file FILE                 a file holding the runtime&#x27;s API token
+  --state-dir DIR                   the runtime&#x27;s state (default: runtime/ in instance/host.yaml&#x27;s root)
+  --yes                             approve it up front, unattended: ask nothing
   --theme NAME|FILE                 the colors: a built-in theme&#x27;s name or a theme file
   --dark | --light                  which of the theme&#x27;s two modes
 
@@ -166,30 +167,60 @@ examples:
                                     pin an installed upgrade while preserving all configuration and prior releases
 </pre>
 </section>
-<section class="verb" id="check"><h3><code>thermite check</code></h3><p>Validate, build and lint the selected configuration; write nothing.</p><pre class="help">usage: thermite check [-h] [--config DIR]
+<section class="verb" id="check"><h3><code>thermite check</code></h3><p>Validate, build and lint the selected configuration; write nothing.</p><pre class="help">usage: thermite check [-h] [--config DIR] [--house FILE] [--json] [STEP ...]
 
-Validate, build and lint a private configuration directory.
+Check a private configuration directory before committing or installing it.
+Nothing is written and no service is changed. Each STEP is one of these, and
+without one it runs all three; they always run in this order:
 
-Nothing is written and no service is changed. The house file is validated
-(thermite validate); then conf/, metrics/ and deploy/ are built in memory
-from it, the host file and versions.json, as thermite generate would write
-them; then the tracked files are linted (thermite lint). What is on disk
-under conf/, metrics/ and deploy/ is neither read nor touched: thermite
-generate --check compares it, and thermite generate --prune removes what
-nothing generates now.
+  house  the house file passes every check thermite generate runs, and its
+         conf/, built in memory, agrees with it: every Thing belongs to a
+         device in the house file and uses only that device&#x27;s address, and
+         every Item is a room location or named after a device. A device
+         nothing watches is named in a note, which is no problem.
+  build  conf/, metrics/ and deploy/ built in memory from the house file,
+         the host file and versions.json, as thermite generate would write
+         them, and none of it written.
+  lint   the secret scan of every file Git has or would add in this area
+         (a line that must carry a credential-looking word for a documented
+         reason ends with `lint: allow`), and every `make TARGET` the docs
+         cite must be one the Makefile defines.
+
+A house file that is missing, cannot be read or has a problem stops it at
+house: nothing can be built from it. Otherwise each step named runs,
+whatever the one before it found. What is on disk under conf/, metrics/ and
+deploy/ is neither read nor touched: thermite generate --check compares it,
+and thermite generate --prune removes what nothing generates now.
+
+positional arguments:
+  STEP           house, build or lint (default: all three)
 
 options:
   -h, --help     show this help message and exit
   --config DIR   use this private configuration directory
+  --house FILE   the house file (default: instance/devices.yaml)
+  --json         print the report as JSON
 
 switches every verb takes:
   -q, --quiet    print only errors
   -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
   --no-color     no color in what it prints (as NO_COLOR=1 does)
 
+exit status:
+  0  every step it ran found nothing wrong
+  1  a step found a problem: what the house file generates disagrees with
+     it, the secret scan found something, or the docs name a make target
+     the Makefile lacks
+  2  a wrong switch; a house file that is missing, cannot be read or has a
+     problem (nothing after house runs); or a host file or versions.json
+     nothing can be generated from
+
 examples:
   thermite check --config /path/to/private-site
                                     check configuration before committing or installing
+  thermite check house              only the house file, and what it generates
+  thermite check lint               only the secret scan and the docs&#x27; make targets
+  thermite check --json             every step&#x27;s report, as one JSON object
 </pre>
 </section>
 <section class="verb" id="generate"><h3><code>thermite generate</code></h3><p>Write conf/ and metrics/ from the house file, and deploy/&#x27;s systemd units.</p><pre class="help">usage: thermite generate [-h] [--config DIR] [--check | --prune] [--house FILE]
@@ -242,61 +273,6 @@ examples:
   thermite generate                 validate the house file, then write every file under conf/, metrics/ and deploy/ that differs
   thermite generate --check         change nothing; name every stale, missing or stray file
   thermite generate --prune         write, and remove generated files nothing generates any more
-</pre>
-</section>
-<section class="verb" id="validate"><h3><code>thermite validate</code></h3><p>Check the house file, and that what it generates agrees with it.</p><pre class="help">usage: thermite validate [-h] [--config DIR] [--house FILE] [--json]
-
-Check instance/devices.yaml, and that what it generates agrees with it.
-
-options:
-  -h, --help     show this help message and exit
-  --config DIR   use this private configuration directory
-  --house FILE   the house file (default: instance/devices.yaml)
-  --json         print the report as JSON
-
-switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
-
-exit status:
-  0  the house file is valid and what it generates agrees with it
-  1  what it generates disagrees with it
-  2  a wrong switch, or a house file that is missing, cannot be read or
-     has a problem (nothing is built)
-
-examples:
-  thermite validate                 check the house file and what it generates
-  thermite validate --json          the same, as JSON
-</pre>
-</section>
-<section class="verb" id="lint"><h3><code>thermite lint</code></h3><p>Refuse credentials in Git, and docs naming a missing make target.</p><pre class="help">usage: thermite lint [-h] [--config DIR]
-
-Refuse credentials and runtime state in this area&#x27;s Git content, and docs
-that name a make target the Makefile lacks. It runs two checks, and exits 1
-if either finds anything:
-
-  - the secret scan: every tracked file and every untracked file Git would
-    add. Where Git lists nothing (outside a work tree, or a tree exported
-    below an ignored path) it scans every file outside var/ and build/
-    instead, so an empty listing never passes. A line that must carry a
-    credential-looking word for a documented reason ends with the marker
-    `lint: allow`.
-  - the docs&#x27; make targets: every `make TARGET` that README.md, FAQ.md,
-    docs/*.md or site/pages/*.md cite in code must be one the Makefile
-    defines.
-
-options:
-  -h, --help     show this help message and exit
-  --config DIR   use this private configuration directory
-
-switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
-
-examples:
-  thermite lint                     scan the area&#x27;s files Git has or would add, and check the docs&#x27; make targets
 </pre>
 </section>
 <section class="verb" id="test"><h3><code>thermite test</code></h3><p>Boot conf/ on a test runtime; test routing and the controls end to end.</p><pre class="help">usage: thermite test [-h] [--config DIR] [--timeout SECONDS] [--house FILE] ACTION ...
@@ -611,7 +587,7 @@ actions:
     reload       refresh var/sandbox/conf from conf/, in the mode the sandbox started in
     stop         stop gracefully (SIGTERM), SIGKILL after --timeout
     status       report whether the sandbox runs and REST answers (exit 3 if stopped)
-    logs         show userdata/logs/openhab.log
+    logs         show userdata/logs/openhab.log (retired: thermite logs --sandbox)
 
 switches every verb takes:
   -q, --quiet    print only errors
@@ -661,7 +637,7 @@ pairing:
 examples:
   thermite sandbox fetch            the pinned JRE and distribution, once
   thermite sandbox start --fresh    a read-only sandbox on an empty userdata
-  thermite sandbox logs -f          follow its openhab.log
+  thermite logs --sandbox -f        follow its openhab.log
   thermite sandbox reload           after thermite generate: the running sandbox picks up conf/
   thermite sandbox stop             stop it
 </pre>
@@ -751,12 +727,13 @@ examples:
   thermite sandbox stop --timeout 30
                                     give Karaf longer before SIGKILL
 </pre></details>
-<details id="sandbox-status"><summary><code>thermite sandbox status</code></summary><pre class="help">usage: thermite sandbox status [-h]
+<details id="sandbox-status"><summary><code>thermite sandbox status</code></summary><pre class="help">usage: thermite sandbox status [-h] [--json]
 
 Report whether the sandbox runs and REST answers (exit 3 if stopped).
 
 options:
   -h, --help     show this help message and exit
+  --json         print the report as JSON
 
 switches every verb takes:
   -q, --quiet    print only errors
@@ -765,10 +742,11 @@ switches every verb takes:
 
 examples:
   thermite sandbox status           process group, URL, mode, start level, token, log
+  thermite sandbox status --json    the same as one JSON object
 </pre></details>
 <details id="sandbox-logs"><summary><code>thermite sandbox logs</code></summary><pre class="help">usage: thermite sandbox logs [-h] [-f] [-n N] [--userdata DIR]
 
-Show userdata/logs/openhab.log.
+Show userdata/logs/openhab.log (retired: thermite logs --sandbox).
 
 options:
   -h, --help      show this help message and exit
@@ -782,16 +760,16 @@ switches every verb takes:
   --no-color      no color in what it prints (as NO_COLOR=1 does)
 
 examples:
+  thermite logs --sandbox           what replaces it
   thermite sandbox logs             the last 50 lines
   thermite sandbox logs -f          and keep following it
-  thermite sandbox logs -f --userdata /srv/thermite/runtime/userdata
-                                    production&#x27;s log, in the runtime state
+  thermite sandbox logs -f --userdata DIR
+                                    the log of a sandbox started with --userdata DIR
 </pre></details>
 </section>
 <section class="verb" id="install"><h3><code>thermite install</code></h3><p>Install thermite on this host, with one approval for the whole run.</p><pre class="help">usage: thermite install [-h] [--config DIR] [-n] [--clean] [--yes] [--restart-runtime]
-                        [--runtime-token-file RUNTIME_TOKEN_FILE] [--source SOURCE]
-                        [--revision REVISION] [--native-timeout SECONDS]
-                        [--allow-downgrade]
+                        [--token-file FILE] [--source SOURCE] [--revision REVISION]
+                        [--native-timeout SECONDS] [--allow-downgrade]
 
 Deploy the complete Thermite installation using committed private configuration.
 Run as your ordinary owner with --config DIR. The current application release
@@ -843,32 +821,29 @@ otherwise the host plan is resolved after approval. Use -v for details. Agents
 only use --dry-run; they never run sudo.
 
 options:
-  -h, --help                    show this help message and exit
-  --config DIR                  use this private configuration directory
-  -n, --dry-run                 report what it would do; change nothing
-  --clean                       delete native state and local API/Grafana credential
-                                copies, then reinstall; pairings are lost
-  --yes                         approve the whole run up front, unattended: nothing
-                                reads standard input, and any other question is answered
-                                no
-  --restart-runtime             restart runtime once after deployment, then run normal
-                                readiness checks
-  --runtime-token-file RUNTIME_TOKEN_FILE
-                                advanced: import an existing internal runtime API token
-                                from your private file
-  --source SOURCE               use a clean application checkout for this deployment
-  --revision REVISION           application Git revision to deploy from --source
-  --native-timeout SECONDS      one native readiness allowance shared by runtime
-                                startup, gateway commissioning and final settlement
-                                (default 900)
-  --allow-downgrade             pin a release older than the site&#x27;s committed one, after
-                                restoring compatible state
+  -h, --help                show this help message and exit
+  --config DIR              use this private configuration directory
+  -n, --dry-run             report what it would do; change nothing
+  --clean                   delete native state and local API/Grafana credential copies,
+                            then reinstall; pairings are lost
+  --yes                     approve the whole run up front, unattended: nothing reads
+                            standard input, and any other question is answered no
+  --restart-runtime         restart runtime once after deployment, then run normal
+                            readiness checks
+  --token-file FILE         advanced: import an existing internal runtime API token from
+                            your private file
+  --source SOURCE           use a clean application checkout for this deployment
+  --revision REVISION       application Git revision to deploy from --source
+  --native-timeout SECONDS  one native readiness allowance shared by runtime startup,
+                            gateway commissioning and final settlement (default 900)
+  --allow-downgrade         pin a release older than the site&#x27;s committed one, after
+                            restoring compatible state
 
 switches every verb takes:
-  -q, --quiet                   print only errors
-  -v, --verbose                 also print, on stderr, the commands and HTTP requests it
-                                runs
-  --no-color                    no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet               print only errors
+  -v, --verbose             also print, on stderr, the commands and HTTP requests it
+                            runs
+  --no-color                no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
   0  committed and verified, or nothing differed and the installed version verified
@@ -895,10 +870,9 @@ examples:
                                     install unattended, approved up front, asking nothing
 </pre>
 </section>
-<section class="verb" id="upgrade"><h3><code>thermite upgrade</code></h3><p>Update the application, native services and HTTPS gateway together.</p><pre class="help">usage: thermite upgrade [-h] [--config DIR] [-n]
-                        [--runtime-token-file RUNTIME_TOKEN_FILE] [--source SOURCE]
-                        [--revision REVISION] [--native-timeout SECONDS]
-                        [--allow-downgrade]
+<section class="verb" id="upgrade"><h3><code>thermite upgrade</code></h3><p>Update the application, native services and HTTPS gateway together.</p><pre class="help">usage: thermite upgrade [-h] [--config DIR] [-n] [--yes] [--token-file FILE]
+                        [--source SOURCE] [--revision REVISION]
+                        [--native-timeout SECONDS] [--allow-downgrade]
 
 Upgrade the complete Thermite installation from the official GitHub main branch.
 Select your committed private site with --config DIR. Use --revision REV to
@@ -933,33 +907,40 @@ and upgrade refuses to pin a release older than the site&#x27;s unless
 --allow-downgrade is given after deliberate recovery. --native-timeout sets
 the one native readiness allowance (300-7200 seconds).
 
+--yes gives the run&#x27;s one approval up front, for an unattended upgrade: it
+covers what that approval covers, the root commands run under sudo -n,
+nothing reads standard input, and any other question is answered no. It
+needs sudo without a password. --token-file imports an existing internal
+runtime API token from a private file, for recovery when no usable copy of
+it remains.
+
 --dry-run changes nothing and does not fetch: the remote revision and its exact
 host differences remain unknown until an approved run. When the site pins the
 release running it, it prints that release&#x27;s provisional host plan for this
 host. Run as your ordinary user. Use -v for details. Agents only use --dry-run.
 
 options:
-  -h, --help                    show this help message and exit
-  --config DIR                  use this private configuration directory
-  -n, --dry-run                 report what it would do; change nothing
-  --runtime-token-file RUNTIME_TOKEN_FILE
-                                advanced: import an existing internal runtime API token
-                                from your private file
-  --source SOURCE               upgrade from a clean application checkout instead of the
-                                official repository
-  --revision REVISION           application Git branch, tag or commit, its hash
-                                abbreviated or whole (default: official main)
-  --native-timeout SECONDS      one native readiness allowance shared by runtime
-                                startup, gateway commissioning and final settlement
-                                (default 900)
-  --allow-downgrade             pin a release older than the site&#x27;s committed one, after
-                                restoring compatible state
+  -h, --help                show this help message and exit
+  --config DIR              use this private configuration directory
+  -n, --dry-run             report what it would do; change nothing
+  --yes                     approve the whole run up front, unattended: nothing reads
+                            standard input
+  --token-file FILE         advanced: import an existing internal runtime API token from
+                            your private file
+  --source SOURCE           upgrade from a clean application checkout instead of the
+                            official repository
+  --revision REVISION       application Git branch, tag or commit, its hash abbreviated
+                            or whole (default: official main)
+  --native-timeout SECONDS  one native readiness allowance shared by runtime startup,
+                            gateway commissioning and final settlement (default 900)
+  --allow-downgrade         pin a release older than the site&#x27;s committed one, after
+                            restoring compatible state
 
 switches every verb takes:
-  -q, --quiet                   print only errors
-  -v, --verbose                 also print, on stderr, the commands and HTTP requests it
-                                runs
-  --no-color                    no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet               print only errors
+  -v, --verbose             also print, on stderr, the commands and HTTP requests it
+                            runs
+  --no-color                no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
   0  committed and verified, or nothing differed and the installed version verified
@@ -975,9 +956,10 @@ exit status:
 examples:
   thermite upgrade -n               what upgrading would do here; runs nothing
   thermite upgrade                  upgrade, asking once for the whole run; rolls back by itself on failure
+  thermite upgrade --yes            upgrade unattended, approved up front, asking nothing
 </pre>
 </section>
-<section class="verb" id="uninstall"><h3><code>thermite uninstall</code></h3><p>Stop thermite here and remove its units; --purge deletes its state.</p><pre class="help">usage: thermite uninstall [-h] [--config DIR] [-n] [--purge]
+<section class="verb" id="uninstall"><h3><code>thermite uninstall</code></h3><p>Stop thermite here and remove its units; --purge deletes its state.</p><pre class="help">usage: thermite uninstall [-h] [--config DIR] [-n] [--purge] [--json] [--yes]
 
 Undo thermite install on this host as one install transaction, as apt
 remove does: Thermite stops, and the install engine, as root, sets aside
@@ -998,15 +980,22 @@ var/transaction; the site itself, with var/gateway/authority, stays. It
 asks you to type the installation root before anything stops. Until the
 commit, any failure rolls back in the same run and Thermite runs again.
 
-One y/n question approves this run, including its sudo commands. --dry-run
-only reads: it reports what it would do. An agent uses only that: agents
-never run sudo.
+One y/n question approves this run, including its sudo commands; --yes
+gives it up front, for an unattended uninstall: the root commands run under
+sudo -n, nothing reads standard input, and any other question is answered
+no. It is refused with --purge, which asks you to type the installation
+root. --dry-run only reads: it reports what it would do, and with --json
+prints that as one JSON object. An agent uses only that: agents never run
+sudo.
 
 options:
   -h, --help     show this help message and exit
   --config DIR   use this private configuration directory
   -n, --dry-run  report what it would do; change nothing
   --purge        also remove runtime/ and access/, the images and every transaction
+  --json         print the report as JSON
+  --yes          approve the uninstall up front, unattended: nothing reads standard
+                 input
 
 switches every verb takes:
   -q, --quiet    print only errors
@@ -1027,9 +1016,11 @@ examples:
   thermite uninstall -n             what uninstalling would do here; runs nothing
   thermite uninstall                stop thermite and remove what it installed, keeping its state
   thermite uninstall -n --purge     what removing the state too would do
+  thermite uninstall -n --json      what uninstalling would do, as one JSON object
 </pre>
 </section>
-<section class="verb" id="rollback"><h3><code>thermite rollback</code></h3><p>Install the commit deployed before the current one, or another.</p><pre class="help">usage: thermite rollback [-h] [--config DIR] [-n] [COMMIT]
+<section class="verb" id="rollback"><h3><code>thermite rollback</code></h3><p>Install the commit deployed before the current one, or another.</p><pre class="help">usage: thermite rollback [-h] [--config DIR] [-n] [--json] [--yes]
+                         [--restore-state | COMMIT]
 
 Install an earlier site commit on this host as one install transaction:
 without COMMIT, the commit deployed before the one deployed now (thermite
@@ -1044,29 +1035,56 @@ The site&#x27;s branch does not move: the next thermite install or upgrade
 installs HEAD again. To keep the earlier configuration, revert the site to
 it in a new commit. The commit must pin the application release that runs
 this command; for one pinned by another release, or to bring back the
-state as it was before the last upgrade, see thermite revert and
+state as it was before the last upgrade, see --restore-state and
 docs/installation.md#update-or-remove. Runtime data stays as it is.
 
+--restore-state instead puts back the version that ran before the last
+install or upgrade committed, as one install transaction of its own: its
+files, units, native-port filter and confinement, and its state in runtime/
+and access/ exactly as that upgrade set it aside. Everything written since
+that upgrade is lost: accounts, pairings, credentials, the gateway&#x27;s
+identity changes, monitoring data. It says so and asks you to type the
+installation root before anything stops. Inside the transaction the site&#x27;s
+branch goes back to the commit before the upgrade&#x27;s pin commit, so that the
+previous version checks its health with its own application; once it
+commits, ~/.local/bin/thermite selects the previous application&#x27;s command
+again. It needs the site at that upgrade&#x27;s pin commit with nothing
+uncommitted, and is refused after an uninstall, a clean install or another
+restore. (thermite revert did this before.)
+
+--yes gives the run&#x27;s one approval up front, for an unattended rollback: the
+root commands run under sudo -n, nothing reads standard input, and any
+other question is answered no. It is refused with --restore-state, which
+asks you to type the installation root. --dry-run only reads: it reports
+what it would do, and with --json prints that as one JSON object.
+
 positional arguments:
-  COMMIT         the commit to install (default: the one deployed before the current
-                 one)
+  COMMIT           the commit to install (default: the one deployed before the current
+                   one)
 
 options:
-  -h, --help     show this help message and exit
-  --config DIR   use this private configuration directory
-  -n, --dry-run  report what it would do; change nothing
+  -h, --help       show this help message and exit
+  --config DIR     use this private configuration directory
+  --restore-state  go back to the version, and the state, the last install or upgrade
+                   set aside; what was written since is lost
+  -n, --dry-run    report what it would do; change nothing
+  --json           print the report as JSON
+  --yes            approve the rollback up front, unattended: nothing reads standard
+                   input
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet      print only errors
+  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
+  --no-color       no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
   0  committed and verified
   1  declined, refused before anything stopped, a check failed, or an earlier
      transaction was finished or closed instead of rolling back
   2  nothing to roll back to, an unknown commit, one that pins another
-     application release, or no installed version
+     application release, or no installed version; with --restore-state,
+     also the site not at the upgrade&#x27;s commit or with uncommitted changes,
+     or the previous application environment gone
   3  rolled back: the version that ran runs again and its health passes
   4  rolled back, but its health does not pass; it keeps running
   5  the rollback did not finish: Thermite stays stopped; run thermite rollback again
@@ -1076,58 +1094,18 @@ examples:
   thermite rollback -n              what installing the commit deployed before the current one would do
   thermite rollback                 install the commit deployed before the current one
   thermite rollback 3d22e36         install that commit (thermite history lists them)
+  thermite rollback -n --restore-state
+                                    what going back to the version and state before the last upgrade would do
+  thermite rollback --restore-state
+                                    go back to it, after typing the installation root; state written since is lost
+  thermite rollback -n --json       the plan, as one JSON object
 </pre>
 </section>
-<section class="verb" id="revert"><h3><code>thermite revert</code></h3><p>Go back to the version, and state, the last upgrade set aside.</p><pre class="help">usage: thermite revert [-h] [--config DIR] [-n]
-
-Put back the version that ran before the last install or upgrade committed,
-as one install transaction of its own: its files, units, native-port filter
-and confinement, and its state in runtime/ and access/ exactly as that
-upgrade set it aside; its gateway release, images and application
-environment were kept for this. Everything written since that upgrade is
-lost: accounts, pairings, credentials, the gateway&#x27;s identity changes,
-monitoring data. Revert says so and asks you to type the installation root
-before anything stops.
-
-Inside the transaction, the site&#x27;s branch goes back to the commit before
-the upgrade&#x27;s pin commit, so that the previous version checks its health
-with its own application. Once the revert commits, ~/.local/bin/thermite
-selects the previous application&#x27;s command again. Any failure before the
-commit rolls back in the same run: the version that runs now runs again,
-and the site&#x27;s branch goes forward to the pin commit again.
-
-A revert needs the site at that upgrade&#x27;s pin commit with nothing
-uncommitted, and the upgrade&#x27;s own record in the site&#x27;s var/transaction. It
-is refused after an uninstall, a clean install or another revert.
-thermite rollback installs an earlier site commit without touching state.
-
-options:
-  -h, --help     show this help message and exit
-  --config DIR   use this private configuration directory
-  -n, --dry-run  report what it would do; change nothing
-
-switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
-
-exit status:
-  0  committed: the previous version runs again, with its state
-  1  declined, or refused before anything stopped (also when an earlier
-     transaction was finished or closed instead of reverting)
-  2  nothing to revert to, the site is not at the upgrade&#x27;s commit or has
-     uncommitted changes, or the previous application environment is gone
-  3  rolled back: the version that ran runs again and its health passes
-  4  rolled back, but its health does not pass; it keeps running
-  5  the rollback did not finish: Thermite stays stopped; run thermite revert again
-  130  interrupted; the next thermite revert rolls the open transaction back first
-
-examples:
-  thermite revert -n                what reverting to the version before the last upgrade would do
-  thermite revert                   revert, after typing the installation root; state written since is lost
-</pre>
-</section>
-<section class="verb" id="status"><h3><code>thermite status</code></h3><p>What is deployed and running here, against this checkout.</p><pre class="help">usage: thermite status [-h] [--config DIR] [--json] [--state DIR]
+<section class="verb" id="status"><h3><code>thermite status</code></h3><p>What is deployed and running here, against this checkout.</p><pre class="help">usage: thermite status [-h] [--config DIR] [--runtime] [--production | --sandbox |
+                       --runtime-url URL] [--installation |
+                       --allow-offline UID [UID ...]] [--settle SECONDS] [--addons FILE]
+                       [--token-file FILE] [--timeout SECONDS] [--state-dir DIR]
+                       [--json]
 
 Report, read-only, what runs here: the commit thermite install deployed
 (and whether HEAD is it, or how many commits after it), whether the
@@ -1139,43 +1117,132 @@ instance/host.yaml sets (and whether the installed gateway still serves
 another), the plain-HTTP Guest addresses instance/host.yaml opens,
 Grafana&#x27;s address on the LAN and whether it answers, Prometheus&#x27; scrape
 targets (up of all), on a host with music: whether Music Assistant runs
-with its API on loopback alone, the install transaction that installed
+with its API on loopback alone, whether systemd has each service of an
+installed gateway active (the gateway, its policy worker and, where the
+house has one, its callback relay), the install transaction that installed
 this version, any install transaction that has not finished and whether a
-command is running one now, and the last deploys (thermite history lists
-more).
+command is running one now, and the runtime&#x27;s own checks: every Thing
+ONLINE, Items whose state is NULL or UNDEF, none of thermite&#x27;s rules
+disabled, and the installed add-ons, read with the API token thermite
+install saved in var/&lt;this host&#x27;s name&gt;/api-token. While runtime does not
+answer they are skipped, that being the problem; when they cannot run (no
+token file, the token refused, an answer malformed) that is a problem too.
+Last come the last deploys (thermite history lists more).
+
+--runtime runs the runtime&#x27;s checks alone, sending only GET and HEAD
+requests: of production on this host by default, with that token, and then
+also of the services beside it: Prometheus ready with every scrape target
+up and Grafana answering; on a host with music:, Music Assistant running,
+its API on loopback alone and its streams answering; and the gateway&#x27;s
+services. Before thermite upgrade has installed them it says they are not
+installed yet. --sandbox checks the sandbox on 127.0.0.1:13616, with
+var/sandbox/api-token when it exists, and --runtime-url the runtime&#x27;s REST
+API at URL; either implies --runtime. The runtime answers /rest/things and
+/rest/addons only with credentials: --token-file names a file holding an
+API token. --addons also fails an add-on an addons.cfg lists that is not
+installed, and --allow-offline lets the Things it names be offline; with
+--token-file and --timeout they shape the runtime&#x27;s checks in plain status
+too. An online HEOS bridge without either optional account field reports
+its missing-account diagnostic as a visible warning, preserving local
+transport.
+
+The runtime keeps a rule&#x27;s disabled flag through restarts and installs and
+logs nothing for it, so a rule switched off in its own pages leaves a device
+quiet with no error anywhere. thermite&#x27;s rules are the ones its scripts
+define, which the runtime lists as not editable; every thermite install or
+upgrade switches any that is disabled back on.
+
+--installation, which implies --runtime of production, checks installation
+readiness with the same Thing policy as the installer&#x27;s native readiness
+wait; thermite install and upgrade run it last. Offline devices waiting for
+pairing or connectivity are visible warnings. Thing configuration errors,
+required add-ons (conf/services/addons.cfg&#x27;s, unless --addons names
+another) and monitoring failures still fail. A runtime that has just
+started gets --settle seconds (default 120) to finish: Things still
+initializing (missing or reloading handlers, UNINITIALIZED, INITIALIZING,
+UNKNOWN), transient REST outages, and add-ons, monitoring, music or a
+gateway service not ready yet are polled that long. Things still
+initializing then are reported as warnings; anything else still failing
+then fails. A Thing configuration error fails at once. --settle 0 takes one
+snapshot, as the other checks do; they remain strict.
 
 options:
-  -h, --help     show this help message and exit
-  --config DIR   use this private configuration directory
-  --json         print the report as JSON
-  --state DIR    the runtime state (default: runtime/ in instance/host.yaml&#x27;s root,
-                 /srv/thermite)
+  -h, --help                    show this help message and exit
+  --config DIR                  use this private configuration directory
+  --runtime                     only the runtime&#x27;s checks (--sandbox and --runtime-url
+                                imply it)
+  --production                  production runtime on this host (default)
+  --sandbox                     the sandbox, http://127.0.0.1:13616 (thermite sandbox)
+  --runtime-url URL             advanced: the runtime&#x27;s REST API at URL, e.g.
+                                http://127.0.0.1:13602, with --token-file
+  --installation                installation readiness, as thermite install checks it:
+                                the runtime&#x27;s checks of production, with offline devices
+                                as warnings
+  --allow-offline UID [UID ...]
+                                Thing UIDs that may be offline
+  --settle SECONDS              with --installation, poll what a start has not finished
+                                this long (default: 120)
+  --addons FILE                 fail if an add-on listed in this addons.cfg is missing
+  --token-file FILE             file holding the runtime&#x27;s API token (default:
+                                production&#x27;s, var/&lt;this host&#x27;s name&gt;/api-token; the
+                                sandbox&#x27;s, var/sandbox/api-token)
+  --timeout SECONDS             seconds to wait for each answer of the runtime (default:
+                                15)
+  --state-dir DIR               the runtime state (default: runtime/ in
+                                instance/host.yaml&#x27;s root, /srv/thermite)
+  --json                        print the report as JSON
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet                   print only errors
+  -v, --verbose                 also print, on stderr, the commands and HTTP requests it
+                                runs
+  --no-color                    no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
-  0  what HEAD (or the selected commit) holds is deployed, unchanged, and
-     its services and runtime are up
+  0  what HEAD (or the selected commit) holds is deployed, unchanged, its
+     services and runtime are up and the runtime&#x27;s checks pass; with
+     --runtime, every Thing ONLINE (or allowed), none of thermite&#x27;s rules
+     disabled and no requested add-on missing
   1  nothing is deployed, HEAD is not what is deployed, a deployed file or
      unit differs or is missing, or is still installed without music:, a
      service is not active, runtime does not answer, Music Assistant does
      not run with its API on loopback alone, the installed gateway serves
-     HTTPS on another port, or an upgrade&#x27;s install transaction has not
-     finished
-  2  a wrong switch, or the host file or deploy record cannot be read
+     HTTPS on another port or one of its services is not active, an
+     upgrade&#x27;s install transaction has not finished, or a runtime check
+     failed or could not run; with --runtime, a Thing not ONLINE and not
+     allowed, one of thermite&#x27;s rules disabled, a requested add-on missing,
+     or (of production) the metrics services installed but not answering, a
+     scrape target down, Music Assistant installed but not running with its
+     API on loopback alone, or a gateway service not active
+  2  a wrong switch, or the host file or deploy record cannot be read; with
+     --runtime, the runtime could not be queried (unreachable, the token
+     refused, or 401/403 without a token)
+
+Items in NULL/UNDEF are reported but do not fail the checks; Group Items
+without an aggregation function are skipped, since they never carry state.
+With --installation, exit 0 means installation is ready, possibly with
+device warnings, Things still initializing after the settle window, or a
+rule that loaded disabled after the install switched thermite&#x27;s rules on,
+which a rollback would not change; only configuration errors, missing
+add-ons, monitoring or music failures exit 1. Its compact output omits
+individual undefined Item states.
 
 examples:
-  thermite status                   the deployed commit against HEAD, the units, the services, runtime
+  thermite status                   the deployed commit against HEAD, the units, the services, runtime and its checks
   thermite status --json            the same, as JSON, with the problems that make it exit 1
-  thermite status --state /tmp/state
+  thermite status --state-dir /tmp/state
                                     the same for a runtime state somewhere else
+  thermite status --runtime         the runtime&#x27;s checks alone, and the services beside it
+  thermite status --sandbox         the same checks of the sandbox, with its API token
+  thermite status --sandbox --addons conf/services/addons.cfg
+                                    also fail if an add-on conf/ asks for is not installed
+  thermite status --runtime-url http://thermite.example:13602 --json
+                                    runtime at that URL, without a token, as JSON
+  thermite status --installation    installation readiness, as thermite install checks it last
 </pre>
 </section>
 <section class="verb" id="history"><h3><code>thermite history</code></h3><p>This host&#x27;s deploys, numbered, the latest last.</p><pre class="help">usage: thermite history [-h] [--config DIR] [--last N] [--details] [--json]
-                        [--state DIR]
+                        [--state-dir DIR]
 
 List, read-only, what thermite install, upgrade and rollback deployed on
 this host, from &lt;state&gt;/deploy/history: numbered from the first deploy,
@@ -1198,18 +1265,18 @@ except the one deployed now, which deployed.json describes; older deploys
 have no details.
 
 options:
-  -h, --help     show this help message and exit
-  --config DIR   use this private configuration directory
-  --last N       the last N deploys; 0 for every one (default: 10)
-  --details      also what each deploy changed, reloaded, backed up and activated
-  --json         print the report as JSON
-  --state DIR    the runtime state (default: runtime/ in instance/host.yaml&#x27;s root,
-                 /srv/thermite)
+  -h, --help       show this help message and exit
+  --config DIR     use this private configuration directory
+  --last N         the last N deploys; 0 for every one (default: 10)
+  --details        also what each deploy changed, reloaded, backed up and activated
+  --json           print the report as JSON
+  --state-dir DIR  the runtime state (default: runtime/ in instance/host.yaml&#x27;s root,
+                   /srv/thermite)
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet      print only errors
+  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
+  --no-color       no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite history                  the last 10 deploys here
@@ -1217,101 +1284,157 @@ examples:
                                     what the latest one changed, reloaded and activated
   thermite history --last 0         every one
   thermite history --json           the same, as JSON
-  thermite history --state /tmp/state
+  thermite history --state-dir /tmp/state
                                     the deploys of a runtime state somewhere else
 </pre>
 </section>
-<section class="verb" id="health"><h3><code>thermite health</code></h3><p>Read-only: every Thing ONLINE in the runtime.</p><pre class="help">usage: thermite health [-h] [--config DIR] (--production | --sandbox | --url URL)
-                       [--token-file FILE] [--allow-offline ID [ID ...] |
-                       --installation] [--addons FILE] [--settle SECONDS]
-                       [--timeout SECONDS] [--json]
+<section class="verb" id="logs"><h3><code>thermite logs</code></h3><p>Every Thermite service&#x27;s log, merged by time; --since and --until pick a range.</p><pre class="help">usage: thermite logs [-h] [--config DIR] [--production | --sandbox | --url URL]
+                     [--since WHEN] [--until WHEN] [--lines N] [-f] [--grep PATTERN]
+                     [--level LEVEL] [--utc] [--json] [--no-redact] [--state-dir DIR]
+                     [COMPONENT ...]
 
-Read-only checks against the running runtime: every Thing ONLINE, Items whose
-state is NULL or UNDEF, none of thermite&#x27;s rules disabled, and the installed
-add-ons (compared with an addons.cfg when --addons is given). Only GET and
-HEAD requests are sent.
-An online HEOS bridge without either optional account field reports its
-missing-account diagnostic as a visible warning, preserving local transport.
+Print, read-only, the logs of this host&#x27;s Thermite services as one list,
+oldest first and merged by time: the runtime&#x27;s openhab.log (with its
+rotations, compressed or not) below the runtime state&#x27;s logs/, and every
+other service&#x27;s journal (journalctl -u UNIT). The runtime also copies
+openhab.log to the journal; while the file can be read those copies are
+left out, and the unit&#x27;s other journal lines (starts, stops, crash
+output) kept.
 
-The runtime keeps a rule&#x27;s disabled flag through restarts and installs and
-logs nothing for it, so a rule switched off in its own pages leaves a device
-quiet with no error anywhere. thermite&#x27;s rules are the ones its scripts
-define, which the runtime lists as not editable; every thermite install or
-upgrade switches any that is disabled back on.
+Name components to read only those (default: all but events):
+  runtime           openHAB: openhab.log, and its unit&#x27;s journal
+  events            openHAB&#x27;s events.log: every Item&#x27;s changes (only when named)
+  gateway, worker, callbacks
+                    the HTTPS gateway, its room policy worker, its callback relay
+  atv, music        the Apple TV helper, Music Assistant
+  prometheus, grafana, blackbox, node-exporter, metrics-exporter
+                    the monitoring services
+  boundary, share-gate
+                    the native listener boundary, the network share gates
 
-The runtime answers /rest/things and /rest/addons only with credentials; pass
-an API token file (the sandbox writes var/sandbox/api-token). --sandbox
-checks the sandbox on 127.0.0.1:13616, with that token when it exists.
---production checks production runtime on this host, on 127.0.0.1 at
-instance/host.yaml&#x27;s http_port, with the token thermite install saved in
-var/&lt;this host&#x27;s name&gt;/api-token, and the metrics services beside it:
-Prometheus ready with every scrape target up, and Grafana answering; on a
-host with music:, Music Assistant running, its API on loopback alone and its
-streams answering. Before thermite upgrade has installed them it says they
-are not installed yet. Of an installed gateway it checks that systemd has
-each of its services active: the gateway, its policy worker and, where the
-house has one, its callback relay.
+Without --since, --until or --lines it prints the last 200 records. WHEN
+is now, today, yesterday; 90s, 30m, 12h, 7d or 2w ago; a date
+(2026-11-21) or a date and time (2026-11-21 14:00, 2026-11-21T14:00:00),
+with an offset (+01:00) or Z, else in this host&#x27;s local time. --lines N
+keeps the last N of the records in range. -f prints the last 10 (or
+--lines) and then each new record until Ctrl-C.
 
---production --installation checks installation readiness with the same
-Thing policy as the installer&#x27;s native readiness wait. Offline devices
-waiting for pairing or connectivity are visible warnings. Thing configuration
-errors, required add-ons and monitoring failures still fail. A runtime that
-has just started gets --settle seconds (default 120 with --installation) to
-finish: Things still initializing (missing or reloading handlers,
-UNINITIALIZED, INITIALIZING, UNKNOWN), transient REST outages, and add-ons,
-monitoring, music or a gateway service not ready yet are polled that long. Things still
-initializing then are reported as warnings; anything else still failing then
-fails. A Thing configuration error fails at once. --settle 0 takes one
-snapshot, as normal health checks do; they remain strict.
+Each line is the time (ISO 8601, with this host&#x27;s offset, or Z with
+--utc), the component, the level and the logger; a stack trace&#x27;s lines
+follow indented. --json prints one JSON object per line instead
+(component, level, logger, message, source, time). Secrets (passwords,
+tokens, keys, cookies, Authorization headers, a URL&#x27;s password) print as
+***. Addresses, host names and device names stay, because they are what
+a log is read for: review the output before sharing it.
+
+Reading openhab.log takes membership of the thermite group, and other
+services&#x27; journals that of systemd-journal (or wheel or adm, where the
+distribution grants it), or sudo. A source it cannot read is named on
+stderr, and the rest still print. With --sandbox it reads the sandbox&#x27;s
+openhab.log alone: the sandbox has no other service.
+
+positional arguments:
+  COMPONENT        read only these: runtime, events, gateway, worker, callbacks, atv,
+                   music, prometheus, grafana, blackbox, node-exporter, metrics-
+                   exporter, boundary, share-gate (default: all but events)
 
 options:
-  -h, --help                   show this help message and exit
-  --config DIR                 use this private configuration directory
-  --production                 production runtime on this host
-  --sandbox                    the sandbox, http://127.0.0.1:13616 (thermite sandbox)
-  --url URL                    runtime at URL, e.g. http://thermite.example:13602
-  --token-file FILE            file holding a runtime API token
-  --allow-offline ID [ID ...]  Thing UIDs that may be offline
-  --installation               with --production, verify installation and report offline
-                               devices as warnings
-  --addons FILE                fail if an add-on listed in this addons.cfg is missing
-  --settle SECONDS             with --installation, poll what a start has not finished
-                               this long (default 120)
-  --timeout SECONDS            seconds to wait for each answer (default: 15)
-  --json                       print the report as JSON
+  -h, --help       show this help message and exit
+  --config DIR     use this private configuration directory
+  --production     this host&#x27;s services (default)
+  --sandbox        the sandbox&#x27;s openhab.log
+  --url URL        run it on the server ssh://[USER@]HOST[:PORT][/SITE] names
+  --since WHEN     records from WHEN on: 1h, today, 2026-11-21 14:00 ...
+  --until WHEN     records up to WHEN
+  --lines N        the last N matching records (default: 200, or every one in range; 10
+                   with -f)
+  -f, --follow     then print each new record until Ctrl-C
+  --grep PATTERN   records whose logger or message match this regular expression; case-
+                   insensitive unless it has an upper-case letter
+  --level LEVEL    records of LEVEL or worse: error, warn, info, debug, trace (default:
+                   all)
+  --utc            print times in UTC (Z) instead of local time
+  --json           print the report as JSON
+  --no-redact      print secrets as the log has them (default: as ***)
+  --state-dir DIR  the runtime state, whose logs/ holds openhab.log (default: runtime/
+                   in instance/host.yaml&#x27;s root, /srv/thermite/runtime)
 
 switches every verb takes:
-  -q, --quiet                  print only errors
-  -v, --verbose                also print, on stderr, the commands and HTTP requests it
-                               runs
-  --no-color                   no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet      print only errors
+  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
+  --no-color       no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
-  0  every Thing ONLINE (or allowed), none of thermite&#x27;s rules disabled and
-     no requested add-on missing
-  1  a Thing not ONLINE and not allowed, one of thermite&#x27;s rules disabled, a
-     requested add-on missing, or (--production) the metrics services
-     installed but not answering, a scrape target down, or Music Assistant
-     installed but not running with its API on loopback alone
-  2  runtime could not be queried (unreachable, the token refused, or 401/403
-     without a token)
-
-Items in NULL/UNDEF are reported but do not fail the check; Group Items
-without an aggregation function are skipped, since they never carry state.
-With --installation, exit 0 means installation is ready, possibly with
-device warnings, Things still initializing after the settle window, or a
-rule that loaded disabled after the install switched thermite&#x27;s rules on,
-which a rollback would not change; only configuration errors, missing
-add-ons, monitoring or music failures exit 1.
-Compact output omits individual undefined Item states.
+  0  done: it read every source (none in range is a note on stderr)
+  1  done, and a source could not be read: openhab.log without the
+     thermite group, the journal without systemd-journal; the rest printed
+  2  a wrong switch, an unknown component or time, or no source at all
+     could be read
 
 examples:
-  thermite health --sandbox         check the sandbox, with its API token
-  thermite health --production      check production runtime on this host, with the token the install saved
-  thermite health --sandbox --addons conf/services/addons.cfg
-                                    also fail if an add-on conf/ asks for is not installed
-  thermite health --url http://thermite.example:13602 --json
-                                    runtime at that URL, without a token, as JSON
+  thermite logs                     the last 200 records of every service
+  thermite logs --since 1h          everything of the last hour
+  thermite logs --since &quot;2026-11-21 14:00&quot; --until &quot;2026-11-21 15:00&quot;
+                                    one hour, in local time
+  thermite logs runtime gateway -f  follow the runtime and the gateway
+  thermite logs --level warn --since today
+                                    today&#x27;s warnings and errors
+  thermite logs --grep avpro --since 2h
+                                    the records that mention avpro, in any case
+  thermite logs --json --since 24h &gt; logs.jsonl
+                                    a day of records as JSON Lines, to share
+  thermite logs --sandbox -f        follow the sandbox&#x27;s openhab.log
+  thermite logs --url ssh://thermite --since 1h
+                                    the last hour, read on the server named thermite
+</pre>
+</section>
+<section class="verb" id="bugreport"><h3><code>thermite bugreport</code></h3><p>Collect versions, status, history, logs and system facts into one archive.</p><pre class="help">usage: thermite bugreport [-h] [--config DIR] [--out FILE] [--since WHEN] [--no-redact]
+                          [--json]
+
+Collect, read-only, what a bug report about this host&#x27;s Thermite needs into
+one compressed archive: thermite&#x27;s version and the runtime&#x27;s (thermite
+version), what is deployed and running (thermite status, with the
+runtime&#x27;s checks), every deploy (thermite history), the services&#x27; logs and
+the runtime&#x27;s events.log since --since (default: the last 24h; thermite
+logs), and the system&#x27;s facts: the kernel, the distribution, uptime, free
+memory and disk, and Thermite&#x27;s systemd units. Each part is the output of
+that command, run as you; manifest.json names each command, its exit
+status and what it said on stderr. A command that fails leaves its part
+empty and the rest is still collected.
+
+Secrets (passwords, tokens, keys, cookies, Authorization headers, a URL&#x27;s
+password) are written as ***; --no-redact keeps them. Addresses, host
+names and device names stay: review the archive before sharing it.
+
+It writes thermite-bugreport-HOST-TIME.tar.gz in the current directory, or
+--out FILE; --out - writes the archive to standard output. With --url
+ssh://HOST it collects on that server and writes the archive here.
+
+options:
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
+  --out FILE     write the archive here (default: thermite-bugreport-HOST-TIME.tar.gz in
+                 the current directory); - writes it to standard output
+  --since WHEN   the logs from WHEN on, as thermite logs --since takes it (default: 24h)
+  --no-redact    keep secrets as the logs and reports have them (default: as ***)
+  --json         print the report as JSON
+
+switches every verb takes:
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
+
+exit status:
+  0  the archive is written (manifest.json names any part whose command failed)
+  2  a wrong switch, or the archive could not be written
+
+examples:
+  thermite bugreport                write thermite-bugreport-HOST-TIME.tar.gz here
+  thermite bugreport --since 3d     with the logs of the last three days
+  thermite bugreport --url ssh://thermite
+                                    collect on the server named thermite; write the archive here
+  thermite bugreport --out - | ssh laptop &#x27;cat &gt; report.tar.gz&#x27;
+                                    the archive on standard output
 </pre>
 </section>
 <section class="verb" id="dhcp-reservations"><h3><code>thermite dhcp-reservations</code></h3><p>List the UniFi DHCP reservations the house file needs.</p><pre class="help">usage: thermite dhcp-reservations [-h] [--config DIR] [--csv] [--house FILE]
@@ -1340,30 +1463,36 @@ examples:
   thermite dhcp-reservations --csv  the same as CSV, with a header row
 </pre>
 </section>
-<section class="verb" id="matrix-settings"><h3><code>thermite matrix-settings</code></h3><p>Show matrix settings that differ from the house file; --apply sets them.</p><pre class="help">usage: thermite matrix-settings [-h] [--config DIR] [--apply] [--device ID]
-                                [--address HOST[:PORT]] [--house FILE]
+<section class="verb" id="matrix-settings"><h3><code>thermite matrix-settings</code></h3><p>Show matrix settings that differ from the house file; --apply sets them.</p><pre class="help">usage: thermite matrix-settings [-h] [--config DIR] [--apply] [--address HOST[:PORT]]
+                                [--house FILE] [--json]
+                                [DEVICE]
 
-Compare each matrix with its `settings` in instance/devices.yaml and print
-the differences. On the BK-808 these settings cover output scalers, HDR
+Compare each matrix (or only DEVICE) with its `settings` in
+instance/devices.yaml and print the differences. On the BK-808 these settings cover output scalers, HDR
 conversion, HDCP and fixed input EDIDs. When a room has hdmi_audio_scaler,
 routing sets the scaler on its audio output and this command skips it.
 Inputs with a routing EDID follow routing.edid when a room selects a source.
 
 With --apply, send the fixed-setting changes one at a time, read them back
-and fail on any that did not take or got no answer.
+and fail on any that did not take or got no answer. With --json, one JSON
+object instead: for each matrix, the settings that differ and, with
+--apply, those that took, those refused and those not taken.
 
 A change can blank the room on that output, or the rooms watching that
 input, for a few seconds while the display and the source renegotiate:
 apply when nobody is watching.
 
+positional arguments:
+  DEVICE                 only this device (its id in the house file)
+
 options:
   -h, --help             show this help message and exit
   --config DIR           use this private configuration directory
   --apply                send the settings to the matrices (without it: only show them)
-  --device ID            only this device id
   --address HOST[:PORT]  talk to this address instead of the device&#x27;s ip (a simulator);
-                         needs --device
+                         needs DEVICE
   --house FILE           the house file (default: instance/devices.yaml)
+  --json                 print the report as JSON
 
 switches every verb takes:
   -q, --quiet            print only errors
@@ -1373,11 +1502,14 @@ switches every verb takes:
 exit status:
   0  every setting matches (with --apply: every change took)
   1  settings differ (without --apply), or a change did not take
-  2  the house file is invalid, or a matrix did not answer
+  2  the house file is invalid, no device (or not DEVICE) has settings to
+     apply, or a matrix did not answer
 
 examples:
   thermite matrix-settings          each setting that differs from the house file; sends nothing
   thermite matrix-settings --apply  send those changes, when nobody is watching
+  thermite matrix-settings DEVICE   only that matrix
+  thermite matrix-settings --json   the settings that differ, as JSON
 </pre>
 </section>
 <section class="verb" id="control4"><h3><code>thermite control4</code></h3><p>Export the Control4 project read-only and compare it.</p><pre class="help">usage: thermite control4 [-h] [--config DIR] ACTION ...
@@ -1504,7 +1636,7 @@ examples:
   thermite discover --json          the comparison as JSON
 </pre>
 </section>
-<section class="verb" id="pair"><h3><code>thermite pair</code></h3><p>Pair a TV with runtime, or check the Sony TVs&#x27; pairing.</p><pre class="help">usage: thermite pair [-h] [--config DIR] [--check] [--production | --sandbox]
+<section class="verb" id="pair"><h3><code>thermite pair</code></h3><p>Pair a TV with runtime, or check the Sony TVs&#x27; pairing.</p><pre class="help">usage: thermite pair [-h] [--config DIR] [--status] [--json] [--production | --sandbox]
                      [--house FILE] [--timeout SECONDS]
                      [DEVICE] [CODE]
 
@@ -1521,7 +1653,8 @@ Pair a device with thermite, as its integration in the house file
     Items, as the Pairing page does, then asks for the digits and sends
     them back. thermite keeps the TV&#x27;s registration in its own userdata;
     the PIN is never shown, logged or put in Git. With CODE it sends four
-    digits the TV shows already. --check reads each TV&#x27;s pairing status.
+    digits the TV shows already. Without DEVICE it reads each Sony TV&#x27;s
+    pairing instead, and DEVICE --status that TV&#x27;s alone.
   - an Android TV or Google TV under androidtv_googletv control, with
     --sandbox: the binding reaches a TV only once the TV trusts its
     certificate, kept in the sandbox&#x27;s userdata/androidtv/. Stand at the
@@ -1542,8 +1675,9 @@ positional arguments:
 options:
   -h, --help         show this help message and exit
   --config DIR       use this private configuration directory
-  --check            change nothing; exit 1 if a Sony TV&#x27;s pairing (DEVICE&#x27;s, or any
-                     one&#x27;s) is stale
+  --status           read DEVICE&#x27;s pairing instead of pairing it (without DEVICE: every
+                     Sony TV&#x27;s)
+  --json             print the report as JSON
   --production       production thermite on this host, with the API token bin/thermite
                      install saved (default)
   --sandbox          the sandbox, and its Android TV pairings
@@ -1565,6 +1699,12 @@ exit status:
      reached or has no such Items, the sandbox is not running, or the
      device pairs elsewhere
 
+--json:
+  Without DEVICE, or with --status, one object: target (production or
+  sandbox), paired (whether every TV read is), and tvs, one entry for each
+  Sony TV: id, label, paired, and its state and problem as thermite reports
+  them, or error where its Items could not be read.
+
 examples:
   thermite pair DEVICE              have that Sony TV show a PIN, then type it to pair it with production
   thermite pair DEVICE --sandbox    the same with the sandbox
@@ -1572,7 +1712,10 @@ examples:
   thermite pair DEVICE --sandbox    ask an Android TV to show a pairing code
   thermite pair DEVICE A1B2C3 --sandbox
                                     send the code it shows; wait for it to come ONLINE
-  thermite pair --check             whether every Sony TV is paired with production
+  thermite pair                     whether every Sony TV is paired with production
+  thermite pair DEVICE --status --sandbox
+                                    whether that Sony TV is paired with the sandbox
+  thermite pair --json              every Sony TV&#x27;s pairing as JSON
 </pre>
 </section>
 <section class="verb" id="device"><h3><code>thermite device</code></h3><p>Everything about one device: what it is, what watches it, what holds now.</p><pre class="help">usage: thermite device [-h] [--config DIR] [--house FILE] [--timeout SECONDS] [--json]
@@ -1592,7 +1735,7 @@ What holds now: each reading&#x27;s value and how long ago it was read, each
 check&#x27;s state and whether a room needs it now, the alerts about it, the
 problem its rules last met, the commands they took and what routing failed
 at it. This is read from the installation&#x27;s Prometheus on this host
-(127.0.0.1, GET only, no credentials), as thermite health --production
+(127.0.0.1, GET only, no credentials), as thermite status --runtime
 reads it. On a host without the monitoring services it says that this part
 needs the installation. While Prometheus does not answer, or has no check
 results, what holds now is unknown and is said so: never fine.
@@ -1635,7 +1778,8 @@ examples:
                                     what another house file makes of it
 </pre>
 </section>
-<section class="verb" id="reboot"><h3><code>thermite reboot</code></h3><p>Restart a device now as the nightly reboots do, or list how each went.</p><pre class="help">usage: thermite reboot [-h] [--config DIR] [--house FILE] [--timeout SECONDS] [DEVICE]
+<section class="verb" id="reboot"><h3><code>thermite reboot</code></h3><p>Restart a device now as the nightly reboots do, or list how each went.</p><pre class="help">usage: thermite reboot [-h] [--config DIR] [--house FILE] [--timeout SECONDS] [--json]
+                       [DEVICE]
 
 Restart a device as the nightly reboots do (lib/oh_features/reboots):
 production thermite restarts it only if it answers and is idle (a receiver
@@ -1648,6 +1792,11 @@ under control that can restart it without cutting its power. Without
 DEVICE, each such device: whether it restarts nightly, and its last
 reboot.
 
+With --json, one JSON object instead: without DEVICE, `devices`, each with
+its id, label, whether it restarts nightly, at what time, and its last
+reboot as the rule reports it (null before any); with DEVICE, the outcome
+the rule reports, or `timed_out` when it reports none in time.
+
 positional arguments:
   DEVICE             the device&#x27;s id in the house file
 
@@ -1656,6 +1805,7 @@ options:
   --config DIR       use this private configuration directory
   --house FILE       the house file (default: instance/devices.yaml)
   --timeout SECONDS  seconds to wait for the device to answer again (default: 480)
+  --json             print the report as JSON
 
 switches every verb takes:
   -q, --quiet        print only errors
@@ -1672,6 +1822,7 @@ exit status:
 examples:
   thermite reboot                   each device thermite can restart, and its last reboot
   thermite reboot DEVICE            restart it now; wait until it answers again
+  thermite reboot --json            the list, as JSON
 </pre>
 </section>
 <section class="verb" id="cameras"><h3><code>thermite cameras</code></h3><p>Read camera status, or configure native Protect bridges privately.</p><pre class="help">usage: thermite cameras [-h] [--config DIR] ACTION ...
@@ -1713,25 +1864,27 @@ examples:
   thermite cameras streams --none   stop native WebRTC sessions while keeping status and snapshots
   thermite cameras configure --homebridge /var/lib/homebridge/config.json --protect-token-file var/protect-token
                                     reuse the existing console login and an explicitly supplied mode-0600 Protect token
+  thermite cameras list --runtime-url https://thermite.example:8443 --token-file var/api-token
+                                    read them from a runtime elsewhere, over HTTPS, with a mode-0600 API token
 </pre>
-<details id="cameras-list"><summary><code>thermite cameras list</code></summary><pre class="help">usage: thermite cameras list [-h] [--house FILE] [--production | --url URL]
-                             [--runtime-token-file FILE] [--json]
+<details id="cameras-list"><summary><code>thermite cameras list</code></summary><pre class="help">usage: thermite cameras list [-h] [--house FILE] [--production | --runtime-url URL]
+                             [--token-file FILE] [--json]
 
 Read the configured camera status.
 
 options:
-  -h, --help                 show this help message and exit
-  --house FILE               the house file (default: instance/devices.yaml)
-  --production               production runtime on this host (default)
-  --url URL                  runtime at URL, e.g. http://thermite.example:13602
-  --runtime-token-file FILE  a mode-0600 API token for --url
-  --json                     print the report as JSON
+  -h, --help         show this help message and exit
+  --house FILE       the house file (default: instance/devices.yaml)
+  --production       production runtime on this host (default)
+  --runtime-url URL  advanced: the runtime&#x27;s REST API at URL, e.g.
+                     http://127.0.0.1:13602, with --token-file
+  --token-file FILE  a mode-0600 file holding the runtime&#x27;s API token, for --runtime-url
+  --json             print the report as JSON
 
 switches every verb takes:
-  -q, --quiet                print only errors
-  -v, --verbose              also print, on stderr, the commands and HTTP requests it
-                             runs
-  --no-color                 no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet        print only errors
+  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
+  --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite cameras list             read the configured cameras&#x27; status
@@ -1743,9 +1896,11 @@ examples:
   thermite cameras streams --none   stop native WebRTC sessions while keeping status and snapshots
   thermite cameras configure --homebridge /var/lib/homebridge/config.json --protect-token-file var/protect-token
                                     reuse the existing console login and an explicitly supplied mode-0600 Protect token
+  thermite cameras list --runtime-url https://thermite.example:8443 --token-file var/api-token
+                                    read them from a runtime elsewhere, over HTTPS, with a mode-0600 API token
 </pre></details>
-<details id="cameras-configure"><summary><code>thermite cameras configure</code></summary><pre class="help">usage: thermite cameras configure [-h] [--house FILE] [--production | --url URL]
-                                  [--runtime-token-file FILE] [-n] [--homebridge FILE]
+<details id="cameras-configure"><summary><code>thermite cameras configure</code></summary><pre class="help">usage: thermite cameras configure [-h] [--house FILE] [--production | --runtime-url URL]
+                                  [--token-file FILE] [-n] [--homebridge FILE]
                                   [--protect-token-file FILE] [--stream-camera ID]
 
 Configure native Protect privately.
@@ -1754,8 +1909,10 @@ options:
   -h, --help                 show this help message and exit
   --house FILE               the house file (default: instance/devices.yaml)
   --production               production runtime on this host (default)
-  --url URL                  runtime at URL, e.g. http://thermite.example:13602
-  --runtime-token-file FILE  a mode-0600 API token for --url
+  --runtime-url URL          advanced: the runtime&#x27;s REST API at URL, e.g.
+                             http://127.0.0.1:13602, with --token-file
+  --token-file FILE          a mode-0600 file holding the runtime&#x27;s API token, for
+                             --runtime-url
   -n, --dry-run              report what it would do; change nothing
   --homebridge FILE          read the matching local console login from this Homebridge
                              configuration
@@ -1779,30 +1936,30 @@ examples:
   thermite cameras streams --none   stop native WebRTC sessions while keeping status and snapshots
   thermite cameras configure --homebridge /var/lib/homebridge/config.json --protect-token-file var/protect-token
                                     reuse the existing console login and an explicitly supplied mode-0600 Protect token
+  thermite cameras list --runtime-url https://thermite.example:8443 --token-file var/api-token
+                                    read them from a runtime elsewhere, over HTTPS, with a mode-0600 API token
 </pre></details>
-<details id="cameras-streams"><summary><code>thermite cameras streams</code></summary><pre class="help">usage: thermite cameras streams [-h] [--house FILE] [--production | --url URL]
-                                [--runtime-token-file FILE] (--all | --none |
-                                --camera ID) [-n]
+<details id="cameras-streams"><summary><code>thermite cameras streams</code></summary><pre class="help">usage: thermite cameras streams [-h] [--house FILE] [--production | --runtime-url URL]
+                                [--token-file FILE] (--all | --none | --camera ID) [-n]
 
 Enable or stop native camera WebRTC sessions.
 
 options:
-  -h, --help                 show this help message and exit
-  --house FILE               the house file (default: instance/devices.yaml)
-  --production               production runtime on this host (default)
-  --url URL                  runtime at URL, e.g. http://thermite.example:13602
-  --runtime-token-file FILE  a mode-0600 API token for --url
-  --all                      enable native WebRTC for every configured camera
-  --none                     disable all native WebRTC sessions; keep status and
-                             snapshots
-  --camera ID                enable only this camera; repeat for several
-  -n, --dry-run              report what it would do; change nothing
+  -h, --help         show this help message and exit
+  --house FILE       the house file (default: instance/devices.yaml)
+  --production       production runtime on this host (default)
+  --runtime-url URL  advanced: the runtime&#x27;s REST API at URL, e.g.
+                     http://127.0.0.1:13602, with --token-file
+  --token-file FILE  a mode-0600 file holding the runtime&#x27;s API token, for --runtime-url
+  --all              enable native WebRTC for every configured camera
+  --none             disable all native WebRTC sessions; keep status and snapshots
+  --camera ID        enable only this camera; repeat for several
+  -n, --dry-run      report what it would do; change nothing
 
 switches every verb takes:
-  -q, --quiet                print only errors
-  -v, --verbose              also print, on stderr, the commands and HTTP requests it
-                             runs
-  --no-color                 no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet        print only errors
+  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
+  --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite cameras list             read the configured cameras&#x27; status
@@ -1814,6 +1971,8 @@ examples:
   thermite cameras streams --none   stop native WebRTC sessions while keeping status and snapshots
   thermite cameras configure --homebridge /var/lib/homebridge/config.json --protect-token-file var/protect-token
                                     reuse the existing console login and an explicitly supplied mode-0600 Protect token
+  thermite cameras list --runtime-url https://thermite.example:8443 --token-file var/api-token
+                                    read them from a runtime elsewhere, over HTTPS, with a mode-0600 API token
 </pre></details>
 </section>
 <section class="verb" id="apple-tv"><h3><code>thermite apple-tv</code></h3><p>Run the Apple TV helper runtime calls.</p><pre class="help">usage: thermite apple-tv [-h] [--config DIR] ACTION ...
@@ -1971,7 +2130,7 @@ examples:
                        --mock] [--native] [--setup] [--pair] [--room ID]
                        [--choose SOURCE] [--theme NAME|FILE] [--dark | --light]
                        [--volume {slider,buttons}] [--still] [--log | --no-log]
-                       [--latency MS] [--matrix-down] [--state FILE]
+                       [--latency MS] [--matrix-down] [--state-file FILE]
 
 The thermite terminal starts on a landing page with Remotes, Security,
 Cameras and Site views. Remotes contains rooms, sources, device controls,
@@ -1981,7 +2140,9 @@ It runs the page&#x27;s own house.js, remotes.js,
 backend.js, session.js and pair.js from web/remote/ under node, so both
 front ends drive thermite the same way (tui/remote/README.md).
 
-By default it uses the authenticated site: THERMITE_SITE_URL, the installed
+By default it uses the authenticated site: THERMITE_SITE_URL, THERMITE_URL
+where it names a server (an https URL, or the HOST of an ssh://[USER@]HOST
+URL, which then means https on the site&#x27;s HTTPS port), the installed
 gateway&#x27;s verified address, or https://localhost on the site&#x27;s HTTPS port
 (instance/host.yaml&#x27;s gateway.port, 13601 by default). --native uses a
 runtime directly instead, without login: a testing mode, for a runtime with
@@ -2014,7 +2175,8 @@ options:
   --config DIR               use this private configuration directory
   --production               production runtime on this host (default)
   --sandbox                  the sandbox, http://127.0.0.1:13616 (thermite sandbox)
-  --url URL                  runtime at URL, e.g. http://thermite.example:13602
+  --url URL                  a Thermite gateway: https://HOST[:PORT] (default:
+                             THERMITE_URL when it names one)
   --mock                     the remote page&#x27;s mock backend, which sends nothing
   --native                   explicitly use the native runtime instead of site
                              authentication (owner/testing only)
@@ -2040,7 +2202,7 @@ options:
                              this run
   --latency MS               mock only: how long a choice takes (default 600)
   --matrix-down              mock only: start with the HDMI matrix not answering
-  --state FILE               where the last room, volume mode, theme mode, motion and
+  --state-file FILE          where the last room, volume mode, theme mode, motion and
                              log visibility are kept (default var/tui-remote/state.json)
 
 switches every verb takes:
@@ -2077,7 +2239,7 @@ examples:
 <section class="verb" id="tui"><h3><code>thermite tui</code></h3><p>The house remote in a terminal on any computer, from its HTTPS gateway.</p><pre class="help">usage: thermite tui [-h] [--config DIR] [--url URL] [--ca-file FILE] [--pair]
                     [--room ID] [--choose SOURCE] [--theme NAME|FILE] [--dark | --light]
                     [--volume {slider,buttons}] [--still] [--log | --no-log]
-                    [--state FILE]
+                    [--state-file FILE]
 
 The house remote in this terminal, as thermite remote draws it, against a
 Thermite gateway: from the server itself or from any other computer with
@@ -2086,14 +2248,17 @@ the gateway serves the house&#x27;s rooms and controls. It needs Node.js; the
 first run installs the pinned blessed into ~/.cache/thermite/tui-remote
 ($XDG_CACHE_HOME) with npm ci.
 
-Without --url it opens https://thermite:13601: most homes run their
-Thermite server on a computer named thermite. --url names the gateway as
-https://HOST:PORT, or as HOST:PORT or HOST, which mean https (on port
-13601 without one). With a private site selected (--config DIR),
-the HTTPS port its instance/host.yaml sets, gateway.port, replaces
-13601 in both. Plain http reaches only this computer: localhost,
-127.0.0.1 or [::1]. A site&#x27;s plain-HTTP Guest port serves browsers on its
-guest network, not this remote; pointed at one, it says so.
+--url names the gateway as https://HOST:PORT, or as HOST:PORT or HOST,
+which mean https (on port 13601 without one). Without --url it opens
+THERMITE_URL where that names a server: an https URL, or the HOST of an
+ssh://[USER@]HOST URL, which then means https on port 13601 as a bare
+HOST does. Without either it opens the selected site&#x27;s installed gateway,
+else https://thermite:13601: most homes run their Thermite server on a computer
+named thermite. With a private site selected (--config DIR), the HTTPS port
+its instance/host.yaml sets, gateway.port, replaces 13601 in all of
+these. Plain http reaches only this computer: localhost, 127.0.0.1 or
+[::1]. A site&#x27;s plain-HTTP Guest port serves browsers on its guest
+network, not this remote; pointed at one, it says so.
 
 Guests control unlocked rooms without a login. After thermite access login
 for the same address, that account&#x27;s personal credential is used.
@@ -2102,7 +2267,9 @@ options:
   -h, --help                 show this help message and exit
   --config DIR               use this private configuration directory
   --url URL                  the gateway: https://HOST:PORT, HOST:PORT or HOST (default:
-                             https://thermite:13601, or a selected site&#x27;s gateway.port)
+                             THERMITE_URL when it names a server, else a selected site&#x27;s
+                             installed gateway, else https://thermite:13601, on that
+                             site&#x27;s gateway.port where it sets one)
   --ca-file FILE             trust this copy of the server&#x27;s tls-cert.pem; remembered
                              for that address
   --pair                     start on the Pairing screen
@@ -2123,7 +2290,7 @@ options:
                              switches and keeps it)
   --no-log                   hide the log pane and give its rows to the controls, for
                              this run
-  --state FILE               where the last room, volume mode, theme mode, motion and
+  --state-file FILE          where the last room, volume mode, theme mode, motion and
                              log visibility are kept (default:
                              ~/.local/state/thermite/tui-remote/state.json, under
                              $XDG_STATE_HOME)
@@ -2190,8 +2357,10 @@ instead and writes its key file. list shows the enrolled remotes and forget
 removes one. The state file holds the remotes&#x27; keys: it is private (mode
 0600) and keys are never printed.
 
-Without --url serve opens https://thermite:13601, as thermite tui does, and
-trusts the gateway&#x27;s certificate the same way (thermite help tui).
+Without --url serve opens the gateway thermite tui does: THERMITE_URL
+where it names a server, else the selected site&#x27;s installed gateway, else
+https://thermite:13601; it trusts the gateway&#x27;s certificate the same way
+(thermite help tui).
 
 options:
   -h, --help     show this help message and exit
@@ -2230,26 +2399,28 @@ examples:
                                     forget lounge, here and on the remote itself
 </pre>
 <details id="handheld-serve"><summary><code>thermite handheld serve</code></summary><pre class="help">usage: thermite handheld serve [-h] [--url URL] [--ca-file FILE] [--mock]
-                               [--port DEVICE | --listen PATH] [--state FILE]
+                               [--port DEVICE | --listen PATH] [--state-file FILE]
 
 Run the bridge between the base and the house.
 
 options:
-  -h, --help      show this help message and exit
-  --url URL       the gateway: https://HOST:PORT, HOST:PORT or HOST (default:
-                  https://thermite:13601, or a selected site&#x27;s gateway.port)
-  --ca-file FILE  trust this copy of the server&#x27;s tls-cert.pem; remembered for that
-                  address
-  --mock          the remote page&#x27;s mock house, which sends nothing
-  --port DEVICE   the base&#x27;s USB serial port (default: the one that answers)
-  --listen PATH   a Unix socket for a simulated base to connect to
-  --state FILE    the state file (default: ~/.local/state/thermite/handheld/state.json,
-                  under $XDG_STATE_HOME)
+  -h, --help         show this help message and exit
+  --url URL          the gateway: https://HOST:PORT, HOST:PORT or HOST (default:
+                     THERMITE_URL when it names a server, else a selected site&#x27;s
+                     installed gateway, else https://thermite:13601, on that site&#x27;s
+                     gateway.port where it sets one)
+  --ca-file FILE     trust this copy of the server&#x27;s tls-cert.pem; remembered for that
+                     address
+  --mock             the remote page&#x27;s mock house, which sends nothing
+  --port DEVICE      the base&#x27;s USB serial port (default: the one that answers)
+  --listen PATH      a Unix socket for a simulated base to connect to
+  --state-file FILE  the state file (default:
+                     ~/.local/state/thermite/handheld/state.json, under $XDG_STATE_HOME)
 
 switches every verb takes:
-  -q, --quiet     print only errors
-  -v, --verbose   also print, on stderr, the commands and HTTP requests it runs
-  --no-color      no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet        print only errors
+  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
+  --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite handheld serve           the bridge for the house on https://thermite:13601, on the base plugged in here
@@ -2258,7 +2429,7 @@ examples:
 </pre></details>
 <details id="handheld-enroll"><summary><code>thermite handheld enroll</code></summary><pre class="help">usage: thermite handheld enroll [-h] --name NAME [--port DEVICE] [--base-port DEVICE]
                                 [--simulator] [--key-file FILE] [--mac MAC]
-                                [--state FILE]
+                                [--state-file FILE]
 
 Enroll a remote, or a simulated one.
 
@@ -2274,7 +2445,7 @@ options:
                       the state file)
   --mac MAC           with --simulator: its MAC (default: the locally administered one
                       ending 00:01)
-  --state FILE        the state file (default:
+  --state-file FILE   the state file (default:
                       ~/.local/state/thermite/handheld/state.json, under
                       $XDG_STATE_HOME)
 
@@ -2289,41 +2460,41 @@ examples:
   thermite handheld enroll --simulator --name sim
                                     enroll a simulated remote; its key file is printed
 </pre></details>
-<details id="handheld-list"><summary><code>thermite handheld list</code></summary><pre class="help">usage: thermite handheld list [-h] [--state FILE] [--json]
+<details id="handheld-list"><summary><code>thermite handheld list</code></summary><pre class="help">usage: thermite handheld list [-h] [--state-file FILE] [--json]
 
 List the enrolled remotes and the base.
 
 options:
-  -h, --help     show this help message and exit
-  --state FILE   the state file (default: ~/.local/state/thermite/handheld/state.json,
-                 under $XDG_STATE_HOME)
-  --json         print the report as JSON
+  -h, --help         show this help message and exit
+  --state-file FILE  the state file (default:
+                     ~/.local/state/thermite/handheld/state.json, under $XDG_STATE_HOME)
+  --json             print the report as JSON
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet        print only errors
+  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
+  --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite handheld list            the enrolled remotes, their boards, batteries and rooms
 </pre></details>
-<details id="handheld-forget"><summary><code>thermite handheld forget</code></summary><pre class="help">usage: thermite handheld forget [-h] [--port DEVICE] [--state FILE] NAME
+<details id="handheld-forget"><summary><code>thermite handheld forget</code></summary><pre class="help">usage: thermite handheld forget [-h] [--port DEVICE] [--state-file FILE] NAME
 
 Forget an enrolled remote.
 
 positional arguments:
-  NAME           the remote&#x27;s name (thermite handheld list)
+  NAME               the remote&#x27;s name (thermite handheld list)
 
 options:
-  -h, --help     show this help message and exit
-  --port DEVICE  also erase the enrolment on the remote connected by USB here
-  --state FILE   the state file (default: ~/.local/state/thermite/handheld/state.json,
-                 under $XDG_STATE_HOME)
+  -h, --help         show this help message and exit
+  --port DEVICE      also erase the enrolment on the remote connected by USB here
+  --state-file FILE  the state file (default:
+                     ~/.local/state/thermite/handheld/state.json, under $XDG_STATE_HOME)
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet        print only errors
+  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
+  --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite handheld forget lounge --port /dev/ttyACM1
@@ -2607,8 +2778,8 @@ Log this terminal into a site.
 options:
   -h, --help         show this help message and exit
   --url URL          the gateway as https://HOST:PORT, HOST:PORT or HOST, as thermite
-                     tui takes it (default: a selected site&#x27;s installed gateway, else
-                     https://thermite:13601)
+                     tui takes it (default: THERMITE_URL when it names a server, else a
+                     selected site&#x27;s installed gateway, else https://thermite:13601)
   --user USER        site username
   --ca-file CA_FILE  trusted private CA certificate file
   --json             print the report as JSON
@@ -2629,8 +2800,8 @@ Revoke this terminal&#x27;s site credential.
 options:
   -h, --help     show this help message and exit
   --url URL      the gateway as https://HOST:PORT, HOST:PORT or HOST, as thermite tui
-                 takes it (default: a selected site&#x27;s installed gateway, else
-                 https://thermite:13601)
+                 takes it (default: THERMITE_URL when it names a server, else a selected
+                 site&#x27;s installed gateway, else https://thermite:13601)
   --json         print the report as JSON
 
 switches every verb takes:
@@ -2649,8 +2820,8 @@ Read this terminal&#x27;s current site identity and policies.
 options:
   -h, --help     show this help message and exit
   --url URL      the gateway as https://HOST:PORT, HOST:PORT or HOST, as thermite tui
-                 takes it (default: a selected site&#x27;s installed gateway, else
-                 https://thermite:13601)
+                 takes it (default: THERMITE_URL when it names a server, else a selected
+                 site&#x27;s installed gateway, else https://thermite:13601)
   --room ROOM    also read this room&#x27;s policy (repeatable)
   --json         print the report as JSON
 

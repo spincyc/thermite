@@ -128,6 +128,8 @@ class Scratch(unittest.TestCase):
         self.enterContext(mock.patch.dict(os.environ, environment))
         os.environ.pop("NODE_EXTRA_CA_CERTS", None)
         os.environ.pop("OPENHAB_REMOTE_TUI_BUILD", None)
+        os.environ.pop(oh_cli.URL_VARIABLE, None)
+        os.environ.pop("THERMITE_SITE_URL", None)
         # No site, no installed gateway on this computer.
         self.enterContext(mock.patch.object(oh_cli, "AREA", self.site))
         self.enterContext(mock.patch.object(tui, "UNIT", self.root / "no-unit.service"))
@@ -301,9 +303,114 @@ class Delegation(Scratch):
         import argparse
         arguments = argparse.Namespace(pair=True, still=False, log_visible=None, room="r", choose=None,
                                        mode=None, volume="buttons", latency=None, matrix_down=False,
-                                       state=Path("/state.json"), mock=True, url=None, sandbox=False)
+                                       state_file=Path("/state.json"), mock=True, url=None, sandbox=False)
         self.assertEqual(remote.node_argv(arguments, "node", Path("/b")),
                          remote.main_js("node", Path("/b"), Path("/state.json"), ["--mock"], arguments))
+
+
+    def test_state_file_names_where_the_view_is_kept(self):
+        _, (command, _) = self.prepared("--state-file", str(self.root / "kept.json"))
+        self.assertEqual(command[command.index("--state") + 1], str(self.root / "kept.json"))
+
+    def test_the_old_state_switch_warns_and_does_the_same(self):
+        status, _, err = self.run_main("--state", str(self.root / "kept.json"))
+        self.assertEqual(status, 0, err)
+        self.assertIn("thermite tui: --state is now --state-file; --state goes in the next release", err)
+        _, prepare, _ = self.launch.call_args.args
+        command = prepare("/usr/bin/node")[0]
+        self.assertEqual(command[command.index("--state") + 1], str(self.root / "kept.json"))
+        self.assertNotIn("--state ", oh_cli.parser_of("tui").format_help())
+
+
+class NamedServer(Scratch):
+    """Without --url: THERMITE_URL, then the selected site's installed gateway, then thermite."""
+
+    def named(self, value):
+        self.enterContext(mock.patch.dict(os.environ, {oh_cli.URL_VARIABLE: value}))
+
+    def test_an_ssh_url_names_the_host_whose_gateway_is_https_on_the_default_port(self):
+        self.named("ssh://ann@192.0.2.60:2222/~/site")
+        self.assertEqual(tui.resolve(None), f"https://192.0.2.60:{PORT}")
+        status, _, err = self.run_main()
+        self.assertEqual(status, 0, err)
+        self.assertEqual(self.opened[0][0], f"https://192.0.2.60:{PORT}{tui.MODEL_PATH}")
+
+    def test_an_ssh_url_of_an_ipv6_address_and_a_host_without_a_user(self):
+        self.named("ssh://[2001:db8::60]")
+        self.assertEqual(tui.resolve(None), f"https://[2001:db8::60]:{PORT}")
+        self.named("ssh://thermite.example")
+        self.assertEqual(tui.resolve(None), f"https://thermite.example:{PORT}")
+
+    def test_an_https_url_is_taken_as_it_is(self):
+        self.named("https://thermite.example:16301")
+        self.assertEqual(tui.resolve(None), "https://thermite.example:16301")
+
+    def test_an_explicit_url_wins(self):
+        self.named("https://thermite.example:16301")
+        status, _, err = self.run_main("--url", "192.0.2.50")
+        self.assertEqual(status, 0, err)
+        self.assertEqual(self.opened[0][0], f"https://192.0.2.50:{PORT}{tui.MODEL_PATH}")
+
+    def test_a_wrong_one_is_named_by_where_it_came_from(self):
+        self.named("http://192.0.2.50")
+        status, _, err = self.run_main()
+        self.assertEqual(status, 2)
+        self.assertIn("THERMITE_URL=http://192.0.2.50: plain http only reaches this computer", err)
+        self.assertNotIn("--url None", err)
+        self.assertEqual(self.opened, [])
+
+    def test_the_selected_sites_installed_gateway_comes_after_it_and_before_thermite(self):
+        profile = {"url": "https://thermite.example:16301", "ca_file": "/site/tls-cert.pem"}
+        with mock.patch.object(client, "deployment", return_value=profile):
+            self.assertEqual(tui.resolve(None), "https://thermite.example:16301")
+            self.assertEqual(tui.chosen(None), (profile["url"], "the installed gateway " + profile["url"]))
+            self.named("ssh://192.0.2.60")
+            self.assertEqual(tui.resolve(None), f"https://192.0.2.60:{PORT}")
+        with mock.patch.object(client, "deployment", side_effect=ValueError("damaged")):
+            os.environ.pop(oh_cli.URL_VARIABLE)
+            self.assertEqual(tui.resolve(None), f"https://thermite:{PORT}")
+
+    def test_tui_opens_the_installed_gateway_with_its_authority(self):
+        ca = str(self.authority())
+        profile = {"url": "https://thermite.example:16301", "ca_file": ca}
+        with mock.patch.object(client, "deployment", return_value=profile):
+            status, _, err = self.run_main()
+        self.assertEqual(status, 0, err)
+        self.assertEqual(self.opened[0][0], "https://thermite.example:16301" + tui.MODEL_PATH)
+        _, prepare, _ = self.launch.call_args.args
+        with mock.patch.object(client, "deployment", return_value=profile):
+            self.assertEqual(prepare("/usr/bin/node")[1]["NODE_EXTRA_CA_CERTS"], ca)
+
+    def test_remote_takes_it_after_thermite_site_url_and_before_the_installed_gateway(self):
+        import argparse
+        arguments = argparse.Namespace(mock=False, native=False, url=None, sandbox=False)
+        profile = {"url": "https://thermite.example:16301", "ca_file": "/site/tls-cert.pem"}
+        self.named("ssh://ann@192.0.2.60")
+        with mock.patch.object(client, "deployment", return_value=profile):
+            self.assertEqual(remote.target(arguments), ["--url", f"https://192.0.2.60:{PORT}"])
+            with mock.patch.dict(os.environ, {"THERMITE_SITE_URL": "https://site.example"}):
+                self.assertEqual(remote.target(arguments), ["--url", "https://site.example"])
+            os.environ.pop(oh_cli.URL_VARIABLE)
+            self.assertEqual(remote.target(arguments), ["--url", profile["url"]])
+        self.named("ftp://192.0.2.60")
+        with self.assertRaisesRegex(remote.RemoteModelError, "THERMITE_URL=ftp://192.0.2.60: a gateway is https"):
+            remote.target(arguments)
+        explicit = argparse.Namespace(mock=False, native=False, url="https://other.example/", sandbox=False)
+        self.assertEqual(remote.target(explicit), ["--url", "https://other.example"])
+
+
+class RemoteStateFile(unittest.TestCase):
+    def test_state_file_and_the_old_state_switch_name_the_same_file(self):
+        self.assertEqual(remote.parser().parse_args([]).state_file, remote.STATE)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            new = remote.parser().parse_args(["--state-file", "/tmp/kept.json"])
+        self.assertEqual((new.state_file, err.getvalue()), (Path("/tmp/kept.json"), ""))
+        with contextlib.redirect_stderr(err):
+            old = remote.parser().parse_args(["--state", "/tmp/kept.json"])
+        self.assertEqual(old.state_file, Path("/tmp/kept.json"))
+        self.assertIn("thermite remote: --state is now --state-file", err.getvalue())
+        self.assertIn("--state-file FILE", oh_cli.parser_of("remote").format_help())
 
 
 class Trust(Scratch):

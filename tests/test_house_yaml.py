@@ -266,7 +266,7 @@ class Verbs(Scratch):
         at = next(number for number, line in enumerate(lines) if line.strip().startswith("mac: "))
         lines[at] = lines[at].split("mac: ")[0] + "mac: " + ADDRESS
         self.house.write_text("\n".join(lines) + "\n")
-        for argv in (["generate", "--check", "--house"], ["validate", "--house"], ["dhcp-reservations", "--house"]):
+        for argv in (["generate", "--check", "--house"], ["check", "house", "--house"], ["dhcp-reservations", "--house"]):
             with self.subTest(argv=argv):
                 code, _, err = run(*argv, str(self.house))
                 self.assertEqual(code, 2)
