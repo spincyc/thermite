@@ -1,12 +1,15 @@
 """OREI BK-808 8x8 HDMI matrix (an HDCVT HDP-MXC88A) over its JSON API.
 
-Two Number points per port pair, read back at each poll (_instr.REFRESH)
-and set by commanding the Item:
+Number points for each port, read back at each poll (_instr.REFRESH) and
+set by commanding the Item:
 
 - `<id>_output<N>_input`: the input routed to output N;
 - `<id>_input<N>_edid`: the EDID code input N presents to its source (EDID
   below), which the routing (oh_features.routing) sets as rooms turn sources
-  on and off.
+  on and off;
+- `<id>_output<N>_scaler`: what output N's scaler does (SCALER below), which
+  the routing sets only on the audio output of a room that names a scaler
+  for some of its sources (routing.rooms.<room>.hdmi_audio_scaler).
 
 Read-only String snapshots `<id>_input_signal` and `<id>_output_signal`
 describe presented EDIDs, sink connections and output processing settings.
@@ -14,9 +17,9 @@ They never infer a negotiated resolution or HDR format from an EDID preset.
 The input snapshot reuses its existing poll; output settings add the known
 `get output status` read to each polling cycle.
 
-The matrix's fixed settings (`settings` in devices.yaml: scaler, HDR and HDCP
-on every output, and the EDID of inputs the routing leaves alone) are
-applied once by bin/thermite matrix-settings, never by a rule.
+bin/thermite matrix-settings applies the matrix's fixed settings from
+devices.yaml. For an audio output with a source-specific scaler, routing
+sets the scaler and restores the configured default on every other choice.
 """
 
 from __future__ import annotations
@@ -34,16 +37,19 @@ HEADER = (
     "HDMI matrix routing over the BK-808's JSON API (HTTP binding). Each",
     "output's input is polled with `get video status` and switched with",
     "`video switch`; each input's EDID is polled with `get input status` and",
-    "set with `set edid`. Items are autoupdate off: they show only what the",
-    "matrix reports.",
+    "set with `set edid`; each output's scaler is polled with `get output",
+    "status` and set with `set video scaler`. Items are autoupdate off: they",
+    "show only what the matrix reports.",
 )
 ADDONS = instr.ADDONS
 ASSETS: dict[str, str] = {}
 INPUTS = OUTPUTS = 8
 READBACK_INPUTS = tuple(str(number) for number in range(1, INPUTS + 1))
 KINDS = {"hdmi_matrix"}
-#: All that the Thing ever sends: it reads and sets routing and input EDIDs.
-COMHEADS = frozenset({"get video status", "video switch", "get input status", "get output status", "set edid"})
+#: All that the Thing ever sends: it reads and sets routing, input EDIDs and
+#: output scalers.
+COMHEADS = frozenset({"get video status", "video switch", "get input status", "get output status", "set edid",
+                      "set video scaler"})
 thing_uid = instr.thing_uid
 url = instr.url
 
@@ -67,7 +73,8 @@ OUTPUT_SETTINGS = {
 }
 DEVICE_KEYS = {"settings": Key(MAPPING, "the matrix's fixed settings, which thermite matrix-settings applies once", keys={
     "edid": Key(MAPPING, "the EDID each input presents", by="input number, or default", each=Key(TEXT, "an EDID name")),
-    "scaler": Key(TEXT, "what the outputs' scalers do", choices=tuple(SCALER)),
+    "scaler": Key(TEXT, "the default scaler for every output, including the value restored after a "
+                        "source-specific hdmi_audio_scaler", choices=tuple(SCALER)),
     "hdr": Key(TEXT, "the outputs' HDR conversion", choices=tuple(HDR)),
     "hdcp": Key(TEXT, "the HDCP version the outputs ask for, in quotes", choices=tuple(HDCP))})}
 
@@ -92,10 +99,15 @@ def copy_edid(output: int) -> str:
     return f"copy-output-{output}"
 
 
+def scaler_item(device: dict, output: int) -> str:
+    """The Item holding the scaler code of `output`."""
+    return f"{device['id']}_output{output}_scaler"
+
+
 def fields(device: dict) -> dict[str, dict]:
     """The routing executor's fields (oh_integrations): each output's input
-    and each input's EDID code, written and read through the Thing's own
-    channel; the matrix acknowledges a write with {"result": 1}. Each is
+    and scaler code and each input's EDID code, written and read through the
+    Thing's own channel; the matrix acknowledges a write with {"result": 1}. Each is
     independent: a request names its one port, so a lost answer leaves the
     other ports as they were."""
     uid = thing_uid(device)
@@ -107,6 +119,10 @@ def fields(device: dict) -> dict[str, dict]:
     out.update({edid_item(device, input_): {"kind": "http", "thing": uid, "channel": f"input{input_}_edid",
                                             "values": codes, "ack": "result", "independent": True}
                 for input_ in range(1, INPUTS + 1)})
+    scalers = [str(code) for code in sorted(SCALER.values())]
+    out.update({scaler_item(device, output): {"kind": "http", "thing": uid, "channel": f"output{output}_scaler",
+                                              "values": scalers, "ack": "result", "independent": True}
+                for output in range(1, OUTPUTS + 1)})
     return out
 
 
@@ -165,7 +181,7 @@ def validate(device: dict) -> list[str]:
             problems.append(f"{where}.settings.edid.{key}: {name!r} is not an EDID name "
                             f"(such as 4k60-444-hdr-2ch or copy-output-1)")
     for setting, (codes, *_) in OUTPUT_SETTINGS.items():
-        if setting in settings and settings[setting] not in codes:
+        if setting in settings and not (isinstance(settings[setting], str) and settings[setting] in codes):
             problems.append(f"{where}.settings.{setting}: {settings[setting]!r} is not one of "
                             f"{', '.join(codes)}")
     for key in sorted(set(settings) - {"edid", *OUTPUT_SETTINGS}):
@@ -193,6 +209,15 @@ def render(device: dict, house: House, out: YamlFile) -> None:
         thing["channels"][channel] = instr.number_channel(f"Output {output} input", "get video status",
                                                           "allsource", output, command)
         out.items[switch_item(device, output)] = _point(device, f"Output {output} input", channel, "video")
+    scalers = options_text((code, name) for name, code in SCALER.items())
+    for output in range(1, OUTPUTS + 1):
+        channel = f"output{output}_scaler"
+        command = f"JSON.stringify({{comhead:'set video scaler',language:0,scaler:[{output},parseInt(input)]}})"
+        thing["channels"][channel] = instr.number_channel(f"Output {output} scaler", "get output status",
+                                                          "allscaler", output, command)
+        item = _point(device, f"Output {output} scaler", channel, "screen")
+        item["metadata"] = {"stateDescription": {"config": {"options": scalers}}}
+        out.items[scaler_item(device, output)] = item
     names = options_text((code, name) for name, code in EDID.items())
     for input_ in range(1, INPUTS + 1):
         channel = f"input{input_}_edid"
@@ -236,9 +261,9 @@ def _name(codes: dict, code: object) -> str:
     return next((name for name, value in codes.items() if value == code), f"code {code}")
 
 
-def plan(device: dict, status: dict[str, dict]) -> list[tuple[str, str]]:
-    """(what changes, request body) for every setting that differs from
-    `status`, the matrix's answers to the comheads in STATUS."""
+def plan(device: dict, status: dict[str, dict], routed_scalers: frozenset[int] = frozenset()) -> list[tuple[str, str]]:
+    """(what changes, request body) for each differing fixed setting.
+    Routing owns the scaler on each output in `routed_scalers`."""
     want = desired(device)
     changes = []
     edids = status["get input status"]["edid"]
@@ -251,6 +276,8 @@ def plan(device: dict, status: dict[str, dict]) -> list[tuple[str, str]]:
         if setting not in want:
             continue
         for port in range(1, OUTPUTS + 1):
+            if setting == "scaler" and port in routed_scalers:
+                continue
             current = outputs[field][port - 1]
             if current != want[setting]:
                 changes.append((f"output {port} {setting} {_name(codes, current)} -> "

@@ -150,6 +150,12 @@ _TABLE = (
     Hook("copy_edid", FUNCTION, "copy_edid(output) -> str: the EDID name that copies the display on that output",
          needs=("EDID",)),
 
+    # An HDMI matrix whose outputs can each scale the picture their own way.
+    Hook("SCALER", CONSTANT, "{name: code} of what an output's scaler can do", needs=("scaler_item",)),
+    Hook("scaler_item", FUNCTION, """
+        scaler_item(device, output) -> str: the Number Item holding the
+        output's scaler code; it is commanded with a code""", needs=("SCALER",)),
+
     # A module that switches an HDMI switch in front of one display (a
     # room's hdmi_switch in the routing) provides these instead of ports()
     # and switch_item(), with COMHEADS and thing_uid() and url(), or aim(),
@@ -227,9 +233,11 @@ _TABLE = (
         Read only from the integration that answers plan(): others keep
         their own status requests under the name"""),
     Hook("plan", FUNCTION, """
-        plan(device, status) -> [(what changes, request body), ...]: for
-        bin/thermite matrix-settings, which reads STATUS, prints the plan
-        and sends the bodies only when asked to""", order=("bk808_http",), needs=("STATUS",)),
+        plan(device, status, routed_scalers) -> [(what changes, request
+        body), ...]: for bin/thermite matrix-settings, which reads STATUS,
+        prints the plan and sends the bodies only when asked to. It leaves
+        alone the scaler of the outputs in routed_scalers, which the routing
+        sets (oh_features.routing.routed_scalers())""", order=("bk808_http",), needs=("STATUS",)),
 
     Hook("CONTROL", CONSTANT, """
         True: an observe module implements the control phase too. A device

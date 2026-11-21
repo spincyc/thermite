@@ -352,6 +352,126 @@
         "8": "Off"
       }
     },
+    "example_matrix_output1_scaler": {
+      "label": "Output 1 scaler",
+      "device": "Example Matrix (HDMI matrix)",
+      "room": "Example West",
+      "kind": "enum",
+      "states": true,
+      "commands": true,
+      "options": {
+        "0": "bypass",
+        "1": "8k-to-4k",
+        "2": "to-1080p",
+        "3": "auto",
+        "4": "audio-only"
+      }
+    },
+    "example_matrix_output2_scaler": {
+      "label": "Output 2 scaler",
+      "device": "Example Matrix (HDMI matrix)",
+      "room": "Example West",
+      "kind": "enum",
+      "states": true,
+      "commands": true,
+      "options": {
+        "0": "bypass",
+        "1": "8k-to-4k",
+        "2": "to-1080p",
+        "3": "auto",
+        "4": "audio-only"
+      }
+    },
+    "example_matrix_output3_scaler": {
+      "label": "Output 3 scaler",
+      "device": "Example Matrix (HDMI matrix)",
+      "room": "Example West",
+      "kind": "enum",
+      "states": true,
+      "commands": true,
+      "options": {
+        "0": "bypass",
+        "1": "8k-to-4k",
+        "2": "to-1080p",
+        "3": "auto",
+        "4": "audio-only"
+      }
+    },
+    "example_matrix_output4_scaler": {
+      "label": "Output 4 scaler",
+      "device": "Example Matrix (HDMI matrix)",
+      "room": "Example West",
+      "kind": "enum",
+      "states": true,
+      "commands": true,
+      "options": {
+        "0": "bypass",
+        "1": "8k-to-4k",
+        "2": "to-1080p",
+        "3": "auto",
+        "4": "audio-only"
+      }
+    },
+    "example_matrix_output5_scaler": {
+      "label": "Output 5 scaler",
+      "device": "Example Matrix (HDMI matrix)",
+      "room": "Example West",
+      "kind": "enum",
+      "states": true,
+      "commands": true,
+      "options": {
+        "0": "bypass",
+        "1": "8k-to-4k",
+        "2": "to-1080p",
+        "3": "auto",
+        "4": "audio-only"
+      }
+    },
+    "example_matrix_output6_scaler": {
+      "label": "Output 6 scaler",
+      "device": "Example Matrix (HDMI matrix)",
+      "room": "Example West",
+      "kind": "enum",
+      "states": true,
+      "commands": true,
+      "options": {
+        "0": "bypass",
+        "1": "8k-to-4k",
+        "2": "to-1080p",
+        "3": "auto",
+        "4": "audio-only"
+      }
+    },
+    "example_matrix_output7_scaler": {
+      "label": "Output 7 scaler",
+      "device": "Example Matrix (HDMI matrix)",
+      "room": "Example West",
+      "kind": "enum",
+      "states": true,
+      "commands": true,
+      "options": {
+        "0": "bypass",
+        "1": "8k-to-4k",
+        "2": "to-1080p",
+        "3": "auto",
+        "4": "audio-only"
+      }
+    },
+    "example_matrix_output8_scaler": {
+      "label": "Output 8 scaler",
+      "device": "Example Matrix (HDMI matrix)",
+      "room": "Example West",
+      "kind": "enum",
+      "states": true,
+      "commands": true,
+      "options": {
+        "0": "bypass",
+        "1": "8k-to-4k",
+        "2": "to-1080p",
+        "3": "auto",
+        "4": "audio-only"
+      }
+    },
     "example_matrix_input1_edid": {
       "label": "Input 1 EDID",
       "device": "Example Matrix (HDMI matrix)",

@@ -16,7 +16,12 @@ a source or Off does there (`on_actions`, `off_actions`: a curtain and
 lights, say), which dedicated sources explicitly enter standby on Off
 (`sleep_sources`), and, under
 `edid`, whether a source's input follows the EDID of the room display it is
-turned on in. A room without an `hdmi_output` offers only sources cabled
+turned on in. A room whose sound leaves the matrix on an output of its own
+(`hdmi_audio_output`) may name, by source, what that output's scaler does
+while the room shows the source (`hdmi_audio_scaler`: audio-only for a
+computer whose picture its receiver need not convert); every other choice,
+Off included, gives the output the matrix's fixed scaler
+(`settings.scaler`) back. A room without an `hdmi_output` offers only sources cabled
 to it, and one whose id is not a room's names its room (`room`), as the
 example beside the Office's desk screen does. A house with no HDMI matrix
 leaves out `hdmi_matrix` and `hdmi_off_input`, and one with no USB matrix
@@ -85,9 +90,10 @@ The matrices are any devices whose integration can switch (`ports()` and
 `switch_item()`, as bk808_http and ukm404_http provide), the HDMI switches
 any devices whose integration has `INPUTS` and `input_item()`, as
 vrroom_telnet does, receivers and displays any whose integration has
-`stage()`, as denonmarantz_http and sony_adcp do, and EDIDs need an HDMI
-matrix integration with `EDID`, `edid_item()` and `copy_edid()`, so this
-module knows rooms and sources, not protocols.
+`stage()`, as denonmarantz_http and sony_adcp do, EDIDs need an HDMI
+matrix integration with `EDID`, `edid_item()` and `copy_edid()`, and
+scalers one with `SCALER` and `scaler_item()`, so this module knows rooms
+and sources, not protocols.
 """
 
 from __future__ import annotations
@@ -157,6 +163,11 @@ ROOM = {
     "hdmi_output": Key(NUMBER, "the HDMI matrix output its screen is on; without one it offers only sources cabled to it"),
     "hdmi_audio_output": Key(NUMBER, "a second matrix output, to its receiver, for a room whose picture and sound "
                                      "leave the matrix apart"),
+    "hdmi_audio_scaler": Key(MAPPING, "what the scaler of its hdmi_audio_output does while it shows some of its "
+                                      "sources from the HDMI matrix (audio-only for a computer whose picture its "
+                                      "receiver need not convert); any other choice, Off included, gives the output "
+                                      "the matrix's settings.scaler back", by="source",
+                             each=Key(TEXT, "one of the HDMI matrix's scaler names")),
     "hdmi_switch": Key(MAPPING, "the HDMI switch in front of its display, or one output of a matrix of its own", keys={
         "device": Key(TEXT, "the switch's device id", required=True),
         "output": Key(NUMBER, "which output of a matrix of its own the room is on"),
@@ -592,6 +603,9 @@ def validate(data: object) -> list[str]:
                 problems.append(f"{where}.sources: {source} is on the HDMI matrix, and this room has no hdmi_output")
         if len(set(map(str, offered))) != len(offered):
             problems.append(f"{where}.sources: lists a source twice")
+        if "hdmi_audio_scaler" in entry:
+            problems += _audio_scaler_problems(f"{where}.hdmi_audio_scaler", entry, offered, sources, routing,
+                                               devices, hdmi is not None)
         if "edid" in entry and not fed:
             problems.append(f"{where}.edid: only applies with an hdmi_output")
         elif "edid" in entry:
@@ -657,6 +671,40 @@ def _audio_problems(where: str, data: dict, room: str, devices: dict) -> list[st
     if ident not in stages and device.get("room") not in covered_rooms(House.unchecked(data), room):
         return [f"{where}.audio: {ident} is in {device.get('room')}, not in a room {room} covers"]
     return []
+
+
+def _audio_scaler_problems(where: str, entry: dict, offered: list, sources: dict, routing: dict, devices: dict,
+                           hdmi_ok: bool) -> list[str]:
+    """Problems with a room's hdmi_audio_scaler: by source the room takes
+    from the HDMI matrix, one of the matrix's scaler names. The matrix needs
+    a fixed scaler (its settings.scaler) for the room's other choices to give
+    the output back."""
+    scalers = entry["hdmi_audio_scaler"]
+    if "hdmi_audio_output" not in entry:
+        return [f"{where}: needs hdmi_audio_output, the output whose scaler it sets"]
+    if not isinstance(scalers, dict) or not scalers:
+        return [f"{where}: must map sources to a scaler name"]
+    if not hdmi_ok:
+        return []  # routing.hdmi_matrix says what is wrong
+    device = devices[routing["hdmi_matrix"]]
+    module = switcher(device)
+    if module.SCALER is None:
+        return [f"{where}: {module.NAME} cannot set an output's scaler"]
+    problems = []
+    settings = device.get("settings")
+    fixed = settings.get("scaler") if isinstance(settings, dict) else None
+    if not (isinstance(fixed, str) and fixed in module.SCALER):
+        problems.append(f"{where}: needs {device['id']}.settings.scaler, the scaler the output gets back for the "
+                        "room's other choices")
+    local = _local(entry)
+    for source, name in scalers.items():
+        if source not in offered or source in local or not (isinstance(sources.get(source), dict)
+                                                            and "hdmi_input" in sources[source]):
+            problems.append(f"{where}.{source}: '{source}' is not one of this room's sources from the HDMI matrix")
+        if not (isinstance(name, str) and name in module.SCALER):
+            problems.append(f"{where}.{source}: {name!r} is not a scaler name of {device['id']} "
+                            f"({', '.join(module.SCALER)})")
+    return problems
 
 
 def _carries_problems(where: str, carries: object, offered: list) -> list[str]:
@@ -1153,10 +1201,35 @@ def _switch_item(devices: dict, switch: dict) -> str:
     return module.switch_item(device, switch["output"]) if "output" in switch else module.input_item(device)
 
 
+def audio_scaler(house: House, room: str, choice: str) -> list[list]:
+    """[[Item, code]] that sets the scaler of the room's hdmi_audio_output
+    for `choice`: its hdmi_audio_scaler for the choice, else the matrix's
+    fixed scaler; none for a room without hdmi_audio_scaler."""
+    routing = house.data["routing"]
+    entry = routing["rooms"][room]
+    if "hdmi_audio_scaler" not in entry:
+        return []
+    device = house.by_id[routing["hdmi_matrix"]]
+    module = switcher(device)
+    name = entry["hdmi_audio_scaler"].get(choice, device["settings"]["scaler"])
+    return [[module.scaler_item(device, entry["hdmi_audio_output"]), module.SCALER[name]]]
+
+
+def routed_scalers(house: House, matrix_id: str) -> dict[int, str]:
+    """{output: room} of each output of a matrix whose scaler the routing
+    sets (hdmi_audio_scaler), which thermite matrix-settings leaves alone."""
+    routing = house.data.get("routing") or {}
+    if routing.get("hdmi_matrix") != matrix_id:
+        return {}
+    return {entry["hdmi_audio_output"]: room for room, entry in (routing.get("rooms") or {}).items()
+            if "hdmi_audio_scaler" in entry}
+
+
 def commands(house: House, room: str, choice: str) -> list[list]:
     """[[Item, value], ...] that put `choice` (a source id or OFF) on in
     `room`'s matrices: its HDMI output first (a room without one has
-    none), then its HDMI switch if it has one, then each of its USB device
+    none), then the scaler of its audio output (audio_scaler()) and that
+    output, then its HDMI switch if it has one, then each of its USB device
     ports. A source cabled to the room alone (its HDMI switch, receiver or
     display) turns the room's HDMI output off; any other choice puts the
     switch on the matrix, but Off leaves a switch the matrix does not reach
@@ -1172,9 +1245,11 @@ def commands(house: House, room: str, choice: str) -> list[list]:
     off = routing.get("hdmi_off_input")
     hdmi_input = off if choice in _local(entry) else source.get("hdmi_input", off)
     out = []
-    for key in ("hdmi_output", "hdmi_audio_output"):
-        if key in entry:
-            out.append([_port_item(devices, routing["hdmi_matrix"], entry[key]), hdmi_input])
+    if "hdmi_output" in entry:
+        out.append([_port_item(devices, routing["hdmi_matrix"], entry["hdmi_output"]), hdmi_input])
+    if "hdmi_audio_output" in entry:
+        out += audio_scaler(house, room, choice)
+        out.append([_port_item(devices, routing["hdmi_matrix"], entry["hdmi_audio_output"]), hdmi_input])
     if switch is not None and (local or "matrix_input" in switch):
         out.append([_switch_item(devices, switch), switch["inputs"][choice] if local else switch["matrix_input"]])
     only = (entry.get("usb_only") or {}).get(choice)

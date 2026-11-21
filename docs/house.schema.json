@@ -151,7 +151,7 @@
                 }
               },
               "scaler": {
-                "description": "what the outputs' scalers do",
+                "description": "the default scaler for every output, including the value restored after a source-specific hdmi_audio_scaler",
                 "type": "string",
                 "enum": [
                   "bypass",
@@ -476,6 +476,14 @@
               "hdmi_audio_output": {
                 "description": "a second matrix output, to its receiver, for a room whose picture and sound leave the matrix apart",
                 "type": "number"
+              },
+              "hdmi_audio_scaler": {
+                "description": "what the scaler of its hdmi_audio_output does while it shows some of its sources from the HDMI matrix (audio-only for a computer whose picture its receiver need not convert); any other choice, Off included, gives the output the matrix's settings.scaler back",
+                "type": "object",
+                "additionalProperties": {
+                  "description": "one of the HDMI matrix's scaler names",
+                  "type": "string"
+                }
               },
               "hdmi_switch": {
                 "description": "the HDMI switch in front of its display, or one output of a matrix of its own",

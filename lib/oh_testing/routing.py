@@ -36,9 +36,10 @@ and check that:
 1. each room's Source reads back what its HDMI switch and HDMI output show,
    and runtime wrote nothing to a matrix while it started;
 2. choosing every source a room offers (all rooms at once, round by round)
-   routes the room's HDMI output, HDMI switch and USB device ports as the
-   routing says, wakes the chosen source, powers its receiver and display
-   (off for Off) and puts them on their inputs, sends its actions, has each
+   routes the room's HDMI output (and the scaler of its audio output, under
+   hdmi_audio_scaler), HDMI switch and USB device ports as the routing says,
+   wakes the chosen source, powers its receiver and display (off for Off)
+   and puts them on their inputs, sends its actions, has each
    source's input present the EDID of a room showing it (the idle EDID
    once none does), and a choice the room does not offer sends nothing;
 3. a switch made at the matrix, at a room's HDMI switch (a keypad, the
@@ -59,7 +60,7 @@ and check that:
 7. All off, sent as the page sends it, turns every room Off as a choice
    of Off would (all_off.js; devices outside the routing are omitted);
 8. the simulated matrices heard only the comheads each Thing or rule may send (no
-   fixed setting such as scaler or HDCP) and refused none;
+   fixed setting such as HDR or HDCP) and refused none;
 9. openhab.log holds no ERROR and no model problem.
 
 It uses the test runtime of thermite test boot (127.0.0.1:13619) and its
@@ -228,6 +229,11 @@ class Check:
             if "hdmi_switch" in entry:
                 self.ports[self.table[room]["switch"]["item"]] = (entry["hdmi_switch"]["device"],
                                                                   entry["hdmi_switch"].get("output", 0))
+        #: scaler Item -> (HDMI matrix id, output) of each output whose
+        #: scaler the routing sets (hdmi_audio_scaler)
+        hdmi_id = self.routing["hdmi_matrix"]
+        self.scalers = {self.modules[hdmi_id].scaler_item(self.devices[hdmi_id], output): (hdmi_id, output)
+                        for output in routing.routed_scalers(house, hdmi_id)}
         #: a receiver's or display's input Item -> the inputs it takes
         self.inputs = {stage["input"]: stage["inputs"] for room in self.table
                        for _, stage in routing.stages(house, room)}
@@ -257,7 +263,7 @@ class Check:
         at their simulators."""
         house = self.house
         built = render.build(house)
-        contract = simulated_lifecycle(routing.table(house), set(self.ports))
+        contract = simulated_lifecycle(routing.table(house), set(self.ports) | set(self.scalers))
         if "lifecycle" in contract:
             from oh_features.routing import lifecycle_io
             # Regenerate custom matrix actor adapters with the projected epoch;
@@ -385,7 +391,10 @@ class Check:
             time.sleep(0.05)
 
     def matrices(self) -> dict[str, int]:
-        return {item: self.sims[ident].get(port) for item, (ident, port) in self.ports.items()}
+        """What each port Item, and each routed scaler Item, should read."""
+        out = {item: self.sims[ident].get(port) for item, (ident, port) in self.ports.items()}
+        out.update({item: self.sims[ident].scaler(port) for item, (ident, port) in self.scalers.items()})
+        return out
 
     def executor_idle(self, what: str, timeout: float = STEP) -> bool:
         """Let queued writes retire before a passive fixture change/baseline.

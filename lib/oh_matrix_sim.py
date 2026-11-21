@@ -170,6 +170,11 @@ class BK808(Matrix):
             self._set({"comhead": "video switch", "source": [port, value]}, "source", "get video status",
                       "allsource", range(1, self.INPUTS + 1), 0)
 
+    def scaler(self, output: int) -> int:
+        """The scaler code of output `output`."""
+        with self.lock:
+            return self.status["get output status"]["allscaler"][output - 1]
+
     def edid(self, input_: int) -> int:
         """The EDID code input `input_` presents."""
         with self.lock:

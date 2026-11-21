@@ -7,6 +7,11 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A room with separate HDMI matrix outputs for its screen and receiver can
+  set `hdmi_audio_scaler` by source. Selecting a computer can now send
+  audio-only to the receiver while the screen keeps its own video route.
+  Other sources and Off restore the matrix's configured scaler.
+  `thermite matrix-settings --apply` skips the routing-controlled scaler.
 - Signal & audio follows explicit audio forks (`audio_link`), keeps known
   audio endpoints visible when their wiring is unknown, and follows the
   confirmed synced route even when the source name stays the same. Passive

@@ -9,16 +9,18 @@ from types import ModuleType
 import oh_integrations as integrations
 import oh_cli
 from oh_conf import House, uses
+from oh_features import routing
 from oh_integrations import _instr as instr
 
 DESCRIPTION = """\
-Read every matrix that has `settings` in instance/devices.yaml (on the
-BK-808: scaler, HDR and HDCP on each output, and the EDID of any input fixed
-there) and print each setting that differs from what devices.yaml asks for.
-With --apply, send those changes one at a time, read the settings back and
-fail on any that did not take or got no answer. Nothing else is written, and
-runtime never writes these settings itself. (The EDIDs of the inputs that
-sources use follow the routing instead: routing.edid in devices.yaml.)
+Compare each matrix with its `settings` in instance/devices.yaml and print
+the differences. On the BK-808 these settings cover output scalers, HDR
+conversion, HDCP and fixed input EDIDs. When a room has hdmi_audio_scaler,
+routing sets the scaler on its audio output and this command skips it.
+Inputs with a routing EDID follow routing.edid when a room selects a source.
+
+With --apply, send the fixed-setting changes one at a time, read them back
+and fail on any that did not take or got no answer.
 
 A change can blank the room on that output, or the rooms watching that
 input, for a few seconds while the display and the source renegotiate:
@@ -82,10 +84,15 @@ def send(changes: list[tuple[str, str]], address: str, request=instr.request, pa
 
 
 def run(device: dict, module: ModuleType, address: str, apply: bool, request=instr.request,
-        pause: float = PAUSE, log=print) -> int:
-    """Check (and with apply, fix) one matrix; returns its exit status."""
+        pause: float = PAUSE, log=print, routed: dict[int, str] | None = None) -> int:
+    """Check one matrix's fixed settings, applying changes when requested.
+    `routed` maps each routing-owned scaler output to its room."""
     where = f"{device['id']} ({device.get('name') or device.get('model')}, {address})"
-    changes = module.plan(device, read_status(module, address, request))
+    routed = routed or {}
+    skip = frozenset(routed)
+    for output, room in sorted(routed.items()):
+        log(f"{where}: output {output} scaler left to the routing ({room})")
+    changes = module.plan(device, read_status(module, address, request), skip)
     if not changes:
         log(f"{where}: every setting matches")
         return 0
@@ -95,7 +102,7 @@ def run(device: dict, module: ModuleType, address: str, apply: bool, request=ins
             log(f"  {what}")
         return 1
     refused = send(changes, address, request, pause, log)
-    remaining = module.plan(device, read_status(module, address, request))
+    remaining = module.plan(device, read_status(module, address, request), skip)
     for what in refused:
         log(f"  REFUSED  {what}")
     for what, _ in remaining:
@@ -116,7 +123,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.address and not args.device:
         parser.error("--address needs --device")
-    chosen = targets(House.load(args.house), args.device)
+    house = House.load(args.house)
+    chosen = targets(house, args.device)
     if not chosen:
         print(f"thermite matrix-settings: no device{' ' + args.device if args.device else ''} has settings "
               "to apply", file=sys.stderr)
@@ -124,7 +132,8 @@ def main(argv: list[str] | None = None) -> int:
     status = 0
     for device, module in chosen:
         try:
-            status = max(status, run(device, module, args.address or device["ip"], args.apply))
+            status = max(status, run(device, module, args.address or device["ip"], args.apply,
+                                     routed=routing.routed_scalers(house, device["id"])))
         except (OSError, ValueError, KeyError, IndexError, TypeError) as exc:
             print(f"thermite matrix-settings: {device['id']}: no usable answer: {exc}", file=sys.stderr)
             status = 2

@@ -17,7 +17,7 @@ def active_requirements(house: House, room: str, choice: str) -> dict[str, str]:
     Kept independent of executor support so policy verification and lifecycle
     compilation can consume the same wiring contract.
     """
-    from . import (OFF, STAGES, commands, inputs, power, stages, usb_host, wake,
+    from . import (OFF, STAGES, audio_scaler, commands, inputs, power, stages, usb_host, wake,
                    _port_item)
 
     if choice == OFF:
@@ -43,6 +43,8 @@ def active_requirements(house: House, room: str, choice: str) -> dict[str, str]:
             participating.update(_port_item(devices, matrix, port) for port in moved)
     master_items = {_port_item(devices, routing["hdmi_matrix"], entry[key])
                     for key in ("hdmi_output", "hdmi_audio_output") if key in entry}
+    # The audio output's scaler goes with the output: a local source parks both.
+    master_items.update(item for item, _ in audio_scaler(house, room, choice))
     switch_device = entry.get("hdmi_switch", {}).get("device")
     result = {}
     for item, value in power(house, room, choice) + commands(house, room, choice) + chosen_inputs:
@@ -60,7 +62,7 @@ def active_requirements(house: House, room: str, choice: str) -> dict[str, str]:
 
 def compile_descriptor(house: House, base_table: dict, caps: dict) -> dict:
     """Return a finite lifecycle descriptor without rendering or mutations."""
-    from . import (OFF, stages, usb_host, wake, switcher,
+    from . import (OFF, audio_scaler, stages, usb_host, wake, switcher,
                    _port_item, _switch_item)
 
     routing = house.data.get("routing")
@@ -314,6 +316,15 @@ def compile_descriptor(house: House, base_table: dict, caps: dict) -> dict:
                 release_values.setdefault(item, str(value))
             for _, stage in stages(house, room):
                 release_values[stage["power"]] = "OFF"
+        # The executor can run independent matrix fields concurrently. Verify
+        # the scaler before switching the receiver feed to a source so that
+        # its picture is processed as the route expects from the first frame.
+        for scaler, _ in audio_scaler(house, room, OFF):
+            output = raw["audioHdmi"]
+            for route in choices.values():
+                required = route["requirements"]
+                if output in required and scaler in required:
+                    resources[output]["requires"][required[output]] = {scaler: required[scaler]}
         # A follower's synced route is its own with its zone on the leader's
         # input, and leases the leader's matrix output at the source: the
         # reference count that keeps the leader from moving it, and the

@@ -425,9 +425,10 @@ and check that:
 1. each room&#x27;s Source reads back what its HDMI switch and HDMI output show,
    and runtime wrote nothing to a matrix while it started;
 2. choosing every source a room offers (all rooms at once, round by round)
-   routes the room&#x27;s HDMI output, HDMI switch and USB device ports as the
-   routing says, wakes the chosen source, powers its receiver and display
-   (off for Off) and puts them on their inputs, sends its actions, has each
+   routes the room&#x27;s HDMI output (and the scaler of its audio output, under
+   hdmi_audio_scaler), HDMI switch and USB device ports as the routing says,
+   wakes the chosen source, powers its receiver and display (off for Off)
+   and puts them on their inputs, sends its actions, has each
    source&#x27;s input present the EDID of a room showing it (the idle EDID
    once none does), and a choice the room does not offer sends nothing;
 3. a switch made at the matrix, at a room&#x27;s HDMI switch (a keypad, the
@@ -448,7 +449,7 @@ and check that:
 7. All off, sent as the page sends it, turns every room Off as a choice
    of Off would (all_off.js; devices outside the routing are omitted);
 8. the simulated matrices heard only the comheads each Thing or rule may send (no
-   fixed setting such as scaler or HDCP) and refused none;
+   fixed setting such as HDR or HDCP) and refused none;
 9. openhab.log holds no ERROR and no model problem.
 
 It uses the test runtime of thermite test boot (127.0.0.1:13619) and its
@@ -1342,13 +1343,14 @@ examples:
 <section class="verb" id="matrix-settings"><h3><code>thermite matrix-settings</code></h3><p>Show matrix settings that differ from the house file; --apply sets them.</p><pre class="help">usage: thermite matrix-settings [-h] [--config DIR] [--apply] [--device ID]
                                 [--address HOST[:PORT]] [--house FILE]
 
-Read every matrix that has `settings` in instance/devices.yaml (on the
-BK-808: scaler, HDR and HDCP on each output, and the EDID of any input fixed
-there) and print each setting that differs from what devices.yaml asks for.
-With --apply, send those changes one at a time, read the settings back and
-fail on any that did not take or got no answer. Nothing else is written, and
-runtime never writes these settings itself. (The EDIDs of the inputs that
-sources use follow the routing instead: routing.edid in devices.yaml.)
+Compare each matrix with its `settings` in instance/devices.yaml and print
+the differences. On the BK-808 these settings cover output scalers, HDR
+conversion, HDCP and fixed input EDIDs. When a room has hdmi_audio_scaler,
+routing sets the scaler on its audio output and this command skips it.
+Inputs with a routing EDID follow routing.edid when a room selects a source.
+
+With --apply, send the fixed-setting changes one at a time, read them back
+and fail on any that did not take or got no answer.
 
 A change can blank the room on that output, or the rooms watching that
 input, for a few seconds while the display and the source renegotiate:
