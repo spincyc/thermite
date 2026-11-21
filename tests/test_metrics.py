@@ -488,6 +488,67 @@ class Speakers(unittest.TestCase):
             answer = items(example_amp_status="play", example_amp_title=" ", **states)
             self.assertEqual(exporter._items(sub, answer, online)[0], sample, states)
 
+    def test_a_follower_in_a_multiroom_group_plays_what_its_leader_plays(self):
+        from tests.test_wiim import AMP, house
+        data = house()
+        data["rooms"]["example_nook"] = {"label": "Example Nook", "tag": "Room"}
+        data["devices"].append({**AMP, "id": "example_mini", "room": "example_nook", "kind": "audio_streamer",
+                                "model": "Mini", "ip": "192.0.2.33"})
+        mapping = json.loads(rendered(data)[oh_metrics.EXPORTER_MAP])
+        self.assertEqual(mapping["items"]["example_mini_status"]["group"],
+                         {"id": "example_mini_group_id", "leader": "example_mini_leader"})
+        online = [{"UID": uid, "statusInfo": {"status": "ONLINE"}}
+                  for ident in ("example_amp", "example_mini") for uid in mapping["devices"][ident]["things"]]
+        mini = {"device": "example_mini", "room": "example_nook", "kind": "audio_streamer",
+                "item": "example_mini_status", "point": "playing"}
+        leader, follower = "FF31F09E00000000C0FFEE01", "FF31F09E00000000C0FFEE02"
+
+        def mini_reads(things=online, **states):
+            answer = items(**{"example_amp_group_id": leader, "example_amp_leader": "",
+                              "example_mini_group_id": follower, "example_mini_leader": leader,
+                              "example_mini_status": "stop", "example_mini_title": "Unknown", **states})
+            return next(sample for sample in exporter._items(mapping, answer, things)
+                        if sample[1].get("item") == "example_mini_status")
+        # A follower reads stopped, its title unknown, while its leader plays a track.
+        self.assertEqual(mini_reads(example_amp_status="play", example_amp_title="Example Track"),
+                         ("thermite_item_value", mini, 2.0))
+        self.assertEqual(mini_reads(example_amp_status="pause", example_amp_title="Example Track"),
+                         ("thermite_item_value", mini, 0.0))
+        # Its leader not read, or one the house does not have: unknown, not idle.
+        self.assertEqual(mini_reads(example_amp_status="UNDEF"), ("thermite_item_unknown", mini, 1.0))
+        self.assertEqual(mini_reads(example_mini_leader="FF31F09E00000000C0FFEE09"),
+                         ("thermite_item_unknown", mini, 1.0))
+        # Its own Thing offline is unknown, whatever its leader plays.
+        self.assertEqual(mini_reads(things=[{**thing, "statusInfo": {"status": "OFFLINE"}} if "example_mini" in
+                                            thing["UID"] else thing for thing in online],
+                                    example_amp_status="play", example_amp_title="Example Track"),
+                         ("thermite_item_unknown", mini, 1.0))
+        # Following none (an empty leader, or its own ID), it is what it reads itself.
+        for alone in ("", follower, "NULL"):
+            self.assertEqual(mini_reads(example_mini_leader=alone, example_amp_status="play",
+                                        example_amp_title="Example Track"),
+                             ("thermite_item_value", mini, 0.0), alone)
+        # The leader itself reads as it reports.
+        answer = items(example_amp_group_id=leader, example_amp_leader="", example_amp_status="play",
+                       example_amp_title="Example Track", example_mini_group_id=follower, example_mini_leader=leader)
+        self.assertIn(("thermite_item_value", {**mini, "device": "example_amp", "room": "example_desk",
+                                               "kind": "streaming_amp", "item": "example_amp_status"}, 2.0),
+                      exporter._items(mapping, answer, online))
+
+        # What it plays is its leader's, under its own device and room.
+        def played(**states):
+            answer = items(**{"example_amp_group_id": leader, "example_amp_leader": "",
+                              "example_mini_group_id": follower, "example_mini_leader": leader,
+                              "example_amp_playing_app": "Example App", "example_amp_playing_title": "Example Track",
+                              "example_mini_playing_app": "UNDEF", "example_mini_playing_title": "UNDEF", **states})
+            return {labels["device"]: (labels["room"], labels["app"], labels["title"])
+                    for _, labels, _ in exporter._playing(mapping, answer, now=1.0)}
+        self.assertEqual(played(), {"example_amp": ("example_desk", "Example App", "Example Track"),
+                                    "example_mini": ("example_nook", "Example App", "Example Track")})
+        self.assertEqual(played(example_mini_leader="FF31F09E00000000C0FFEE09"),
+                         {"example_amp": ("example_desk", "Example App", "Example Track")})
+        self.assertEqual(played(example_mini_leader=""), {"example_amp": ("example_desk", "Example App", "Example Track")})
+
     def test_a_speaker_is_required_while_it_played_lately_or_was_playing_when_last_read(self):
         recorded = [rule for rule in yaml.safe_load(self.FILES["prometheus/alerts.yml"])["groups"][0]["rules"]
                     if rule.get("record") == alerts.CHECK and rule["labels"].get("device") == "example_speaker"]

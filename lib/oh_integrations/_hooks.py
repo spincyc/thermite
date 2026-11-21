@@ -296,6 +296,13 @@ _TABLE = (
         "titles": Items of the title, each {"title", "artist", "series",
         "season", "episode" (each but title optional), "when": {"item",
         "is": [values]} while it holds (optional)}}"""),
+    Hook("group", FUNCTION, """
+        group(device) -> {"id": the String Item of the player's own group
+        ID, "leader": the String Item of the group ID of the leader it
+        follows, empty while it follows none}, or None: a player that
+        follows another in a multiroom group plays what its leader plays,
+        whatever it reports itself (oh_metrics: its playing state and what
+        it plays are its leader's)""", order=("wiim_http",)),
 
     # A control module whose devices Music Assistant plays on (oh_music).
     Hook("music", FUNCTION, """

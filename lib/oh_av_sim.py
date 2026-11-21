@@ -245,7 +245,7 @@ class Player(Device):
     def __init__(self, *, model: str = "Amp Pro", status: str = "play", volume: int = 30, mute: bool = False,
                  mode: str | None = None, title: str = "", artist: str = "", album: str = "", vendor: str = "",
                  name: str | None = None, position: int = 0, duration: int = 0, sample_rate: str = "unknow",
-                 bit_depth: str = "unknow") -> None:
+                 bit_depth: str = "unknow", uuid: str = "FF31F09E00000000C0FFEE01", leader: str = "") -> None:
         super().__init__()
         self.spec = self.MODELS[model]
         self.modes = self.spec["modes"]
@@ -264,6 +264,10 @@ class Player(Device):
         self.duration = duration
         self.sample_rate = sample_rate
         self.bit_depth = bit_depth
+        #: Its own LinkPlay uuid, and the leader's it follows in a multiroom
+        #: group ("" for none), as getStatusEx tells them.
+        self.uuid = uuid
+        self.leader = leader
         self.loop = "4"
         self.eq = True
         self.eq_preset = "Flat"
@@ -299,7 +303,9 @@ class Player(Device):
             return self._json({"DeviceName": self.name, "project": spec["project"],
                                "plm_support": spec["plm_support"], "firmware": spec["firmware"],
                                "VersionUpdate": "0", "NewVer": "0", "internet": "1", **temperatures,
-                               "BleRemoteControl": "1", "BleRemoteConnected": "1", "BleRemoteBatterylevel": "40"})
+                               "BleRemoteControl": "1", "BleRemoteConnected": "1", "BleRemoteBatterylevel": "40",
+                               "uuid": self.uuid, "group": "1" if self.leader else "0",
+                               **({"master_uuid": self.leader} if self.leader else {})})
         if command == "getSubLPF" and self.spec["sub"]:
             return self._json({"status": 1, "plugged": 1, "cross": 90, "phase": 0, "level": self.sub_level,
                                "main_filter": 1, "sub_filter": 1, "sub_delay": 0})

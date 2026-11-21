@@ -30,6 +30,11 @@ its app and title as free-text labels of
 thermite_playing_timestamp_seconds, with the routing zones whose source it
 is at that moment.
 
+A speaker that follows another in a multiroom group (map `group` of its
+playing point) reports itself stopped while its group plays: its playing
+state and what it plays are its leader's, unknown while the leader it
+names is none the map has.
+
 An Item whose state is NULL or UNDEF has no value but, whatever its
 conversion, thermite_item_device_off 1 while the power Item it needs on
 (map `power`) reads OFF, else thermite_item_unknown 1; anything unparsable is
@@ -111,7 +116,8 @@ FAMILIES = {
     "thermite_item_value": ("gauge", "A numeric Item state: switches 1 or 0, numbers as they are; a speaker's "
                             "playing state (point playing) 0 idle (a soundbar's silent TV input too, and an "
                             "input fed by a room's source of picture alone), 1 sound with no track named (TV "
-                            "audio, line-in), 2 a track."),
+                            "audio, line-in), 2 a track. A speaker that follows another in a multiroom group "
+                            "reads its leader's, unknown while that leader is not known."),
     "thermite_item_info": ("gauge", "A selection Item's state, as a label; always 1. A routing zone's source Item "
                            "names its zone too: join it with a check on(zone), as a room may have two zones."),
     "thermite_item_unknown": ("gauge", "1 while a kept Item is NULL or UNDEF (a selection also while empty) and "
@@ -612,10 +618,48 @@ def _offline(mapping: dict, things: list | None) -> set[str]:
             if any(status_of.get(uid, "ONLINE") != "ONLINE" for uid in device.get("things") or [])}
 
 
+def _leaders(mapping: dict, state_of: dict) -> dict[str, str | None]:
+    """Each speaker that follows another in a multiroom group (the map's
+    `group` of its playing point, oh_integrations group()): its playing
+    Item -> its leader's, or None while the group ID it follows is no
+    speaker's the map has (a leader thermite does not read, or one whose ID
+    is not read yet)."""
+    speakers = {name: spec for name, spec in (mapping.get("items") or {}).items()
+                if spec.get("convert") == "playing" and isinstance(spec.get("group"), dict)}
+    ids: dict[str, str] = {}
+    for name, spec in speakers.items():
+        own = to_text(state_of.get(spec["group"].get("id")))
+        if own:
+            ids.setdefault(own, name)
+    found: dict[str, str | None] = {}
+    for name, spec in speakers.items():
+        leader = to_text(state_of.get(spec["group"].get("leader")))
+        if leader and ids.get(leader) != name:
+            found[name] = ids.get(leader)
+    return found
+
+
+def _speaker(name: str, spec: dict, state_of: dict, offline: set[str]) -> tuple[str, float] | None:
+    """(family, value) of a speaker's playing point as it reports itself:
+    what it plays while its state is a playing value, and unknown while a
+    Thing of it is not online, whatever its binding last left there; None
+    for a state that is no reading."""
+    state = state_of.get(name)
+    if str(spec.get("device") or "") in offline or state in NO_VALUE:
+        return _no_value(spec, state_of), 1.0
+    if not isinstance(state, str):
+        return None
+    title = to_text(state_of.get(spec["title"])) if spec.get("title") else "?"
+    value = PLAYING_IDLE if state not in (spec.get("playing") or []) \
+        else PLAYING_TRACK if title and title not in NO_TITLE else sounding(spec, state_of)
+    return (_no_value(spec, state_of), 1.0) if value is None else ("thermite_item_value", value)
+
+
 def _items(mapping: dict, answer: list, things: list | None = None) -> list[Sample]:
     state_of = {item["name"]: item.get("state") for item in answer
                 if isinstance(item, dict) and isinstance(item.get("name"), str)}
     offline = _offline(mapping, things)
+    leaders = _leaders(mapping, state_of)
     samples: list[Sample] = []
     missing = 0
     for name, spec in sorted((mapping.get("items") or {}).items()):
@@ -632,20 +676,16 @@ def _items(mapping: dict, answer: list, things: list | None = None) -> list[Samp
             item["zone"] = str(spec["zone"])
         convert = spec.get("convert")
         if convert == "playing":
-            # A speaker: what it plays while its state is a playing value, and
-            # unknown while a Thing of it is not online, whatever its binding
-            # last left there.
-            if device in offline or not isinstance(state, str) or state in NO_VALUE:
-                if device in offline or state in NO_VALUE:
-                    samples.append((_no_value(spec, state_of), item, 1.0))
-                continue
-            title = to_text(state_of.get(spec["title"])) if spec.get("title") else "?"
-            value = PLAYING_IDLE if state not in (spec.get("playing") or []) \
-                else PLAYING_TRACK if title and title not in NO_TITLE else sounding(spec, state_of)
-            if value is None:
-                samples.append((_no_value(spec, state_of), item, 1.0))
-            else:
-                samples.append(("thermite_item_value", item, value))
+            reading = _speaker(name, spec, state_of, offline)
+            if name in leaders and reading is not None and reading[0] == "thermite_item_value":
+                # A follower reads stopped while its group plays: what it
+                # plays is its leader's, unknown while that is not known.
+                lead = leaders[name]
+                reading = _speaker(lead, mapping["items"][lead], state_of, offline) if lead else None
+                if reading is None or reading[0] != "thermite_item_value":
+                    reading = ("thermite_item_unknown", 1.0)
+            if reading is not None:
+                samples.append((reading[0], item, reading[1]))
             continue
         if convert == "enum":
             text = to_label(state, spec.get("options"))
@@ -674,18 +714,26 @@ def _items(mapping: dict, answer: list, things: list | None = None) -> list[Samp
 
 def _playing(mapping: dict, answer: list, now: float | None = None) -> list[Sample]:
     """thermite_playing_timestamp_seconds for each device playing something,
-    with the zones whose source Item names it."""
+    with the zones whose source Item names it. A speaker that follows another
+    in a multiroom group plays what its leader plays, and nothing known
+    while its leader is not known (_leaders())."""
     now = time.time() if now is None else now
     spec = mapping.get("playing") or {}
     state_of = {item["name"]: item.get("state") for item in answer
                 if isinstance(item, dict) and isinstance(item.get("name"), str)}
+    kept = mapping.get("items") or {}
+    follows = {kept[name].get("device"): kept[lead].get("device") if lead else None
+               for name, lead in _leaders(mapping, state_of).items()}
     zones: dict[str, list[str]] = {}
     for name, entry in (mapping.get("items") or {}).items():
         if entry.get("point") == "source" and entry.get("zone") and isinstance(state_of.get(name), str):
             zones.setdefault(state_of[name], []).append(str(entry["zone"]))
     samples: list[Sample] = []
     for ident in sorted(spec):
-        app, title = (to_text(state_of.get(spec[ident].get(key))) for key in ("app", "title"))
+        source = follows.get(ident, ident)
+        if source not in spec:
+            continue
+        app, title = (to_text(state_of.get(spec[source].get(key))) for key in ("app", "title"))
         if app is None and title is None:
             continue
         samples.append(("thermite_playing_timestamp_seconds", {**device_labels(mapping, ident), "app": app or "",

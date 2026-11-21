@@ -1068,9 +1068,9 @@ d287996f91b026c89229d2c67a89ed3154ba1e1be97a95e38c741ce0da6b9199  routed/conf/ya
 
 99640f71ba1c67290b2498f8d44382186c1efeec09c4ba32ed3617c658cc1ff0  routed/conf/yaml/vrroom_telnet.yaml
 
-6a2c76b0f50883d13307084b930ab611ef3c8187dba7e464cef0c08122b467dd  routed/conf/yaml/wiim.yaml
+81b5dfef0fe3a17b1679243184a754b7cce977686fe71d3ed2f4c87d7406141a  routed/conf/yaml/wiim.yaml
 
-5638cd2a9f18287be4fd49a1c7d50cb45cb2d121ab113e65ee0f015ba6b27af6  routed/metrics/exporter/map.json
+6bb9a21373233f2b769e18b23063f04336867ca6006a8b0c34e9e3d6b2419295  routed/metrics/exporter/map.json
 
 67d072366f92f1d93ef96e00275d839e98d12190556460c4df3ee2b0ca3afd0a  routed/metrics/grafana/dashboards/devices.json
 
@@ -1082,7 +1082,7 @@ fc664504ebc56367b49f26c69e4c85d40b5267622c3e2a92a0edd559f18e84db  routed/metrics
 
 4131b9a23253a330fccd0e062ef14d187d784f7691bb882ec811c90e6c081877  routed/metrics/grafana/dashboards/switching.json
 
-094614442093c85867e78faa64b04d9a9750a9d919f1f6122b4e86e0adcdb432  routed/metrics/grafana/dashboards/usage.json
+84cb3aedc43a31a091983d5f0f0a7091f589e179371c4f08831fc510146ea12c  routed/metrics/grafana/dashboards/usage.json
 
 af04186428a2ea58ddc18628f692c5e1e3891f356eac153ffdfd66c66a84c357  routed/metrics/prometheus/alerts.yml
 
@@ -1146,7 +1146,7 @@ b338388a8794dd102bdc134ee3da96cdee5035877925652d2172292b53a24161  sonos.control/
 
 044b07993ffe72cc71c847e9640918f3e51af41b7fea9851e91a0fa210cacb30  sonos.control/metrics/grafana/dashboards/switching.json
 
-684a9908b63899cbf4f76cd8e84b4faeeee96dbacb78011ccab7b8366302bb1c  sonos.control/metrics/grafana/dashboards/usage.json
+3a9674f30a92e775e04003cfa705e9e1ef6876dccd8112971a3cd088ac110886  sonos.control/metrics/grafana/dashboards/usage.json
 
 3270ef8c89f76548e02fb5598fa75aa18cedb86bf904a7dd347720c4436d0265  sonos.control/metrics/prometheus/alerts.yml
 
@@ -1736,9 +1736,9 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  wiim_http.cont
 
 ffd5905554cb81f7f487d10892991251658774afc0929adc8e62f830ce404391  wiim_http.control/conf/yaml/playing.yaml
 
-31009c2cf989561046fc2e90042acd0b30af11ba0a268ffb79079a45d8f3871c  wiim_http.control/conf/yaml/wiim.yaml
+2942cdce63759eb0ab1ff8d59784dc15ecfa7b986b2ee174cb917164a721c4ad  wiim_http.control/conf/yaml/wiim.yaml
 
-0d40b7a4e26b1e982dee484da16d34de0b8390abc54ffa19e9728e90269a9fee  wiim_http.control/metrics/exporter/map.json
+a1a268b87f8ee8bf4fbe2d373d8b9998c2badf8b1e95a7d49c4936d7dc545ca3  wiim_http.control/metrics/exporter/map.json
 
 bd1c38a6c995107fdd6a2ac0510bdc8ac047640ee955a2e32c6b1fe0ad55665f  wiim_http.control/metrics/grafana/dashboards/devices.json
 
@@ -1750,7 +1750,7 @@ c7a2f0cb544ea7d60d2f07fabb307330bb0496afa66847e3a07581e90eb4917b  wiim_http.cont
 
 a9bd872371cb5c936916e924868152018fa1ecd0c5a49cbd095ea652f68ef80e  wiim_http.control/metrics/grafana/dashboards/switching.json
 
-9896a742e6fa89c505edccf8b9e449eade6bde41e644cb02844127e347e63c2c  wiim_http.control/metrics/grafana/dashboards/usage.json
+9961a65096de140b1bb6b5c1bf255080e03466fdaa31b38785c5547094f1b2d9  wiim_http.control/metrics/grafana/dashboards/usage.json
 
 83cf62134b54d3c8270473e1102d4617a574ace1e65c5c2095af85d521fe9bd4  wiim_http.control/metrics/prometheus/alerts.yml
 
@@ -1798,7 +1798,7 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  wiim_http.obse
 
 ffd5905554cb81f7f487d10892991251658774afc0929adc8e62f830ce404391  wiim_http.observe/conf/yaml/playing.yaml
 
-8a482730c1e6b0a3921509687b849696c141c2ab3f5f47435d7cc34d4acd8b24  wiim_http.observe/conf/yaml/wiim.yaml
+2f5284f0043b57958b4164229a1aafd3ca2cfd98ad5ba205e4615943639bc40e  wiim_http.observe/conf/yaml/wiim.yaml
 
 c96748e8823194a97e345fc3aa31e227c488def16732e758ab1293b22903d5ef  wiim_http.observe/metrics/exporter/map.json
 

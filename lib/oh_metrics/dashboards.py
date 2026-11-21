@@ -935,7 +935,8 @@ def _listening_timeline(mapping: dict) -> Panel:
     queries = [(f'max(thermite_item_value{{point="playing",room={_q(room)}}})', rooms.get(room, room))
                for room in _speaker_rooms(mapping)]
     return state_timeline("Listening through the day", queries, PLAYBACK,
-                          "Each room's speakers as they report themselves every 30 s. Playing: one plays a track. TV "
+                          "Each room's speakers as they report themselves every 30 s; a speaker grouped with "
+                          "another plays what its group's leader plays. Playing: one plays a track. TV "
                           "or line-in: one plays sound with no track named, such as a soundbar's TV audio. Idle: "
                           "paused or stopped. A gap: none answered.", show_values=True)
 

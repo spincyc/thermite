@@ -624,8 +624,10 @@ def exporter_map(house: House, conf=None) -> dict:
     audio page (oh_integrations audio(), as the remotes' Listen reads it),
     with the page's playing values and its title Item, which tell a track
     from TV audio or line-in (exporter PLAYING_TRACK), its silent reading,
-    which tells TV audio from a silent TV, and the routes that feed it a
-    picture alone (remote_model.quiet_routes())."""
+    which tells TV audio from a silent TV, the routes that feed it a
+    picture alone (remote_model.quiet_routes()), and its multiroom group's
+    Items (oh_integrations group()), by which a follower plays what its
+    leader plays."""
     import oh_integrations
     from oh_integrations import _commands
     from oh_features import remote_model
@@ -677,13 +679,17 @@ def exporter_map(house: House, conf=None) -> dict:
         routes = [{key: route[key] for key in ("item", "is", "input") if key in route}
                   for route in remote_model.quiet_routes(house, ident)
                   if route["item"] in present and ("input" not in route or route["input"]["item"] in points)]
+        grouped = next((found for module in oh_integrations.defining("group") if (found := module.group(device))),
+                       None) or {}
         if state.get("item") in points and state.get("playing"):
             items[state["item"]] = {"device": ident, "room": device["room"], "kind": device["kind"], "point": "playing",
                                     "convert": "playing", "playing": [str(value) for value in state["playing"]],
                                     **({"title": title} if title in points else {}),
                                     **({"silent": {"item": silent["item"], "is": [str(value) for value in silent["is"]]}}
                                        if silent.get("item") in points else {}),
-                                    **({"route": routes} if routes else {})}
+                                    **({"route": routes} if routes else {}),
+                                    **({"group": {key: grouped[key] for key in ("id", "leader")}}
+                                       if grouped and {grouped["id"], grouped["leader"]} <= set(points) else {})}
     for file in conf.yaml.values():
         for name, item in file.items.items():
             groups = item.get("groups") or []

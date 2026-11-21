@@ -7,6 +7,12 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A WiiM speaker that follows another in a multiroom group reports what
+  its group's leader plays in the metrics (Listening, Speakers and What
+  played), not idle. A follower reads stopped while its leader plays.
+  Each WiiM gains read-only Group ID and Group Leader Items from the
+  status it already polls; the activity feed leaves them out.
+
 - An AVPro HDMI matrix keeps its one telnet session through the 30-second
   diagnostic reads. A reply that misses its window, now 500 ms rather than
   150 ms, ends that cycle's reads. `GET OUT0 VS` then clears the late reply

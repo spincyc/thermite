@@ -92,6 +92,10 @@ def manifest(house: House, conf: Conf) -> dict:
         page = remote_model.audio_page(device) or {}
         joined.update(entry["item"] for entry in page.get("facts", ()) if entry.get("quiet"))
         joined.update(item for field, item in (page.get("track") or {}).items() if field not in ("title", "artist"))
+        # A multiroom group's player uuids are for the metrics: a regroup
+        # already shows as what each player plays.
+        for module in integrations.defining("group"):
+            joined.update((module.group(device) or {}).values())
         for name, item in points.items():
             if name not in joined:
                 add(name, item, device)

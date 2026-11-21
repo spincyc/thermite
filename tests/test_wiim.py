@@ -73,6 +73,14 @@ class Transformations(unittest.TestCase):
                    json.dumps({"BleRemoteControl": "1", "BleRemoteConnected": "1", "BleRemoteBatterylevel": ""})]
         self.assertEqual(self.run_js(wiim_http.REMOTE_BATTERY, battery), ["40", "", ""])
 
+    def test_a_follower_names_its_leaders_group_id_and_a_player_alone_none(self):
+        alone = {"uuid": "FF31F09E00000000C0FFEE01", "group": "0"}
+        follower = {"uuid": "FF31F09E00000000C0FFEE02", "group": "1", "master_uuid": "FF31F09E00000000C0FFEE01"}
+        cases = [json.dumps(case) for case in (alone, follower, {"group": "1"}, {})]
+        self.assertEqual(self.run_js(wiim_http.GROUP_ID, cases), ["FF31F09E00000000C0FFEE01", "FF31F09E00000000C0FFEE02",
+                                                                  "", ""])
+        self.assertEqual(self.run_js(wiim_http.LEADER, cases), ["", "FF31F09E00000000C0FFEE01", "", ""])
+
     def test_the_service_is_the_vendor_or_the_network_modes_name_and_nothing_for_an_input(self):
         cases = [{"mode": "31", "vendor": ""}, {"mode": "10", "vendor": "Amazon Music"},
                  {"mode": "43", "vendor": "Spotify"}, {"mode": "10", "vendor": ""}, {"mode": "99", "vendor": " "}]
@@ -110,6 +118,11 @@ class Render(unittest.TestCase):
         self.assertEqual(requests["cpu_temperature"], "command=getStatusEx")
         self.assertEqual(requests["sub_level"], "command=getSubLPF")
         self.assertEqual(requests["light"], "command=LED_SWITCH_GET")
+        # Its multiroom group is in what the player itself answers: no request more.
+        self.assertEqual((requests["group_id"], requests["leader"]), ("command=getStatusEx",) * 2)
+        self.assertEqual(wiim_http.group(AMP), {"id": "example_amp_group_id", "leader": "example_amp_leader"})
+        self.assertEqual(oh_metrics.exporter_map(House(house()))["items"]["example_amp_status"]["group"],
+                         wiim_http.group(AMP))
         sent = {name: channel["config"].get("commandExtension") for name, channel in
                 {**player["channels"], **device["channels"]}.items() if channel["config"].get("commandExtension")}
         self.assertEqual(sent, {
@@ -192,8 +205,8 @@ class Render(unittest.TestCase):
         data = house()
         feed = remote_activity.manifest(House(data), render.build(House(data)))["items"]
         self.assertLessEqual({"example_amp_firmware", "example_amp_internet", "example_amp_eq_preset"}, set(feed))
-        self.assertFalse({"example_amp_cpu_temperature", "example_amp_remote_battery", "example_amp_sample_rate"}
-                         & set(feed))
+        self.assertFalse({"example_amp_cpu_temperature", "example_amp_remote_battery", "example_amp_sample_rate",
+                          "example_amp_group_id", "example_amp_leader"} & set(feed))
 
     def test_the_presets_and_play_modes_are_the_players_own(self):
         self.assertEqual(wiim_http.EQ_PRESETS, av_sim.Player.EQ_PRESETS)
@@ -306,6 +319,11 @@ class MiniStandIn(Served):
         self.assertEqual(self.get("command=setPlayerCmd:switchmode:bluetooth"), "OK")
         self.assertEqual(json.loads(self.get("command=getPlayerStatus"))["mode"], "41")
         self.assertEqual(json.loads(self.get("command=EQGetBand"))["source_name"], "bluetooth")
+        self.assertEqual((status["uuid"], status["group"]), (self.sim.uuid, "0"))
+        self.assertNotIn("master_uuid", status)
+        self.sim.leader = "FF31F09E00000000C0FFEE09"
+        status = json.loads(self.get("command=getStatusEx"))
+        self.assertEqual((status["group"], status["master_uuid"]), ("1", "FF31F09E00000000C0FFEE09"))
 
 
 if __name__ == "__main__":

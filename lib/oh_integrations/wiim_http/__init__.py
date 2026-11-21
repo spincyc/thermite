@@ -15,7 +15,10 @@ LED_SWITCH_GET). Its Items (readings()), plain Numbers in UNITS:
     device    _firmware, _update (a newer firmware waits), _cpu_temperature,
               _board_temperature, _remote_battery (its Bluetooth remote's
               charge), _internet, _sub (a subwoofer is plugged in),
-              _sub_crossover, _sub_phase, _light (the status light)
+              _sub_crossover, _sub_phase, _light (the status light),
+              _group_id (its own LinkPlay uuid) and _leader (the uuid of
+              the player it follows in a multiroom group, empty while it
+              follows none: group())
 
 less those its model has no request for (MODELS: a Mini has neither a
 subwoofer output nor temperatures), and, under control, _key (a remote
@@ -264,6 +267,15 @@ def service_js() -> str:
             f"{json.dumps(SERVICES, separators=(',', ':'))}))")
 
 
+#: getStatusEx -> the player's own uuid, and the uuid of the leader it
+#: follows: a multiroom follower answers "group": "1" and "master_uuid",
+#: a leader or a player on its own "group": "0" and no master_uuid (as an
+#: Audio Pro LinkPlay player answers, openHAB community "LinkPlay
+#: binding", 2025-02). A follower's getPlayerStatus reads mode 99 and
+#: status stop while its leader plays, so what it plays is its leader's.
+GROUP_ID = "JS(|(function (d) { return d.uuid ? String(d.uuid) : ''; })(JSON.parse(input)))"
+LEADER = ("JS(|(function (d) { return String(d.group) === '1' && d.master_uuid ? String(d.master_uuid) : ''; })"
+          "(JSON.parse(input)))")
 #: getStatusEx -> its Bluetooth remote's charge in %, while one is connected
 #: (BleRemoteControl only says the player takes one).
 REMOTE_BATTERY = ("JS(|(function (d) { return d.BleRemoteConnected === '1' && /^\\d+$/.test(String(d.BleRemoteBatterylevel)) "
@@ -326,6 +338,8 @@ def readings() -> tuple:
         ("sub_phase", "device", SUB, "number", "Number", "Subwoofer Phase", ["Status", "Info"], ["JSONPATH($.phase)"],
          {}),
         ("light", "device", LIGHT, "switch", "Switch", "Status Light", ["Status", "Light"], [], switch),
+        ("group_id", "device", DEVICE_STATUS, "string", "String", "Group ID", ["Status", "Info"], [GROUP_ID], {}),
+        ("leader", "device", DEVICE_STATUS, "string", "String", "Group Leader", ["Status", "Info"], [LEADER], {}),
     )
 
 
@@ -450,6 +464,16 @@ def playing(device: dict) -> dict:
     return {"apps": [{"item": f"{ident}_service", "when": playing}],
             "titles": [{"title": f"{ident}_title", "artist": f"{ident}_artist",
                         "when": playing}]}
+
+
+def group(device: dict) -> dict | None:
+    """Its multiroom group (oh_metrics.exporter_map()): the Items of its own
+    group ID and of the leader's it follows; None for a device it does not
+    read."""
+    if not (uses(device, PHASE, NAME) or uses(device, "control", NAME)):
+        return None
+    ident = device["id"]
+    return {"id": f"{ident}_group_id", "leader": f"{ident}_leader"}
 
 
 def music(device: dict) -> dict | None:
