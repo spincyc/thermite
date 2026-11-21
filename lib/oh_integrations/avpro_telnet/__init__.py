@@ -15,6 +15,16 @@ unknown. A command to an output's Item is sent as SET on that connection,
 followed by the same read. A matrix that does not answer, or closes the connection, gets UNDEF
 and is reconnected after 10, 20 and 40 seconds, then every minute.
 
+Every 30 seconds the rule also asks a few of the manual's diagnostic reads
+(`GET IN<n> VID FMT INF`, `GET IN<n> SIG STA`, `GET OUT<n> SIG STA`,
+`GET OUT<n> HPD`) on that same connection, kept as unparsed text in
+`<id>_signal`. The house's matrix answers about half of them later than
+150 ms. Closing the connection after each late answer made a new session
+every 30 seconds, and the matrix locked up 7 hours later (2026-11-20). So
+a late or missing answer ends that cycle's reads, and `GET OUT0 VS`, which the
+matrix answers after anything asked before it, clears the late answer from the
+connection. Only a matrix that answers neither loses the connection.
+
 A command `reboot` to `<id>_reboot` restarts the matrix as its web page's
 Reboot button does: `SET RBT` over telnet, which restarts its controller in
 about 4 seconds with its routes kept, then its network module's own restart,

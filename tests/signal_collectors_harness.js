@@ -78,7 +78,9 @@ function device(name, {send = true} = {}) {
   const collect = () => {
     const start = clock.now, health = items.example_problem, tally = items[`example_${name}_commands`], count = opened.length;
     rules[`${name}_example_signal`].execute();
-    assert(clock.now - start <= 1000, 'optional collection exceeded its 1 s budget');
+    // The AVPro's reads have 1 s, and its fence after a missed one 2 s more.
+    const budget = name === 'avpro_telnet' ? 3000 : 1000;
+    assert(clock.now - start <= budget, `optional collection exceeded its ${budget / 1000} s budget`);
     assert.equal(opened.length, count, 'optional collection opened a connection');
     assert.equal(items.example_problem, health, 'optional collection changed routing health');
     assert.equal(items[`example_${name}_commands`], tally, 'optional collection changed command counters');
@@ -190,22 +192,56 @@ test('AVPro retains only matching physical port and query text as unparsed metad
   assert(r.requests.every(query => query.startsWith('GET '))); assert.equal(r.opened.length, 1);
 });
 
-test('AVPro unsupported grammar is unavailable, bounded, rotated, and cannot contaminate later sessions', () => {
+test('AVPro unsupported grammar is unavailable, bounded, rotated, and keeps its one session', () => {
   const r = device('avpro_telnet'); r.poll(); assert(r.collect().values.input);
   r.requests.length = 0;
   r.state.override = request => request !== 'GET OUT0 VS' ? ['unidentified proprietary reply'] : undefined;
-  for (let cycle = 0; cycle < 4; cycle += 1) {
+  for (let cycle = 0; cycle < 24; cycle += 1) {
     const result = r.collect(); assert.equal(result.reason, 'no_response'); assert.deepEqual(result.values, {});
-    assert(r.opened.at(-1).closed); r.poll();
+    assert(!r.opened.at(-1).closed); r.poll();
   }
-  assert(r.requests.includes('GET OUT4 HPD')); assert.equal(r.items.example_output1_input, '1');
+  assert.equal(r.opened.length, 1);
+  for (let port = 1; port <= 4; port += 1) {
+    for (const query of [`IN${port} VID FMT INF`, `IN${port} SIG STA`, `OUT${port} SIG STA`, `OUT${port} HPD`]) {
+      assert(r.requests.includes(`GET ${query}`), `starved ${query}`);
+    }
+  }
+  assert.equal(r.items.example_output1_input, '1');
+});
+
+test('AVPro takes a SET on its one session after a late or refused diagnostic reply', () => {
+  const r = device('avpro_telnet'); r.poll(); r.requests.length = 0;
+  const link = r.opened[0];
+  let late = [];
+  // The matrix answers in order: a reply that missed its window comes
+  // before the answer to the next request.
+  r.state.override = request => {
+    link.lines.push(...late); late = [];
+    if (request.startsWith('GET ') && request !== 'GET OUT0 VS') {
+      late = [`${request.slice(4)} late reply`, 'CMD ERR'];
+      return [];
+    }
+  };
+  assert.equal(r.collect().reason, 'no_response');
+  assert.deepEqual(r.requests, ['GET IN1 VID FMT INF', 'GET OUT0 VS']);
+  assert(!link.closed); assert.deepEqual(link.lines, []);
+  const result = r.context.routingProvider().execute('example_output1_input', '2');
+  assert.equal(result.outcome, 'applied'); assert.equal(result.sample.value, '2');
+  assert.equal(r.opened.length, 1); assert.equal(r.items.example_output1_input, '2');
+});
+
+test('AVPro ends its session only when the matrix answers neither a diagnostic read nor GET OUT0 VS', () => {
+  const r = device('avpro_telnet'); r.poll();
+  r.state.override = () => [];
+  assert.equal(r.collect().reason, 'no_response'); assert(r.opened[0].closed);
+  r.state.override = null; r.poll();
+  assert.equal(r.opened.length, 2); assert.equal(r.items.example_output1_input, '1');
 });
 
 test('the next control reconnects and confirms its result after an optional timeout', () => {
   for (const [name, item, value, optional] of [
     ['vrroom_telnet', 'example_input', '2', request => request.startsWith('get status ')],
     ['sony_adcp', 'example_input', 'hdmi2', request => request === 'signal ?'],
-    ['avpro_telnet', 'example_output1_input', '2', request => request.startsWith('GET ') && request !== 'GET OUT0 VS'],
   ]) {
     const r = device(name); r.poll();
     r.state.override = request => optional(request) ? [] : undefined;

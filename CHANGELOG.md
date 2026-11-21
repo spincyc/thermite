@@ -7,6 +7,13 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- An AVPro HDMI matrix keeps its one telnet session through the 30-second
+  diagnostic reads. A reply that misses its window, now 500 ms rather than
+  150 ms, ends that cycle's reads. `GET OUT0 VS` then clears the late reply
+  from the session instead of a reconnection. A matrix that answered late
+  had been given a new session every 30 seconds, and an AC-MX-44X locked up
+  (TCP 23 closing at once) after about 900 of them.
+
 - A room can set `edid_by_source` for individual HDMI matrix sources.
   Its EDID stays on the source's input while the room uses that feed,
   including when another room selects the same source. When the room
