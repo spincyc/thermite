@@ -18,7 +18,12 @@ and is reconnected after 10, 20 and 40 seconds, then every minute.
 Every 30 seconds the rule also asks a few of the manual's diagnostic reads
 (`GET IN<n> VID FMT INF`, `GET IN<n> SIG STA`, `GET OUT<n> SIG STA`,
 `GET OUT<n> HPD`) on that same connection, kept as unparsed text in
-`<id>_signal`. The house's matrix answers about half of them later than
+`<id>_signal`. An HPD reply, `OUT<n> HPD 1` or `OUT<n> HPD 0` as the
+house's matrix gives it at every read, is also each output's hot-plug Item
+(oh_integrations._hotplug): whether a display is cabled to that output. The
+reads take turns, so each output's comes about every 3 to 4 minutes, and
+its Item is UNDEF from a failed read of the routing until the next. The
+house's matrix answers about half of them later than
 150 ms. Closing the connection after each late answer made a new session
 every 30 seconds, and the matrix locked up 7 hours later (2026-11-20). So
 a late or missing answer ends that cycle's reads, and `GET OUT0 VS`, which the
@@ -42,6 +47,8 @@ Items, per matrix:
 - `<id>_output<N>_input` (Number): the input routed to output N; commanded
   with an input number.
 - `<id>_reboot` (String): commanded `reboot`, restarts the matrix.
+- `<id>_output<N>_hotplug` (Switch, read-only): ON while output N reports a
+  display's hot-plug, OFF while it reports none (hotplug_item()).
 - `<id>_problem` and `<id>_avpro_telnet_commands` (oh_integrations._commands): why
   the matrix did not take the rule's last command or cannot be read, as a
   code, and the rule's tally of its commands by outcome.
@@ -60,7 +67,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from oh_conf import Addon, House, YamlFile, uses
-from .. import _commands, _script
+from .. import _commands, _hotplug, _script
 
 NAME = "avpro_telnet"
 PHASE = "control"
@@ -100,6 +107,11 @@ def ports(device: dict) -> tuple[int, int]:
 def switch_item(device: dict, output: int) -> str:
     """The Item holding the input routed to `output`."""
     return f"{device['id']}_output{output}_input"
+
+
+def hotplug_item(device: dict, output: int) -> str:
+    """The Item reporting whether a display is on `output` (_hotplug)."""
+    return _hotplug.item(device, output)
 
 
 def reboot_item(device: dict) -> str:
@@ -148,6 +160,7 @@ def render(device: dict, house: House, out: YamlFile) -> None:
             "tags": ["Control"],
             "autoupdate": False,
         }
+        out.items[hotplug_item(device, output)] = _hotplug.point(device, output)
     out.items[reboot_item(device)] = {
         "type": "String",
         "label": "Reboot",

@@ -60,6 +60,22 @@ rollback. The unified deployment workflow uses a separate committed private site
   Each WiiM gains read-only Group ID and Group Leader Items from the
   status it already polls; the activity feed leaves them out.
 
+- A room whose display is not cabled to the HDMI output it names no
+  longer shows the source that output is switched to. An HDMI matrix
+  confirms a switch of an output with nothing on it all the same: the
+  AVPro confirmed every switch of the output a house file named for its
+  TV while the TV was on another. A matrix that reports each output's
+  hot-plug (BK-808 `allconnect`, AVPro `GET OUT<n> HPD`) now has a
+  read-only Switch Item per output, `<id>_output<N>_hotplug`, defined once
+  for both in `oh_integrations._hotplug`. When two reads in a row, a
+  minute or more apart, find no display on a room's output while every
+  device the room powers reports on, its Source is unknown, and the remote
+  says "no display on output N" and asks you to check the cable and the
+  output the house file names. One read the matrix drops, a display
+  waking, or a room that is off never counts. An AVPro SET counts as
+  answered only by a line naming the input it sent, not by a route from
+  before or one another controller made.
+
 - An AVPro HDMI matrix keeps its one telnet session through the 30-second
   diagnostic reads. A reply that misses its window, now 500 ms rather than
   150 ms, ends that cycle's reads. `GET OUT0 VS` then clears the late reply

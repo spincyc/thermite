@@ -143,6 +143,19 @@ async function probe(name, run, options) {
     return { streams: c.streams.length, gets: c.reads.length, rooms: answered.length };
   });
 
+  await probe("remote_source_problem_names_an_output_with_no_display", async c => {
+    c.live()[0].open();
+    const problem = (index, output) => JSON.stringify({ version: 1, device: "display_" + index, label: "Display " + index, model: "",
+      item: "matrix_output" + index + "_hotplug", action: "detect the display", reason: "no_display", reported: null,
+      ...(output === undefined ? {} : { output }) });
+    c.live()[0].send({ type: "snapshot", view: "remote", states: snapshotStates("remote", {
+      loc_room_3_source: "UNDEF", loc_room_3_source_problem: problem(3, 4),
+      loc_room_4_source: "UNDEF", loc_room_4_source_problem: problem(4) }) });
+    const states = await Promise.all(["room_3", "room_4"].map(room => c.backend.getState(room)));
+    assert(states.every(state => state.status === "unavailable"));
+    return { reasons: states.map(state => state.reason) };
+  });
+
   await probe("remote_view_events_after_the_snapshot", async c => {
     c.live()[0].open();
     c.live()[0].send({ type: "snapshot", view: "remote", states: snapshotStates("remote") });

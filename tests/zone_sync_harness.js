@@ -105,7 +105,8 @@ function load(table, options = {}) {
     openhab: {
       items: { getItem: (name, nullable) => world.items.get(name) || (nullable ? null : assert.fail('no Item ' + name)) },
       rules: { JSRule(rule) { world.rules.push(rule); } },
-      triggers: { ItemCommandTrigger: (name) => ({ kind: 'command', name }), ItemStateChangeTrigger: (name) => ({ kind: 'change', name }) },
+      triggers: { ItemCommandTrigger: (name) => ({ kind: 'command', name }), ItemStateChangeTrigger: (name) => ({ kind: 'change', name }),
+        ItemStateUpdateTrigger: (name) => ({ kind: 'update', name }) },
     },
     'thermite-routing-io': { create: () => executor,
       nativeJournal: () => ({ load: () => world.journal.data, save(value) { world.journal.data = JSON.parse(JSON.stringify(value)); },

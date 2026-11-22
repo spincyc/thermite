@@ -28,7 +28,7 @@ class Collectors(unittest.TestCase):
             result = subprocess.run([shutil.which("node"), str(AREA / "tests/signal_collectors_harness.js"), str(fixture)],
                                     capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(json.loads(result.stdout)["passed"], 17)
+        self.assertEqual(json.loads(result.stdout)["passed"], 18)
 
     def test_descriptors_separate_formats_capabilities_unparsed_reports_and_transport(self):
         device = {"id": "example_switch", "inputs": 4, "outputs": 4}

@@ -10,7 +10,8 @@ function device(name, {send = true} = {}) {
   const state = {input:'hdmi1', power:'on', route:[1, 4], routes:[1, 1, 1, 1], mode:'0', override:null};
   const signalItem = name === 'sony_adcp' ? 'example_video_signal' : name === 'vrroom_telnet' ? 'example_telnet_signal' : 'example_signal';
   const items = Object.fromEntries(['input', 'power', 'power_state', 'picture_mode', 'key', 'reboot', 'problem',
-    'output1_input', 'output2_input', 'output3_input', 'output4_input', `${name}_commands`].map(key => [`example_${key}`, 'NULL']));
+    'output1_input', 'output2_input', 'output3_input', 'output4_input',
+    'output1_hotplug', 'output2_hotplug', 'output3_hotplug', 'output4_hotplug', `${name}_commands`].map(key => [`example_${key}`, 'NULL']));
   items[signalItem] = 'NULL';
   function reply(request) {
     if (state.override) { const result = state.override(request); if (result !== undefined) return result; }
@@ -236,6 +237,23 @@ test('AVPro ends its session only when the matrix answers neither a diagnostic r
   assert.equal(r.collect().reason, 'no_response'); assert(r.opened[0].closed);
   r.state.override = null; r.poll();
   assert.equal(r.opened.length, 2); assert.equal(r.items.example_output1_input, '1');
+});
+
+test('each AVPro HPD reply is its output\'s hot-plug Item at every read: ON, OFF, or UNDEF for a reply that says neither', () => {
+  const r = device('avpro_telnet'); r.poll();
+  const replies = {'GET OUT1 HPD': 'OUT1 HPD 1', 'GET OUT2 HPD': 'A00 OUT02 HPD 0', 'GET OUT3 HPD': 'OUT3 HPD 2'};
+  r.state.override = request => !(request in replies) ? undefined : replies[request] === null ? [] : [request, replies[request]];
+  const result = r.collect();
+  assert.deepEqual([1, 2, 3, 4].map(port => r.items[`example_output${port}_hotplug`]), ['ON', 'OFF', 'UNDEF', 'UNDEF']);
+  assert.equal(result.values.output['2'].hpd, 'A00 OUT02 HPD 0');
+  const posts = () => r.posted.filter(([item]) => item === 'example_output1_hotplug').map(([, value]) => value);
+  r.collect(); assert.deepEqual(posts(), ['ON', 'ON']);
+  // A read the matrix does not answer in time says nothing of the output.
+  replies['GET OUT1 HPD'] = null;
+  r.collect(); assert.deepEqual(posts(), ['ON', 'ON']);
+  replies['GET OUT1 HPD'] = 'OUT1 HPD 0';
+  r.collect(); assert.deepEqual(posts(), ['ON', 'ON', 'OFF']);
+  assert.equal(r.opened.length, 1);
 });
 
 test('the next control reconnects and confirms its result after an optional timeout', () => {

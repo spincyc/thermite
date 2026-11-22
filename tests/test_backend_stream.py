@@ -24,6 +24,12 @@ class BackendStream(unittest.TestCase):
         opened = self.cases["remote_page_one_stream_snapshot_no_get_burst"]
         self.assertEqual((opened["streams"], opened["gets"], opened["rooms"]), (1, 0, 9))
 
+    def test_a_room_with_no_display_on_its_output_says_which_output(self):
+        self.assertEqual(self.cases["remote_source_problem_names_an_output_with_no_display"]["reasons"], [
+            "Display 3: no display on output 4 — check its cable, and which output the house file names for this room",
+            "Display 4: no display on this room's output — check its cable, and which output the house file names "
+            "for this room"])
+
     def test_each_view_follows_its_own_items(self):
         self.assertEqual(self.cases["remote_view_events_after_the_snapshot"]["applied"], 3)
         self.assertEqual(self.cases["home_view_sources_only"], {"streams": 1, "gets": 0})

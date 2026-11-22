@@ -271,9 +271,13 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None, metrics
                 "label": {"kind": "enum", "values": sorted({row.get("label", "") for row in checks.values()})},
                 "model": {"kind": "enum", "values": sorted({row.get("model", "") for row in checks.values()})},
                 "item": {"kind": "enum", "values": list(checks)},
-                "action": {"kind": "enum", "values": ["read selected input", "read matrix output input", "read power"]},
-                "reason": {"kind": "enum", "values": ["unavailable", "unsupported_input"]},
+                "action": {"kind": "enum", "values": list(routing.ACTIONS)},
+                "reason": {"kind": "enum", "values": list(routing.REASONS)},
                 "reported": {"kind": "enum", "nullable": True, "values": [None, *diagnosis["reported"]]}}}
+            # The output a room's display was looked for on (no_display).
+            outputs = sorted({row["output"] for row in checks.values() if "output" in row})
+            if outputs:
+                states[diagnosis["item"]]["fields"]["output"] = {"kind": "enum", "values": outputs}
 
     # Each audio page's device route (oh_identity.runtime): its remote's
     # controls by point, its settings by Item, and the routed rooms that

@@ -56,7 +56,8 @@ function load(table, initialScaler = '3') {
     openhab: {
       items: {getItem: (name, nullable) => items.get(name) || (nullable ? null : assert.fail('no Item ' + name))},
       rules: {JSRule: rule => rules.push(rule)},
-      triggers: {ItemCommandTrigger: command => ({command}), ItemStateChangeTrigger: change => ({change})},
+      triggers: {ItemCommandTrigger: command => ({command}), ItemStateChangeTrigger: change => ({change}),
+        ItemStateUpdateTrigger: update => ({update})},
     },
     '@runtime': {lifecycleTracker: {addDisposeHook() {}}},
     'thermite-routing-io': {

@@ -357,10 +357,10 @@ test('a failed restore of the previous keystore stops retrying and shows failed 
 // connection and close it at once, `mute` close one at its next request,
 // unanswered, and `hangup` close one at that request, unanswered. `silent`
 // takes a SET without answering it, and `down` takes no connection. close()
-// closes every connection while idle. `format` shapes each answer. SET RBT
-// is answered RBT, then its listing again on the same connection, and no
-// GET or SET is answered for restartMs; `rbt` 'refuse' answers it CMD ERR
-// and 'silent' not at all. Its web server records each request (posts) and
+// closes every connection while idle. `format` shapes each answer, and may
+// give a SET more than one line. SET RBT is answered RBT, then its listing
+// again on the same connection, and no GET or SET is answered for
+// restartMs; `rbt` 'refuse' answers it CMD ERR and 'silent' not at all. Its web server records each request (posts) and
 // answers webStatus, or, while `webDown`, takes no connection.
 function avpro({ send = true } = {}) {
   const clock = { now: 0 }, hooks = [];
@@ -407,12 +407,13 @@ function avpro({ send = true } = {}) {
       const set = /^SET OUT(\d+) VS IN(\d+)$/.exec(request);
       if (set && matrix.error) link.lines.push('CMD ERR');
       else if (set && matrix.silent) matrix.routes[set[1] - 1] = Number(set[2]);
-      else if (set) { matrix.routes[set[1] - 1] = Number(set[2]); link.lines.push(matrix.format(`SET OUT${set[1]} VS IN${set[2]}`)); }
+      else if (set) { matrix.routes[set[1] - 1] = Number(set[2]); link.lines.push(...[].concat(matrix.format(`SET OUT${set[1]} VS IN${set[2]}`))); }
       else if (request === 'GET OUT0 VS') link.lines.push(...matrix.routes.map((input, i) => matrix.format(`OUT${i + 1} VS IN${input}`)));
     },
     close(link) { link.closed = true; },
   };
-  const items = Object.fromEntries([1, 2, 3, 4].map(output => [`matrix_output${output}_input`, 'NULL']));
+  const items = Object.fromEntries([1, 2, 3, 4].flatMap(output => [[`matrix_output${output}_input`, 'NULL'],
+    [`matrix_output${output}_hotplug`, 'NULL']]));
   Object.assign(items, { matrix_problem: 'NULL', matrix_avpro_telnet_commands: 'NULL' });
   const source = send ? avproSource : avproSource.replace('const SEND = true;', 'const SEND = false;');
   const loaded = run(source.replace('// THERMITE_BOUNDED_IO', ''), { DEVICES: [{ id: 'matrix', host: '192.0.2.30', port: 23,
@@ -486,6 +487,8 @@ test('every AVPro poll posts each output\'s input, changed or not, so a reading 
   // A matrix that stops answering has UNDEF posted at each poll that tries it.
   r.matrix.mute = true; r.poll(); r.matrix.mute = false; r.matrix.refuse = true; r.poll();
   assert.deepEqual(posts('matrix_output4_input').slice(4), ['UNDEF', 'UNDEF']);
+  // Nor is a display known to be on any output: only a diagnostic read says.
+  for (let output = 1; output <= 4; output++) assert.deepEqual(posts(`matrix_output${output}_hotplug`), ['UNDEF', 'UNDEF']);
 });
 
 test('the AVPro routing provider is unsent before SET, refused on CMD ERR, unknown without its answer, applied once answered', () => {
@@ -533,6 +536,21 @@ test('each way an AVPro switch ends is its record, and what the matrix did not t
   assert.deepEqual(r.tally('matrix_avpro_telnet_commands'), { applied: 2, dropped: 2, unsent: 2, refused: 1, unknown: 1 });
 });
 
+test('only a line naming the input it was sent answers an AVPro SET, not a route from before or another controller\'s', () => {
+  const r = avpro(), provider = r.context.routingProvider();
+  r.poll();
+  // Control4's switch of the same output, which every session hears, comes first.
+  r.matrix.format = line => line === 'SET OUT4 VS IN2' ? ['OUT4 VS IN3', line] : line;
+  const applied = provider.execute('matrix_output4_input', '2');
+  assert.equal(applied.outcome, 'applied'); assert.equal(applied.sample.value, '2');
+  // A matrix that names only another input for the output has not said it
+  // took this one; its read says what it did.
+  r.matrix.format = line => line === 'SET OUT4 VS IN3' ? 'OUT4 VS IN2' : line;
+  assert.deepEqual(provider.execute('matrix_output4_input', '3'), { outcome: 'unknown', code: 'no_answer' });
+  assert.equal(r.items.matrix_output4_input, '3');
+  assert.deepEqual(r.warnings(), ['matrix: did not answer SET OUT4 VS IN3']);
+});
+
 test('a read-only copy connects to no AVPro matrix and only logs what it would send', () => {
   const r = avpro({ send: false });
   r.poll(); r.poll(); r.command(4, 2); r.reboot();
@@ -552,7 +570,9 @@ test('an AVPro reboot is SET RBT, then its network module\'s restart; nothing is
   assert.deepEqual(r.matrix.requests, ['GET OUT0 VS', 'SET RBT']); assert.equal(r.matrix.restarts, 1);
   assert.deepEqual(r.matrix.posts, [['http://192.0.2.30:80/do', 'POST', '{"cmd":"c s reboot"}', 'application/json;charset=utf-8']]);
   assert(r.matrix.links[0].closed);
-  for (let output = 1; output <= 4; output++) assert.equal(r.items[`matrix_output${output}_input`], 'UNDEF');
+  for (let output = 1; output <= 4; output++) {
+    assert.equal(r.items[`matrix_output${output}_input`], 'UNDEF'); assert.equal(r.items[`matrix_output${output}_hotplug`], 'UNDEF');
+  }
   // For 30 s a switch is not sent, and a poll reads nothing.
   r.command(4, 2); r.poll(); r.poll(); r.poll();
   assert.deepEqual(r.matrix.requests, ['GET OUT0 VS', 'SET RBT']); assert.equal(r.items.matrix_output4_input, 'UNDEF');

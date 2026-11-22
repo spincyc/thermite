@@ -10,6 +10,7 @@ import re
 
 import oh_integrations as integrations
 from oh_conf import Conf, House, parse_options
+from oh_integrations import _hotplug
 
 from . import playing, remote_model, routing
 from .remote_diagnostics import providers
@@ -96,6 +97,9 @@ def manifest(house: House, conf: Conf) -> dict:
         # already shows as what each player plays.
         for module in integrations.defining("group"):
             joined.update((module.group(device) or {}).values())
+        # Whether a display is on each output is the routing's to read: a
+        # display waking, or a read the matrix drops, is no activity.
+        joined.update(name for name in points if _hotplug.owns(device, name))
         for name, item in points.items():
             if name not in joined:
                 add(name, item, device)

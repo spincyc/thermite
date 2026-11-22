@@ -11,6 +11,11 @@ set by commanding the Item:
   the routing sets only on the audio output of a room that names a scaler
   for some of its sources (routing.rooms.<room>.hdmi_audio_scaler).
 
+A read-only Switch `<id>_output<N>_hotplug` (hotplug_item()) is ON while
+output N reports a display connected and OFF while it reports none
+(`allconnect` of `get output status`, the request its scaler channel already
+polls), at each poll (oh_integrations._hotplug).
+
 Read-only String snapshots `<id>_input_signal` and `<id>_output_signal`
 describe presented EDIDs, sink connections and output processing settings.
 They never infer a negotiated resolution or HDR format from an EDID preset.
@@ -29,6 +34,7 @@ from oh_shape import MAPPING, TEXT, Key
 
 from . import _instr as instr
 from . import _diagnostics as diag
+from . import _hotplug
 
 NAME = "bk808_http"
 PHASE = "control"
@@ -102,6 +108,11 @@ def copy_edid(output: int) -> str:
 def scaler_item(device: dict, output: int) -> str:
     """The Item holding the scaler code of `output`."""
     return f"{device['id']}_output{output}_scaler"
+
+
+def hotplug_item(device: dict, output: int) -> str:
+    """The Item reporting whether a display is on `output` (_hotplug)."""
+    return _hotplug.item(device, output)
 
 
 def fields(device: dict) -> dict[str, dict]:
@@ -218,6 +229,13 @@ def render(device: dict, house: House, out: YamlFile) -> None:
         item = _point(device, f"Output {output} scaler", channel, "screen")
         item["metadata"] = {"stateDescription": {"config": {"options": scalers}}}
         out.items[scaler_item(device, output)] = item
+    for output in range(1, OUTPUTS + 1):
+        channel = f"output{output}_hotplug"
+        # The same request as the scaler's: the binding polls it once for both.
+        thing["channels"][channel] = {"type": "switch", "label": f"Output {output} hot-plug", "config": {
+            "mode": "READONLY", "stateContent": instr.body("get output status", language=0),
+            "stateTransformation": [f"JSONPATH($.allconnect[{output - 1}])"], "onValue": "1", "offValue": "0"}}
+        out.items[hotplug_item(device, output)] = _hotplug.point(device, output, f"{thing_uid(device)}:{channel}")
     names = options_text((code, name) for name, code in EDID.items())
     for input_ in range(1, INPUTS + 1):
         channel = f"input{input_}_edid"

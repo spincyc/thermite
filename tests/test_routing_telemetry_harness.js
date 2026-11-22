@@ -53,7 +53,8 @@ function load(options = {}) {
     openhab: {
       items: { getItem: (name, nullable) => w.items.get(name) || (nullable ? null : assert.fail('no Item ' + name)) },
       rules: { JSRule(rule) { w.rules[rule.id] = rule; } },
-      triggers: { ItemCommandTrigger: name => ({ kind: 'command', name }), ItemStateChangeTrigger: name => ({ kind: 'change', name }) },
+      triggers: { ItemCommandTrigger: name => ({ kind: 'command', name }), ItemStateChangeTrigger: name => ({ kind: 'change', name }),
+        ItemStateUpdateTrigger: name => ({ kind: 'update', name }) },
     },
     'thermite-routing-io': { create: () => executor, nativeJournal: () => ({ load: () => null, save() {}, path: '/userdata/journal.json' }) },
     'thermite-routing-lifecycle': { createCoordinator: () => lifecycle },

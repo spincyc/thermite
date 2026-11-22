@@ -489,10 +489,14 @@
     let issue;
     try { issue = JSON.parse(raw); } catch (_) { return fallback; }
     if (!issue || issue.version !== 1 || !house.devices[issue.device]
-        || !["read selected input", "read matrix output input", "read power"].includes(issue.action)
-        || !["unavailable", "unsupported_input"].includes(issue.reason)) return fallback;
+        || !["read selected input", "read matrix output input", "read power", "detect the display"].includes(issue.action)
+        || !["unavailable", "unsupported_input", "no_display"].includes(issue.reason)) return fallback;
     const device = house.devices[issue.device];
     const name = device.label + (device.model && !device.label.includes(device.model) ? " (" + device.model + ")" : "");
+    if (issue.reason === "no_display") {
+      const output = Number.isInteger(issue.output) && issue.output > 0 ? "output " + issue.output : "this room's output";
+      return name + ": no display on " + output + " — check its cable, and which output the house file names for this room";
+    }
     const reported = typeof issue.reported === "string" && /^(?:\d+|hdmi\d+|tv)$/.test(issue.reported)
       ? "input " + issue.reported : "an unsupported input";
     return name + ": " + issue.action + " — " + (issue.reason === "unavailable"

@@ -156,6 +156,15 @@ _TABLE = (
         scaler_item(device, output) -> str: the Number Item holding the
         output's scaler code; it is commanded with a code""", needs=("SCALER",)),
 
+    # An HDMI matrix that reports whether something is cabled to each output.
+    Hook("hotplug_item", FUNCTION, """
+        hotplug_item(device, output) -> str: the Switch Item that reads,
+        at every read of the matrix, whether that output finds a display's
+        hot-plug line raised (ON) or not (OFF), UNDEF while the matrix
+        cannot be read (oh_integrations._hotplug). routing.js shows the
+        Source of a room on that output as unknown, and why, while it keeps
+        finding none with the room's devices on""", needs=("switch_item",)),
+
     # A module that switches an HDMI switch in front of one display (a
     # room's hdmi_switch in the routing) provides these instead of ports()
     # and switch_item(), with COMHEADS and thing_uid() and url(), or aim(),

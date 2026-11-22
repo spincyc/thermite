@@ -23,6 +23,7 @@ const TABLE = {
   edid: { inputs: { 1: 'matrix_input1_edid' }, outputs: { matrix_output1_input: '5', matrix_output2_input: '6' }, idle: null },
   off: 'off',
   holdMs: 15000,
+  hotplug: { reports: 2, absentMs: 60000 },
   lifecycle: { resources: { matrix_output1_input: { key: 'matrix' }, matrix_output2_input: { key: 'matrix' } },
     io: { wake: 'house_routing_io_events' }, consumers: [] },
 };
@@ -40,7 +41,7 @@ const REAL = { ...TABLE, lifecycle: { version: 1, deadlineMs: 30000, sources: {}
 
 function load(options = {}) {
   const items = new Map(), sent = [], posted = [], rules = {}, logs = [], calls = [], routes = [];
-  const table = options.real ? REAL : TABLE;
+  const table = options.table || (options.real ? REAL : TABLE);
   let onLegacy = null, deps = null, real = null;
   const slots = options.slots || {};
   const item = (name, state = 'NULL') => {
@@ -48,8 +49,8 @@ function load(options = {}) {
       postUpdate(value) { posted.push([name, String(value)]); this.state = String(value); } });
     return items.get(name);
   };
-  for (const id of Object.keys(TABLE.rooms)) {
-    const r = TABLE.rooms[id];
+  for (const id of Object.keys(table.rooms)) {
+    const r = table.rooms[id];
     for (const name of [r.item, r.diagnosis.item, `${id}_tv_power`, `${id}_tv_input`, `${id}_lights`]) item(name);
     item(r.hdmi, '9');
   }
@@ -74,7 +75,8 @@ function load(options = {}) {
     openhab: {
       items: { getItem: (name, nullable) => items.get(name) || (nullable ? null : assert.fail('no Item ' + name)) },
       rules: { JSRule(rule) { rules[rule.id] = rule; } },
-      triggers: { ItemCommandTrigger: name => ({ name }), ItemStateChangeTrigger: name => ({ name }) },
+      triggers: { ItemCommandTrigger: name => ({ name }), ItemStateChangeTrigger: name => ({ name }),
+        ItemStateUpdateTrigger: name => ({ name, update: true }) },
     },
     'thermite-routing-io': { create: () => executor, nativeJournal: () => ({ load: () => null, save() {}, path: '/userdata/thermite-routing/executor_coordinator.json' }) },
     'thermite-routing-lifecycle': { QUARANTINE_REASONS,
@@ -88,12 +90,12 @@ function load(options = {}) {
   const context = vm.createContext({
     require: name => modules[name] || assert.fail('unexpected module ' + name),
     console: { info: m => logs.push(['info', m]), warn: m => logs.push(['warn', m]), error: m => logs.push(['error', m]) },
-    setTimeout: () => 0, clearTimeout() {}, Date, JSON, Map, Set, Object, String, Number, Error, Math,
+    setTimeout: () => 0, clearTimeout() {}, Date: options.clock ? { now: () => options.clock.now } : Date, JSON, Map, Set, Object, String, Number, Error, Math,
   });
   vm.runInContext(source.replace('const TABLE = null;', 'const TABLE = ' + JSON.stringify(table) + ';'), context);
   posted.length = 0; calls.length = 0; logs.length = 0;
   const command = (id, value, eventSource) => rules[`routing_${id}_command`].execute({ receivedCommand: value, eventSource });
-  return { sent, posted, logs, calls, routes, command, context, item, deps: () => deps, legacy: event => onLegacy(event), planner: () => real };
+  return { sent, posted, logs, calls, routes, command, context, item, rules, deps: () => deps, legacy: event => onLegacy(event), planner: () => real };
 }
 
 // Sources a command can carry: what openHAB's REST API makes of the
@@ -290,6 +292,81 @@ test('an HDMI switch the master matrix does not feed names itself when it does n
   assert.deepEqual([room.readbackProblem.reason, room.readbackProblem.reported], ['unsupported_input', '3']);
   room.readbackProblem = null; output.state = '2';
   assert.equal(r.context.shown(room), 'apple_tv'); assert.equal(room.readbackProblem, null);
+});
+
+// A fictional room behind its own matrix's output 4, which confirms a switch
+// of that output whether or not a display is cabled to it.
+function unplugRoom(r) {
+  r.item('den_matrix_output4_input', '2');
+  const plug = r.item('den_matrix_output4_hotplug', 'OFF'), power = r.item('den_tv_power');
+  power.state = 'ON'; r.item('den_tv_input').state = 'hdmi4';
+  const detect = { device: 'den_matrix', label: 'den.matrix', model: 'AC-MX-44X', action: 'detect the display', output: 4 };
+  const room = { item: 'loc_den_source', hdmi: null, stages: [{ power: 'den_tv_power', input: 'den_tv_input', feed: 'hdmi4', readback: {} }],
+    switch: { item: 'den_matrix_output4_input', matrix: null, readback: { 1: 'shield', 2: 'apple_tv' }, hotplug: 'den_matrix_output4_hotplug' },
+    inputs: { shield: [['den_tv_input', 'hdmi4']], apple_tv: [['den_tv_input', 'hdmi4']] },
+    diagnosis: { item: 'loc_den_source_problem', reported: ['1', '2', '3', '4'], checks: { den_matrix_output4_hotplug: detect } } };
+  return { room, plug, power, detect };
+}
+
+test('a room whose output keeps finding no display while its devices are on has no Source, and names that output', () => {
+  const clock = { now: 1000000 }, r = load({ clock });
+  const { room, plug, power, detect } = unplugRoom(r);
+  const read = (state, after) => { clock.now += after; plug.state = state; return r.context.plugRead(room, 'den_matrix_output4_hotplug'); };
+  const show = () => { room.readbackProblem = null; return r.context.shown(room); };
+  // Two reads in a row find none, a minute apart.
+  assert.equal(read('OFF', 0), false); assert.equal(show(), 'apple_tv');
+  assert.equal(read('OFF', 59999), false); assert.equal(show(), 'apple_tv');
+  assert.equal(read('OFF', 1), true); assert.equal(show(), 'UNDEF');
+  assert.deepEqual(room.readbackProblem, { version: 1, ...detect, item: 'den_matrix_output4_hotplug', reason: 'no_display', reported: null });
+  // Off is off; on again, the display is missing until a read finds it.
+  power.state = 'OFF';
+  assert.equal(read('OFF', 30000), false); assert.equal(show(), 'off');
+  power.state = 'ON';
+  assert.equal(show(), 'UNDEF'); assert.equal(room.readbackProblem.reason, 'no_display');
+  assert.equal(read('ON', 30000), true); assert.equal(show(), 'apple_tv'); assert.equal(room.readbackProblem, null);
+  // A read that finds one, or none at all (UNDEF), starts the count again,
+  // as a read while the devices are off or not known does.
+  for (const [state, after] of [['OFF', 0], ['ON', 10000], ['OFF', 60000], ['UNDEF', 30000], ['OFF', 60000]]) {
+    assert.equal(read(state, after), false, `${state} after ${after} ms`);
+  }
+  assert.equal(show(), 'apple_tv');
+  assert.equal(read('OFF', 60000), true); assert.equal(show(), 'UNDEF');
+  assert.equal(read('ON', 1000), true);
+  for (const state of ['OFF', 'NULL']) {
+    power.state = state; assert.equal(read('OFF', 0), false);
+    power.state = 'ON'; assert.equal(read('OFF', 60000), false, `after a read while ${state}`);
+    assert.equal(show(), 'apple_tv'); assert.equal(read('ON', 0), false);
+  }
+  // A room that powers nothing has no devices on to say a display must be there.
+  room.stages = [];
+  for (let n = 0; n < 3; n++) assert.equal(read('OFF', 60000), false);
+  assert.equal(show(), 'apple_tv');
+});
+
+test('a room\'s hot-plug Item is read back at every update, changed or not', () => {
+  const clock = { now: 1000000 };
+  const check = { device: 'matrix', label: 'Matrix', model: 'BK-808', action: 'detect the display', output: 1 };
+  const den = { ...room('den', 'Den', 'matrix_output1_input'), hdmiHotplug: 'matrix_output1_hotplug',
+    stages: [{ power: 'den_tv_power', input: 'den_tv_input', feed: 'hdmi1', readback: {} }],
+    diagnosis: { item: 'loc_den_source_problem', reported: ['1', '9'], checks: { matrix_output1_hotplug: check } } };
+  const r = load({ clock, table: { ...TABLE, rooms: { den } } });
+  const rule = r.rules.routing_den_hotplug_readback;
+  assert.deepEqual(JSON.parse(JSON.stringify(rule.triggers)), [{ name: 'matrix_output1_hotplug', update: true }]);
+  r.item('den_tv_power').state = 'ON'; r.item('den_tv_input').state = 'hdmi1'; r.item('matrix_output1_input').state = '1';
+  const plug = r.item('matrix_output1_hotplug', 'OFF'), posts = () => r.posted.filter(([name]) => name.startsWith('loc_den_'));
+  rule.execute({ itemName: 'matrix_output1_hotplug' });
+  clock.now += 60000;
+  assert.deepEqual(posts(), []);
+  rule.execute({ itemName: 'matrix_output1_hotplug' });
+  assert.equal(r.item('loc_den_source').state, 'UNDEF');
+  assert.deepEqual(JSON.parse(r.item('loc_den_source_problem').state), { version: 1, ...check, item: 'matrix_output1_hotplug',
+    reason: 'no_display', reported: null });
+  // Only a read that changes what the room shows reads it back.
+  const count = posts().length;
+  rule.execute({ itemName: 'matrix_output1_hotplug' });
+  assert.equal(posts().length, count);
+  plug.state = 'ON'; rule.execute({ itemName: 'matrix_output1_hotplug' });
+  assert.equal(r.item('loc_den_source').state, 'tv'); assert.equal(r.item('loc_den_source_problem').state, 'UNDEF');
 });
 
 test('the planner logs through the script console', () => {

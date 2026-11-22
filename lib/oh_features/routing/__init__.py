@@ -96,7 +96,11 @@ vrroom_telnet does, receivers and displays any whose integration has
 `stage()`, as denonmarantz_http and sony_adcp do, EDIDs need an HDMI
 matrix integration with `EDID`, `edid_item()` and `copy_edid()`, and
 scalers one with `SCALER` and `scaler_item()`, so this module knows rooms
-and sources, not protocols.
+and sources, not protocols. A matrix whose integration has `hotplug_item()`
+(oh_integrations._hotplug) also says whether a display is cabled to the
+output a room names, its HDMI output or its HDMI switch: while it keeps
+saying none with the room's devices on, the room's Source is unknown and its
+readback problem names that output, instead of believing the route.
 """
 
 from __future__ import annotations
@@ -106,6 +110,7 @@ from types import ModuleType
 
 import oh_integrations as integrations
 import oh_inventory as inventory
+from oh_integrations import _hotplug
 from oh_conf import Addon, Conf, House, fill, indented, options_text, uses
 from oh_shape import LIST, MAPPING, NUMBER, TEXT, TRUTH, Key, unknown
 
@@ -1233,6 +1238,14 @@ def _switch_item(devices: dict, switch: dict) -> str:
     return module.switch_item(device, switch["output"]) if "output" in switch else module.input_item(device)
 
 
+def _hotplug_item(devices: dict, matrix_id: str, port: int) -> str | None:
+    """The Item saying whether a display is on that output of the matrix,
+    None for a matrix whose integration does not say (hotplug_item())."""
+    device = devices[matrix_id]
+    module = switcher(device)
+    return module.hotplug_item(device, port) if module.hotplug_item else None
+
+
 def audio_scaler(house: House, room: str, choice: str) -> list[list]:
     """[[Item, code]] that sets the scaler of the room's hdmi_audio_output
     for `choice`: its hdmi_audio_scaler for the choice, else the matrix's
@@ -1414,6 +1427,15 @@ def edid_table(house: House) -> dict | None:
     return table
 
 
+#: A readback problem's action while the room's output finds no display.
+DETECT = "detect the display"
+#: What a readback problem may say was being done (routing.js unavailable()).
+ACTIONS = ("read selected input", "read matrix output input", "read power", DETECT)
+#: Why it failed: no current reading, an input the room does not offer, or no
+#: display on the room's output (oh_integrations._hotplug).
+REASONS = ("unavailable", "unsupported_input", "no_display")
+
+
 #: Seconds routing.js holds a room's Source after a choice while its
 #: receiver or display does not show it yet (RECENT_MS): at least this, a
 #: receiver being read seconds after the matrix.
@@ -1450,6 +1472,7 @@ def table(house: House) -> dict:
             "item": item_name(room),
             "label": room_label(house, room),
             "hdmi": _port_item(devices, routing["hdmi_matrix"], entry["hdmi_output"]) if fed else None,
+            "hdmiHotplug": _hotplug_item(devices, routing["hdmi_matrix"], entry["hdmi_output"]) if fed else None,
             "choices": {choice: commands(house, room, choice) for choice in choices},
             "power": {choice: power(house, room, choice) for choice in choices},
             "inputs": {choice: inputs(house, room, choice) for choice in choices},
@@ -1459,6 +1482,7 @@ def table(house: House) -> dict:
                 "item": _switch_item(devices, switch),
                 "matrix": str(switch["matrix_input"]) if "matrix_input" in switch else None,
                 "readback": {str(number): source for source, number in switch["inputs"].items()},
+                "hotplug": _hotplug_item(devices, switch["device"], switch["output"]) if "output" in switch else None,
             },
             "stages": [{"power": stage["power"], "input": stage["input"], "feed": spec.get("input"),
                         "readback": {value: source for source, value in (spec.get("sources") or {}).items()}}
@@ -1491,12 +1515,19 @@ def table(house: House) -> dict:
                 device = devices[ident]
                 checks[item] = {"device": ident, "label": device.get("name") or device.get("model") or ident,
                                 "model": device.get("model") or "", "action": action}
+        for item, matrix_id, output in ([(raw["hdmiHotplug"], routing.get("hdmi_matrix"), entry.get("hdmi_output"))] + (
+                [(raw["switch"]["hotplug"], switch["device"], switch.get("output"))] if raw["switch"] else [])):
+            if item:
+                device = devices[matrix_id]
+                checks[item] = {"device": matrix_id, "label": device.get("name") or device.get("model") or matrix_id,
+                                "model": device.get("model") or "", "action": DETECT, "output": output}
         raw["diagnosis"] = {"item": problem_item_name(room), "checks": checks,
                             "reported": readback_inputs(devices[row["device"]] for row in checks.values())}
     for room, raw in rooms.items():
         if "sync" in raw:
             rooms[raw["sync"]["leader"]].setdefault("followers", []).append(room)
-    result = {"rooms": rooms, "edid": edid_table(house), "off": OFF, "holdMs": hold_ms(house)}
+    result = {"rooms": rooms, "edid": edid_table(house), "off": OFF, "holdMs": hold_ms(house),
+              "hotplug": {"reports": _hotplug.REPORTS, "absentMs": 1000 * _hotplug.ABSENT}}
     if lifecycle_enabled(house):
         from .lifecycle import compile_descriptor
         from .lifecycle_io import capabilities
