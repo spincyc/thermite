@@ -155,7 +155,7 @@ class Packaging(unittest.TestCase):
         with patch.dict(os.environ, {**environment, "PYTHONDONTWRITEBYTECODE": "1"}, clear=True), \
                 contextlib.redirect_stderr(said), self.assertRaises(subprocess.CalledProcessError) as refused:
             oh_source_upgrade.site_update(command, site, expected_head=head)
-        self.assertEqual((refused.exception.returncode, refused.exception.cmd[1:]), (2, ["check", "--config", str(site)]))
+        self.assertEqual((refused.exception.returncode, refused.exception.cmd[1:]), (1, ["check", "--config", str(site)]))
         self.assertEqual(oh_source_upgrade.git(site, "rev-parse", "HEAD"), head)
         self.assertEqual(oh_source_upgrade.git(site, "status", "--porcelain", "--untracked-files=all"), "")
         return path, first + 1, said.getvalue()

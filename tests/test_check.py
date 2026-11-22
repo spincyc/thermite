@@ -148,6 +148,7 @@ PROBLEMS = {**OK, "problems": ["conf/yaml/more.yaml: Thing http:url:stranger: 's
             "status": "problems"}
 BUILT = {"conf": 3, "metrics": 2, "units": 1}
 UNBUILT = {"error": "instance/host.yaml: unknown setting state_root; nothing can be generated", "problems": []}
+UNREAD = {"error": "[Errno 2] No such file or directory: 'versions.json'; nothing can be generated", "problems": []}
 CLEAN = {"secret_scan": {"files": 4, "findings": []}, "doc_targets": {"documents": 2, "stale": []}}
 FOUND = {"secret_scan": {"files": 4, "findings": ["notes.txt:1: a credential-looking line"]},
          "doc_targets": {"documents": 2, "stale": ["README.md: make no-such-target: the Makefile has no such target"]}}
@@ -192,8 +193,8 @@ class Steps(unittest.TestCase):
 
     def test_every_step_runs_whatever_the_one_before_found_and_the_worst_is_the_exit_status(self):
         for house, build, linted, expected in ((OK, (BUILT, 0), CLEAN, 0), (PROBLEMS, (BUILT, 0), CLEAN, 1),
-                                               (OK, (UNBUILT, 2), CLEAN, 2), (OK, (BUILT, 0), FOUND, 1),
-                                               (PROBLEMS, (UNBUILT, 2), FOUND, 2)):
+                                               (OK, (UNBUILT, 1), CLEAN, 1), (OK, (BUILT, 0), FOUND, 1),
+                                               (PROBLEMS, (UNBUILT, 1), FOUND, 1), (PROBLEMS, (UNREAD, 2), FOUND, 2)):
             with self.subTest(house=house["status"], build=build[1], lint=linted is FOUND):
                 ran = self.steps(house, build, linted)
                 code, out, _ = run("check")
@@ -203,12 +204,12 @@ class Steps(unittest.TestCase):
                 code, out, _ = run("check", "--json")
                 self.assertEqual(code, expected)
                 self.assertEqual(json.loads(out), {"house": house, "build": build[0], "lint": linted,
-                                                   "status": ("ok", "problems", "invalid")[expected]})
+                                                   "status": ("ok", "problems", "unreadable")[expected]})
 
     def test_each_step_says_what_it_said_as_its_own_verb_under_check_s_name(self):
-        self.steps(PROBLEMS, (UNBUILT, 2), FOUND)
+        self.steps(PROBLEMS, (UNBUILT, 1), FOUND)
         code, out, err = run("check")
-        self.assertEqual(code, 2)
+        self.assertEqual(code, 1)
         self.assertEqual(out.splitlines(), [
             "house file: 1 devices, conf: 1 Things, 2 Items, 1 problems",
             "secret scan: 4 files, 1 findings",
@@ -263,7 +264,9 @@ class Retired(unittest.TestCase):
                 with self.subTest(argv=argv, house=house):
                     retired = run("validate", "--house", house, *argv)
                     checked = run("check", "house", "--house", house, *argv)
+                    # validate keeps its old exit status until it goes; check found a problem.
                     self.assertEqual(retired[0], expected)
+                    self.assertEqual(checked[0], min(expected, 1))
                     self.assertTrue(retired[2].startswith(self.warning("validate")), retired[2])
                     said = retired[2][len(self.warning("validate")):]
                     if not argv and expected == 0:
@@ -271,11 +274,11 @@ class Retired(unittest.TestCase):
                     if argv:
                         self.assertEqual(json.loads(checked[1]),
                                          {"house": json.loads(retired[1]),
-                                          "status": "ok" if expected == 0 else "invalid"})
-                        self.assertEqual((checked[0], checked[2], said), (expected, "", ""))
+                                          "status": "ok" if expected == 0 else "problems"})
+                        self.assertEqual((checked[2], said), ("", ""))
                     else:
-                        self.assertEqual(checked, (expected, retired[1], said.replace("thermite validate: ",
-                                                                                       "thermite check: ")))
+                        self.assertEqual(checked[1:], (retired[1], said.replace("thermite validate: ",
+                                                                                "thermite check: ")))
 
     def test_what_the_house_file_generates_disagreeing_is_a_problem_of_validate_and_of_check(self):
         with stranger():
@@ -381,7 +384,7 @@ class Site(unittest.TestCase):
         (self.site / "instance/host.yaml").write_text(json.dumps({**host, "state_root": "/mnt/example"}), encoding="utf-8")
         before = self.files()
         done = self.thermite("check")
-        self.assertEqual(done.returncode, 2)
+        self.assertEqual(done.returncode, 1)
         self.assertEqual(done.stderr.splitlines()[-1][:len("thermite check: ")], "thermite check: ")
         self.assertIn("instance/host.yaml: unknown setting state_root", done.stderr)
         self.assertTrue(done.stderr.rstrip().endswith("; nothing can be generated"), done.stderr)
@@ -393,13 +396,32 @@ class Site(unittest.TestCase):
         self.assertEqual(self.files(), before)
 
     def test_a_house_file_with_a_problem_stops_it_first(self):
-        (self.site / "instance/devices.yaml").write_text(json.dumps({**EXAMPLE, "housing": {}}), encoding="utf-8")
-        before = self.files()
-        done = self.thermite("check")
-        self.assertEqual((done.returncode, done.stdout), (2, ""))
-        self.assertIn("thermite check: ", done.stderr)
-        self.assertIn("housing", done.stderr)
-        self.assertEqual(self.files(), before)
+        for name, text in (("a problem", json.dumps({**EXAMPLE, "housing": {}})), ("not YAML", "version: 1\nrooms: {\n")):
+            with self.subTest(name):
+                (self.site / "instance/devices.yaml").write_text(text, encoding="utf-8")
+                before = self.files()
+                done = self.thermite("check")
+                self.assertEqual((done.returncode, done.stdout), (1, ""))
+                self.assertIn("thermite check: ", done.stderr)
+                self.assertIn("housing" if name == "a problem" else "is not YAML", done.stderr)
+                self.assertEqual(self.files(), before)
+                done = self.thermite("check", "--json")
+                self.assertEqual((done.returncode, json.loads(done.stdout)["status"]), (1, "problems"))
+                self.assertEqual(set(json.loads(done.stdout)), {"house", "status"}, "nothing after house ran")
+
+    def test_a_file_it_cannot_read_is_a_check_that_could_not_run(self):
+        (self.site / "instance/devices.yaml").unlink()
+        done = self.thermite("check", "--json")
+        self.assertEqual((done.returncode, json.loads(done.stdout)["status"]), (2, "unreadable"))
+        self.assertEqual(set(json.loads(done.stdout)), {"house", "status"})
+        (self.site / "instance/devices.yaml").write_bytes((AREA / "instance/devices.yaml").read_bytes())
+        (self.site / "versions.json").unlink()
+        done = self.thermite("check", "build")
+        self.assertEqual(done.returncode, 2, done.stderr)
+        self.assertTrue(done.stderr.rstrip().endswith("; nothing can be generated"), done.stderr)
+        (self.site / "versions.json").write_text("{", encoding="utf-8")
+        done = self.thermite("check", "build")
+        self.assertEqual(done.returncode, 1, done.stderr)
 
 
 if __name__ == "__main__":

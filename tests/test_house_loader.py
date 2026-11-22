@@ -205,6 +205,7 @@ class Loader(unittest.TestCase):
         self.assertEqual(len(caught.exception.problems), 2)
 
     def test_a_house_file_of_the_wrong_shape_exits_2_with_a_message_from_every_verb_that_reads_it(self):
+        """But check, which found the problem, exits 1."""
         shapes = {
             "devices: null": ({**EXAMPLE, "devices": None},
                               "devices must be a list of devices; write `devices: []` for a house with none"),
@@ -222,7 +223,7 @@ class Loader(unittest.TestCase):
                              ["dhcp-reservations", "--house"]):
                     with self.subTest(shape=name, verb=argv[0]):
                         code, err = run(*argv, str(path))
-                        self.assertEqual(code, 2)
+                        self.assertEqual(code, 1 if argv[0] == "check" else 2)
                         self.assertIn(f"thermite {argv[0]}: {path}: {problem}\n", err)
                         self.assertNotIn("Traceback", err)
 

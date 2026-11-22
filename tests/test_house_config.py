@@ -56,6 +56,8 @@ class Loading(Scratch):
     def test_missing_and_unparsable_files_are_config_errors_with_their_position(self):
         with self.assertRaisesRegex(oh_inventory.ConfigError, r"nothing\.yaml: cannot be read"):
             oh_inventory.load(self.root / "nothing.yaml")
+        with self.assertRaises(oh_inventory.Unreadable):
+            oh_inventory.load(self.root / "nothing.yaml")
         broken = self.house("version: 1\ndevices: [\n  - a\n")
         with self.assertRaises(oh_inventory.ConfigError) as caught:
             oh_inventory.load(broken)
@@ -63,13 +65,15 @@ class Loading(Scratch):
         self.assertTrue(str(caught.exception).startswith(f"{broken}:3:3: is not YAML"))
 
     def test_every_house_verb_exits_2_naming_the_file(self):
+        """check exits 1 for a house file with a problem, which it found; 2
+        for one it could not read, as every verb does."""
         broken = self.house("version: 1\nrooms: {\n")
         invalid = self.house({**EXAMPLE, "devices": [{**EXAMPLE["devices"][0], "model": 900}]}, "invalid.yaml")
         for argv in (["generate", "--check", "--house"], ["check", "house", "--house"], ["dhcp-reservations", "--house"]):
             for path in (self.root / "missing.yaml", broken, invalid):
                 with self.subTest(argv=argv, path=path.name):
                     code, _, err = run(*argv, str(path))
-                    self.assertEqual(code, 2)
+                    self.assertEqual(code, 1 if argv[0] == "check" and path != self.root / "missing.yaml" else 2)
                     self.assertTrue(err.startswith(f"thermite {argv[0]}: {path}"), err)
                     self.assertNotIn("Traceback", err)
 
@@ -179,7 +183,7 @@ class Validate(Scratch):
         self.assertIn("--conf", err.getvalue())
         themed = self.house({**EXAMPLE, "theme": "no-such-theme"}, "themed.yaml")
         code, out, _ = run("check", "house", "--house", str(themed), "--json")
-        self.assertEqual((code, json.loads(out)["house"]["status"]), (2, "invalid"))
+        self.assertEqual((code, json.loads(out)["house"]["status"], json.loads(out)["status"]), (1, "invalid", "problems"))
         self.assertTrue(json.loads(out)["house"]["problems"][0].startswith("theme:"))
 
     def test_a_build_that_disagrees_with_the_house_is_its_problem_and_generate_writes_none_of_it(self):

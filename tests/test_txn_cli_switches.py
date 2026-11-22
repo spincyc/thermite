@@ -334,6 +334,73 @@ class Json(Fixture):
                 self.assertEqual((code, out), (2, ""))
                 self.assertIn("--json reports what a dry run would do: give it with -n/--dry-run", error)
                 body.assert_not_called()
+        for module in (install_cli, upgrade_cli):
+            for argv in (["--json"], ["--json", "--_host-phase", "--_run-approved"]):
+                with self.subTest(module=module.__name__, argv=argv):
+                    body = self.patch(install_cli, "run")
+                    code, out, error = self.main(module, argv)
+                    self.assertEqual((code, out), (2, ""))
+                    verb = module.__name__.rsplit(".", 1)[1]
+                    self.assertEqual(error, f"thermite {verb}: --json reports what a dry run would do: give it with "
+                                            "-n/--dry-run\n")
+                    body.assert_not_called()
+
+    def test_install_and_upgrade_host_phases_number_their_preflight_and_preparation(self):
+        self.patch(oh_paths, "require_compatible")
+        self.patch(steps, "install_preflight", side_effect=lambda context: [
+            Fake("Preconditions", Check(True, "fine")), Fake("Committed", Check(True, "at HEAD"))])
+        work = changeover.Work("upgrade", "upgrade", [Fake(
+            "Units", Check(False, "two units differ"), [Command(("systemctl", "daemon-reload"), root=True)])],
+            [Fake("Deploy", Check(False, "new"))], [], None)
+        self.patch(changeover, "install_work", return_value=work)
+        self.patch(System, "login", return_value="owner")
+        for module, title in (
+                (upgrade_cli, f"What upgrading thermite on this host, fixture-host, to what {AFTER[:12]} pins, "
+                              "would do:"),
+                (install_cli, f"What installing thermite (runtime 5.2.3) on this host, fixture-host (192.0.2.10), "
+                              f"as owner, at {AFTER[:12]}, would do:")):
+            with self.subTest(module=module.__name__):
+                report = self.report(module, ["--_host-phase", "-n", "--json"])
+                verb = module.__name__.rsplit(".", 1)[1]
+                self.assertEqual((report["verb"], report["dry_run"], report["status"], report["title"],
+                                  report["commit"]), (verb, True, 0, title, AFTER))
+                self.assertEqual(report["said"], [title])
+                self.assertEqual([(step["number"], step["title"], step["done"]) for step in report["steps"]],
+                                 [(1, "Preconditions", True), (2, "Committed", True), (3, "Units", False)])
+                self.assertEqual(report["steps"][2]["actions"], [{"argv": ["systemctl", "daemon-reload"],
+                                                                 "root": True}])
+                self.assertEqual((report["transaction"]["switching"], report["transaction"]["summary"]),
+                                 (["Deploy"], changeover.outline(work)))
+
+    def test_install_and_upgrade_report_the_application_workflow_s_dry_run(self):
+        for module in (install_cli, upgrade_cli):
+            verb = module.__name__.rsplit(".", 1)[1]
+
+            def workflow(site, *, say, report, dry_run, **_):
+                self.assertTrue(dry_run)
+                say("Application: https://example.invalid/thermite.git (main).")
+                report.update(application={"source": "https://example.invalid/thermite.git", "revision": "main",
+                                           "release": None}, notes=["No host plan is shown: ..."], host_plan=None)
+                return 0
+            with self.subTest(verb=verb):
+                outer = self.patch(oh_application_update, verb, side_effect=workflow)
+                report = self.report(module, ["-n", "--json"])
+                outer.assert_called_once()
+                self.assertEqual({key: report[key] for key in ("verb", "dry_run", "status", "steps", "transaction",
+                                                               "host_plan", "said")},
+                                 {"verb": verb, "dry_run": True, "status": 0, "steps": [], "transaction": None,
+                                  "host_plan": None, "said": ["Application: https://example.invalid/thermite.git "
+                                                              "(main)."]})
+                self.assertEqual(report["application"]["revision"], "main")
+                self.assertNotIn("--json", outer.call_args.kwargs["host_args"], "the workflow adds it to its child")
+
+    def test_install_and_upgrade_without_json_say_their_dry_run_as_before(self):
+        for module in (install_cli, upgrade_cli):
+            verb = module.__name__.rsplit(".", 1)[1]
+            with self.subTest(verb=verb):
+                outer = self.patch(oh_application_update, verb, return_value=0)
+                self.assertEqual(self.main(module, ["-n"]), (0, "", ""))
+                self.assertIsNone(outer.call_args.kwargs["report"])
 
     def test_a_dry_run_without_json_still_prints_its_steps(self):
         found = Fake("Units", Check(False, "two units differ"), [Command(("systemctl", "daemon-reload"), root=True)])

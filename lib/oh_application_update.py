@@ -451,26 +451,49 @@ def advanced(site_root: Path, head: str) -> bool:
 
 
 def preview(operation: str, site: Path, program: Path, exact: bool, host_args: Sequence[str],
-            say: Callable[[str], None]) -> int:
+            say: Callable[[str], None], report: dict | None = None) -> int:
     """Describe this host now with the running release, when the site pins it.
 
     The selected application plans its own steps only after approval; this
-    read-only child is the running release's own host dry run.
+    read-only child is the running release's own host dry run. Given
+    `report` (a --json dry run's), the child reports its plan as JSON, which
+    fills the report in: the child is this same release, so it takes --json.
     """
     try:
         current = oh_release.manifest(program)["digest"]
         pinned = json.loads((site / SITE_FILE).read_text())["release"]
     except (oh_release.ReleaseError, OSError, ValueError, TypeError, KeyError):
         current = pinned = None
+    notes = report.setdefault("notes", []) if report is not None else []
     if current is None or current != pinned:
-        say("No host plan is shown: the site does not pin the release running this command. An approved run "
-            "plans the host with the selected application after committing its requirement.")
+        notes.append("No host plan is shown: the site does not pin the release running this command. An approved "
+                     "run plans the host with the selected application after committing its requirement.")
+        say(notes[-1])
+        if report is not None:
+            report.update(host_plan=None, title=None, commit=None)
         return 0
-    say(f"Provisional host plan from the current release {current[:12]}: it describes this host now"
-        + ("; the approved run checks every step again." if exact else
-           "; the selected application plans its own steps after approval, and they may differ."))
-    return transaction.foreground(sys.executable, program / "bin/thermite", operation, "--config", site,
-                                  "--_host-phase", "--dry-run", *host_args)
+    notes.append(f"Provisional host plan from the current release {current[:12]}: it describes this host now"
+                 + ("; the approved run checks every step again." if exact else
+                    "; the selected application plans its own steps after approval, and they may differ."))
+    say(notes[-1])
+    argv = (sys.executable, program / "bin/thermite", operation, "--config", site, "--_host-phase", "--dry-run",
+            *host_args)
+    if report is None:
+        return transaction.foreground(*argv)
+    code, out = transaction.foreground_output(*argv, "--json")
+    try:
+        found = json.loads(out)
+    except ValueError:
+        found = None
+    if not isinstance(found, dict) or not isinstance(found.get("said"), list):
+        raise ValueError(f"the host phase's dry run printed no JSON report (exit status {code})")
+    # Said here, the host phase's lines follow this run's in the report, as they do on a terminal.
+    for line in found["said"]:
+        say(line)
+    report["host_plan"] = {"release": current, "exact": exact, "status": code}
+    report.update(title=found.get("title"), commit=found.get("commit"), steps=found.get("steps", []),
+                  transaction=found.get("transaction"))
+    return code
 
 
 def apply(operation: str, site: Path, *, source: Path | None = None, revision: str | None = None,
@@ -478,10 +501,12 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
           home: Path | None = None, runtime_token_file: Path | None = None,
           host_args: Sequence[str | Path] = (), allow_downgrade: bool = False,
           say: Callable[[str], None] = print,
-          stage: Callable[[str], contextlib.AbstractContextManager] = contextlib.nullcontext) -> int:
+          stage: Callable[[str], contextlib.AbstractContextManager] = contextlib.nullcontext,
+          report: dict | None = None) -> int:
     """`stage(title)` wraps each part of the work before the host phase: the
     owner command shows it as a spinner whose children speak only on
-    failure."""
+    failure. A dry run given `report` (a --json one's) also fills it in
+    with what it says: the application, its notes and the host plan."""
     if operation not in {"install", "upgrade"}:
         raise ValueError("application workflow must be install or upgrade")
     if revision is not None and (not revision or revision.startswith("-") or "\0" in revision):
@@ -518,19 +543,26 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
     selected = str(source) if source is not None else OFFICIAL_SOURCE
     selected_revision = revision or ("current release" if release_digest else "HEAD" if source else DEFAULT_REVISION)
     say(f"Application: {selected} ({selected_revision}).")
+    if report is not None:
+        report["application"] = {"source": selected, "revision": selected_revision, "release": release_digest}
     if release_digest is not None and not allow_downgrade:
         refuse_older(older(store, site_root, site, release_digest, None), site, release_digest)
     forwarded = [*map(str, host_args)]
     if runtime_token_file is not None:
         forwarded.extend(("--runtime-token-file", str(runtime_token_file)))
     if dry_run:
-        say("Would resolve the selected application, prepare or reuse a private Python environment, "
-            "validate and commit its site release requirement, apply the complete host and access "
-            "workflow, and select the owner command only after all readiness checks pass.")
+        notes = ["Would resolve the selected application, prepare or reuse a private Python environment, "
+                 "validate and commit its site release requirement, apply the complete host and access "
+                 "workflow, and select the owner command only after all readiness checks pass."]
         if source is None:
-            say("The remote revision and its host changes are unknown until an approved run fetches it; "
-                "this dry run does not fetch or change the site, application, or host.")
-        return preview(operation, site, program, release_digest is not None and source == program, forwarded, say)
+            notes.append("The remote revision and its host changes are unknown until an approved run fetches it; "
+                         "this dry run does not fetch or change the site, application, or host.")
+        for line in notes:
+            say(line)
+        if report is not None:
+            report["notes"] = notes
+        return preview(operation, site, program, release_digest is not None and source == program, forwarded, say,
+                       report)
     # Fail a missing commit identity before asking or preparing anything.
     transaction.git(site_root, "var", "GIT_AUTHOR_IDENT")
     transaction.git(site_root, "var", "GIT_COMMITTER_IDENT")

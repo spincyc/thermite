@@ -34,10 +34,14 @@ without one it runs all three; they always run in this order:
          cite must be one the Makefile defines.
 
 A house file that is missing, cannot be read or has a problem stops it at
-house: nothing can be built from it. Otherwise each step named runs,
-whatever the one before it found. What is on disk under conf/, metrics/ and
-deploy/ is neither read nor touched: thermite generate --check compares it,
-and thermite generate --prune removes what nothing generates now.
+house: nothing can be built from it. A problem in the site's files (the
+house file's, a host file or versions.json nothing can be generated from)
+exits 1, as a step's finding does; 2 is kept for a check that could not
+run: a wrong switch, or a file missing or unreadable. Otherwise each step
+named runs, whatever the one before it found. What is on disk under
+conf/, metrics/ and deploy/ is neither read nor touched: thermite
+generate --check compares it, and thermite generate --prune removes what
+nothing generates now.
 """
 
 EXAMPLES = (
@@ -50,43 +54,56 @@ EXAMPLES = (
 NOTES = """\
 exit status:
   0  every step it ran found nothing wrong
-  1  a step found a problem: what the house file generates disagrees with
-     it, the secret scan found something, or the docs name a make target
-     the Makefile lacks
-  2  a wrong switch; a house file that is missing, cannot be read or has a
-     problem (nothing after house runs); or a host file or versions.json
-     nothing can be generated from
+  1  a step found a problem: the house file has one (it is not YAML, or
+     fails a check; nothing after house runs), what it generates disagrees
+     with it, a host file or versions.json holds what nothing can be
+     generated from, the secret scan found something, or the docs name a
+     make target the Makefile lacks
+  2  it could not check: a wrong switch, or a house file, host file or
+     versions.json that is missing or cannot be read (a missing or
+     unreadable house file stops it at house)
+
+--json's status is ok, problems or unreadable, for each exit status.
 """
 
+#: --json's status for each exit status.
+STATUSES = ("ok", "problems", "unreadable")
 
-def failed(error: inventory.ConfigError, code: int) -> tuple[dict, int]:
-    """The build's report of what stopped it: `problems` as its stderr names them."""
-    return {"error": str(error), "problems": error.lines()[:-1]}, code
+
+def failed(error: inventory.ConfigError) -> tuple[dict, int]:
+    """The build's report of what stopped it: `problems` as its stderr
+    names them; 2 when a file could not be read, 1 when one has a problem."""
+    return {"error": str(error), "problems": error.lines()[:-1]}, unreadable(error)
+
+
+def unreadable(error: inventory.ConfigError) -> int:
+    """2 for a house file missing or unreadable, which check cannot read;
+    1 for one that has a problem."""
+    return 2 if isinstance(error, inventory.Unreadable) else 1
 
 
 def built(house_path: Path) -> tuple[dict, int]:
     """Build everything thermite generate would write for the site, and
-    write none of it: (the count of each, 0), or ({"error": ...}, 2) with
-    what stopped it, as it would stop thermite generate (1: what the house
-    file generates disagrees with it)."""
+    write none of it: (the count of each, 0), or ({"error": ...}, 1) with
+    what stopped it, as it would stop thermite generate (2: a file it could
+    not read)."""
     import oh_deploy as deploy
-    import oh_render as render
     from oh_cli import generate
     from oh_conf import House
     try:
         house = House.load(house_path)
     except inventory.ConfigError as error:
-        return failed(error, 2)
+        return failed(error)
     try:
         versions, host = deploy.load(oh_cli.AREA)
-    except (OSError, ValueError) as error:
+    except OSError as error:
         return {"error": f"{error}; nothing can be generated", "problems": []}, 2
+    except ValueError as error:
+        return {"error": f"{error}; nothing can be generated", "problems": []}, 1
     try:
         files, monitoring, units = generate.rendered(house, versions, host)
-    except render.Disagreement as error:
-        return failed(error, 1)
     except inventory.ConfigError as error:
-        return failed(error, 2)
+        return failed(error)
     return {"conf": len(files), "metrics": len(monitoring), "units": len(units)}, 0
 
 
@@ -125,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
                 for line in error.lines():
                     print(f"{PROGRAM}: {line}", file=sys.stderr)
             chosen = []
-            codes.append(2)
+            codes.append(unreadable(error))
         else:
             codes.append(validate.status(report["house"]))
             if human:
@@ -142,5 +159,5 @@ def main(argv: list[str] | None = None) -> int:
             lint.said(report["lint"], PROGRAM)
     code = max(codes)
     if arguments.json:
-        oh_cli.emit({**report, "status": ("ok", "problems", "invalid")[code]})
+        oh_cli.emit({**report, "status": STATUSES[code]})
     return code

@@ -90,6 +90,16 @@ class Sandbox(unittest.TestCase):
         status, out, err = self.run_main("logs")
         self.assertEqual((status, out.splitlines()[0], err), (0, "line 11", WARNING))
 
+    def test_logs_names_its_replacement_with_the_userdata_it_was_given(self):
+        self.inst.openhab_log.parent.mkdir(parents=True)
+        self.inst.openhab_log.write_text("line 1\n")
+        elsewhere = self.root / "other userdata"
+        status, out, err = self.run_main("logs", "--userdata", str(elsewhere))
+        self.assertEqual((status, out), (0, "line 1\n"))
+        self.assertEqual(err, f"thermite sandbox logs: thermite logs --sandbox --userdata '{elsewhere}' replaces it; "
+                              "thermite sandbox logs goes in the next release\n")
+        sandbox.lib.sandbox_instance.assert_called_with(userdata=elsewhere)
+
     def test_logs_is_listed_as_retired(self):
         text = oh_cli.parser_of("sandbox").format_help()
         self.assertIn("(retired: thermite logs --sandbox)", text)

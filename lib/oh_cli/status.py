@@ -43,15 +43,20 @@ with its API on loopback alone, whether systemd has each service of an
 installed gateway active (the gateway, its policy worker and, where the
 house has one, its callback relay), the install transaction that installed
 this version, any install transaction that has not finished and whether a
-command is running one now, and the runtime's own checks: every Thing
-ONLINE, Items whose state is NULL or UNDEF, none of thermite's rules
-disabled, and the installed add-ons, read with the API token thermite
-install saved in var/<this host's name>/api-token. While runtime does not
-answer they are skipped, that being the problem; when they cannot run (no
-token file, the token refused, an answer malformed) that is a problem too.
-Last come the last deploys (thermite history lists more).
+command is running one now, and the runtime's own checks: its Things, read
+with the same Thing policy as installation readiness (--installation), Items
+whose state is NULL or UNDEF, none of thermite's rules disabled, and the
+installed add-ons, read with the API token thermite install saved in
+var/<this host's name>/api-token. A Thing offline, waiting for pairing or
+connectivity, or not initialized is a warning, listed and in --json's
+warnings, and does not fail status; a Thing configuration error fails it.
+While runtime does not answer the checks are skipped, that being the
+problem; when they cannot run (no token file, the token refused, an answer
+malformed) that is a problem too. Last come the last deploys (thermite
+history lists more).
 
---runtime runs the runtime's checks alone, sending only GET and HEAD
+--runtime runs the runtime's checks alone, and strictly: every Thing
+ONLINE, unless --allow-offline names it. It sends only GET and HEAD
 requests: of production on this host by default, with that token, and then
 also of the services beside it: Prometheus ready with every scrape target
 up and Grafana answering; on a host with music:, Music Assistant running,
@@ -64,8 +69,9 @@ API at URL; either implies --runtime. The runtime answers /rest/things and
 API token. --addons also fails an add-on an addons.cfg lists that is not
 installed, and --allow-offline lets the Things it names be offline; with
 --token-file and --timeout they shape the runtime's checks in plain status
-too. An online HEOS bridge without either optional account field reports
-its missing-account diagnostic as a visible warning, preserving local
+too, where a Thing --allow-offline names is not even a warning. An online
+HEOS bridge without either optional account field reports its
+missing-account diagnostic as a visible warning, preserving local
 transport.
 
 The runtime keeps a rule's disabled flag through restarts and installs and
@@ -91,7 +97,7 @@ snapshot, as the other checks do; they remain strict.
 
 EXAMPLES = (
     ("thermite status", "the deployed commit against HEAD, the units, the services, runtime and its checks"),
-    ("thermite status --json", "the same, as JSON, with the problems that make it exit 1"),
+    ("thermite status --json", "the same, as JSON, with the problems that make it exit 1 and the warnings"),
     ("thermite status --state-dir /tmp/state", "the same for a runtime state somewhere else"),
     ("thermite status --runtime", "the runtime's checks alone, and the services beside it"),
     ("thermite status --sandbox", "the same checks of the sandbox, with its API token"),
@@ -105,7 +111,8 @@ EXAMPLES = (
 NOTES = """\
 exit status:
   0  what HEAD (or the selected commit) holds is deployed, unchanged, its
-     services and runtime are up and the runtime's checks pass; with
+     services and runtime are up and the runtime's checks pass, possibly
+     with Things offline or not initialized, which are warnings; with
      --runtime, every Thing ONLINE (or allowed), none of thermite's rules
      disabled and no requested add-on missing
   1  nothing is deployed, HEAD is not what is deployed, a deployed file or
@@ -114,8 +121,10 @@ exit status:
      not run with its API on loopback alone, the installed gateway serves
      HTTPS on another port or one of its services is not active, an
      upgrade's install transaction has not finished, or a runtime check
-     failed or could not run; with --runtime, a Thing not ONLINE and not
-     allowed, one of thermite's rules disabled, a requested add-on missing,
+     failed or could not run: a Thing configuration error, one of
+     thermite's rules disabled or a requested add-on missing; with
+     --runtime, a Thing not ONLINE and not allowed, one of thermite's rules
+     disabled, a requested add-on missing,
      or (of production) the metrics services installed but not answering, a
      scrape target down, Music Assistant installed but not running with its
      API on loopback alone, or a gateway service not active
@@ -258,11 +267,14 @@ def show_transaction(host: dict, report: dict, say, problems: list[str], *, mani
         say(f"install  {holder} is in progress; it has not begun a transaction")
 
 
-def show_runtime_checks(args, report: dict, say, problems: list[str]) -> None:
+def show_runtime_checks(args, report: dict, say, problems: list[str], warnings: list[str] | None = None) -> None:
     """The runtime's own checks (health.run): its Things, Items, thermite's
     rules and add-ons, without the metrics, music and gateway, which status
     reads itself. Skipped while the runtime does not answer, which is a
-    problem already; a problem when they cannot run."""
+    problem already; a problem when they cannot run. Things are read as
+    installation readiness reads them: a Thing offline or not initialized is
+    a warning, one with a configuration error a problem."""
+    warnings = [] if warnings is None else warnings
     url = report["runtime"]["url"]
     report["runtime_checks"], report["runtime_checks_reason"] = None, None
     if not report["runtime"]["version"]:
@@ -270,7 +282,7 @@ def show_runtime_checks(args, report: dict, say, problems: list[str]) -> None:
         return
     token = args.token_file or AREA / deploy.token_file(deploy.hostname())
     checks = argparse.Namespace(url=url, token_file=token, timeout=args.timeout, allow_offline=args.allow_offline,
-                                addons=args.addons, installation=False)
+                                addons=args.addons, installation=False, offline_warns=True)
     try:
         if not token.is_file():
             raise lib.SandboxError(f"no {token}: thermite install saves production's API token there "
@@ -283,6 +295,11 @@ def show_runtime_checks(args, report: dict, say, problems: list[str]) -> None:
         return
     report["runtime_checks"] = found
     problems.extend(f"runtime: {failure}" for failure in found["failures"])
+    for row in found["things"]["things"]:
+        if row["verdict"] in ("warn", "pending"):
+            warnings.append(f"runtime: Thing {row['uid']} is {row['status']}/{row['detail']}"
+                            + (f" ({row['description']})" if row.get("description") else "")
+                            + ("; it has not initialized" if row["verdict"] == "pending" else ""))
     say(f"checks   the runtime's own, with the API token in {token}")
     things = found["things"]
     say(f"things   {things['count']}: " + ", ".join(f"{status} {count}" for status, count in things["by_status"].items()))
@@ -320,8 +337,8 @@ def show(args, host: dict) -> int:
     something drifted from the deploy or is down."""
     as_json = getattr(args, "json", False)
     say = _quiet if as_json else print
-    report: dict = {"deployed": None, "trees": {}, "units": {}, "services": {}, "problems": []}
-    problems = report["problems"]
+    report: dict = {"deployed": None, "trees": {}, "units": {}, "services": {}, "problems": [], "warnings": []}
+    problems, warnings = report["problems"], report["warnings"]
     state_dir = getattr(args, "state_dir", None)
     layout = deploy.State(state_dir) if state_dir else deploy.state(host)
     record = deploy.read_record(layout)
@@ -396,7 +413,7 @@ def show(args, host: dict) -> int:
     if getattr(args, "no_runtime_checks", False):
         report["runtime_checks"], report["runtime_checks_reason"] = None, "not asked for"
     else:
-        show_runtime_checks(args, report, say, problems)
+        show_runtime_checks(args, report, say, problems, warnings)
     entries = deploy.deploys(layout)
     report["deploys"] = len(entries)
     if entries:

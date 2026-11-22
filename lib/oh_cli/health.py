@@ -137,6 +137,9 @@ def settled(args, *, clock=time.monotonic, sleep=time.sleep) -> dict:
 
 def run(args) -> dict:
     installation = bool(getattr(args, "installation", False))
+    # Plain status reads Things as installation readiness does, and the rest
+    # as strictly as ever.
+    readiness = installation or bool(getattr(args, "offline_warns", False))
     if installation and (getattr(args, "host", None) is None or args.allow_offline):
         raise lib.SandboxError("installation health requires production settings and no --allow-offline override")
     token = lib.read_token(args.token_file) if args.token_file else None
@@ -182,7 +185,7 @@ def run(args) -> dict:
     acode, addons = http.try_get_json("/rest/addons?serviceId=all")
 
     allow = frozenset(args.allow_offline or ())
-    summary = lib.summarize_things(things or [], require_online=True, allow=allow, installation=installation)
+    summary = lib.summarize_things(things or [], require_online=True, allow=allow, installation=readiness)
     unknown_allowed = sorted(allow - {t["uid"] for t in summary["things"]})
 
     undefined = []
@@ -215,7 +218,7 @@ def run(args) -> dict:
     failures = []
     if summary["failed"]:
         failures.append(f"{len(summary['failed'])} Thing(s) " +
-                        ("have configuration errors" if installation else "not ONLINE"))
+                        ("have configuration errors" if readiness else "not ONLINE"))
     # The install switches them back on just before its own health check; one
     # still off then loaded late, and a rollback would not switch it on.
     if disabled and not installation:

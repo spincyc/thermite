@@ -87,7 +87,7 @@ class ConfigParameter(unittest.TestCase):
     def test_check_runs_every_step_whatever_one_found_and_never_generates(self):
         from oh_cli import check, generate, lint, validate
         house = {"devices": 0, "items": 0, "notes": [], "problems": [], "status": "ok", "things": 0}
-        for codes, expected in (((0, 0, 0), 0), ((1, 0, 0), 1), ((0, 2, 0), 2), ((0, 0, 1), 1)):
+        for codes, expected in (((0, 0, 0), 0), ((1, 0, 0), 1), ((0, 1, 0), 1), ((0, 2, 0), 2), ((0, 0, 1), 1)):
             with self.subTest(codes=codes), patch.object(generate, "main") as generated, \
                     patch.object(validate, "checked", return_value={**house, "status": ("ok", "problems")[codes[0]]}) \
                     as validated, \

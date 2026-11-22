@@ -12,7 +12,8 @@ rollback. The unified deployment workflow uses a separate committed private site
   service's journal. `--since` and `--until` take `1h`, `today` or
   `2026-11-21 14:00`; components (`runtime`, `gateway`, `events` ...),
   `--level`, `--grep`, `-f` and `--json` narrow and shape it, and secrets
-  print as `***`. `thermite logs --sandbox` replaces `thermite sandbox logs`.
+  print as `***`. `thermite logs --sandbox` (with `--userdata DIR` for a
+  sandbox started with its own) replaces `thermite sandbox logs`.
 - `thermite bugreport` collects what `thermite version`, `status` and
   `history` say, the last day of logs and the system's facts into one
   owner-only archive, with secrets as `***`.
@@ -28,14 +29,18 @@ rollback. The unified deployment workflow uses a separate committed private site
   - `thermite check [house|build|lint]` replaces `thermite validate`
     (`check house`) and `thermite lint` (`check lint`). It runs every step
     it is given, even after one finds a problem, unless the house file is
-    invalid.
+    invalid. It exits 1 for a problem in the site's files, the house
+    file's included, and 2 only when it cannot check: a wrong switch, or
+    a file missing or unreadable.
   - `thermite status` takes in `thermite health`. Plain status adds the
-    runtime's checks (Things ONLINE, Items not NULL or UNDEF, thermite's
-    rules enabled, add-ons) and the installed gateway's services to its
-    problems, so a Thing that is not ONLINE makes it exit 1. `status
-    --runtime` (with `--sandbox` or `--runtime-url URL` for another
-    runtime) and `status --installation` run the checks alone, as health
-    did; the installer's last check is `status --installation`.
+    runtime's checks (Things, Items not NULL or UNDEF, thermite's rules
+    enabled, add-ons) and the installed gateway's services to its
+    problems. It reads Things as installation readiness does: a device
+    offline or not initialized is a warning (`warnings` in `--json`) and
+    a Thing configuration error a problem. `status --runtime` (with
+    `--sandbox` or `--runtime-url URL` for another runtime), strict
+    about every Thing as health was, and `status --installation` run the
+    checks alone; the installer's last check is `status --installation`.
   - `thermite rollback --restore-state` replaces `thermite revert`.
   - A device is a positional DEVICE: `matrix-settings DEVICE` replaces
     `--device ID`; `pair` with no DEVICE lists every Sony TV's pairing and
@@ -50,8 +55,8 @@ rollback. The unified deployment workflow uses a separate committed private site
     predates `--yes` in its host phase stops before the pin commit, with
     the site and host unchanged.
   - `--json` is new on `check`, `matrix-settings`, `reboot`, `pair` and
-    `sandbox status`, and on `uninstall -n` and `rollback -n`; every
-    `--json` prints one line.
+    `sandbox status`, and on the dry runs `install -n`, `upgrade -n`,
+    `uninstall -n` and `rollback -n`; every `--json` prints one line.
   - The old verbs and spellings warn on stderr and work until the next
     release.
 - A WiiM speaker that follows another in a multiroom group reports what

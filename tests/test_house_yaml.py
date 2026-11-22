@@ -262,6 +262,7 @@ class EveryRelease(Scratch):
 
 class Verbs(Scratch):
     def test_every_house_verb_exits_2_naming_the_file_and_the_line(self):
+        """But check, which found the problem, exits 1."""
         lines = yaml.safe_dump(EXAMPLE, sort_keys=False).splitlines()
         at = next(number for number, line in enumerate(lines) if line.strip().startswith("mac: "))
         lines[at] = lines[at].split("mac: ")[0] + "mac: " + ADDRESS
@@ -269,7 +270,7 @@ class Verbs(Scratch):
         for argv in (["generate", "--check", "--house"], ["check", "house", "--house"], ["dhcp-reservations", "--house"]):
             with self.subTest(argv=argv):
                 code, _, err = run(*argv, str(self.house))
-                self.assertEqual(code, 2)
+                self.assertEqual(code, 1 if argv[0] == "check" else 2)
                 self.assertEqual(err.splitlines(), [
                     f"thermite {argv[0]}: {self.house}: line {at + 1}: {ADDRESS} is a number in base 60 in YAML 1.1 "
                     f"and text in YAML 1.2: write \"{ADDRESS}\" in quotes",

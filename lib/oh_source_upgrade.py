@@ -64,15 +64,28 @@ def foreground(*argv: str | Path) -> int:
     child. subprocess.run would kill the child 0.25 s into that cleanup. A
     Python handler, unlike SIG_IGN, resets to the default in the exec'd child.
     """
+    return _foreground(argv, capture=False)[0]
+
+
+def foreground_output(*argv: str | Path) -> tuple[int, str]:
+    """foreground(), with the child's standard output read back instead of
+    shown: (its exit status, its standard output). Its standard error
+    still shows."""
+    return _foreground(argv, capture=True)
+
+
+def _foreground(argv: tuple[str | Path, ...], *, capture: bool) -> tuple[int, str]:
     interrupted = []
     previous = signal.signal(signal.SIGINT, lambda number, frame: interrupted.append(number))
     try:
-        code = subprocess.Popen([str(arg) for arg in argv], env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"}).wait()
+        process = subprocess.Popen([str(arg) for arg in argv], env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
+                                   stdout=subprocess.PIPE if capture else None, text=capture)
+        output = process.communicate()[0] or ""
     finally:
         signal.signal(signal.SIGINT, signal.default_int_handler if previous is None else previous)
     if interrupted:
         raise KeyboardInterrupt
-    return code
+    return process.returncode, output
 
 
 def git(directory: Path, *args: str) -> str:

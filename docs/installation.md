@@ -83,6 +83,10 @@ git add .
 git commit -m 'Initialize private Thermite site'
 ```
 
+`thermite check` exits 1 when it finds a problem in the site's files (the
+house file, the host file or `versions.json`), and 2 only when it cannot
+check: a wrong switch, or a file that is missing or cannot be read.
+
 Configure your Git author name and email if Git requests them. Keep this
 repository private. Commit the site manifest, instance configuration and
 `versions.json`. Generated `conf/`, `deploy/`, `metrics/`, credentials, caches
@@ -110,7 +114,10 @@ of the terminal. `--dry-run` describes the
 application selection and complete workflow without fetching, creating an
 environment, changing the site pin or touching services. For an upgrade from
 GitHub it cannot know the remote commit or its detailed changes without a fetch,
-and says so.
+and says so. `--dry-run --json` prints the same as one JSON object: the
+application and its revision, those notes, and each step of the host plan
+with whether it is done and what it would run, and the install transaction's
+summary.
 
 Read the plan first. One approval covers application preparation, the private
 site's release commit, native services and the HTTPS gateway, including their
@@ -476,7 +483,12 @@ that server the default (`ssh://USER@HOST:PORT/SITE` names the login, the
 port and the site directory there).
 
 Its runtime checks report real device availability; fictional example addresses will
-not establish a healthy house. Pair and verify equipment before relying on
+not establish a healthy house. It reads Things as the installer's readiness
+check does: a device that is offline, waiting for pairing or connectivity,
+or not initialized is listed as a warning (`warnings` in `--json`) and does
+not fail `thermite status`; a Thing configuration error does.
+`thermite status --runtime` stays strict: every Thing ONLINE, unless
+`--allow-offline UID` names it. Pair and verify equipment before relying on
 automation; `thermite pair --help` lists supported pairing steps.
 
 ### Nightly reboots
@@ -1115,6 +1127,8 @@ accounts or replace credentials merely to retry.
 
 `--dry-run` prints a provisional host plan only when the site pins the release
 that is running it; otherwise the host plan is resolved after approval.
+`--dry-run --json` prints it as one JSON object; the release running the
+dry run must be one that takes `--json`.
 
 `thermite install` runs as the same install transaction, with the same exit
 statuses; on a host without Thermite, a rollback leaves nothing installed.

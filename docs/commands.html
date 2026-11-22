@@ -187,10 +187,14 @@ without one it runs all three; they always run in this order:
          cite must be one the Makefile defines.
 
 A house file that is missing, cannot be read or has a problem stops it at
-house: nothing can be built from it. Otherwise each step named runs,
-whatever the one before it found. What is on disk under conf/, metrics/ and
-deploy/ is neither read nor touched: thermite generate --check compares it,
-and thermite generate --prune removes what nothing generates now.
+house: nothing can be built from it. A problem in the site&#x27;s files (the
+house file&#x27;s, a host file or versions.json nothing can be generated from)
+exits 1, as a step&#x27;s finding does; 2 is kept for a check that could not
+run: a wrong switch, or a file missing or unreadable. Otherwise each step
+named runs, whatever the one before it found. What is on disk under
+conf/, metrics/ and deploy/ is neither read nor touched: thermite
+generate --check compares it, and thermite generate --prune removes what
+nothing generates now.
 
 positional arguments:
   STEP           house, build or lint (default: all three)
@@ -208,12 +212,16 @@ switches every verb takes:
 
 exit status:
   0  every step it ran found nothing wrong
-  1  a step found a problem: what the house file generates disagrees with
-     it, the secret scan found something, or the docs name a make target
-     the Makefile lacks
-  2  a wrong switch; a house file that is missing, cannot be read or has a
-     problem (nothing after house runs); or a host file or versions.json
-     nothing can be generated from
+  1  a step found a problem: the house file has one (it is not YAML, or
+     fails a check; nothing after house runs), what it generates disagrees
+     with it, a host file or versions.json holds what nothing can be
+     generated from, the secret scan found something, or the docs name a
+     make target the Makefile lacks
+  2  it could not check: a wrong switch, or a house file, host file or
+     versions.json that is missing or cannot be read (a missing or
+     unreadable house file stops it at house)
+
+--json&#x27;s status is ok, problems or unreadable, for each exit status.
 
 examples:
   thermite check --config /path/to/private-site
@@ -761,6 +769,8 @@ switches every verb takes:
 
 examples:
   thermite logs --sandbox           what replaces it
+  thermite logs --sandbox --userdata DIR -f
+                                    what replaces sandbox logs -f --userdata DIR
   thermite sandbox logs             the last 50 lines
   thermite sandbox logs -f          and keep following it
   thermite sandbox logs -f --userdata DIR
@@ -769,7 +779,7 @@ examples:
 </section>
 <section class="verb" id="install"><h3><code>thermite install</code></h3><p>Install thermite on this host, with one approval for the whole run.</p><pre class="help">usage: thermite install [-h] [--config DIR] [-n] [--clean] [--yes] [--restart-runtime]
                         [--token-file FILE] [--source SOURCE] [--revision REVISION]
-                        [--native-timeout SECONDS] [--allow-downgrade]
+                        [--native-timeout SECONDS] [--allow-downgrade] [--json]
 
 Deploy the complete Thermite installation using committed private configuration.
 Run as your ordinary owner with --config DIR. The current application release
@@ -817,8 +827,11 @@ and is refused with --clean, which asks you to type the state path.
 --native-timeout sets the one native readiness allowance (300-7200 seconds).
 --dry-run fetches, commits and changes nothing. When the site pins the release
 running it, it also prints that release&#x27;s provisional host plan for this host;
-otherwise the host plan is resolved after approval. Use -v for details. Agents
-only use --dry-run; they never run sudo.
+otherwise the host plan is resolved after approval. With --json it prints
+what it would do as one JSON object: the application and its revision, the
+notes, and each step of the host plan (its title, whether it is done, what
+it would do or run) with the install transaction&#x27;s summary. Use -v for
+details. Agents only use --dry-run; they never run sudo.
 
 options:
   -h, --help                show this help message and exit
@@ -838,6 +851,7 @@ options:
                             gateway commissioning and final settlement (default 900)
   --allow-downgrade         pin a release older than the site&#x27;s committed one, after
                             restoring compatible state
+  --json                    print the report as JSON
 
 switches every verb takes:
   -q, --quiet               print only errors
@@ -863,6 +877,7 @@ examples:
   thermite install --config /path/to/private-site --dry-run
                                     review the plan without changing services
   thermite install --dry-run        each step, and what it would run here; runs nothing
+  thermite install -n --json        the same, as one JSON object
   thermite install                  install with one approval for the whole run; rolls back by itself on failure
   thermite install --clean --dry-run
                                     review a complete native-state reset and fresh installation
@@ -872,7 +887,7 @@ examples:
 </section>
 <section class="verb" id="upgrade"><h3><code>thermite upgrade</code></h3><p>Update the application, native services and HTTPS gateway together.</p><pre class="help">usage: thermite upgrade [-h] [--config DIR] [-n] [--yes] [--token-file FILE]
                         [--source SOURCE] [--revision REVISION]
-                        [--native-timeout SECONDS] [--allow-downgrade]
+                        [--native-timeout SECONDS] [--allow-downgrade] [--json]
 
 Upgrade the complete Thermite installation from the official GitHub main branch.
 Select your committed private site with --config DIR. Use --revision REV to
@@ -917,7 +932,11 @@ it remains.
 --dry-run changes nothing and does not fetch: the remote revision and its exact
 host differences remain unknown until an approved run. When the site pins the
 release running it, it prints that release&#x27;s provisional host plan for this
-host. Run as your ordinary user. Use -v for details. Agents only use --dry-run.
+host. With --json it prints what it would do as one JSON object: the
+application and its revision, the notes, and each step of that host plan
+(its title, whether it is done, what it would do or run) with the install
+transaction&#x27;s summary. Run as your ordinary user. Use -v for details.
+Agents only use --dry-run.
 
 options:
   -h, --help                show this help message and exit
@@ -935,6 +954,7 @@ options:
                             gateway commissioning and final settlement (default 900)
   --allow-downgrade         pin a release older than the site&#x27;s committed one, after
                             restoring compatible state
+  --json                    print the report as JSON
 
 switches every verb takes:
   -q, --quiet               print only errors
@@ -955,6 +975,7 @@ exit status:
 
 examples:
   thermite upgrade -n               what upgrading would do here; runs nothing
+  thermite upgrade -n --json        the same, as one JSON object
   thermite upgrade                  upgrade, asking once for the whole run; rolls back by itself on failure
   thermite upgrade --yes            upgrade unattended, approved up front, asking nothing
 </pre>
@@ -1121,15 +1142,20 @@ with its API on loopback alone, whether systemd has each service of an
 installed gateway active (the gateway, its policy worker and, where the
 house has one, its callback relay), the install transaction that installed
 this version, any install transaction that has not finished and whether a
-command is running one now, and the runtime&#x27;s own checks: every Thing
-ONLINE, Items whose state is NULL or UNDEF, none of thermite&#x27;s rules
-disabled, and the installed add-ons, read with the API token thermite
-install saved in var/&lt;this host&#x27;s name&gt;/api-token. While runtime does not
-answer they are skipped, that being the problem; when they cannot run (no
-token file, the token refused, an answer malformed) that is a problem too.
-Last come the last deploys (thermite history lists more).
+command is running one now, and the runtime&#x27;s own checks: its Things, read
+with the same Thing policy as installation readiness (--installation), Items
+whose state is NULL or UNDEF, none of thermite&#x27;s rules disabled, and the
+installed add-ons, read with the API token thermite install saved in
+var/&lt;this host&#x27;s name&gt;/api-token. A Thing offline, waiting for pairing or
+connectivity, or not initialized is a warning, listed and in --json&#x27;s
+warnings, and does not fail status; a Thing configuration error fails it.
+While runtime does not answer the checks are skipped, that being the
+problem; when they cannot run (no token file, the token refused, an answer
+malformed) that is a problem too. Last come the last deploys (thermite
+history lists more).
 
---runtime runs the runtime&#x27;s checks alone, sending only GET and HEAD
+--runtime runs the runtime&#x27;s checks alone, and strictly: every Thing
+ONLINE, unless --allow-offline names it. It sends only GET and HEAD
 requests: of production on this host by default, with that token, and then
 also of the services beside it: Prometheus ready with every scrape target
 up and Grafana answering; on a host with music:, Music Assistant running,
@@ -1142,8 +1168,9 @@ API at URL; either implies --runtime. The runtime answers /rest/things and
 API token. --addons also fails an add-on an addons.cfg lists that is not
 installed, and --allow-offline lets the Things it names be offline; with
 --token-file and --timeout they shape the runtime&#x27;s checks in plain status
-too. An online HEOS bridge without either optional account field reports
-its missing-account diagnostic as a visible warning, preserving local
+too, where a Thing --allow-offline names is not even a warning. An online
+HEOS bridge without either optional account field reports its
+missing-account diagnostic as a visible warning, preserving local
 transport.
 
 The runtime keeps a rule&#x27;s disabled flag through restarts and installs and
@@ -1200,7 +1227,8 @@ switches every verb takes:
 
 exit status:
   0  what HEAD (or the selected commit) holds is deployed, unchanged, its
-     services and runtime are up and the runtime&#x27;s checks pass; with
+     services and runtime are up and the runtime&#x27;s checks pass, possibly
+     with Things offline or not initialized, which are warnings; with
      --runtime, every Thing ONLINE (or allowed), none of thermite&#x27;s rules
      disabled and no requested add-on missing
   1  nothing is deployed, HEAD is not what is deployed, a deployed file or
@@ -1209,8 +1237,10 @@ exit status:
      not run with its API on loopback alone, the installed gateway serves
      HTTPS on another port or one of its services is not active, an
      upgrade&#x27;s install transaction has not finished, or a runtime check
-     failed or could not run; with --runtime, a Thing not ONLINE and not
-     allowed, one of thermite&#x27;s rules disabled, a requested add-on missing,
+     failed or could not run: a Thing configuration error, one of
+     thermite&#x27;s rules disabled or a requested add-on missing; with
+     --runtime, a Thing not ONLINE and not allowed, one of thermite&#x27;s rules
+     disabled, a requested add-on missing,
      or (of production) the metrics services installed but not answering, a
      scrape target down, Music Assistant installed but not running with its
      API on loopback alone, or a gateway service not active
@@ -1229,7 +1259,7 @@ individual undefined Item states.
 
 examples:
   thermite status                   the deployed commit against HEAD, the units, the services, runtime and its checks
-  thermite status --json            the same, as JSON, with the problems that make it exit 1
+  thermite status --json            the same, as JSON, with the problems that make it exit 1 and the warnings
   thermite status --state-dir /tmp/state
                                     the same for a runtime state somewhere else
   thermite status --runtime         the runtime&#x27;s checks alone, and the services beside it
@@ -1291,6 +1321,7 @@ examples:
 <section class="verb" id="logs"><h3><code>thermite logs</code></h3><p>Every Thermite service&#x27;s log, merged by time; --since and --until pick a range.</p><pre class="help">usage: thermite logs [-h] [--config DIR] [--production | --sandbox | --url URL]
                      [--since WHEN] [--until WHEN] [--lines N] [-f] [--grep PATTERN]
                      [--level LEVEL] [--utc] [--json] [--no-redact] [--state-dir DIR]
+                     [--userdata DIR]
                      [COMPONENT ...]
 
 Print, read-only, the logs of this host&#x27;s Thermite services as one list,
@@ -1331,7 +1362,8 @@ Reading openhab.log takes membership of the thermite group, and other
 services&#x27; journals that of systemd-journal (or wheel or adm, where the
 distribution grants it), or sudo. A source it cannot read is named on
 stderr, and the rest still print. With --sandbox it reads the sandbox&#x27;s
-openhab.log alone: the sandbox has no other service.
+openhab.log alone: the sandbox has no other service. --userdata DIR reads
+that of a sandbox started with thermite sandbox start --userdata DIR.
 
 positional arguments:
   COMPONENT        read only these: runtime, events, gateway, worker, callbacks, atv,
@@ -1358,6 +1390,8 @@ options:
   --no-redact      print secrets as the log has them (default: as ***)
   --state-dir DIR  the runtime state, whose logs/ holds openhab.log (default: runtime/
                    in instance/host.yaml&#x27;s root, /srv/thermite/runtime)
+  --userdata DIR   with --sandbox, the userdata of a sandbox started with --userdata
+                   DIR, whose logs/ holds openhab.log (default: var/sandbox/userdata)
 
 switches every verb takes:
   -q, --quiet      print only errors
@@ -1384,6 +1418,8 @@ examples:
   thermite logs --json --since 24h &gt; logs.jsonl
                                     a day of records as JSON Lines, to share
   thermite logs --sandbox -f        follow the sandbox&#x27;s openhab.log
+  thermite logs --sandbox --userdata DIR -f
+                                    that of a sandbox started with --userdata DIR
   thermite logs --url ssh://thermite --since 1h
                                     the last hour, read on the server named thermite
 </pre>

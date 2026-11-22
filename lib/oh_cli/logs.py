@@ -1,6 +1,7 @@
 """Every Thermite service's log, merged by time.
 
     thermite logs [COMPONENT ...] [--since WHEN] [--until WHEN] [--lines N] [-f] [--json]
+    thermite logs --sandbox [--userdata DIR] [...]
 """
 
 from __future__ import annotations
@@ -60,7 +61,8 @@ Reading openhab.log takes membership of the thermite group, and other
 services' journals that of systemd-journal (or wheel or adm, where the
 distribution grants it), or sudo. A source it cannot read is named on
 stderr, and the rest still print. With --sandbox it reads the sandbox's
-openhab.log alone: the sandbox has no other service.
+openhab.log alone: the sandbox has no other service. --userdata DIR reads
+that of a sandbox started with thermite sandbox start --userdata DIR.
 """
 
 EXAMPLES = (
@@ -72,6 +74,7 @@ EXAMPLES = (
     ("thermite logs --grep avpro --since 2h", "the records that mention avpro, in any case"),
     ("thermite logs --json --since 24h > logs.jsonl", "a day of records as JSON Lines, to share"),
     ("thermite logs --sandbox -f", "follow the sandbox's openhab.log"),
+    ("thermite logs --sandbox --userdata DIR -f", "that of a sandbox started with --userdata DIR"),
     ("thermite logs --url ssh://thermite --since 1h", "the last hour, read on the server named thermite"),
 )
 
@@ -100,12 +103,12 @@ def logs_of(state: Path) -> Path:
     return state / "logs"
 
 
-def sandbox_logs() -> Path:
+def sandbox_logs(userdata: Path | None = None) -> Path:
     try:
         import oh_sandbox
-        return oh_sandbox.sandbox_instance().openhab_log.parent
+        return oh_sandbox.sandbox_instance(userdata=userdata).openhab_log.parent
     except ImportError:
-        return AREA / "var/sandbox/userdata/logs"
+        return Path(userdata or AREA / "var/sandbox/userdata").resolve() / "logs"
 
 
 def _paint(level: str, text: str) -> str:
@@ -146,9 +149,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state-dir", type=Path, metavar="DIR",
                         help="the runtime state, whose logs/ holds openhab.log (default: runtime/ in "
                              "instance/host.yaml's root, /srv/thermite/runtime)")
+    parser.add_argument("--userdata", type=Path, metavar="DIR",
+                        help="with --sandbox, the userdata of a sandbox started with --userdata DIR, whose logs/ "
+                             "holds openhab.log (default: var/sandbox/userdata)")
     arguments = parser.parse_args(argv)
     if arguments.url:
         return oh_cli.refuse_url("logs", arguments.url)
+    if arguments.userdata is not None and not arguments.sandbox:
+        parser.error("--userdata names a sandbox's userdata: give it with --sandbox")
 
     unknown = [name for name in arguments.components if name not in oh_logs.COMPONENTS]
     if unknown:
@@ -179,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
         components = tuple(name for name in components if name in oh_logs.FILES)
         if not components:
             return 2
-        logs, journal = sandbox_logs(), False
+        logs, journal = sandbox_logs(arguments.userdata), False
     else:
         logs, journal = logs_of(arguments.state_dir or state_dir()), True
 

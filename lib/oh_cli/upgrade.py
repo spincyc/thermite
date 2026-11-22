@@ -1,7 +1,7 @@
 """Update the application, then move this host's services to what the site
 pins, or show what that would do.
 
-    thermite upgrade --config DIR [-n | --dry-run] [--yes] [--token-file FILE] [--source DIR]
+    thermite upgrade --config DIR [-n | --dry-run [--json]] [--yes] [--token-file FILE] [--source DIR]
                      [--revision REV] [--native-timeout SECONDS] [--allow-downgrade]
 """
 
@@ -61,7 +61,11 @@ it remains.
 --dry-run changes nothing and does not fetch: the remote revision and its exact
 host differences remain unknown until an approved run. When the site pins the
 release running it, it prints that release's provisional host plan for this
-host. Run as your ordinary user. Use -v for details. Agents only use --dry-run.
+host. With --json it prints what it would do as one JSON object: the
+application and its revision, the notes, and each step of that host plan
+(its title, whether it is done, what it would do or run) with the install
+transaction's summary. Run as your ordinary user. Use -v for details.
+Agents only use --dry-run.
 """
 
 NOTES = """\
@@ -79,6 +83,7 @@ exit status:
 
 EXAMPLES = (
     ("thermite upgrade -n", "what upgrading would do here; runs nothing"),
+    ("thermite upgrade -n --json", "the same, as one JSON object"),
     ("thermite upgrade", "upgrade, asking once for the whole run; rolls back by itself on failure"),
     ("thermite upgrade --yes", "upgrade unattended, approved up front, asking nothing"),
 )
@@ -97,6 +102,7 @@ def main(argv: list[str] | None = None) -> int:
                              "and final settlement (default 900)")
     parser.add_argument("--allow-downgrade", action="store_true",
                         help="pin a release older than the site's committed one, after restoring compatible state")
+    oh_cli.add_json(parser)
     parser.add_argument("--_host-phase", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--_run-approved", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--_site-before", help=argparse.SUPPRESS)
@@ -104,6 +110,8 @@ def main(argv: list[str] | None = None) -> int:
     if os.geteuid() == 0:
         print("thermite upgrade: run it as your user; it asks once before applying the upgrade",
               file=sys.stderr)
+        return 2
+    if not install.json_with_dry_run("upgrade", arguments):
         return 2
     approval = UNATTENDED.set(arguments.yes)
     try:

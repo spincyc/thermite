@@ -344,6 +344,46 @@ class Lifecycle(fixtures.ApplicationFixture):
             self.assertTrue(any(line.startswith("No host plan is shown") for line in self.said))
         self.assertFalse((self.home / ".local/share").exists())
 
+    def test_a_json_dry_run_reports_the_host_phase_s_plan(self):
+        planned = {"verb": "install", "dry_run": True, "status": 1, "commit": "c" * 40,
+                   "title": "What installing thermite ... would do:",
+                   "steps": [{"number": 1, "title": "Preconditions", "done": True, "detail": "fine", "problem": None,
+                              "actions": []}],
+                   "transaction": {"kind": "install", "summary": "Then, as one install transaction: ..."},
+                   "said": ["What installing thermite ... would do:"]}
+        with patch.object(transaction, "run", side_effect=self.simulate), \
+                patch.object(transaction, "foreground", side_effect=AssertionError("the plan is read back")), \
+                patch.object(transaction, "foreground_output", return_value=(1, json.dumps(planned) + "\n")) as child:
+            self.said, report = [], {}
+            self.assertEqual(application.apply("install", self.site, program=self.old, dry_run=True, home=self.home,
+                                               approve=Mock(side_effect=AssertionError), say=self.said.append,
+                                               host_args=("--native-timeout", "600"), report=report), 1)
+            child.assert_called_once_with(sys.executable, self.old / "bin/thermite", "install", "--config", self.site,
+                                          "--_host-phase", "--dry-run", "--native-timeout", "600", "--json")
+            digest = oh_release.manifest(self.old)["digest"]
+            self.assertEqual(report["application"], {"source": str(self.old), "revision": "current release",
+                                                     "release": digest})
+            self.assertEqual(report["notes"], [line for line in self.said[1:-1]],
+                             "every line it says but the application's and the host phase's")
+            self.assertTrue(report["notes"][-1].startswith(f"Provisional host plan from the current release "
+                                                           f"{digest[:12]}"))
+            self.assertEqual(report["host_plan"], {"release": digest, "exact": True, "status": 1})
+            self.assertEqual({key: report[key] for key in ("title", "commit", "steps", "transaction")},
+                             {key: planned[key] for key in ("title", "commit", "steps", "transaction")})
+            self.assertEqual(self.said[-1], "What installing thermite ... would do:", "its lines follow, as on a terminal")
+            self.said, report = [], {}
+            self.assertEqual(application.apply("upgrade", self.site, program=self.new, dry_run=True, home=self.home,
+                                               approve=Mock(side_effect=AssertionError), say=self.said.append,
+                                               report=report), 0)
+            self.assertEqual((report["host_plan"], report["title"], report["commit"]), (None, None, None))
+            self.assertEqual(report["notes"], self.said[1:])
+            self.assertEqual(report["application"]["revision"], "main")
+            child.return_value = (2, "Traceback: not a report\n")
+            with self.assertRaisesRegex(ValueError, r"printed no JSON report \(exit status 2\)"):
+                application.apply("install", self.site, program=self.old, dry_run=True, home=self.home,
+                                  approve=Mock(side_effect=AssertionError), say=self.said.append, report={})
+        self.assertFalse((self.home / ".local/share").exists())
+
 
 class Commands(unittest.TestCase):
     def test_native_timeout_and_downgrade_reach_the_outer_and_host_phases(self):

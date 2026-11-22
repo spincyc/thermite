@@ -606,6 +606,8 @@ def summarize_things(things: list[dict], require_online: bool = False, allow: fr
                 verdict = "warn"
         if thing.get("UID") in allow and verdict == "fail" and status != "UNINITIALIZED" and detail not in FAIL_DETAILS:
             verdict = "allowed"
+        elif thing.get("UID") in allow and installation and verdict in ("warn", "pending"):
+            verdict = "allowed"
         row = {
             "uid": thing.get("UID"),
             "label": thing.get("label"),

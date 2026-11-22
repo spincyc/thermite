@@ -339,15 +339,23 @@ def read(text: str | bytes) -> tuple[object, list[tuple[int, int, str, str]]]:
     return content, sorted(loader.refused)
 
 
+class Unreadable(ConfigError):
+    """A configuration file that is missing or that the system would not
+    read: nothing in it is wrong, as far as anyone can tell."""
+
+
 def load(path: Path) -> object:
-    """A house file's content; ConfigError when it cannot be read, is not
-    YAML, or holds what StrictLoader refuses, each named with its line and
-    what to write. Its shape is not checked: oh_conf.House.load is the
-    reader of a house file (tests/test_house_loader.py)."""
+    """A house file's content; ConfigError when it cannot be read (Unreadable,
+    when the system would not read it), is not YAML, or holds what
+    StrictLoader refuses, each named with its line and what to write. Its
+    shape is not checked: oh_conf.House.load is the reader of a house file
+    (tests/test_house_loader.py)."""
     try:
         text = Path(path).read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as error:
-        raise ConfigError(path, f"cannot be read: {getattr(error, 'strerror', None) or error}") from None
+    except OSError as error:
+        raise Unreadable(path, f"cannot be read: {error.strerror or error}") from None
+    except UnicodeDecodeError as error:
+        raise ConfigError(path, f"cannot be read: {error}") from None
     try:
         content, refused = read(text)
     except yaml.MarkedYAMLError as error:

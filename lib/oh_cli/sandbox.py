@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -257,7 +258,10 @@ def cmd_status(args) -> int:
 
 
 def cmd_logs(args) -> int:
-    print(f"{oh_cli.PROGRAM} sandbox logs: {oh_cli.PROGRAM} logs --sandbox replaces it; "
+    instead = shlex.join([oh_cli.PROGRAM, "logs", "--sandbox",
+                          *(["--userdata", str(args.userdata)] if args.userdata is not None else []),
+                          *(["-f"] if args.follow else [])])
+    print(f"{oh_cli.PROGRAM} sandbox logs: {instead} replaces it; "
           f"{oh_cli.PROGRAM} sandbox logs goes in the next release", file=sys.stderr)
     inst = lib.sandbox_instance(userdata=args.userdata)
     path = inst.openhab_log
@@ -341,6 +345,7 @@ def main(argv=None) -> int:
 
     p = oh_cli.action(sub, "logs", "show userdata/logs/openhab.log (retired: thermite logs --sandbox)", examples=(
         ("thermite logs --sandbox", "what replaces it"),
+        ("thermite logs --sandbox --userdata DIR -f", "what replaces sandbox logs -f --userdata DIR"),
         ("thermite sandbox logs", "the last 50 lines"),
         ("thermite sandbox logs -f", "and keep following it"),
         ("thermite sandbox logs -f --userdata DIR", "the log of a sandbox started with --userdata DIR"),

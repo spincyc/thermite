@@ -1,6 +1,6 @@
 """Install thermite on this host, or show what that would do.
 
-    thermite install --config DIR [--dry-run] [--clean | --yes] [--restart-runtime]
+    thermite install --config DIR [-n | --dry-run [--json]] [--clean | --yes] [--restart-runtime]
                      [--token-file FILE] [--native-timeout SECONDS] [--allow-downgrade]
 """
 
@@ -66,8 +66,11 @@ and is refused with --clean, which asks you to type the state path.
 --native-timeout sets the one native readiness allowance (300-7200 seconds).
 --dry-run fetches, commits and changes nothing. When the site pins the release
 running it, it also prints that release's provisional host plan for this host;
-otherwise the host plan is resolved after approval. Use -v for details. Agents
-only use --dry-run; they never run sudo.
+otherwise the host plan is resolved after approval. With --json it prints
+what it would do as one JSON object: the application and its revision, the
+notes, and each step of the host plan (its title, whether it is done, what
+it would do or run) with the install transaction's summary. Use -v for
+details. Agents only use --dry-run; they never run sudo.
 """
 
 NOTES = """\
@@ -88,6 +91,7 @@ EXAMPLES = (
     ("thermite install --config /path/to/private-site", "install this site's configuration on the host"),
     ("thermite install --config /path/to/private-site --dry-run", "review the plan without changing services"),
     ("thermite install --dry-run", "each step, and what it would run here; runs nothing"),
+    ("thermite install -n --json", "the same, as one JSON object"),
     ("thermite install", "install with one approval for the whole run; rolls back by itself on failure"),
     ("thermite install --clean --dry-run", "review a complete native-state reset and fresh installation"),
     ("thermite install --yes --config /path/to/private-site", "install unattended, approved up front, asking nothing"),
@@ -112,12 +116,15 @@ def main(argv: list[str] | None = None) -> int:
                              "and final settlement (default 900)")
     parser.add_argument("--allow-downgrade", action="store_true",
                         help="pin a release older than the site's committed one, after restoring compatible state")
+    oh_cli.add_json(parser)
     parser.add_argument("--_host-phase", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--_run-approved", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--_site-before", help=argparse.SUPPRESS)
     arguments = parser.parse_args(host_phase(argv))
     if os.geteuid() == 0:
         print("thermite install: run it as your user; it asks once before applying the installation", file=sys.stderr)
+        return 2
+    if not json_with_dry_run("install", arguments):
         return 2
     if arguments.yes and arguments.clean:
         print("thermite install: --yes cannot approve a clean install, which asks you to type the state path",
@@ -128,6 +135,15 @@ def main(argv: list[str] | None = None) -> int:
         return run(System(), arguments)
     finally:
         UNATTENDED.reset(approval)
+
+
+def json_with_dry_run(verb: str, arguments: argparse.Namespace) -> bool:
+    """Whether --json, if given, comes with the dry run it reports; it is
+    refused, and said so, otherwise."""
+    if arguments.json and not arguments.dry_run:
+        print(f"thermite {verb}: --json reports what a dry run would do: give it with -n/--dry-run", file=sys.stderr)
+        return False
+    return True
 
 
 def add_token_file(parser: argparse.ArgumentParser) -> None:
@@ -160,6 +176,8 @@ def run(system: System, arguments: argparse.Namespace, verb: str = "install") ->
     with `arguments` parsed: the two differ in what they may be given and
     in what install() does for each."""
     given = vars(arguments)
+    # --json comes only with --dry-run (json_with_dry_run): the report of what it would do.
+    report = {"verb": verb, "dry_run": True} if given.get("json") else None
     try:
         if not arguments._host_phase:
             if arguments._run_approved:
@@ -169,7 +187,7 @@ def run(system: System, arguments: argparse.Namespace, verb: str = "install") ->
                 if found is not None:
                     return changeover.REFUSED if found == changeover.COMMITTED else found
             import oh_application_update
-            return getattr(oh_application_update, verb)(
+            return changeover.reported(report, lambda: getattr(oh_application_update, verb)(
                 AREA, source=arguments.source, revision=arguments.revision,
                 dry_run=arguments.dry_run, approve=lambda: runner.confirm_run(system, verb, rerun(verb)),
                 runtime_token_file=arguments.runtime_token_file, allow_downgrade=arguments.allow_downgrade,
@@ -178,7 +196,7 @@ def run(system: System, arguments: argparse.Namespace, verb: str = "install") ->
                           (["--native-timeout", str(arguments.native_timeout)]
                            if arguments.native_timeout is not None else []) +
                           (["--verbose"] if oh_cli.switches.verbose else []), say=system.say,
-                stage=lambda title: progress.stage(system, title))
+                stage=lambda title: progress.stage(system, title), report=report))
         import oh_paths
 
         def body(before: str | None) -> int:
@@ -187,11 +205,11 @@ def run(system: System, arguments: argparse.Namespace, verb: str = "install") ->
                            runtime_token_file=arguments.runtime_token_file,
                            restart_runtime=given.get("restart_runtime", False),
                            run_approved=arguments._run_approved, native_timeout=arguments.native_timeout,
-                           site_before=before)
-        return changeover.scoped(
+                           site_before=before, plan=report)
+        return changeover.reported(report, lambda: changeover.scoped(
             AREA, system, verb,
             lambda: changeover.pinned(system, AREA, arguments._site_before, arguments.dry_run, body),
-            dry_run=arguments.dry_run)
+            dry_run=arguments.dry_run))
     except subprocess.CalledProcessError as exc:
         print(f"thermite {verb}: {changeover.escaped(AREA, verb, exc)}", file=sys.stderr)
         return exc.returncode if exc.returncode > 0 else 1
@@ -218,13 +236,14 @@ def approve(system: System, context: steps.Context, clean: bool) -> bool:
 
 def install(system: System, dry_run: bool, *, verb: str = "install", clean: bool = False,
             runtime_token_file: Path | None = None, restart_runtime: bool = False, run_approved: bool = False,
-            native_timeout: int | None = None, site_before: str | None = None) -> int:
+            native_timeout: int | None = None, site_before: str | None = None, plan: dict | None = None) -> int:
     """The host phase of thermite install and of thermite upgrade (`verb`):
     finish any open transaction, read the committed site and what is
     installed, run the checks that need nothing stopped, then install the
     version as one transaction, or only check its health when nothing
     differs. An upgrade needs an installation and has no --clean or
-    --restart-runtime; an install also makes the first one."""
+    --restart-runtime; an install also makes the first one. A dry run
+    given `plan` (a --json report) fills it in instead of showing the steps."""
     upgrade = verb == "upgrade"
     again = rerun(verb)
     if clean and runtime_token_file is not None:
@@ -235,7 +254,9 @@ def install(system: System, dry_run: bool, *, verb: str = "install", clean: bool
     except ImportError:
         system.say("PyYAML is missing from this Python environment. Install the application dependencies, "
                    "then rerun: the site must be validated before any host changes.")
-        if dry_run:
+        if dry_run and plan is not None:
+            plan["steps"] = runner.plan([steps.Packages()], system)[1]
+        elif dry_run:
             runner.run([steps.Packages()], system, AREA, dry_run=True)
         return 2
     if not dry_run:
@@ -268,14 +289,21 @@ def install(system: System, dry_run: bool, *, verb: str = "install", clean: bool
         return 2
     kind = "upgrade" if upgrade else "clean" if clean else "install"
     if upgrade:
-        system.say(f"{'What upgrading' if dry_run else 'Upgrading'} thermite on this host, {context.hostname}, to "
-                   f"what {context.head[:12]} pins, {'would do' if dry_run else 'step by step'}:")
+        title = (f"{'What upgrading' if dry_run else 'Upgrading'} thermite on this host, {context.hostname}, to "
+                 f"what {context.head[:12]} pins, {'would do' if dry_run else 'step by step'}:")
     else:
         where = f"{context.hostname} ({context.address})" if context.address else context.hostname
-        system.say(f"{'What installing' if dry_run else 'Installing'} thermite (runtime "
-                   f"{context.versions['openhab']['version']}) on this host, {where}, as {system.login()}, at "
-                   f"{context.head[:12]}, {'would do' if dry_run else 'step by step'}:")
+        title = (f"{'What installing' if dry_run else 'Installing'} thermite (runtime "
+                 f"{context.versions['openhab']['version']}) on this host, {where}, as {system.login()}, at "
+                 f"{context.head[:12]}, {'would do' if dry_run else 'step by step'}:")
+    system.say(title)
     preflight = steps.install_preflight(context)
+    if dry_run and plan is not None:
+        code, checked = runner.plan(preflight, system)
+        prepared, preparation, transaction = changeover.plan(
+            system, changeover.install_work(context, None, kind=kind), first=len(preflight) + 1)
+        plan.update(title=title, commit=context.head, steps=[*checked, *preparation], transaction=transaction)
+        return prepared or code
     code = runner.run(preflight, system, AREA, dry_run=dry_run, rerun=again)
     if dry_run:
         return changeover.preview(context, system, changeover.install_work(context, None, kind=kind),

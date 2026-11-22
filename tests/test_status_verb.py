@@ -141,7 +141,7 @@ class PlainStatus(Fixture):
         lines = out.splitlines()
         self.assertIn(f"checks   the runtime's own, with the API token in {self.token}", lines)
         self.assertIn("things   2: OFFLINE/COMMUNICATION_ERROR 1, ONLINE 1", lines)
-        self.assertIn("           FAIL    http:url:gone  OFFLINE/COMMUNICATION_ERROR", lines)
+        self.assertIn("           warn    http:url:gone  OFFLINE/COMMUNICATION_ERROR", lines)
         self.assertIn("items    1, NULL/UNDEF: 1", lines)
         self.assertIn("           NULL  fixture_level (Dimmer)", lines)
         self.assertIn("rules    1, thermite's disabled: 0", lines)
@@ -152,14 +152,43 @@ class PlainStatus(Fixture):
                         lines.index("things   2: OFFLINE/COMMUNICATION_ERROR 1, ONLINE 1"))
 
     def test_a_failed_check_is_a_problem(self):
-        self.responses[THINGS] = 200, [thing("http:url:gone", "OFFLINE", "COMMUNICATION_ERROR")]
+        self.responses[THINGS] = 200, [thing("http:url:bad", "OFFLINE", "CONFIGURATION_ERROR")]
         self.responses[RULES] = 200, [rule("fixture_poll", "DISABLED")]
         code, report, _ = self.report()
         self.assertEqual(code, 1)
         self.assertEqual(report["problems"][1:], [
-            "runtime: 1 Thing(s) not ONLINE",
+            "runtime: 1 Thing(s) have configuration errors",
             "runtime: 1 of thermite's rules disabled in the runtime: fixture_poll; "
             "the next thermite install or upgrade switches them back on"])
+        self.assertEqual(report["warnings"], [])
+
+    def test_offline_things_are_warnings_as_installation_readiness_has_them(self):
+        """A device unplugged or off the network does not fail plain status;
+        --runtime, as health did, still fails it."""
+        offline = thing("http:url:gone", "OFFLINE", "COMMUNICATION_ERROR")
+        offline["statusInfo"]["description"] = "No route to host"
+        self.responses[THINGS] = 200, [thing("http:url:fixture"), offline,
+                                       thing("http:url:bridged", "OFFLINE", "BRIDGE_OFFLINE"),
+                                       thing("http:url:new", "UNKNOWN")]
+        code, report, _ = self.report()
+        self.assertEqual(report["problems"], ["nothing is deployed"], "only what fails without the runtime's Things")
+        self.assertEqual(report["warnings"], [
+            "runtime: Thing http:url:bridged is OFFLINE/BRIDGE_OFFLINE",
+            "runtime: Thing http:url:gone is OFFLINE/COMMUNICATION_ERROR (No route to host)",
+            "runtime: Thing http:url:new is UNKNOWN/NONE; it has not initialized"])
+        self.assertEqual(report["runtime_checks"]["failures"], [])
+        verdicts = {row["uid"]: row["verdict"] for row in report["runtime_checks"]["things"]["things"]}
+        self.assertEqual(verdicts, {"http:url:bridged": "warn", "http:url:fixture": "ok", "http:url:gone": "warn",
+                                    "http:url:new": "pending"})
+        code, out, _ = self.run_cli("status", "--state-dir", str(self.state))
+        self.assertIn("           waiting http:url:new  UNKNOWN/NONE", out.splitlines())
+        code, report, _ = self.report("--allow-offline", "http:url:gone", "http:url:new")
+        self.assertEqual(report["warnings"], ["runtime: Thing http:url:bridged is OFFLINE/BRIDGE_OFFLINE"],
+                         "a Thing --allow-offline names is not even a warning")
+        code, out, _ = self.run_cli("status", "--runtime", "--json")
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(out)["failures"], ["3 Thing(s) not ONLINE"])
+        self.assertNotIn("warnings", json.loads(out), "--runtime's report is health's, as it was")
 
     def test_the_checks_switches_shape_them(self):
         self.responses[THINGS] = 200, [thing("http:url:gone", "OFFLINE", "COMMUNICATION_ERROR")]
@@ -222,6 +251,7 @@ class PlainStatus(Fixture):
     def test_without_runtime_checks_reads_what_is_deployed_alone(self):
         code, report, _ = self.report("--no-runtime-checks")
         self.assertEqual((report["runtime_checks"], report["runtime_checks_reason"]), (None, "not asked for"))
+        self.assertEqual(report["warnings"], [])
         self.client.assert_not_called()
 
     def test_state_dir_and_its_old_spelling_read_the_same_state(self):

@@ -386,13 +386,32 @@ class Targets(Fixture):
         sandbox = self.root / "sandbox-logs"
         sandbox.mkdir()
         (sandbox / "openhab.log").write_text("2026-11-21 14:40:00.000 [INFO ] [org.example.Sandbox] - sandbox up\n")
-        with mock.patch.object(logs, "sandbox_logs", lambda: sandbox):
+        with mock.patch.object(logs, "sandbox_logs", lambda userdata: sandbox if userdata is None else None):
             status, out, err = self.run_logs("--sandbox", "--json")
             self.assertEqual(status, 0, err)
             self.assertEqual([json.loads(line)["message"] for line in out.splitlines()], ["sandbox up"])
             status, out, err = self.run_logs("--sandbox", "gateway")
         self.assertEqual(status, 2)
         self.assertIn("the sandbox has only the runtime's log: no gateway", err)
+        self.assertEqual(self.calls(), [])
+
+    def test_sandbox_userdata_reads_the_log_of_that_sandbox(self):
+        userdata = self.root / "elsewhere"
+        (userdata / "logs").mkdir(parents=True)
+        (userdata / "logs/openhab.log").write_text("2026-11-21 14:40:00.000 [INFO ] [org.example.Sandbox] - "
+                                                   "elsewhere up\n")
+        status, out, err = self.run_logs("--sandbox", "--userdata", str(userdata), "--json")
+        self.assertEqual(status, 0, err)
+        self.assertEqual([json.loads(line)["message"] for line in out.splitlines()], ["elsewhere up"])
+        self.assertEqual(logs.sandbox_logs(userdata), userdata.resolve() / "logs")
+        self.assertEqual(self.calls(), [])
+
+    def test_userdata_goes_only_with_sandbox(self):
+        for argv in (["--userdata", str(self.root)], ["--production", "--userdata", str(self.root)]):
+            with self.subTest(argv=argv):
+                status, out, err = self.run_logs(*argv)
+                self.assertEqual((status, out), (2, ""))
+                self.assertIn("--userdata names a sandbox's userdata: give it with --sandbox", err)
         self.assertEqual(self.calls(), [])
 
     def test_url_is_refused_in_process(self):
