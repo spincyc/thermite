@@ -18,21 +18,27 @@ const OTHER = { id: 'other', nightly: false, item: 'other_reboot', answers: ['ot
 const MATRIX = { id: 'usb', nightly: false, item: 'usb_reboot', answers: ['usb_device1_host'], things: ['http:url:usb'],
   signs: [], idle: [{ item: 'loc_den_source', is: 'off' }],
   console: { host: '192.0.2.21', port: 8000, ready: 'initialization finished!', polled: 12 } };
+// A switch that restarts when its web API hangs while telnet answers.
+const HUNG = { id: 'hv', nightly: false, item: 'hv_reboot', answers: ['hv_input'], things: [], signs: [],
+  idle: [{ item: 'hv_signal', field: 'RX0', is: 'no signal', maxAge: 125, unreadIsIdle: true }],
+  hung: { things: ['http:url:hv'], seconds: 300, idle: [{ item: 'loc_study_source', is: 'off' }] } };
 const TABLE = { item: 'house_reboot', command: 'reboot', time: '03:00', cron: '0 0 3 * * ?',
-  devices: [RECEIVER, SWITCH, OTHER, MATRIX] };
+  devices: [RECEIVER, SWITCH, OTHER, MATRIX, HUNG] };
 // What the matrix's controller prints as it starts.
 const BOOT = ['4x4 USB3.2 Gen1 Matrix Switcher', 'system initializing...', 'initialization finished!',
   'mcu fw version : v1.00.05'];
 const START = Date.UTC(2026, 10, 14, 9, 0, 0);
 
 // With `chunks`, the console is a socket that reads them in turn.
-function load({ kept = 'NULL', unreadIsIdle = true, refused = false, send = true, chunks = null } = {}) {
+function load({ kept = 'NULL', unreadIsIdle = true, refused = false, send = true, chunks = null, hung = true } = {}) {
   const clock = { now: START };
   const signal = (rx0, age = 0) => JSON.stringify({ version: 1, observedAt: clock.now - age * 1000, values: { RX0: rx0 } });
   const items = { house_reboot: kept, rx_main_power: 'OFF', rx_zone2_power: 'OFF', sw_input: '1', sw_signal: signal('no signal'),
     other_input: '2', rx_reboot: 'NULL', sw_reboot: 'NULL', other_reboot: 'NULL', usb_device1_host: '4',
-    loc_den_source: 'off', usb_reboot: 'NULL' };
-  const things = { 'denonmarantz:avr:rx': { status: 'ONLINE' }, 'http:url:usb': { status: 'ONLINE' } };
+    loc_den_source: 'off', usb_reboot: 'NULL', hv_input: '1', hv_signal: 'UNDEF', hv_reboot: 'NULL',
+    loc_study_source: 'off' };
+  const things = { 'denonmarantz:avr:rx': { status: 'ONLINE' }, 'http:url:usb': { status: 'ONLINE' },
+    'http:url:hv': { status: 'ONLINE' } };
   // events: each console opened and each command, in order.
   const commands = [], logs = [], rules = {}, consoles = [], disposers = [], events = [];
   let timers = [];
@@ -108,11 +114,14 @@ function load({ kept = 'NULL', unreadIsIdle = true, refused = false, send = true
   });
   const table = JSON.parse(JSON.stringify(TABLE));
   table.devices[1].idle[0].unreadIsIdle = unreadIsIdle;
+  if (!hung) table.devices = table.devices.filter(device => !device.hung);
   const rule = source.replace('const TABLE = null;', `const TABLE = ${JSON.stringify(table)};`)
     .replace('// THERMITE_BOUNDED_IO', () => chunks ? ioSource : '');
   vm.runInContext(send ? rule : rule.replace('const SEND = true;', 'const SEND = false;'), context);
   assert.deepEqual(rules.reboots_nightly.triggers, [{ cron: '0 0 3 * * ?' }]);
   assert.deepEqual(rules.reboots_command.triggers, [{ item: 'house_reboot' }]);
+  if (hung) assert.deepEqual(rules.reboots_hung.triggers, [{ cron: '0 * * * * ?' }]);
+  else assert.equal(rules.reboots_hung, undefined);
   return {
     items, things, commands, logs, signal, consoles, events, openhab,
     dispose() { for (const fn of disposers) fn(); },
@@ -134,6 +143,13 @@ function load({ kept = 'NULL', unreadIsIdle = true, refused = false, send = true
       }
     },
     nightly() { rules.reboots_nightly.execute(); },
+    // `minutes` of the every-minute look for hangs, each at its minute's end.
+    hung(minutes, before = () => {}) {
+      for (let minute = 0; minute < minutes; minute++) {
+        this.advance(60_000, before);
+        rules.reboots_hung.execute();
+      }
+    },
     command(value) { rules.reboots_command.execute({ itemName: 'house_reboot', receivedCommand: value }); },
     report() { return JSON.parse(items.house_reboot).devices; },
     pending: () => timers.length,
@@ -355,6 +371,79 @@ test('a reload keeps the report, and marks the reboot it interrupted', () => {
   const quiet = load({ kept: JSON.stringify({ version: 1, devices: { sw: kept.devices.sw } }) });
   assert.equal(quiet.items.house_reboot, JSON.stringify({ version: 1, devices: { sw: kept.devices.sw } }));
   assert.deepEqual(load({ kept: 'UNDEF' }).items.house_reboot, 'UNDEF');
+});
+
+test('a switch whose web API stays hung while telnet answers restarts once its room is off, at most hourly', () => {
+  const r = load();
+  r.things['http:url:hv'].status = 'OFFLINE';
+  // First seen at the end of minute 1; five minutes later it has stayed hung.
+  r.hung(5);
+  assert.deepEqual(r.commands, []);
+  r.hung(1);
+  assert.deepEqual(r.commands, [['hv_reboot', 'reboot', 360_000]]);
+  r.advance(60_000, at => { if (at === 361_000) r.items.hv_input = 'UNDEF'; if (at === 380_000) r.items.hv_input = '1'; });
+  assert.deepEqual(r.report().hv, { at: new Date(START + 380_000).toISOString(), by: 'hung', outcome: 'back', seconds: 20 });
+  assert.deepEqual(r.logs, ['info: reboot hv: no hv_signal reading; restarting it anyway, as a restart may cure that',
+    'info: reboot hv: rebooting', 'info: reboot hv: back after 20 s']);
+  // A restart that did not cure it: none again within the hour, then one.
+  r.hung(58);
+  assert.equal(r.commands.length, 1);
+  r.hung(1);
+  assert.deepEqual(r.commands.map(([item, , at]) => [item, at]), [['hv_reboot', 360_000], ['hv_reboot', 3_960_000]]);
+  assert.equal(r.report().hv.by, 'hung');
+});
+
+test('a short hang, a switch telnet does not reach, or one shown in a room in use is not restarted', () => {
+  const short = load();
+  short.hung(10, at => { short.things['http:url:hv'].status = at <= 240_000 ? 'OFFLINE' : 'ONLINE'; });
+  // Gone again: a new hang counts its five minutes afresh.
+  short.hung(5, () => { short.things['http:url:hv'].status = 'OFFLINE'; });
+  const away = load();
+  away.things['http:url:hv'].status = 'OFFLINE';
+  away.items.hv_input = 'UNDEF';
+  away.hung(10);
+  // Not OFFLINE but unknown, as a Thing being set up is: not a hang.
+  const unknown = load();
+  unknown.things['http:url:hv'].status = 'UNKNOWN';
+  unknown.hung(10);
+  for (const r of [short, away, unknown]) {
+    assert.deepEqual([r.commands, r.items.house_reboot, r.logs], [[], 'NULL', []]);
+  }
+  const used = load();
+  used.things['http:url:hv'].status = 'OFFLINE';
+  used.items.loc_study_source = 'apple_tv';
+  used.hung(30);
+  assert.deepEqual(used.commands, []);
+  assert.deepEqual(used.logs, ['info: reboot hv: hung for 5 min; waiting, as loc_study_source is apple_tv, not off']);
+  used.items.loc_study_source = 'off';
+  used.hung(1);
+  assert.deepEqual(used.commands, [['hv_reboot', 'reboot', 31 * 60_000]]);
+  assert.equal(used.report().hv.by, 'hung');
+});
+
+test('a restart within the hour, for any reason and across a reload, holds a hang back', () => {
+  const kept = JSON.stringify({ version: 1, devices: {
+    hv: { at: new Date(START - 30 * 60_000).toISOString(), by: 'command', outcome: 'back', seconds: 18 } } });
+  const r = load({ kept });
+  r.things['http:url:hv'].status = 'OFFLINE';
+  r.hung(29);
+  assert.deepEqual(r.commands, []);
+  r.hung(1);
+  assert.deepEqual(r.commands, [['hv_reboot', 'reboot', 30 * 60_000]]);
+  // A skip sent nothing, so it holds nothing back.
+  const skipped = load({ kept: JSON.stringify({ version: 1, devices: {
+    hv: { at: new Date(START - 60_000).toISOString(), by: 'command', outcome: 'skipped', detail: 'it does not answer' } } }) });
+  skipped.things['http:url:hv'].status = 'OFFLINE';
+  skipped.hung(6);
+  assert.deepEqual(skipped.commands, [['hv_reboot', 'reboot', 360_000]]);
+  // A switch commanded now is not restarted for a hang within the hour.
+  const commanded = load();
+  commanded.command('hv');
+  commanded.things['http:url:hv'].status = 'OFFLINE';
+  commanded.hung(30);
+  assert.deepEqual(commanded.commands, [['hv_reboot', 'reboot', 0]]);
+  // A house with nothing to restart when hung looks for no hangs.
+  load({ hung: false });
 });
 
 process.stdout.write(JSON.stringify({ passed: tests.length, tests }));

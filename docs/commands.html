@@ -1784,18 +1784,19 @@ examples:
 Restart a device as the nightly reboots do (lib/oh_features/reboots):
 production thermite restarts it only if it answers and is idle (a receiver
 with every zone off, a switch whose input has no signal, a USB or HDMI
-matrix whose rooms are all Off), then waits for it to stop answering and answer again
-(a USB matrix: for its console to say it started), and reports how that
-went. DEVICE
-need not have `reboot: nightly` in the house file; it needs an integration
-under control that can restart it without cutting its power. Without
-DEVICE, each such device: whether it restarts nightly, and its last
-reboot.
+matrix whose rooms are all Off), then waits for it to stop answering and
+answer again (a USB matrix: for its console to say it started), and
+reports how that went. DEVICE need not have `reboot: nightly` in the
+house file; it needs an integration under control that can restart it
+without cutting its power. Without
+DEVICE, each such device: whether it restarts nightly or when hung
+(`reboot: when_hung`), and its last reboot.
 
 With --json, one JSON object instead: without DEVICE, `devices`, each with
-its id, label, whether it restarts nightly, at what time, and its last
-reboot as the rule reports it (null before any); with DEVICE, the outcome
-the rule reports, or `timed_out` when it reports none in time.
+its id, label, whether it restarts nightly, at what time, whether it
+restarts when hung, and its last reboot as the rule reports it (null
+before any; `by` is `schedule`, `command` or `hung`); with DEVICE, the
+outcome the rule reports, or `timed_out` when it reports none in time.
 
 positional arguments:
   DEVICE             the device&#x27;s id in the house file

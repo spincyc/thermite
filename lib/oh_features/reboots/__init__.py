@@ -1,7 +1,8 @@
 """Nightly reboots: thermite restarts the devices the house file asks it to,
-one at a time, at one time of night.
+one at a time, at one time of night, or when one hangs.
 
-A device opts in with `reboot: nightly`. Only one whose integration under
+A device opts in with `reboot: nightly`, `reboot: when_hung`, or
+`reboot: nightly_and_when_hung` for both. Only one whose integration under
 control can restart it without cutting its power can: that integration
 provides reboot(device) (oh_integrations). The top-level `reboots: {time:
 "HH:MM"}` sets when, on the 24-hour clock in openHAB's time zone (host.yaml
@@ -36,6 +37,16 @@ restarts now, past the same checks, whether or not it is nightly
 reboot: when, its outcome, why, and how long it took to answer again.
 Nothing cuts a device's power; a device that does not answer again is left
 to the health checks' alerts.
+
+A device `when_hung` restarts by itself once part of it has hung while the
+rest still answers: its reboot() spec names `hung`, the Things that go
+OFFLINE then and for how long they must stay so (a VRROOM's web API, five
+missed polls, while telnet still answers). The rule looks each minute.
+Only while each room that shows it (routing `hdmi_switch`) or whose ports
+it switches (`usb`) is Off, so a restart never blanks a room in use; one
+no room lists cannot opt in. A device restarted within HUNG_GAP_MS for any
+reason is left alone, so one a restart does not cure restarts at most
+hourly; its report says `by: hung`.
 """
 
 from __future__ import annotations
@@ -57,9 +68,13 @@ RULE = "automation/js/reboots.js"
 SOURCE = Path(__file__).resolve().parent / "reboots.js"
 HOUSE_KEYS = {"reboots": Key(MAPPING, "when the devices marked reboot: nightly restart", keys={
     "time": Key(TEXT, "the time of day, as 24-hour HH:MM in quotes; 03:00 when left out")})}
-#: The one value a device's `reboot` takes.
+#: The values a device's `reboot` takes.
 NIGHTLY = "nightly"
-DEVICE_KEYS = {"reboot": Key(TEXT, "when thermite restarts it: each night, while it is idle", choices=(NIGHTLY,))}
+WHEN_HUNG = "when_hung"
+BOTH = "nightly_and_when_hung"
+CHOICES = (NIGHTLY, WHEN_HUNG, BOTH)
+DEVICE_KEYS = {"reboot": Key(TEXT, "when thermite restarts it, while it is idle: each night, once part of it "
+                             "has hung while the rest answers, or both", choices=CHOICES)}
 HOUSE_ITEMS = (ITEM,)
 DEFAULT_TIME = "03:00"
 TIME = re.compile(r"([01][0-9]|2[0-3]):([0-5][0-9])")
@@ -81,6 +96,18 @@ def provider(device: dict):
     return next((module for module in integrations.defining("reboot") if uses(device, "control", module.NAME)), None)
 
 
+def nightly(device: dict) -> bool:
+    return device.get("reboot") in (NIGHTLY, BOTH)
+
+
+def when_hung(device: dict) -> bool:
+    return device.get("reboot") in (WHEN_HUNG, BOTH)
+
+
+#: What shows a device idle for a restart when hung: its rooms' Off.
+HUNG_ROOMS = {"rooms": True}
+
+
 def time_of(data: dict) -> str:
     return ((data.get("reboots") or {}).get("time")) or DEFAULT_TIME
 
@@ -98,12 +125,21 @@ def validate(data: dict) -> list[str]:
         if not isinstance(device, dict) or "reboot" not in device:
             continue
         where = device.get("id") or "a device"
-        if device["reboot"] != NIGHTLY:
-            problems.append(f"{where}.reboot: {device['reboot']!r} is not {NIGHTLY}")
+        if device["reboot"] not in CHOICES:
+            problems.append(f"{where}.reboot: {device['reboot']!r} is not {', '.join(CHOICES[:-1])} or {CHOICES[-1]}")
         elif provider(device) is None:
             problems.append(f"{where}.reboot: none of its integrations under control can restart it; "
                             f"these can: {', '.join(able)}")
-        elif device.get("id") and not (spec := provider(device).reboot(device))["idle"] \
+        elif not device.get("id"):
+            continue
+        elif when_hung(device) and "hung" not in (spec := provider(device).reboot(device)):
+            problems.append(f"{where}.reboot: {provider(device).NAME} cannot tell when it hangs, "
+                            f"so it can only be {NIGHTLY}")
+        elif when_hung(device) and not rooms_off(data, device, HUNG_ROOMS):
+            problems.append(f"{where}.reboot: nothing would show it idle; a device restarts when hung only while "
+                            "the rooms that show it (routing.rooms.<room>.hdmi_switch) or whose ports it switches "
+                            "(routing.rooms.<room>.usb) are Off, and no room lists it")
+        elif nightly(device) and not (spec := provider(device).reboot(device))["idle"] \
                 and not rooms_off(data, device, spec):
             problems.append(f"{where}.reboot: nothing would show it idle; " + (
                 "an HDMI matrix restarts nightly only while the rooms that show its outputs "
@@ -137,11 +173,13 @@ def rooms_off(data: dict, device: dict, spec: dict | None = None) -> list[dict]:
 
 def entry(house: House, device: dict) -> dict:
     spec = provider(device).reboot(device)
-    return {"id": device["id"], "nightly": device.get("reboot") == NIGHTLY,
+    hung = {"hung": {"things": list(spec["hung"]["things"]), "seconds": spec["hung"]["seconds"],
+                     "idle": rooms_off(house.data, device, HUNG_ROOMS)}} if when_hung(device) and "hung" in spec else {}
+    return {"id": device["id"], "nightly": nightly(device),
             "item": spec["item"], "answers": list(spec["answers"]), "things": list(spec.get("things", ())),
             "signs": list(spec.get("signs", ())),
             "idle": [dict(check) for check in spec["idle"]] + rooms_off(house.data, device, spec),
-            **({"console": dict(spec["console"])} if "console" in spec else {})}
+            **({"console": dict(spec["console"])} if "console" in spec else {}), **hung}
 
 
 def table(house: House) -> dict:

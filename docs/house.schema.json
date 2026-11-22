@@ -250,10 +250,12 @@
             ]
           },
           "reboot": {
-            "description": "when thermite restarts it: each night, while it is idle",
+            "description": "when thermite restarts it, while it is idle: each night, once part of it has hung while the rest answers, or both",
             "type": "string",
             "enum": [
-              "nightly"
+              "nightly",
+              "when_hung",
+              "nightly_and_when_hung"
             ]
           },
           "c4_item": {

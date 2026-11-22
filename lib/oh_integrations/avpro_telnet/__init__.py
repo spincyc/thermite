@@ -88,6 +88,8 @@ WEB_PORT = 80
 PROBED = False
 #: The rule's own read, every 10 s, says whether the matrix answers.
 READS = True
+#: Seconds between those reads (avpro_telnet.js POLL).
+POLL_S = 10
 INPUTS = OUTPUTS = 4
 READBACK_INPUTS = tuple(str(number) for number in range(1, INPUTS + 1))
 #: All that the rule ever sends, named as lib/oh_matrix_sim's stand-in

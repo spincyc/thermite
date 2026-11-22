@@ -101,6 +101,13 @@ and sources, not protocols. A matrix whose integration has `hotplug_item()`
 output a room names, its HDMI output or its HDMI switch: while it keeps
 saying none with the room's devices on, the room's Source is unknown and its
 readback problem names that output, instead of believing the route.
+
+A matrix or HDMI switch that misses one read does not make a room's Source
+unknown: routing.js holds the input the room's output or switch Item last
+read for up to MISSED of its integration's polls (`POLL_S`), until the next
+read or a second one that finds nothing (TABLE `reads`), never for a
+choice made since that read. Only the Source and its readback problem wait;
+the planner and the EDIDs see the Item as it is.
 """
 
 from __future__ import annotations
@@ -1436,6 +1443,29 @@ ACTIONS = ("read selected input", "read matrix output input", "read power", DETE
 REASONS = ("unavailable", "unsupported_input", "no_display")
 
 
+#: How many of a matrix's or an HDMI switch's polls (POLL_S) routing.js holds
+#: the input a room's Item last read once a read finds nothing: past the next
+#: poll, which answers one poll after the miss less the miss's own timeout,
+#: and short of the one after, so a second miss shows as one at once did.
+MISSED = 1.5
+
+
+def reads(house: House, rooms: dict) -> dict[str, int]:
+    """routing.js's TABLE.reads: {Item: ms} of each room's HDMI output, audio
+    output and HDMI switch Item, and how long one missed read of it holds
+    the input it read before (MISSED of its integration's POLL_S)."""
+    routing = house.data["routing"]
+    devices = house.by_id
+    out = {}
+    for room, entry in routing["rooms"].items():
+        raw = rooms[room]
+        held = [(raw[key], switcher(devices[routing["hdmi_matrix"]])) for key in ("hdmi", "audioHdmi") if raw.get(key)]
+        if raw["switch"]:
+            held.append((raw["switch"]["item"], switch_module(devices, entry["hdmi_switch"])))
+        out.update({item: round(1000 * MISSED * module.POLL_S) for item, module in held})
+    return out
+
+
 #: Seconds routing.js holds a room's Source after a choice while its
 #: receiver or display does not show it yet (RECENT_MS): at least this, a
 #: receiver being read seconds after the matrix.
@@ -1527,7 +1557,8 @@ def table(house: House) -> dict:
         if "sync" in raw:
             rooms[raw["sync"]["leader"]].setdefault("followers", []).append(room)
     result = {"rooms": rooms, "edid": edid_table(house), "off": OFF, "holdMs": hold_ms(house),
-              "hotplug": {"reports": _hotplug.REPORTS, "absentMs": 1000 * _hotplug.ABSENT}}
+              "hotplug": {"reports": _hotplug.REPORTS, "absentMs": 1000 * _hotplug.ABSENT},
+              "reads": reads(house, rooms)}
     if lifecycle_enabled(house):
         from .lifecycle import compile_descriptor
         from .lifecycle_io import capabilities

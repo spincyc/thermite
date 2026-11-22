@@ -49,6 +49,7 @@ READY = "initialization finished!"
 #: Seconds after which its Items have been polled again: one poll and its
 #: timeout.
 POLLED = instr.REFRESH + math.ceil(instr.TIMEOUT / 1000)
+POLL_S = instr.REFRESH
 thing_uid = instr.thing_uid
 url = instr.url
 

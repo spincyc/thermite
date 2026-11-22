@@ -75,6 +75,22 @@ rollback. The unified deployment workflow uses a separate committed private site
   waking, or a room that is off never counts. An AVPro SET counts as
   answered only by a line naming the input it sent, not by a route from
   before or one another controller made.
+- A room's Source rides out one read its matrix or HDMI switch misses. A
+  BK-808 leaves its Items UNDEF for one poll many times a day, and each
+  time the rooms it feeds showed an unknown Source and a readback
+  problem. Such a room now keeps showing the input read before until the
+  next read, a second read that finds nothing, or one and a half polls,
+  whichever comes first; then its Source is unknown as before. An input
+  read before the room's last choice is never kept, so it never confirms
+  a choice, and nothing but the Source and its readback problem waits.
+- A VRROOM whose web page hangs can restart by itself, by day as well:
+  give it `reboot: when_hung`, or `nightly_and_when_hung` for both. Once
+  its web page has missed five polls in a row while its telnet port still
+  answers, thermite restarts it as soon as each room that shows it is
+  Off, at most once an hour. Only a device whose integration can tell
+  when it hangs, and that a room lists as its `hdmi_switch` or `usb`, can
+  opt in. Its last reboot says `by: hung`; `thermite reboot` lists it as
+  restarting when hung, `when_hung` in `--json`.
 
 - An AVPro HDMI matrix keeps its one telnet session through the 30-second
   diagnostic reads. A reply that misses its window, now 500 ms rather than

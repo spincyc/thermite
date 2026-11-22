@@ -212,7 +212,7 @@ b8a43f75c4844e06f2767c0ead635ab34720dc4c7c184b203dad169379946659  androidtv_goog
 
 cec13e643726a46b5e4fa9b0f4b22967c820e2c07a1c466c0aff6819c5330b3c  avpro_telnet.control/conf/automation/js/avpro_telnet_den_device.js
 
-f576deb95db40ac32347e175a01a3a74c3a0e059275c2953e75e2a4942529ea0  avpro_telnet.control/conf/automation/js/reboots.js
+835795dfcf8e7ec4059eab33df0d3013c2f27efb76aa53bfd57466eb30e16232  avpro_telnet.control/conf/automation/js/reboots.js
 
 976c8e986b47d0e7e7455f91c164f9eb70dccedc002c7be393de3db4394f0dec  avpro_telnet.control/conf/html/remote/access.html
 
@@ -276,7 +276,7 @@ de7cd8904353720fbe5d6d68bd16a944afd09844186fe9b9b0a58df779cee23a  bk808_cec.cont
 
 92bff9d913cd889236fc7b2d1434c6a159295a8cfb541df20d9b17c123df31df  bk808_cec.control/conf/automation/js/bk808_cec.js
 
-e76086517723950a0b972bb46397e41b059202bb29570c813946c710a5501e53  bk808_cec.control/conf/automation/js/routing.js
+b9f0f5b707ab2623fa67768c5a69282eb35e4bd6c3ae5ad85386eb276d57b6bc  bk808_cec.control/conf/automation/js/routing.js
 
 1cf306531d9848511891c6ba1d70047494a2d1bf724679c83816b248b3061de7  bk808_cec.control/conf/html/remote/access.html
 
@@ -644,7 +644,7 @@ d2f9233ce671c26d5a8b70597635133e9821ec769ed3b5553e66879e9e99c7ec  drhdmi_http.ob
 
 4989723987b5b9f3c545856d0fcce06556785661ae189473389a4db9540e4a5d  example/conf/automation/js/pyatv_http_example_player.js
 
-adabd8fc93dc0b3262844ca13ff8ddca6a1bf13baada416102a81776e4816b7b  example/conf/automation/js/routing.js
+0315e569cfa1193dc7cdf9f34fcd28cd99afaabf13380eeb6509885ad60fa4f2  example/conf/automation/js/routing.js
 
 59c00f759da175b186fd924e78a0a1673bb1fcd59a11feb5a74ed8a12764e454  example/conf/automation/js/sony_ip_control_example_display.js
 
@@ -726,7 +726,7 @@ b22f53f01bed8c3f0628f7bbb15a97fe13ffe9534fc06127611028558957e407  heos.control/c
 
 8aeb7abcdb691fadb9e257e90a712c626d99a452a76461df911cc1b312b7d831  heos.control/conf/automation/js/heos.js
 
-442273c483dc9d4845852f2150e8aadbde3a5b433f2d93789971d7ed8f653a7f  heos.control/conf/automation/js/reboots.js
+bdb8f81a4f98f7dd007904468302ac0670dc6a111940edebd48a47093b9bdc89  heos.control/conf/automation/js/reboots.js
 
 cfc1754b29ee525739e84f4f31bd5bb549ae0a2353dd3b19d08b453c318013f7  heos.control/conf/html/remote/access.html
 
@@ -976,9 +976,9 @@ ac5819ab6ee8c64c461c70b1809c4c0e6a2e0503c04eee5dd4878cc36b6cfcc0  routed/conf/au
 
 c6107ba4361bfdbebc693d3e1c3edbf79b840026645fabb910e300f74e644656  routed/conf/automation/js/pyatv_http_example_player.js
 
-446aa80e31ada56999e65e98213309080eb2ef22b9bf45d952fbcaebfbe1a880  routed/conf/automation/js/reboots.js
+64e789a830503a7f33ea582ca3c8c20e2c4f912ea7668a0019490d6de2958db1  routed/conf/automation/js/reboots.js
 
-4652885aa81c75bc36eb4f063afc7d52e344ed7a62b7e3c15509544ec75fdd2e  routed/conf/automation/js/routing.js
+6d0b47a0278c8ebc3c6b4cc3e6c05f8f49f208edf6ff20a1f189063c35d12755  routed/conf/automation/js/routing.js
 
 2b5b11b981a86356c9553b2c80f1cde7e9a15c9adcbb2720615d208792c9c9bc  routed/conf/automation/js/sony_ip_control_example_den_tv.js
 
@@ -1454,7 +1454,7 @@ b3efccad2fd3e335c79f7af7619478f22b46542c91f28b54b271412558100af3  sony_rest.obse
 
 b8759a9da687f81432712aaccb84a063e488fda0b92a48ea4d012ec57f65d613  sony_rest.observe/metrics/prometheus/prometheus.yml
 
-e4aa04cb68fae831817043458f64dd6531bd6e70e36aaf1867001bcc563d7afa  ukm404_http.control/conf/automation/js/reboots.js
+ad03386e9388d36b369a09372d12aff1b47246598384a6d2d4382f5607ad5383  ukm404_http.control/conf/automation/js/reboots.js
 
 a886c5af94137abe05546ce819d88aa6c3ada7e6541b53effbb80dfaea725c26  ukm404_http.control/conf/html/remote/access.html
 
@@ -1632,7 +1632,7 @@ bbcd1b5c46467ee1f2286dfe05679c9322bdcf672fa71a94a05424dc7792b535  vrroom_http.ob
 
 4163e8e0ee6a205d35c78dfb85ae0753e38d954c3edd2ec16405e3d091c99ba6  vrroom_http.observe/metrics/prometheus/prometheus.yml
 
-7efed524d9c4c4b882bea1b1410fc66830a61485120e57c0631fa6ff6e724c42  vrroom_telnet.control/conf/automation/js/reboots.js
+cbe645dc42fefa3e30b2f7acead6c9d0acac4c8b5fe874dfd5f18c323ea02b71  vrroom_telnet.control/conf/automation/js/reboots.js
 
 fc5d205214d1ba3de6d858947410c7e07d732ca889b95a50410cd2ff806fedf7  vrroom_telnet.control/conf/automation/js/vrroom_telnet_den_device.js
 

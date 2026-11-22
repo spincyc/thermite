@@ -51,6 +51,7 @@ ADDONS = instr.ADDONS
 ASSETS: dict[str, str] = {}
 INPUTS = OUTPUTS = 8
 READBACK_INPUTS = tuple(str(number) for number in range(1, INPUTS + 1))
+POLL_S = instr.REFRESH
 KINDS = {"hdmi_matrix"}
 #: All that the Thing ever sends: it reads and sets routing, input EDIDs and
 #: output scalers.

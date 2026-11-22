@@ -29,7 +29,10 @@ Items, per switch:
   about 15 s, with no power cycle. It is the cure when its web server
   hangs (resets every HTTP request) while telnet still answers. Only a
   switch with `reboot: nightly` restarts unasked, at night while its input
-  has no signal (reboot(), oh_features.reboots), which vrroom_http reports.
+  has no signal (reboot(), oh_features.reboots), which vrroom_http reports;
+  one with `reboot: when_hung` restarts once that web API has missed
+  HUNG_POLLS polls in a row (its Thing OFFLINE) while telnet answers and
+  each room that shows the switch is Off, at most hourly.
 - `<id>_problem` and `<id>_vrroom_telnet_commands` (oh_integrations._commands): why
   the switch did not take the rule's last command or cannot be read, as a
   code, and the rule's tally of its commands by outcome.
@@ -91,6 +94,10 @@ COMHEADS = frozenset({"get insel", "set insel", "get ipinterrupt", "set ipinterr
 SETUP_COMHEADS = frozenset({"get ipinterrupt", "set ipinterrupt"})
 #: What the reboot Item is commanded with.
 REBOOT = "reboot"
+#: vrroom_http polls in a row its Thing must miss before the web API counts
+#: as hung. One miss is a dropped request; the hang it cures has lasted
+#: days, so five minutes waits out any blip and costs little.
+HUNG_POLLS = 5
 RULE = "automation/js/vrroom_telnet.js"
 SOURCE = Path(__file__).resolve().parent / "vrroom_telnet.js"
 
@@ -141,10 +148,12 @@ def reboot(device: dict) -> dict:
     input reads, and is idle while the input TX0 shows has no signal, as
     its web page (vrroom_http) reports it. A web page that does not answer
     while telnet does is the VRROOM's hang that a restart cures, so its
-    missing report does not hold the restart back."""
+    missing report does not hold the restart back, and its Thing OFFLINE
+    for HUNG_POLLS polls while telnet answers is that hang (`hung`)."""
     return {"item": reboot_item(device), "answers": [input_item(device)],
             "idle": [{"item": vrroom_http.signal_item(device), "field": "RX0", "is": "no signal",
-                      "maxAge": vrroom_http.MAX_AGE, "unreadIsIdle": True}]}
+                      "maxAge": vrroom_http.MAX_AGE, "unreadIsIdle": True}],
+            "hung": {"things": [vrroom_http.thing_uid(device)], "seconds": HUNG_POLLS * vrroom_http.REFRESH}}
 
 
 def fields(device: dict) -> dict[str, dict]:

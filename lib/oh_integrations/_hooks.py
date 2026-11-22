@@ -123,7 +123,12 @@ _TABLE = (
     Hook("switch_item", FUNCTION, """
         switch_item(device, output) -> str: the Number Item holding the
         input routed to that output of a matrix; it is commanded with an
-        input number""", order=("bk808_http", "ukm404_http", "avpro_telnet"), needs=("ports", "COMHEADS")),
+        input number""", order=("bk808_http", "ukm404_http", "avpro_telnet"), needs=("ports", "COMHEADS", "POLL_S")),
+    Hook("POLL_S", CONSTANT, """
+        seconds between the reads of a matrix's or an HDMI switch's Items
+        (switch_item(), input_item()): routing.js holds the input a room's
+        Item last read through one read that finds nothing, for at most
+        oh_features.routing.MISSED of these"""),
     Hook("COMHEADS", CONSTANT, """
         all a matrix or switch integration ever sends, named as its
         stand-in from lib/oh_matrix_sim.SIMS[NAME] records it"""),
@@ -177,7 +182,7 @@ _TABLE = (
     Hook("input_item", FUNCTION, """
         input_item(device) -> str: the Number Item holding the input an
         HDMI switch shows; it is commanded with an input number""",
-         order=("vrroom_telnet",), needs=("INPUTS", "COMHEADS")),
+         order=("vrroom_telnet",), needs=("INPUTS", "COMHEADS", "POLL_S")),
 
     # A module that powers a room's receiver or display and sets its input
     # (routing.rooms.<room> receiver and display).
@@ -289,9 +294,12 @@ _TABLE = (
         or {"item", "field", "is", "maxAge"} for a field of a diagnostics
         snapshot, with "unreadIsIdle": True where a missing snapshot is a
         hang that the restart cures; "rooms": True (optional) for an HDMI
-        matrix that reports nothing of its use. oh_features.reboots adds,
-        for a USB matrix, that each room whose ports it switches is Off,
-        and with "rooms", that each room showing one of its outputs is Off}""",
+        matrix that reports nothing of its use; "hung" (optional):
+        {"things": Things whose OFFLINE while it answers is a hang that a
+        restart cures, "seconds": how long they stay so first}, for
+        `reboot: when_hung`. oh_features.reboots adds, for a USB matrix,
+        that each room whose ports it switches is Off, and with "rooms",
+        that each room showing one of its outputs is Off}""",
          order=("heos", "ukm404_http", "vrroom_telnet", "avpro_telnet")),
 
     # A module whose Items tell what its devices play, for what is playing

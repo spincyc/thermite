@@ -523,6 +523,16 @@ thermite reboot DEVICE --config "$HOME/thermite-site"
 thermite reboot --config "$HOME/thermite-site"
 ```
 
+A VRROOM whose web page hangs can also restart as soon as it is idle, by
+day as well: give it `reboot: when_hung`, or `reboot:
+nightly_and_when_hung` for both. Once its web page has missed five polls
+in a row (five minutes) while its telnet port still answers, Thermite
+restarts it while each room that shows it is Off, at most once an hour.
+A shorter outage is left alone, and so is a switch that telnet cannot
+reach either, since the command could not arrive. `thermite reboot` then
+says its last reboot came after a hang (`"by": "hung"` with `--json`).
+The switch's room must list it as its `hdmi_switch`.
+
 ### What is playing
 
 Where a room's source reports what it plays, the remotes show it. On the

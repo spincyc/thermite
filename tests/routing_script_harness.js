@@ -24,6 +24,7 @@ const TABLE = {
   off: 'off',
   holdMs: 15000,
   hotplug: { reports: 2, absentMs: 60000 },
+  reads: {},
   lifecycle: { resources: { matrix_output1_input: { key: 'matrix' }, matrix_output2_input: { key: 'matrix' } },
     io: { wake: 'house_routing_io_events' }, consumers: [] },
 };
@@ -40,7 +41,9 @@ const REAL = { ...TABLE, lifecycle: { version: 1, deadlineMs: 30000, sources: {}
   io: { wake: 'house_routing_io_events' }, consumers: [] } };
 
 function load(options = {}) {
-  const items = new Map(), sent = [], posted = [], rules = {}, logs = [], calls = [], routes = [];
+  const items = new Map(), sent = [], posted = [], rules = {}, logs = [], calls = [], routes = [], observed = [];
+  // Timers run only when advance() passes them.
+  let timers = [];
   const table = options.table || (options.real ? REAL : TABLE);
   let onLegacy = null, deps = null, real = null;
   const slots = options.slots || {};
@@ -63,7 +66,7 @@ function load(options = {}) {
       if (options.refuse && options.refuse[id]) throw new Error(options.refuse[id]);
       return 1;
     },
-    observe() {}, snapshot: () => ({ slots, holds: options.holds || {}, endpoints: {} }),
+    observe(name, value) { observed.push([name, value]); }, snapshot: () => ({ slots, holds: options.holds || {}, endpoints: {} }),
     recover(key, evidence) { calls.push(`recover ${key} ${evidence.terminal} ${evidence.resource || '-'}`); },
     releaseHold(id) { calls.push('release ' + id); }, hold(id) { calls.push('hold ' + id); }, takeover: () => [], external() {},
     report(event) { calls.push(`report ${event.type} ${event.token}`); }, close() {},
@@ -90,12 +93,25 @@ function load(options = {}) {
   const context = vm.createContext({
     require: name => modules[name] || assert.fail('unexpected module ' + name),
     console: { info: m => logs.push(['info', m]), warn: m => logs.push(['warn', m]), error: m => logs.push(['error', m]) },
-    setTimeout: () => 0, clearTimeout() {}, Date: options.clock ? { now: () => options.clock.now } : Date, JSON, Map, Set, Object, String, Number, Error, Math,
+    setTimeout: (fn, ms) => { const timer = { at: (options.clock ? options.clock.now : 0) + ms, fn }; timers.push(timer); return timer; },
+    clearTimeout: timer => { timers = timers.filter(other => other !== timer); }, Date: options.clock ? { now: () => options.clock.now } : Date, JSON, Map, Set, Object, String, Number, Error, Math,
   });
   vm.runInContext(source.replace('const TABLE = null;', 'const TABLE = ' + JSON.stringify(table) + ';'), context);
   posted.length = 0; calls.length = 0; logs.length = 0;
   const command = (id, value, eventSource) => rules[`routing_${id}_command`].execute({ receivedCommand: value, eventSource });
-  return { sent, posted, logs, calls, routes, command, context, item, rules, deps: () => deps, legacy: event => onLegacy(event), planner: () => real };
+  const advance = ms => {
+    const end = options.clock.now + ms;
+    for (;;) {
+      const due = timers.filter(timer => timer.at <= end).sort((a, b) => a.at - b.at)[0];
+      if (!due) break;
+      timers = timers.filter(timer => timer !== due);
+      options.clock.now = Math.max(options.clock.now, due.at);
+      due.fn();
+    }
+    options.clock.now = end;
+  };
+  return { sent, posted, logs, calls, routes, observed, command, context, item, rules, advance, pending: () => timers.length,
+    deps: () => deps, legacy: event => onLegacy(event), planner: () => real };
 }
 
 // Sources a command can carry: what openHAB's REST API makes of the
@@ -369,6 +385,120 @@ test('a room\'s hot-plug Item is read back at every update, changed or not', () 
   assert.equal(r.item('loc_den_source').state, 'tv'); assert.equal(r.item('loc_den_source_problem').state, 'UNDEF');
 });
 
+// A fictional Den on output 1 of a matrix polled every 10 s (its hold one
+// and a half polls), or behind an HDMI switch the matrix does not feed. A
+// poll's answer is the Item's update, which routing_reads counts, and, if it
+// changed, its change, which the readback rule takes: in either order.
+function missRoom({ via = 'matrix' } = {}) {
+  const clock = { now: 1000000 };
+  const name = via === 'matrix' ? 'matrix_output1_input' : 'den_switch_input';
+  const check = via === 'matrix' ? { device: 'matrix', label: 'Matrix', model: 'BK-808', action: 'read matrix output input' }
+    : { device: 'den_switch', label: 'Switch', model: 'VRROOM', action: 'read selected input' };
+  const den = { ...room('den', 'Den', 'matrix_output1_input'),
+    diagnosis: { item: 'loc_den_source_problem', reported: ['0', '1', '9'], checks: { [name]: check } } };
+  if (via === 'switch') Object.assign(den, { hdmi: null, switch: { item: name, matrix: null, readback: { 0: 'tv' } } });
+  const r = load({ clock, table: { ...TABLE, rooms: { den }, reads: { [name]: 15000 } } });
+  const item = r.item(name);
+  item.state = via === 'switch' ? '0' : '1';
+  r.item('den_tv_input').state = 'hdmi1';
+  const rule = via === 'matrix' ? 'routing_den_readback' : 'routing_den_switch_readback';
+  const poll = (state, after = 10000, changeFirst = false) => {
+    clock.now += after;
+    const before = item.state;
+    item.state = state;
+    const update = () => r.rules.routing_reads.execute({ itemName: name });
+    const change = () => { if (before !== state) r.rules[rule].execute({ itemName: name, oldState: before, newState: state }); };
+    if (changeFirst) { change(); update(); } else { update(); change(); }
+  };
+  const source = () => r.item('loc_den_source').state;
+  const problem = () => r.item('loc_den_source_problem').state;
+  const unknown = { version: 1, ...check, item: name, reason: 'unavailable', reported: null };
+  // The device's first read since the load, and the readback it brings.
+  poll(item.state, 0);
+  r.rules[rule].execute({ itemName: name, newState: item.state });
+  return { r, clock, name, poll, source, problem, unknown };
+}
+
+test('one missed read of a room\'s matrix output or HDMI switch keeps its Source and readback problem', () => {
+  for (const via of ['matrix', 'switch']) {
+    for (const changeFirst of [false, true]) {
+      const { r, name, poll, source, problem } = missRoom({ via });
+      assert.deepEqual(JSON.parse(JSON.stringify(r.rules.routing_reads.triggers)), [{ name, update: true }]);
+      assert.deepEqual([source(), problem()], ['tv', 'UNDEF']);
+      r.posted.length = 0;
+      // The BK-808's Thing times out one poll, 2 s after it asked.
+      poll('UNDEF', 2000, changeFirst);
+      assert.deepEqual([source(), problem()], ['tv', 'UNDEF'], `${via}, change first: ${changeFirst}`);
+      assert.deepEqual(r.posted.filter(([item, value]) => item.startsWith('loc_den_') && value !== 'tv'), []);
+      assert.equal(r.pending(), 1, 'the hold ends at its own time');
+    }
+  }
+});
+
+test('two missed reads in a row, or a hold that ends unread, make the Source unknown as one did before', () => {
+  const { r, poll, source, problem, unknown } = missRoom();
+  poll('UNDEF', 2000);
+  poll('UNDEF', 10000);
+  assert.equal(source(), 'UNDEF');
+  assert.deepEqual(JSON.parse(problem()), unknown);
+  // More misses change nothing; nor does the hold's end.
+  poll('UNDEF', 10000);
+  r.advance(15000);
+  assert.deepEqual([source(), JSON.parse(problem())], ['UNDEF', unknown]);
+  // A device that is not read again (a rule backing off) is unknown once the
+  // hold ends, one and a half polls after the miss.
+  const quiet = missRoom({ via: 'switch' });
+  quiet.poll('UNDEF', 4000);
+  quiet.r.advance(14999);
+  assert.equal(quiet.source(), 'tv');
+  quiet.r.advance(1);
+  assert.deepEqual([quiet.source(), JSON.parse(quiet.problem())], ['UNDEF', quiet.unknown]);
+  // Nothing is held before a first read: right after a reload, a miss shows at once.
+  const fresh = load({ clock: { now: 0 }, table: { ...TABLE, reads: { matrix_output1_input: 15000 } } });
+  fresh.item('matrix_output1_input').state = 'UNDEF';
+  fresh.rules.routing_den_readback.execute({ itemName: 'matrix_output1_input', newState: 'UNDEF' });
+  assert.equal(fresh.item('loc_den_source').state, 'UNDEF');
+});
+
+test('an input read before the room\'s last choice is never held for it, and nothing else sees a held input', () => {
+  const { r, name, poll, source, problem, unknown } = missRoom();
+  poll('9', 10000);
+  assert.equal(source(), 'off');
+  r.command('den', 'tv');
+  // The matrix misses its read after the choice: the room's Source is
+  // unknown, not the off it was before, and the planner sees UNDEF.
+  poll('UNDEF', 2000);
+  assert.deepEqual([source(), JSON.parse(problem())], ['UNDEF', unknown]);
+  r.rules.routing_lifecycle_observations.execute({ itemName: name });
+  assert.deepEqual(r.observed[r.observed.length - 1], [name, null]);
+  // A read since the choice is held as any other, and the planner still sees UNDEF.
+  poll('1', 8000);
+  assert.equal(source(), 'tv');
+  poll('UNDEF', 2000);
+  assert.equal(source(), 'tv');
+  r.rules.routing_lifecycle_observations.execute({ itemName: name });
+  assert.deepEqual(r.observed[r.observed.length - 1], [name, null]);
+});
+
+test('the next read after a miss shows what the device reads, and a later miss is held again', () => {
+  const { r, poll, source, problem } = missRoom();
+  poll('UNDEF', 2000);
+  poll('1', 8000);
+  assert.deepEqual([source(), problem(), r.pending()], ['tv', 'UNDEF', 0]);
+  r.advance(30000);
+  assert.equal(source(), 'tv');
+  // A read that finds another input after a miss shows it at once.
+  poll('UNDEF', 2000);
+  poll('9', 8000);
+  assert.equal(source(), 'off');
+  // Each miss after a read is one miss: a matrix that misses every other
+  // read never shows unknown.
+  for (let n = 0; n < 3; n++) {
+    poll('UNDEF', 2000); assert.equal(source(), 'off');
+    poll('9', 8000); assert.equal(source(), 'off');
+  }
+  assert.equal(problem(), 'UNDEF');
+});
 test('the planner logs through the script console', () => {
   const r = load();
   r.deps().log.warn('routing deadline room=den');

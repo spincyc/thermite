@@ -78,7 +78,7 @@ class Validation(unittest.TestCase):
         self.assertEqual(render.validate(data), [
             "example_tv.reboot: none of its integrations under control can restart it; "
             "these can: avpro_telnet, heos, ukm404_http, vrroom_telnet",
-            "example_receiver.reboot: 'daily' is not nightly"])
+            "example_receiver.reboot: 'daily' is not nightly, when_hung or nightly_and_when_hung"])
 
     def test_a_switch_restarts_only_with_its_web_page_to_say_it_is_idle(self):
         data = house()
@@ -166,6 +166,55 @@ class HdmiMatrix(unittest.TestCase):
         entry = next(entry for entry in reboots.table(House(copy.deepcopy(VRROOM_HOUSE)))["devices"]
                      if entry["id"] == "example_switch")
         self.assertEqual([check["item"] for check in entry["idle"]], ["example_switch_signal"])
+
+
+def hung_desk(value="when_hung"):
+    """The fictional desk whose VRROOM (example_switch) shows it, restarting
+    when its web API hangs."""
+    data = copy.deepcopy(VRROOM_HOUSE)
+    device(data, "example_switch")["reboot"] = value
+    return data
+
+
+class WhenHung(unittest.TestCase):
+    def test_a_vrroom_restarts_when_its_web_api_stays_offline_while_its_room_is_off(self):
+        data = hung_desk()
+        self.assertEqual(render.validate(data), [])
+        entry = next(entry for entry in reboots.table(House(data))["devices"] if entry["id"] == "example_switch")
+        self.assertIs(entry["nightly"], False)
+        # Five missed polls of a minute each: a dropped request is no hang.
+        self.assertEqual(entry["hung"], {"things": ["http:url:example_switch"], "seconds": 300,
+                                         "idle": [{"item": "loc_example_desk_source", "is": "off"}]})
+        both = next(entry for entry in reboots.table(House(hung_desk("nightly_and_when_hung")))["devices"]
+                    if entry["id"] == "example_switch")
+        self.assertEqual((both["nightly"], both["hung"]), (True, entry["hung"]))
+        nightly = next(entry for entry in reboots.table(House(hung_desk("nightly")))["devices"]
+                       if entry["id"] == "example_switch")
+        self.assertNotIn("hung", nightly)
+
+    def test_only_a_device_a_room_shows_and_whose_hang_is_known_restarts_when_hung(self):
+        data = hung_desk()
+        del data["routing"]
+        self.assertEqual(render.validate(data), [
+            "example_switch.reboot: nothing would show it idle; a device restarts when hung only while the rooms "
+            "that show it (routing.rooms.<room>.hdmi_switch) or whose ports it switches (routing.rooms.<room>.usb) "
+            "are Off, and no room lists it"])
+        data = house()
+        device(data, "example_receiver")["reboot"] = "when_hung"
+        self.assertEqual(render.validate(data), [
+            "example_receiver.reboot: heos cannot tell when it hangs, so it can only be nightly"])
+        # Its web API is what shows the hang.
+        data = hung_desk()
+        device(data, "example_switch")["controls"]["observe"] = []
+        self.assertEqual(render.validate(data), [
+            "example_switch.reboot: needs vrroom_http under observe, which tells when the switch's input has no signal"])
+
+    def test_the_rule_looks_for_hangs_only_in_a_house_with_a_device_that_restarts_when_hung(self):
+        text = render.render(House(hung_desk()))[reboots.RULE]
+        line = text[text.index("const TABLE = "):]
+        self.assertEqual(json.loads(line[len("const TABLE = "):line.index(";\n")]), reboots.table(House(hung_desk())))
+        self.assertTrue(any("hung" in entry for entry in reboots.table(House(hung_desk()))["devices"]))
+        self.assertFalse(any("hung" in entry for entry in reboots.table(House(house()))["devices"]))
 
 
 def usb_thing(files):
@@ -271,7 +320,7 @@ class Rule(unittest.TestCase):
                                  str(_io.SOURCE)],
                                 capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(json.loads(result.stdout)["passed"], 11)
+        self.assertEqual(json.loads(result.stdout)["passed"], 14)
 
 
 class FakeOpenHAB:
@@ -337,6 +386,19 @@ class Command(unittest.TestCase):
             "Marantz CINEMA 30 (example_small_receiver): on command only; not restarted yet",
             f"HDFury VRROOM (example_switch): nightly at 03:00; last: back after 18 s, {local:%Y-%m-%d %H:%M}"])
 
+    def test_the_list_says_which_restart_when_hung_and_whether_the_last_was_a_hang(self):
+        def line(value, **devices):
+            lines = []
+            self.assertEqual(cli.listing(House(hung_desk(value)), FakeOpenHAB(state(**devices)), log=lines.append), 0)
+            return next(text for text in lines if "(example_switch)" in text)
+        hung = {"at": "2026-11-14T09:00:42.000Z", "by": "hung", "outcome": "back", "seconds": 18}
+        local = datetime.datetime(2026, 11, 14, 9, 0, 42, tzinfo=datetime.timezone.utc).astimezone()
+        self.assertEqual(line("when_hung", example_switch=hung),
+                         f"HDFury VRROOM (example_switch): when hung; last (it had hung): back after 18 s, "
+                         f"{local:%Y-%m-%d %H:%M}")
+        self.assertEqual(line("nightly_and_when_hung"),
+                         "HDFury VRROOM (example_switch): nightly at 03:00 and when hung; not restarted yet")
+
     def test_only_a_device_thermite_can_restart_is_named(self):
         with tempfile.TemporaryDirectory() as root:
             path = Path(root) / "devices.yaml"
@@ -362,10 +424,12 @@ class Command(unittest.TestCase):
                 return code, json.loads(out.getvalue())
             last = {"at": "2026-11-14T09:00:42.000Z", "by": "schedule", "outcome": "back", "seconds": 18}
             self.assertEqual(verb(FakeOpenHAB(state(example_switch=last))), (0, {"devices": [
-                {"id": "example_receiver", "label": "Marantz CINEMA 60", "nightly": True, "time": "03:00", "last": None},
+                {"id": "example_receiver", "label": "Marantz CINEMA 60", "nightly": True, "time": "03:00",
+                 "when_hung": False, "last": None},
                 {"id": "example_small_receiver", "label": "Marantz CINEMA 30", "nightly": False, "time": None,
-                 "last": None},
-                {"id": "example_switch", "label": "HDFury VRROOM", "nightly": True, "time": "03:00", "last": last}]}))
+                 "when_hung": False, "last": None},
+                {"id": "example_switch", "label": "HDFury VRROOM", "nightly": True, "time": "03:00",
+                 "when_hung": False, "last": last}]}))
             skipped = {"at": now(30), "by": "command", "outcome": "skipped", "detail": "example_switch_signal RX0 is 1080p"}
             http = FakeOpenHAB(state(example_switch=last), state(example_switch=skipped))
             self.assertEqual(verb(http, "example_switch"), (1, {

@@ -22,18 +22,19 @@ DESCRIPTION = """\
 Restart a device as the nightly reboots do (lib/oh_features/reboots):
 production thermite restarts it only if it answers and is idle (a receiver
 with every zone off, a switch whose input has no signal, a USB or HDMI
-matrix whose rooms are all Off), then waits for it to stop answering and answer again
-(a USB matrix: for its console to say it started), and reports how that
-went. DEVICE
-need not have `reboot: nightly` in the house file; it needs an integration
-under control that can restart it without cutting its power. Without
-DEVICE, each such device: whether it restarts nightly, and its last
-reboot.
+matrix whose rooms are all Off), then waits for it to stop answering and
+answer again (a USB matrix: for its console to say it started), and
+reports how that went. DEVICE need not have `reboot: nightly` in the
+house file; it needs an integration under control that can restart it
+without cutting its power. Without
+DEVICE, each such device: whether it restarts nightly or when hung
+(`reboot: when_hung`), and its last reboot.
 
 With --json, one JSON object instead: without DEVICE, `devices`, each with
-its id, label, whether it restarts nightly, at what time, and its last
-reboot as the rule reports it (null before any); with DEVICE, the outcome
-the rule reports, or `timed_out` when it reports none in time.
+its id, label, whether it restarts nightly, at what time, whether it
+restarts when hung, and its last reboot as the rule reports it (null
+before any; `by` is `schedule`, `command` or `hung`); with DEVICE, the
+outcome the rule reports, or `timed_out` when it reports none in time.
 """
 
 EXAMPLES = (
@@ -90,22 +91,26 @@ def outcome(last: dict) -> str:
 
 def entries(house: House, http) -> list[dict]:
     """Each device thermite can restart: its id, label, whether it restarts
-    nightly and when (null if not), and its last reboot (null before any)."""
+    nightly and when (null if not), whether it restarts when hung, and its
+    last reboot (null before any)."""
     last = report(http)
     out = []
     for entry in reboots.table(house)["devices"]:
         device = next(d for d in house.devices if d["id"] == entry["id"])
         nightly = bool(entry["nightly"])
         out.append({"id": entry["id"], "label": house.label(device), "nightly": nightly,
-                    "time": reboots.time_of(house.data) if nightly else None,
+                    "time": reboots.time_of(house.data) if nightly else None, "when_hung": "hung" in entry,
                     "last": last[entry["id"]] if isinstance(last.get(entry["id"]), dict) else None})
     return out
 
 
 def listing(house: House, http, log=print) -> int:
     for entry in entries(house, http):
-        how = f"nightly at {entry['time']}" if entry["nightly"] else "on command only"
-        done = f"last: {outcome(entry['last'])}" if entry["last"] is not None else "not restarted yet"
+        how = " and ".join(([f"nightly at {entry['time']}"] if entry["nightly"] else [])
+                           + (["when hung"] if entry["when_hung"] else [])) or "on command only"
+        last = entry["last"]
+        done = (f"last{' (it had hung)' if last.get('by') == 'hung' else ''}: {outcome(last)}" if last is not None
+                else "not restarted yet")
         log(f"{entry['label']} ({entry['id']}): {how}; {done}")
     return 0
 

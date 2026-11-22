@@ -158,7 +158,7 @@ class Device(TypedDict):
     protect: NotRequired[Camera]
     ir: NotRequired[Infrared]
     cec: NotRequired[Cec]
-    reboot: NotRequired[Literal["nightly"]]
+    reboot: NotRequired[Literal["nightly", "when_hung", "nightly_and_when_hung"]]
     c4_item: NotRequired[int | list[int]]
 
 
