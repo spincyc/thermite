@@ -154,16 +154,20 @@ def roll_back(system: System, commit: str | None, dry_run: bool, plan: dict | No
 
 def main(argv: list[str] | None = None) -> int:
     parser = oh_cli.command("rollback", DESCRIPTION, EXAMPLES, NOTES)
-    which = parser.add_mutually_exclusive_group()
-    which.add_argument("commit", nargs="?", metavar="COMMIT",
-                       help="the commit to install (default: the one deployed before the current one)")
-    which.add_argument("--restore-state", action="store_true",
-                       help="go back to the version, and the state, the last install or upgrade set aside; "
-                            "what was written since is lost")
+    # Not a mutually exclusive group: Python 3.13 and 3.14 print the usage
+    # of one that mixes a positional and an option differently, and the
+    # command reference embeds it.
+    parser.add_argument("commit", nargs="?", metavar="COMMIT",
+                        help="the commit to install (default: the one deployed before the current one)")
     oh_cli.add_dry_run(parser)
     oh_cli.add_json(parser)
     oh_cli.add_yes(parser, "the rollback")
+    parser.add_argument("--restore-state", action="store_true",
+                        help="instead of COMMIT, go back to the version, and the state, the last install or "
+                             "upgrade set aside; what was written since is lost")
     args = parser.parse_args(argv)
+    if args.restore_state and args.commit is not None:
+        parser.error("argument --restore-state: not allowed with argument COMMIT")
     if os.geteuid() == 0:
         print("thermite rollback: run it as your user; it asks once before rolling back", file=sys.stderr)
         return 2

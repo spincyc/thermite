@@ -436,8 +436,15 @@ class Following(Fixture):
         log = self.logs / "openhab.log"
         self.write_journal([entry("2026-11-21 15:00:05", "thermite-access.service",
                                   "INFO oh_identity.trail: later id=2", 3, "thermite-access")], "follow.jsonl")
+        def answered():
+            # The journal's record is read before the file's last one is
+            # complete, which a slow start of the journal once hid.
+            while not any("-f" in call for call in self.calls()):
+                time.sleep(0.01)
+            time.sleep(0.3)
+
         steps = iter([
-            lambda: log.open("a").write("2026-11-21 15:00:01.000 [INFO ] [org.example.A] - first new\n"),
+            lambda: (answered(), log.open("a").write("2026-11-21 15:00:01.000 [INFO ] [org.example.A] - first new\n")),
             lambda: (log.open("a").write("2026-11-21 15:00:02.000 [WARN ] [org.example.B] - before rotation\n"
                                          "\tat a continuation\n"),
                      log.rename(self.logs / "openhab.log.1"),
@@ -478,6 +485,25 @@ class Following(Fixture):
         follow = self.calls()[-1]
         self.assertIn("-f", follow)
         self.assertEqual(follow[follow.index("--after-cursor") + 1], "c-2026-11-21 14:20:00.001")
+
+
+class JournalOrder(unittest.TestCase):
+    def test_a_quiet_units_last_record_settles_once_no_entry_can_continue_it(self):
+        """While the journal is busy, follow prints what came after a quiet
+        unit's last record only once that record is out."""
+        parser = oh_logs.JournalParser(runtime_file=False)
+        quiet = entry("2026-11-21 15:00:00", "thermite-access.service", "INFO oh_identity.trail: quiet", 6,
+                      "thermite-access")
+        self.assertEqual(parser.feed(quiet), [])
+
+        def busy(second):
+            return parser.feed(entry(f"2026-11-21 15:00:0{second}", "thermite-openhab.service",
+                                     f"[INFO ] [org.example.Busy] - line {second}", 6, "thermite-openhab"))
+        busy(1), busy(2)
+        self.assertEqual(parser.settled(), [])
+        busy(3)
+        self.assertEqual([record.message for record in parser.settled()], ["quiet"])
+        self.assertEqual(sorted(parser.pending), ["runtime"])
 
 
 class Redact(unittest.TestCase):

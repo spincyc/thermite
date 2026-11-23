@@ -1040,8 +1040,8 @@ examples:
   thermite uninstall -n --json      what uninstalling would do, as one JSON object
 </pre>
 </section>
-<section class="verb" id="rollback"><h3><code>thermite rollback</code></h3><p>Install the commit deployed before the current one, or another.</p><pre class="help">usage: thermite rollback [-h] [--config DIR] [-n] [--json] [--yes]
-                         [--restore-state | COMMIT]
+<section class="verb" id="rollback"><h3><code>thermite rollback</code></h3><p>Install the commit deployed before the current one, or another.</p><pre class="help">usage: thermite rollback [-h] [--config DIR] [-n] [--json] [--yes] [--restore-state]
+                         [COMMIT]
 
 Install an earlier site commit on this host as one install transaction:
 without COMMIT, the commit deployed before the one deployed now (thermite
@@ -1086,12 +1086,12 @@ positional arguments:
 options:
   -h, --help       show this help message and exit
   --config DIR     use this private configuration directory
-  --restore-state  go back to the version, and the state, the last install or upgrade
-                   set aside; what was written since is lost
   -n, --dry-run    report what it would do; change nothing
   --json           print the report as JSON
   --yes            approve the rollback up front, unattended: nothing reads standard
                    input
+  --restore-state  instead of COMMIT, go back to the version, and the state, the last
+                   install or upgrade set aside; what was written since is lost
 
 switches every verb takes:
   -q, --quiet      print only errors

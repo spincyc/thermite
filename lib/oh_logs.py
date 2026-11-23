@@ -483,6 +483,9 @@ class JournalParser:
         #: The components whose last record began a private key block that
         #: no line has ended yet.
         self.keys: set[str] = set()
+        #: The latest entry's time. Entries come in time order, so a pending
+        #: record more than _CONTINUATION_GAP before it is continued no more.
+        self.latest: datetime | None = None
 
     def feed(self, entry: dict) -> list[Record]:
         if isinstance(entry.get("__CURSOR"), str):
@@ -494,6 +497,7 @@ class JournalParser:
             moment = datetime.fromtimestamp(int(entry["__REALTIME_TIMESTAMP"]) / 1e6, timezone.utc)
         except (KeyError, TypeError, ValueError):
             return []
+        self.latest = moment if self.latest is None else max(self.latest, moment)
         message = _text(entry.get("MESSAGE")).rstrip("\n")
         identifier = entry.get("SYSLOG_IDENTIFIER")
         container = entry.get("CONTAINER_NAME")
@@ -537,6 +541,17 @@ class JournalParser:
     def flush(self) -> list[Record]:
         out = sorted(self.pending.values(), key=lambda record: record.time)
         self.pending = {}
+        return out
+
+    def settled(self) -> list[Record]:
+        """The pending records no later entry can continue, oldest first."""
+        latest = self.latest
+        if latest is None:
+            return []
+        out = sorted((record for record in self.pending.values() if latest - record.time > _CONTINUATION_GAP),
+                     key=lambda record: record.time)
+        for record in out:
+            del self.pending[record.component]
         return out
 
 
@@ -719,8 +734,9 @@ def _pump(stream, into: queue.Queue) -> None:
 def follow(query: Query, logs: Path | None, journal: bool, start: Result, emit: Callable[[Record], None],
            stop: Callable[[], bool] = lambda: False, sleep: Callable[[float], None] = time.sleep,
            interval: float = 0.5) -> Result:
-    """Print (emit) each new matching record, in time order a poll at a time,
-    until stop() is true (or Ctrl-C, KeyboardInterrupt, outside)."""
+    """Print (emit) each new matching record, in time order across the
+    files and the journal, until stop() is true (or Ctrl-C,
+    KeyboardInterrupt, outside)."""
     result = Result()
     tails = [Tail(logs / FILES[component], component, start.positions.get(logs / FILES[component]))
              for component in ("runtime", "events") if component in query.components and logs is not None]
@@ -734,10 +750,11 @@ def follow(query: Query, logs: Path | None, journal: bool, start: Result, emit: 
         process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                    stdin=subprocess.DEVNULL)
         threading.Thread(target=_pump, args=(process.stdout, lines), daemon=True).start()
+    held: list[Record] = []
     try:
         idle = 0
         while True:
-            batch: list[Record] = []
+            batch, held = held, []
             for tail in tails:
                 batch += tail.poll()
             fed = False
@@ -756,8 +773,16 @@ def follow(query: Query, logs: Path | None, journal: bool, start: Result, emit: 
                     fed = True
                     batch += parser.feed(entry)
             idle = 0 if fed else idle + 1
-            if idle >= 2:
-                batch += parser.flush()
+            batch += parser.flush() if idle >= 2 else parser.settled()
+            # Each source keeps its last record a poll or two for the lines
+            # that may continue it. What came after that record, from any
+            # source, waits for it.
+            waiting = [tail.pending.time for tail in tails if tail.pending is not None]
+            waiting += [record.time for record in parser.pending.values()]
+            horizon = min(waiting, default=None)
+            if horizon is not None:
+                held = [record for record in batch if record.time > horizon]
+                batch = [record for record in batch if record.time <= horizon]
             for record in sorted(batch, key=lambda record: record.time):
                 if query.within(record.time) and (kept := query.prepare(record)):
                     emit(kept)
