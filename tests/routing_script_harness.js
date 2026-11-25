@@ -547,4 +547,157 @@ test('the planner logs through the script console', () => {
   assert.deepEqual(r.logs, [['warn', 'routing deadline room=den']]);
 });
 
+test('origin===repair is recognized as policy enforcement and never yields the endpoint or sets a manual pin', () => {
+  const realTable = { ...REAL, lifecycle: { ...REAL.lifecycle,
+    endpoints: {
+      den: { choices: {
+        tv: { requirements: { matrix_output1_input: '1' }, uses: [] },
+        off: { off: true, release: { matrix_output1_input: '9' } },
+      } },
+      office: { choices: {
+        tv: { requirements: { matrix_output2_input: '1' }, uses: [] },
+        off: { off: true, release: { matrix_output2_input: '9' } },
+      } },
+    } } };
+  const r = load({ real: true, table: realTable });
+  r.item('loc_den_source_lifecycle', 'NULL');
+  r.command('den', 'tv');
+  assert.equal(r.planner().snapshot().endpoints.den.yielded, false);
+  // Policy repair command with origin === 'repair' holds transiently, does NOT yield den or add manual:*.
+  const repairId = 'legacy-repair1';
+  const webId = 'legacy-web1';
+  r.legacy({ type: 'legacy', token: repairId, key: 'matrix', resource: 'matrix_output1_input', value: '9',
+    managed: true, independent: true, origin: 'repair', actorSource: 'thermite.repair:1a2b3c4d', effectResources: [] });
+  assert.equal(r.planner().snapshot().endpoints.den.yielded, false, 'repair must never yield endpoint');
+  assert(!('manual:matrix_output1_input' in r.planner().snapshot().holds), 'repair must never leave manual:* pin');
+  assert(repairId in r.planner().snapshot().holds, 'repair holds transiently while in flight');
+  assert(r.calls.includes('authorize legacy-repair1'));
+  r.legacy({ type: 'admitted', token: repairId, key: 'matrix', legacy: true, managed: true, resource: 'matrix_output1_input' });
+  r.legacy({ type: 'terminal', token: repairId, key: 'matrix', legacy: true, managed: true, admitted: true });
+  assert(!(repairId in r.planner().snapshot().holds));
+  // Contrast: a manual web command DOES yield den and sets manual:* pin.
+  r.legacy({ type: 'legacy', token: webId, key: 'matrix', resource: 'matrix_output1_input', value: '9',
+    managed: true, independent: true, origin: 'web', actorSource: 'thermite.web:1a2b3c4d', effectResources: [] });
+  assert.equal(r.planner().snapshot().endpoints.den.yielded, true);
+  assert('manual:matrix_output1_input' in r.planner().snapshot().holds);
+});
+
+test('loc_<room>_source_lifecycle publishes Stage 2b status, waiting, and reasons', () => {
+  const clock = { now: 1000 };
+  const dispatches = [];
+  const realTable = { ...REAL, lifecycle: { ...REAL.lifecycle, deadlineMs: 10000,
+    endpoints: {
+      den: { choices: {
+        tv: { requirements: { matrix_output1_input: '1' }, uses: [] },
+        off: { off: true, release: { matrix_output1_input: '9' } },
+      } },
+      office: { choices: {
+        tv: { requirements: { matrix_output2_input: '1' }, uses: [] },
+        off: { off: true, release: { matrix_output2_input: '9' } },
+      } },
+    } } };
+  const r = load({ real: true, clock, table: realTable });
+  const statusItem = r.item('loc_den_source_lifecycle', 'NULL');
+  // Intercept planner dispatches by spying on deps().
+  const origDispatch = r.deps().dispatch, origProbe = r.deps().probe;
+  r.deps().dispatch = (op, rep) => { dispatches.push({ op, rep }); origDispatch(op, rep); };
+  r.deps().probe = (op, rep) => { dispatches.push({ op, rep }); origProbe(op, rep); };
+  r.command('den', 'tv');
+  let payload = JSON.parse(statusItem.state);
+  assert.equal(payload.status, 'running');
+  assert(Array.isArray(payload.waiting) && payload.waiting.length > 0 && payload.waiting[0].startsWith('matrix_output1_input:'));
+  assert.deepEqual(payload.reasons, []);
+  // Complete probe + write -> status becomes 'done'.
+  while (dispatches.length) {
+    const { op, rep } = dispatches.shift();
+    if (op.kind === 'probe') rep({ type: 'sample', token: op.token, value: '9', fresh: true, retired: true });
+    else rep({ type: 'terminal', token: op.token, admitted: true, sample: { value: op.value, fresh: true, retired: true } });
+  }
+  payload = JSON.parse(statusItem.state);
+  assert.equal(payload.status, 'done');
+  assert.deepEqual(payload.waiting, []);
+  assert.deepEqual(payload.reasons, []);
+  // Refused write -> status becomes 'failed' with sorted reasons.
+  r.command('den', 'off');
+  while (dispatches.length) {
+    const { op, rep } = dispatches.shift();
+    if (op.kind === 'probe') rep({ type: 'sample', token: op.token, value: '1', fresh: true, retired: true });
+    else rep({ type: 'terminal', token: op.token, admitted: true, refused: true, reason: 'device_refused' });
+  }
+  payload = JSON.parse(statusItem.state);
+  assert.equal(payload.status, 'failed');
+  assert.deepEqual(payload.reasons, ['device-refused']);
+  // Manual takeover -> status becomes 'yielded'.
+  r.command('den', 'tv');
+  const yieldId = 'legacy-y1';
+  r.legacy({ type: 'legacy', token: yieldId, key: 'matrix', resource: 'matrix_output1_input', value: '9',
+    managed: true, independent: true, origin: 'web', effectResources: [] });
+  payload = JSON.parse(statusItem.state);
+  assert.equal(payload.status, 'yielded');
+});
+
+test('EDID write is ordered strictly before HDMI output dispatch under lifecycle', () => {
+  const events = [];
+  const realTable = { ...REAL, lifecycle: { ...REAL.lifecycle,
+    endpoints: {
+      den: { choices: {
+        tv: { requirements: { matrix_output1_input: '1' }, uses: [] },
+        off: { off: true, release: { matrix_output1_input: '9' } },
+      } },
+      office: { choices: {
+        tv: { requirements: { matrix_output2_input: '1' }, uses: [] },
+        off: { off: true, release: { matrix_output2_input: '9' } },
+      } },
+    } } };
+  const r = load({ real: true, table: realTable });
+  const edidItem = r.item('matrix_input1_edid');
+  const origSend = edidItem.sendCommand.bind(edidItem);
+  edidItem.sendCommand = (v) => { events.push(`edid:${v}`); origSend(v); };
+  const origDispatch = r.deps().dispatch, origProbe = r.deps().probe;
+  r.deps().dispatch = (op, rep) => { events.push(`dispatch:${op.resource}=${op.value}`); origDispatch(op, rep); };
+  r.deps().probe = (op, rep) => { events.push(`probe:${op.resource}`); origProbe(op, rep); };
+  r.command('office', 'tv');
+  const edidIdx = events.indexOf('edid:6');
+  const firstMatrixOp = events.findIndex(e => e.startsWith('probe:matrix_output2_input') || e.startsWith('dispatch:matrix_output2_input'));
+  assert(edidIdx >= 0 && firstMatrixOp > edidIdx, `expected EDID before matrix dispatch: ${events.join(', ')}`);
+});
+
+test('manual command targeting a settling property is deferred until settled and then authorized', () => {
+  const clock = { now: 1000 };
+  const ops = [];
+  const settleTable = { ...REAL, lifecycle: { ...REAL.lifecycle,
+    resources: { ...REAL.lifecycle.resources,
+      receiver_power: { key: 'receiver', values: ['ON', 'OFF'], capable: true, settleMs: { ON: 60000, OFF: 30000 } },
+    },
+    endpoints: {
+      den: { choices: {
+        tv: { requirements: { receiver_power: 'ON' }, uses: [] },
+        off: { off: true, deactivate: { receiver_power: 'OFF' } },
+      } },
+      office: { choices: { tv: { requirements: { matrix_output2_input: '1' }, uses: [] }, off: { off: true } } },
+    } } };
+  const r = load({ real: true, clock, table: settleTable });
+  r.deps().dispatch = (op, rep) => ops.push({ op, rep });
+  r.deps().probe = (op, rep) => ops.push({ op, rep });
+  r.command('den', 'tv');
+  // Probe OFF -> write Power=ON accepted without readback -> Power is pending settle!
+  let next = ops.shift();
+  next.rep({ type: 'sample', token: next.op.token, value: 'OFF', fresh: true, retired: true });
+  next = ops.shift();
+  next.rep({ type: 'terminal', token: next.op.token, admitted: true });
+  assert(r.planner().snapshot().resources.receiver_power.pending !== null);
+  // Manual OFF arrives while settling: NOT authorized immediately!
+  r.calls.length = 0;
+  const deferId = 'legacy-defer1';
+  r.legacy({ type: 'legacy', token: deferId, key: 'receiver', resource: 'receiver_power', value: 'OFF',
+    managed: true, origin: 'web', effectResources: [] });
+  assert(!r.calls.includes('authorize legacy-defer1'), 'must hold manual command while property is settling');
+  // Advance to settle probe step and return stable ON -> deferred manual command is now authorized!
+  r.advance(5000);
+  const settleProbe = ops.find(e => e.op.phase === 'settle' && e.op.resource === 'receiver_power');
+  assert(settleProbe, 'expected settle probe');
+  settleProbe.rep({ type: 'sample', token: settleProbe.op.token, value: 'ON', fresh: true, retired: true });
+  assert(r.calls.includes('authorize legacy-defer1'), 'must authorize deferred manual command once settled');
+});
+
 process.stdout.write(JSON.stringify({ passed: tests.length, tests }));

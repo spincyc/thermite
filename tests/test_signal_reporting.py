@@ -16,7 +16,7 @@ class SignalReporting(unittest.TestCase):
                                 capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
         proof = json.loads(result.stdout)
-        self.assertEqual(proof["passed"], 14)
+        self.assertEqual(proof["passed"], 15)
         self.assertEqual(len(set(proof["cases"])), proof["passed"])
 
 

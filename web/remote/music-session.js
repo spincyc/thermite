@@ -164,6 +164,8 @@
     let current = null;
     let pending = 0;
     let life = 0;
+    // Estimated (local ms - server ms) clock offset from snapshot/speaker receipt time.
+    let clockOffsetMs = null;
     // The last life that had music, and the last whose library was read again.
     let given = 0, resumed = 0;
     // A Guest who may not see titles has no library (oh_identity.music).
@@ -248,6 +250,17 @@
       return shown(ownerOf(speaker), "playing", read).value;
     }
 
+    function noteClock(speakers, receivedAt, fresh) {
+      let latestAt = null;
+      speakers.forEach((speaker) => {
+        const playing = speaker && speaker.now_playing;
+        if (playing && Number.isFinite(playing.at) && (latestAt === null || playing.at > latestAt)) latestAt = playing.at;
+      });
+      if (latestAt === null) return;
+      const sample = receivedAt - latestAt * 1000;
+      if (clockOffsetMs === null || fresh || sample < clockOffsetMs) clockOffsetMs = sample;
+    }
+
     // A speaker's report ends each hold it answers, then and there.
     function heard(speaker) {
       const owner = ownerOf(speaker);
@@ -258,7 +271,7 @@
       if (speaker.group) shown(owner, "group_volume", speaker.group.volume);
       const seek = held[owner + " seek"], playing = speaker.now_playing;
       // A position Music Assistant measured after the seek was sent is the speaker's.
-      if (seek && playing && Number.isFinite(playing.at) && playing.at * 1000 >= seek.at - 1000) delete held[owner + " seek"];
+      if (seek && playing && Number.isFinite(playing.at) && playing.at * 1000 + (clockOffsetMs || 0) >= seek.at - 1000) delete held[owner + " seek"];
     }
 
     // The rooms that hold a speaker when locked, as [id, label]: the routed
@@ -372,9 +385,8 @@
 
     // Where it is in the track: from {elapsed, at}, or from a seek just sent,
     // moving on while the speaker says it plays. A Play still to be read back
-    // waits for the speaker; a Pause stops it where it was pressed. at is the
-    // gateway's clock: a phone's set apart from it puts the position off by
-    // as much while it plays.
+    // waits for the speaker; a Pause stops it where it was pressed. Clock skew
+    // between the phone and gateway is compensated via clockOffsetMs from snapshot receipt.
     function progressOf(speaker) {
       const playing = speaker.now_playing;
       if (!playing || !Number.isFinite(playing.elapsed)) return null;
@@ -387,7 +399,8 @@
       if (seek && now() - seek.at < HOLD_MS) elapsed = seek.value + (until !== null ? Math.max(0, until - seek.at) / 1000 : 0);
       else {
         if (seek) delete held[owner + " seek"];
-        elapsed = playing.elapsed + (until !== null && Number.isFinite(playing.at) ? Math.max(0, until / 1000 - playing.at) : 0);
+        const serverAtMs = Number.isFinite(playing.at) ? playing.at * 1000 + (clockOffsetMs || 0) : null;
+        elapsed = playing.elapsed + (until !== null && serverAtMs !== null ? Math.max(0, (until - serverAtMs) / 1000) : 0);
       }
       const duration = Number.isFinite(playing.duration) && playing.duration > 0 ? playing.duration : null;
       if (duration !== null) elapsed = Math.min(elapsed, duration);
@@ -1191,6 +1204,7 @@
       if (!next || !Array.isArray(next.speakers)) return;
       music = next;
       failure = null;
+      noteClock(all(), now(), false);
       if (!find(current)) {
         const stored = store.get("music.speaker");
         const first = all().find((speaker) => speaker.state === "playing") || all().find((speaker) => speaker.available) || all()[0];
@@ -1212,9 +1226,11 @@
       if (index < 0) return;
       const before = music.speakers[index];
       music.speakers[index] = speaker;
+      const was = before.now_playing, is = speaker.now_playing;
+      const freshAt = Boolean(is && Number.isFinite(is.at) && (!was || was.at !== is.at));
+      noteClock([speaker], now(), freshAt);
       heard(speaker);
       // A track began, or what it plays changed: its queue is read again.
-      const was = before.now_playing, is = speaker.now_playing;
       const chosenOwner = chosen() && ownerOf(chosen());
       if (ownerOf(speaker) === chosenOwner && (speaker.id === chosenOwner) && ((was && was.title) !== (is && is.title)
           || (was && was.duration) !== (is && is.duration) || before.state !== speaker.state)) refreshQueue();
@@ -1315,6 +1331,7 @@
       grouping.pending = false;
       tidal.pending = false;
       tidal.checked = false;
+      clockOffsetMs = null;
       Object.keys(held).forEach((key) => { delete held[key]; });
     }
 

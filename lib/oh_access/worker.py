@@ -71,11 +71,12 @@ class NativeCache:
     NULL, UNDEF or a non-string or over-long value is None, Unknown.
     """
 
-    def __init__(self, fields, *, native_power=None, clock=None, on_change=None):
+    def __init__(self, fields, *, native_power=None, lifecycle_items=None, clock=None, on_change=None):
         self.fields = {field.item: field for field in fields}
         self.native_power = dict(native_power or {})
+        self.lifecycle_items = frozenset(lifecycle_items or ())
         self._topics = tuple("openhab/items/" + name + "/stateupdated"
-                             for name in sorted(set(self.fields) | set(self.native_power.values())))
+                             for name in sorted(set(self.fields) | set(self.native_power.values()) | self.lifecycle_items))
         self._topic_set = frozenset(self._topics)
         self.timestamps = {}
         self.clock = clock or (lambda: datetime.now(timezone.utc))
@@ -112,6 +113,10 @@ class NativeCache:
         if item in self.fields:
             from oh_room_policy import canonical
             return item, canonical(value)
+        if item in self.lifecycle_items:
+            if not isinstance(value, str) or value in ("NULL", "UNDEF", "") or len(value) > 4096:
+                return item, None
+            return item, value
         if not isinstance(value, str) or len(value) > 128:
             return None
         try:
@@ -129,28 +134,38 @@ class NativeCache:
         changed = False
         with self.lock:
             self.connected = True
-            if item not in self.fields:
+            if item in self.lifecycle_items:
+                previous = self.values.get(item)
+                if value is None:
+                    self.values.pop(item, None)
+                else:
+                    self.values[item] = Observation(value, self.clock(), basis="native")
+                current = self.values.get(item)
+                changed = ((previous is None) != (current is None)
+                           or previous is not None and current is not None and previous.value != current.value)
+            elif item not in self.fields:
                 try:
                     at = datetime.fromisoformat(value.replace("Z", "+00:00"))
                 except ValueError:
                     at = None
                 self.timestamps[item] = at
                 return
-            field = self.fields[item]
-            previous = self.values.get(item)
-            if field.native_power:
-                # The provider emits the exact acquisition timestamp BEFORE
-                # each power update. Consume it once; never reuse poll receipt.
-                at = self.timestamps.pop(self.native_power.get(item), None)
-                if at is None:
-                    self.values.pop(item, None)
-                else:
-                    self.values[item] = Observation(value, at, basis="native_power")
             else:
-                self.values[item] = Observation(value, self.clock(), basis="native")
-            current = self.values.get(item)
-            changed = ((previous is None) != (current is None)
-                       or previous is not None and current is not None and previous.value != current.value)
+                field = self.fields[item]
+                previous = self.values.get(item)
+                if field.native_power:
+                    # The provider emits the exact acquisition timestamp BEFORE
+                    # each power update. Consume it once; never reuse poll receipt.
+                    at = self.timestamps.pop(self.native_power.get(item), None)
+                    if at is None:
+                        self.values.pop(item, None)
+                    else:
+                        self.values[item] = Observation(value, at, basis="native_power")
+                else:
+                    self.values[item] = Observation(value, self.clock(), basis="native")
+                current = self.values.get(item)
+                changed = ((previous is None) != (current is None)
+                           or previous is not None and current is not None and previous.value != current.value)
         # Same-value reports retain truthful acquisition times without waking
         # the policy loop for every periodic device status update.
         if changed and self.on_change:
@@ -161,13 +176,17 @@ class NativeCache:
             return {item: self.values[item] for item in items if item in self.values}
 
 
+def compile_plans(house, rooms):
+    """Compile every room's route plans once, building routing.table(house) a single time."""
+    from oh_room_policy.plan import compile_plans as _compile_plans
+    return _compile_plans(house, rooms)
+
+
 class PolicyIO:
-    def __init__(self, adapter, store, cache, house):
+    def __init__(self, adapter, store, cache, house, *, plans=None):
         """house is the contract's plain (mutable) house mapping."""
         self.adapter, self.store, self.cache = adapter, store, cache
-        from oh_room_policy import expected_plan
-        self.plans = {room: {choice: expected_plan(house, room, choice)
-                             for choice in ("off", *spec["sources"])} for room, spec in adapter.contract.rooms.items()}
+        self.plans = compile_plans(house, adapter.contract.rooms) if plans is None else plans
 
     def read(self, items):
         return self.cache.read(items)
@@ -384,13 +403,15 @@ def run(config_path, *, stop=None, interval=5, wall_clock=None):
     store = Store()
     telemetry = Telemetry(adapter.contract.rooms)
     house = plain(adapter.contract.house)
-    fields = observed_fields(house, adapter.contract.rooms)
+    plans = compile_plans(house, adapter.contract.rooms)
+    fields = observed_fields(house, adapter.contract.rooms, plans=plans)
+    lifecycle_items = {plan.lifecycle_item for choices in plans.values() for plan in choices.values() if plan.lifecycle_item}
     from oh_room_policy.plan import native_power_observations
     observed = cache_items(fields)
     native_power = {item: reported_at for item, reported_at in native_power_observations(house["devices"]).items()
                     if item in observed}
-    cache = NativeCache(fields, native_power=native_power, clock=wall_clock)
-    io = PolicyIO(adapter, store, cache, house)
+    cache = NativeCache(fields, native_power=native_power, lifecycle_items=lifecycle_items, clock=wall_clock)
+    io = PolicyIO(adapter, store, cache, house, plans=plans)
     worker = Worker(house, telemetry.store(store), io, locks=locks, wall_clock=wall_clock)
     rooms_by_item = {}
     for room, choices in io.plans.items():
@@ -529,9 +550,9 @@ def cache_items(fields):
     return {field.item for field in fields}
 
 
-def observed_fields(house, rooms):
+def observed_fields(house, rooms, *, plans=None):
     """Every Field the native cache observes: each route plan's fields and the
     conditions their alternatives depend on, which are never written."""
-    from oh_room_policy import expected_plan
-    return [field for room, spec in rooms.items() for choice in ("off", *spec["sources"])
-            for plan in (expected_plan(house, room, choice),) for field in (*plan.fields, *plan.conditions)]
+    compiled = compile_plans(house, rooms) if plans is None else plans
+    return [field for choices in compiled.values() for plan in choices.values()
+            for field in (*plan.fields, *plan.conditions)]

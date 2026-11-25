@@ -29,7 +29,7 @@ function test(name, fn) { fn(); tests.push(name); }
 function vrroom({ send = true, interrupts = false } = {}) {
   const clock = { now: 0 }, hooks = [];
   const vr = { refuse: false, mute: false, hangup: null, silent: false, decline: false, err: false, echo: false,
-    insel: [0, 4], interrupts,
+    insel: [0, 4], interrupts, lineCalls: 0, pollLineCalls: 0,
     opened: [], requests: [], links: [], unanswered: new Set(), answers: {}, format: line => line,
     close() { for (const link of vr.links) link.peerClosed = true; },
     notice(line = 'int') { for (const link of vr.links) if (!link.closed && !link.peerClosed) link.lines.push(line); } };
@@ -44,9 +44,16 @@ function vrroom({ send = true, interrupts = false } = {}) {
     },
     renew(link, end) { link.deadline = end; },
     line(link) {
+      vr.lineCalls += 1;
       if (link.lines.length) return link.lines.shift();
       if (link.peerClosed) { link.closed = true; return null; }
       throw Error('quiet');
+    },
+    pollLine(link) {
+      vr.pollLineCalls += 1;
+      if (link.lines.length) return link.lines.shift();
+      if (link.peerClosed) { link.closed = true; return null; }
+      return null;
     },
     quietTimeout: () => true, waitedOut: () => true,
     write(link, text) {
@@ -127,9 +134,11 @@ test('a VRROOM is read every 10 s on one kept connection, which turns its change
 test('a change notice between polls is read within a second; an unasked line of any wording counts, silence costs nothing', () => {
   const r = vrroom({ interrupts: true });
   r.tick();
-  const asked = r.vr.requests.length;
+  const asked = r.vr.requests.length, lineBefore = r.vr.lineCalls, pollBefore = r.vr.pollLineCalls;
   r.listen(); r.listen();
   assert.equal(r.vr.requests.length, asked);
+  assert.equal(r.vr.lineCalls, lineBefore, 'idle listen must not call throwing line()');
+  assert.equal(r.vr.pollLineCalls, pollBefore + 2, 'idle listen must use non-blocking pollLine()');
   r.vr.insel = [2, 4]; r.vr.notice();
   r.listen();
   assert.deepEqual(r.vr.requests.slice(asked), ['get insel']); assert.equal(r.items.switch_input, '2');
@@ -391,6 +400,114 @@ test('shows() resolves TX0 COPY=4 to TX1 and treats a follow cycle as unread', (
   r.vr.insel = [4, 4];
   r.tick();
   assert.equal(r.items.switch_input, 'UNDEF');
+});
+
+test('idle listen uses non-throwing pollLine and never allocates SocketTimeoutException on real _io.js', () => {
+  const classes = {}, chunks = [];
+  let timeouts = 0;
+  const { runtime, hooks } = require('./integration_io_harness.js').install(classes, {}, { Socket: class {} });
+  const BaseTimeout = classes['java.net.SocketTimeoutException'];
+  classes['java.net.SocketTimeoutException'] = class extends BaseTimeout {
+    constructor(msg) { super(msg); timeouts += 1; }
+  };
+  classes['java.net.InetSocketAddress'] = class { constructor(address, port) { Object.assign(this, { address, port }); } };
+  classes['java.nio.channels.SocketChannel'] = class {
+    static open() { return new this(); }
+    configureBlocking() {} connect() { return true; } register() {} close() { this.closed = true; }
+    read(buffer) {
+      if (!chunks.length) return 0;
+      const chunk = chunks.shift();
+      for (const c of chunk) buffer.bytes[buffer.pos++] = c.charCodeAt(0);
+      return chunk.length;
+    }
+    write(buffer) { let n = 0; while (buffer.hasRemaining()) { buffer.get(); n++; } return n; }
+  };
+  const context = vm.createContext({
+    Java: { type: name => classes[name] || assert.fail('unexpected Java type ' + name), to: values => values },
+    require: name => name === '@runtime' ? runtime : { items: { getItem: () => null }, rules: { JSRule() {} }, triggers: {} },
+    console: { info() {}, warn() {}, error() {} },
+  });
+  vm.runInContext(`${ioSource}\n${deviceSource}`, context);
+  const [thermiteIO, thermiteDevice] = vm.runInContext('[thermiteIO, thermiteDevice]', context);
+  const heard = [], device = { id: 'switch' };
+  const links = thermiteDevice.links((_, end) => thermiteIO.open('192.0.2.40', 2222, 2000, end), (_, line) => heard.push(line));
+  const link = links.connection(device, thermiteIO.deadline(12000));
+  for (let i = 0; i < 5; i++) {
+    assert.equal(thermiteIO.pollLine(link, true), null);
+    assert.equal(links.listen(device, thermiteIO.deadline(1000)), link);
+  }
+  assert.equal(timeouts, 0, 'idle polls must not construct SocketTimeoutException');
+  chunks.push('in');
+  assert.equal(thermiteIO.pollLine(link, true), null);
+  assert.equal(link.closed, false);
+  chunks.push('t\r\n');
+  assert.equal(thermiteIO.pollLine(link, true), 'int');
+  assert.equal(timeouts, 0);
+  // Without keep, a partial line on idle closes the link cleanly without throwing.
+  chunks.push('partial');
+  assert.equal(thermiteIO.pollLine(link, false), null);
+  assert.equal(link.closed, true);
+  assert.equal(timeouts, 0);
+  hooks.forEach(hook => hook());
+});
+
+test('_io.js decodes channel reads in bulk via ByteBuffer.array and UTF-8', () => {
+  const classes = {}, chunks = [], stringCalls = [];
+  let byteGets = 0;
+  const { runtime, hooks } = require('./integration_io_harness.js').install(classes, {}, { Socket: class {} });
+  classes['java.nio.charset.StandardCharsets'].UTF_8 = 'utf8';
+  classes['java.lang.String'] = class {
+    constructor(bytes, offset, count, charset) {
+      stringCalls.push([offset, count, charset]);
+      this.value = Buffer.from(bytes.subarray(offset, offset + count)).toString(charset);
+    }
+    toString() { return this.value; }
+  };
+  classes['java.nio.ByteBuffer'] = {
+    allocate(size) {
+      const backing = Buffer.alloc(size + 4);
+      return {
+        backing, pos: 0,
+        hasArray: () => true, array: () => backing, arrayOffset: () => 4,
+        flip() {}, hasRemaining: () => false, get() { byteGets += 1; return 0; },
+      };
+    },
+  };
+  classes['java.net.InetSocketAddress'] = class { constructor(address, port) { Object.assign(this, { address, port }); } };
+  classes['java.nio.channels.SocketChannel'] = class {
+    static open() { return new this(); }
+    configureBlocking() {} connect() { return true; } register() {} close() { this.closed = true; }
+    read(buffer) {
+      if (!chunks.length) return 0;
+      const chunk = Buffer.from(chunks.shift(), 'utf8');
+      chunk.copy(buffer.backing, buffer.arrayOffset());
+      return chunk.length;
+    }
+  };
+  const context = vm.createContext({
+    Java: { type: name => classes[name] || assert.fail('unexpected Java type ' + name), to: values => values },
+    require: name => name === '@runtime' ? runtime : {},
+    console: { info() {}, warn() {}, error() {} },
+  });
+  vm.runInContext(ioSource, context);
+  const thermiteIO = vm.runInContext('thermiteIO', context);
+  const link = thermiteIO.open('192.0.2.40', 2222, 2000, thermiteIO.deadline(5000));
+  chunks.push('caf\u00e9\r\n');
+  assert.equal(thermiteIO.pollLine(link, true), 'caf\u00e9');
+  assert.equal(byteGets, 0, 'bulk UTF-8 decode must not call buffer.get() byte-by-byte');
+  assert.deepEqual(stringCalls, [[4, 7, 'utf8']]);
+  thermiteIO.close(link);
+  hooks.forEach(hook => hook());
+});
+
+test('a reboot ordered by an operation carrying actorSource logs that source directly', () => {
+  const r = vrroom({ interrupts: true });
+  r.tick();
+  const provider = r.context.routingProvider();
+  assert.deepEqual(provider.execute('switch_reboot', 'reboot', { queuedAt: r.clock.now, actorSource: 'thermite.actor:direct' }),
+    { outcome: 'applied' });
+  assert.deepEqual(r.warnings().filter(line => line.includes('set reboot')), [
+    'switch: sent set reboot (command from thermite.actor:direct); it restarts and does not answer for about 15 s']);
 });
 
 process.stdout.write(JSON.stringify({ passed: tests.length, tests }));

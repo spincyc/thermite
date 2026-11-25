@@ -312,6 +312,16 @@ class Retired(unittest.TestCase):
                 self.assertEqual(direct[1], f"secret scan: 4 files, {expected} findings\n"
                                             f"make targets in the docs: 2 documents, {expected} stale\n")
 
+    def test_check_house_build_reuses_loaded_house_and_built_conf(self):
+        with mock.patch.object(House, "load", wraps=House.load) as load_spy, \
+                mock.patch.object(render, "build", wraps=render.build) as build_spy:
+            code, out, err = run("check", "house", "build", "--house", HOUSE)
+        self.assertEqual(code, 0, err)
+        self.assertIn("house file:", out)
+        self.assertIn("build:", out)
+        self.assertEqual(load_spy.call_count, 1, "House.load should run once across house + build")
+        self.assertEqual(build_spy.call_count, 1, "oh_render.build should run once across house + build")
+
 
 class Site(unittest.TestCase):
     """The verb itself, on a checkout without a descriptor whose ignored

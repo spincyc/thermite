@@ -28,6 +28,7 @@ leader, and the answer says which speaker's queue it was.
 
 import atexit
 import math
+import os
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -36,6 +37,7 @@ import unicodedata
 import weakref
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 from oh_music.client import SLOW, TIMEOUT, Client, Failed, Unauthorized, Unavailable
 from oh_music import provision, tidal
@@ -137,7 +139,8 @@ KEPT_FORMATS = frozenset("\u200c\u200d\u200e\u200f\u061c\u0600\u0601\u0602\u0603
 #: A subdivision flag (England, Scotland, Wales): the black flag, its tags,
 #: and the cancel tag.
 _FLAG = re.compile("(\U0001f3f4[\U000e0020-\U000e007e]+\U000e007f)")
-_music, _music_guard = weakref.WeakKeyDictionary(), threading.Lock()
+_music: weakref.WeakKeyDictionary[Any, Any] = weakref.WeakKeyDictionary()
+_music_guard = threading.Lock()
 _pool, _pool_guard = None, threading.Lock()
 
 
@@ -319,9 +322,32 @@ class Music:
         self._art_requests = threading.BoundedSemaphore(ART_FETCHES + ART_WAITING + ART_ARRIVING)
         # Blocks using each client: one the token replaced is closed by its last.
         self._using = {}
+        self._claim_key = None
+        self._claim_value = None
         self.flow = None
 
     # ---- Music Assistant ----------------------------------------------------
+
+    def _read_claim(self):
+        """Cached music-token.json keyed by stat metadata so hot cover-art and
+        playback requests avoid re-reading and re-parsing disk on every call."""
+        path = provision.token_file(self.state)
+        try:
+            stat = os.lstat(path)
+        except OSError:
+            with self._guard:
+                self._claim_key = None
+                self._claim_value = None
+            return provision.read_claim(self.state)
+        key = (stat.st_mtime_ns, stat.st_size, stat.st_ino, stat.st_mode, stat.st_uid)
+        with self._guard:
+            if self._claim_key == key:
+                return self._claim_value
+        claim = provision.read_claim(self.state)
+        with self._guard:
+            self._claim_key = key
+            self._claim_value = claim
+        return claim
 
     @contextmanager
     def connected(self, failed=("music_failed", 502)):
@@ -329,7 +355,7 @@ class Music:
         is, and Music Assistant's failures in the block as the gateway's
         problems: music_unavailable when it cannot be reached or refuses the
         token, failed when it fails what was asked."""
-        claim = provision.read_claim(self.state)
+        claim = self._read_claim()
         problem = provision.problem(claim)
         if problem:
             raise Problem(problem, 503)
@@ -465,9 +491,10 @@ class Music:
             view["now_playing"] = now
         return view
 
-    def item(self, raw, sources):
-        """A search, browse or queue entry, or None for one thermite does not
-        show: a radio, a podcast, a provider it does not know."""
+    @staticmethod
+    def _item_ref(raw, sources):
+        """(ref, provider, kind) of an entry thermite shows, or None to skip it
+        without normalizing its text or metadata."""
         if not isinstance(raw, dict):
             return None
         kind = raw.get("media_type")
@@ -478,12 +505,19 @@ class Music:
                     return None
                 ref = f"{instance}://folder/{path}"
             elif kind in KINDS:
-                ref = raw.get("uri")
+                raw_uri = raw.get("uri")
+                if not isinstance(raw_uri, str):
+                    return None
+                ref = raw_uri
             else:
                 return None
             provider, kind, _ = parse_ref(ref, sources)
         except Problem:
             return None
+        return ref, provider, kind
+
+    def _project_item(self, raw, parsed, sources):
+        ref, provider, kind = parsed
         entry = {"ref": ref, "kind": kind, "name": text(raw.get("name")), **sources.source(provider)}
         if kind != "folder":
             album = raw.get("album") if kind == "track" and isinstance(raw.get("album"), dict) else None
@@ -502,6 +536,12 @@ class Music:
             elif kind == "playlist":
                 entry["owner"] = text(raw.get("owner"))
         return entry
+
+    def item(self, raw, sources):
+        """A search, browse or queue entry, or None for one thermite does not
+        show: a radio, a podcast, a provider it does not know."""
+        parsed = self._item_ref(raw, sources)
+        return None if parsed is None else self._project_item(raw, parsed, sources)
 
     @staticmethod
     def link(raw, kind, sources):
@@ -554,19 +594,21 @@ class Music:
                       "library": name} for instance, name in sorted(sources.libraries.items(), key=lambda pair: pair[1])]
             items += [{"ref": f"{instance}://folder/", "kind": "folder", "name": "TIDAL", "source": "tidal"}
                       for instance in sources.tidal]
+            return {"ref": ref, "offset": offset, "limit": limit, "total": len(items),
+                    "items": items[offset:offset + limit]}
+        provider, kind, ident = parse_ref(ref, sources)
+        if kind == "folder":
+            listed = self.call("music/browse", SLOW, path=f"{provider}://{ident}")
+        elif kind == "track":
+            raise Problem("invalid_query")
         else:
-            provider, kind, ident = parse_ref(ref, sources)
-            if kind == "folder":
-                listed = self.call("music/browse", SLOW, path=f"{provider}://{ident}")
-            elif kind == "track":
-                raise Problem("invalid_query")
-            else:
-                command = {"album": "music/albums/album_tracks", "playlist": "music/playlists/playlist_tracks",
-                           "artist": "music/artists/artist_albums"}[kind]
-                listed = self.call(command, SLOW, item_id=ident, provider_instance_id_or_domain=provider)
-            items = [entry for raw in (listed if isinstance(listed, list) else [])[:OFFSET]
-                     if (entry := self.item(raw, sources))]
-        return {"ref": ref, "offset": offset, "limit": limit, "total": len(items), "items": items[offset:offset + limit]}
+            command = {"album": "music/albums/album_tracks", "playlist": "music/playlists/playlist_tracks",
+                       "artist": "music/artists/artist_albums"}[kind]
+            listed = self.call(command, SLOW, item_id=ident, provider_instance_id_or_domain=provider)
+        kept = [(raw, parsed) for raw in (listed if isinstance(listed, list) else [])[:OFFSET]
+                if (parsed := self._item_ref(raw, sources)) is not None]
+        page = [self._project_item(raw, parsed, sources) for raw, parsed in kept[offset:offset + limit]]
+        return {"ref": ref, "offset": offset, "limit": limit, "total": len(kept), "items": page}
 
     def details(self, ref):
         """An album's, artist's or playlist's own entry, as Music Assistant
@@ -592,7 +634,7 @@ class Music:
                 future.cancel()
             raise
         # Each section's items, or None when its read failed.
-        read = {}
+        read: dict[str, list[dict[str, Any]] | None] = {}
         try:
             for name, future in later.items():
                 try:
@@ -687,27 +729,28 @@ class Music:
             raise
         command.finish()
 
-    def guarded(self, user, action, value, plan):
-        """A command under the locks and policy of every room that commands a
-        speaker it reaches (RuntimeAdapter.device_guard); plan(players)
-        answers, from Music Assistant's players, (those speakers, the
-        command and its arguments or None, the answer). It is planned again
-        from the players read once the locks are held: a group can change
-        while the command waits. When that plan reaches a speaker the locks
-        do not cover, they are taken again for both."""
-        involved = set(plan(self.players())[0])
+    def guarded(self, user, action, value, plan, initial=None):
+        """A command checked under the locks and policy of every room that
+        commands a speaker it reaches (RuntimeAdapter.device_guard);
+        plan(players) answers, from Music Assistant's players, (those speakers,
+        the command and its arguments or None, the answer). Room locks are held
+        only around local authentication and policy checks, never across slow
+        Music Assistant network calls. When the read finds a group reaching a
+        speaker not yet checked, its rooms are checked too before dispatch."""
+        involved = set(initial) if initial is not None else set(plan(self.players())[0])
         for _ in range(LOCK_ATTEMPTS):
-            rooms = {}
+            rooms: dict[str, str] = {}
             for ident in involved:
                 for room, role in self.spec["speakers"][ident]["rooms"].items():
                     rooms[room] = "own" if role == "own" or rooms.get(room) == "own" else "shared"
             resources = tuple("device:" + ident for ident in sorted(involved))
             with self.adapter.device_guard(user, rooms, action, value, resources):
-                reached, command, answer = plan(self.players())
-                if set(reached) <= involved:
-                    if command:
-                        self.call(command[0], LONG_COMMANDS.get(command[0]), **command[1])
-                    return answer
+                pass
+            reached, command, answer = plan(self.players())
+            if set(reached) <= involved:
+                if command:
+                    self.call(command[0], LONG_COMMANDS.get(command[0]), **command[1])
+                return answer
             involved |= set(reached)
         raise Problem("music_failed", 502)
 
@@ -742,7 +785,7 @@ class Music:
             parse_ref(ref, self.sources())
             if start is not None:
                 parse_ref(start, self.sources())
-            owner = self.guarded(user, "play", option, plan)
+            owner = self.guarded(user, "play", option, plan, initial=(speaker,))
         return {"accepted": True, "speaker": speaker, "action": "play", "queue": owner}
 
     def transport(self, user, speaker, action, value, *, origin=None):
@@ -759,7 +802,7 @@ class Music:
             return group, ("players/cmd/" + action, {"player_id": queue}), owner
         shown = None if value is None else str(value).lower()
         with self.record(user, origin, speaker, action, shown):
-            owner = self.guarded(user, action, shown, plan)
+            owner = self.guarded(user, action, shown, plan, initial=(speaker,))
         return {"accepted": True, "speaker": speaker, "action": action, "queue": owner}
 
     def volume(self, user, speaker, data, *, origin=None):
@@ -777,7 +820,7 @@ class Music:
             return group, ("players/cmd/group_volume", {"player_id": lead["player_id"], "volume_level": level}), None
         action = "volume" if key == "level" else "group_volume"
         with self.record(user, origin, speaker, action, level):
-            self.guarded(user, action, level, plan)
+            self.guarded(user, action, level, plan, initial=(speaker,))
         return {"accepted": True, "speaker": speaker, "action": key, "level": level}
 
     def group(self, user, speaker, members, *, origin=None):
@@ -806,7 +849,7 @@ class Music:
                 players[member]["player_id"] for member in known]}) if known else None
             return reached, command, known
         with self.record(user, origin, speaker, "group", ",".join(members)):
-            known = self.guarded(user, "group", ",".join(members), plan)
+            known = self.guarded(user, "group", ",".join(members), plan, initial=(speaker, *members))
         joined = self.settled(speaker, known)
         if joined is None:
             # Asked for and accepted, but no read answered: whether each joined is not known.
@@ -842,7 +885,7 @@ class Music:
             _, members = self.leader(player, players, self.ids(players))
             return members or [speaker], ("players/cmd/ungroup", {"player_id": player["player_id"]}), None
         with self.record(user, origin, speaker, "ungroup", None):
-            self.guarded(user, "ungroup", None, plan)
+            self.guarded(user, "ungroup", None, plan, initial=(speaker,))
         return {"accepted": True, "speaker": speaker, "action": "ungroup"}
 
     # ---- TIDAL ----------------------------------------------------------------

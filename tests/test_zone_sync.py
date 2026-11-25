@@ -299,7 +299,8 @@ class Policy(unittest.TestCase):
         self.assertEqual((zone.value, zone.alternatives), ("AUX2", (("BD", OUT1, "1"),)))
         self.assertEqual([(field.item, field.value, field.resource) for field in plan.conditions],
                          [(OUT1, "1", "device:example_matrix")])
-        self.assertEqual(plan.observed()[-1], OUT1)
+        self.assertEqual(plan.observed()[-2:], (OUT1, "loc_example_lounge_source_lifecycle"))
+        self.assertEqual(plan.lifecycle_item, "loc_example_lounge_source_lifecycle")
         self.assertNotIn(OUT1, {field.item for field in plan.fields})
         self.assertEqual(expected_plan(house(), LOUNGE, "off").conditions, ())
         self.assertFalse(any(field.alternatives for field in expected_plan(house(), CINEMA, COMPUTER).fields))
@@ -515,7 +516,7 @@ class Runtime(unittest.TestCase):
                                 input=json.dumps(tables), capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         report = json.loads(result.stdout)
-        self.assertEqual((report["passed"], report["failed"]), (30, 0))
+        self.assertEqual((report["passed"], report["failed"]), (31, 0))
 
 
 if __name__ == "__main__":

@@ -36,6 +36,22 @@ USER_MAX_DELAY = 60
 HASHING = threading.BoundedSemaphore(2)
 HASH_WAIT = 10
 
+_revocation_lock = threading.Lock()
+_revocation_version = 0
+
+
+def auth_revocation_version() -> int:
+    """Process-local counter incremented whenever credentials or guest visibility change."""
+    return _revocation_version
+
+
+def bump_auth_revocation() -> int:
+    """Signal open SSE streams in this process to revalidate credentials immediately."""
+    global _revocation_version
+    with _revocation_lock:
+        _revocation_version += 1
+        return _revocation_version
+
 
 class Guest:
     """The anonymous principal: in memory only, never a stored account.
@@ -166,6 +182,7 @@ def principal(request):
         # Like a deleted session, the rejection happens once: the flushed
         # session's cookie is cleared, and the next request is a Guest.
         request.session.flush()
+        bump_auth_revocation()
         raise Problem("session_expired", 401)
     user._identity_context = {"session": request.session.session_key, "peer": peer}
     return user

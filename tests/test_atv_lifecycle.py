@@ -293,3 +293,140 @@ class CorrelatedOneShots(unittest.IsolatedAsyncioTestCase):
             await self.post("power", on=True, operation="actor:power")
         self.connection.remote_control.select.assert_not_awaited()
         self.bridge._scan.assert_not_awaited()
+
+
+class KeepAliveAndCredentials(unittest.IsolatedAsyncioTestCase):
+    async def test_http_keep_alive_reuses_connection_and_honors_connection_close(self):
+        import tempfile
+
+        async def read_http(reader):
+            head = await reader.readuntil(b"\r\n\r\n")
+            lines = head.decode("ascii").split("\r\n")
+            status = int(lines[0].split(" ", 2)[1])
+            headers = {k.lower(): v for line in lines[1:] if ":" in line
+                       for k, v in (line.split(":", 1),)}
+            headers = {k: v.strip() for k, v in headers.items()}
+            length = int(headers["content-length"])
+            body = await reader.readexactly(length)
+            return status, headers, json.loads(body.decode("utf-8"))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge = oh_atv.Bridge(Path(tmp) / "creds.json", types.SimpleNamespace(), log=lambda _: None)
+            server = await oh_atv.serve(bridge, "127.0.0.1", 0)
+            port = server.sockets[0].getsockname()[1]
+            try:
+                reader, writer = await asyncio.open_connection("127.0.0.1", port)
+                try:
+                    writer.write(b"GET /devices/player?host=192.0.2.20 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+                    await writer.drain()
+                    status1, hdrs1, body1 = await read_http(reader)
+                    self.assertEqual((status1, hdrs1.get("connection"), body1["id"]), (200, "keep-alive", "player"))
+
+                    # Second request on the exact same TCP connection.
+                    writer.write(b"GET /devices/player?host=192.0.2.20 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+                    await writer.drain()
+                    status2, hdrs2, body2 = await read_http(reader)
+                    self.assertEqual((status2, hdrs2.get("connection"), body2["id"]), (200, "keep-alive", "player"))
+
+                    # Client requests Connection: close -> server honors it and closes socket.
+                    writer.write(b"GET /devices/player?host=192.0.2.20 HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+                    await writer.drain()
+                    status3, hdrs3, body3 = await read_http(reader)
+                    self.assertEqual((status3, hdrs3.get("connection"), body3["id"]), (200, "close", "player"))
+                    self.assertEqual(await asyncio.wait_for(reader.read(), 2.0), b"")
+                finally:
+                    writer.close()
+                    await writer.wait_closed()
+            finally:
+                server.close()
+                await server.wait_closed()
+                await bridge.close()
+
+    async def test_credentials_are_cached_in_memory_and_writes_use_to_thread(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            creds = Path(tmp) / "creds.json"
+            oh_atv.write_credentials(creds, "other", "secret:0")
+            module = types.SimpleNamespace(
+                const=types.SimpleNamespace(PowerState=PowerState, Protocol=types.SimpleNamespace(Companion="companion")),
+                exceptions=types.SimpleNamespace(AuthenticationError=RuntimeError),
+            )
+            bridge = oh_atv.Bridge(creds, module, log=lambda _: None)
+            with mock.patch.object(oh_atv, "read_credentials", wraps=oh_atv.read_credentials) as reader:
+                self.assertTrue(bridge.paired("other"))
+                self.assertTrue(bridge.paired("other"))
+                self.assertEqual(reader.call_count, 1)
+                self.assertFalse(bridge.paired("player"))
+                self.assertEqual(reader.call_count, 2)
+                self.assertFalse(bridge.paired("player"))
+                self.assertEqual(reader.call_count, 2)
+
+            device = bridge._device("player", "192.0.2.20")
+            device.pairing = types.SimpleNamespace(
+                pin=mock.Mock(), finish=mock.AsyncMock(), close=mock.AsyncMock(),
+                has_paired=True, service=types.SimpleNamespace(credentials="tok:123"),
+            )
+            device.pairing_since = bridge.clock()
+            to_thread_calls = []
+            real_to_thread = asyncio.to_thread
+
+            async def spy_to_thread(func, *args, **kwargs):
+                to_thread_calls.append(func)
+                return await real_to_thread(func, *args, **kwargs)
+
+            with mock.patch.object(asyncio, "to_thread", side_effect=spy_to_thread), \
+                    mock.patch.object(oh_atv, "read_credentials", wraps=oh_atv.read_credentials) as reader2:
+                closed = await bridge.pair_finish(device, "1234")
+                self.assertTrue(closed)
+                self.assertTrue(bridge.paired("player"))
+                self.assertEqual(reader2.call_count, 0)
+            self.assertIn(oh_atv.write_credentials, to_thread_calls)
+            self.assertEqual(oh_atv.read_credentials(creds, "player"), "tok:123")
+            await bridge.close()
+
+    async def test_power_wait_releases_device_lock_for_keys_while_serializing_power_commands(self):
+        module = types.SimpleNamespace(const=types.SimpleNamespace(PowerState=PowerState))
+        bridge = oh_atv.Bridge(AREA.parents[1] / ".scratch/lifecycle_impl/helper-unused", module,
+                               connect_timeout=2.0, log=lambda _: None)
+        bridge.paired = mock.Mock(return_value=True)
+        device = bridge._device("player", "192.0.2.20")
+        turn_off_called = asyncio.Event()
+        turn_on_called = asyncio.Event()
+
+        async def do_off():
+            turn_off_called.set()
+
+        async def do_on():
+            turn_on_called.set()
+
+        power = types.SimpleNamespace(turn_on=mock.AsyncMock(side_effect=do_on),
+                                      turn_off=mock.AsyncMock(side_effect=do_off))
+        rc = types.SimpleNamespace(select=mock.AsyncMock())
+        conn = types.SimpleNamespace(power=power, remote_control=rc, close=lambda: ())
+        device.atv = conn
+        device.listener = oh_atv._Listener(bridge, device, conn)
+        device.listener.powerstate_update(PowerState.Unknown, PowerState.On)
+
+        task1 = asyncio.create_task(bridge.lifecycle(device, "op:1", "power", False))
+        await asyncio.wait_for(turn_off_called.wait(), 1.0)
+        await asyncio.sleep(0)
+
+        # While task1 awaits power_event, a key press acquires device.lock immediately.
+        await asyncio.wait_for(bridge.press(device, "select"), 0.5)
+        rc.select.assert_awaited_once()
+
+        # Meanwhile, a second power command is serialized behind device.power_lock.
+        task2 = asyncio.create_task(bridge.lifecycle(device, "op:2", "power", True))
+        await asyncio.sleep(0.05)
+        self.assertFalse(turn_on_called.is_set())
+
+        # Deliver task1's confirmation -> task1 completes, then task2 proceeds.
+        device.listener.powerstate_update(PowerState.On, PowerState.Off)
+        code1, res1 = await asyncio.wait_for(task1, 1.0)
+        self.assertEqual((code1, res1["power"], res1["terminal"]), (200, "off", True))
+
+        await asyncio.wait_for(turn_on_called.wait(), 1.0)
+        device.listener.powerstate_update(PowerState.Off, PowerState.On)
+        code2, res2 = await asyncio.wait_for(task2, 1.0)
+        self.assertEqual((code2, res2["power"], res2["terminal"]), (200, "on", True))

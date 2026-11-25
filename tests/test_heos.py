@@ -110,13 +110,22 @@ class OneBridgePerHouse(unittest.TestCase):
         self.assertEqual(out.things[f"heos:bridge:{WEST}"]["config"]["ipAddress"], ADDRESS[WEST])
 
     def test_the_rule_drives_each_receiver_through_its_player_on_the_shared_bridge(self):
-        rule = oh_render.render(House(two()))[heos.RULE]
-        table = json.loads(re.search(r"^const DEVICES = (.*);$", rule, re.M).group(1))
-        self.assertEqual([(row["id"], row["thing"], row["receiver"]) for row in table], [
+        rendered = oh_render.render(House(two()))
+        self.assertNotIn(heos.RULE, rendered)
+        rows = []
+        for ident in (WEST, EAST):
+            rule = rendered[heos.rule_path({"id": ident})]
+            self.assertIn("const thermiteIO = ", rule)
+            self.assertIn("const thermiteDevice = ", rule)
+            self.assertLess(rule.index("const thermiteIO = "), rule.index("const thermiteDevice = "))
+            table = json.loads(re.search(r"^const DEVICES = (.*);$", rule, re.M).group(1))
+            self.assertEqual(len(table), 1)
+            rows.extend(table)
+        self.assertEqual([(row["id"], row["thing"], row["receiver"]) for row in rows], [
             (WEST, f"heos:player:{WEST}:{WEST}", f"denonmarantz:avr:{WEST}"),
             (EAST, f"heos:player:{WEST}:{EAST}", f"denonmarantz:avr:{EAST}"),
         ])
-        self.assertEqual([row["readURL"] for row in table],
+        self.assertEqual([row["readURL"] for row in rows],
                          [f"http://{ADDRESS[ident]}:8080/goform/AppCommand.xml" for ident in (WEST, EAST)])
 
     def test_every_thing_belongs_to_the_device_whose_address_it_uses(self):
@@ -194,9 +203,12 @@ class Metrics(unittest.TestCase):
 
     def test_aim_rewrites_both_host_and_read_url(self):
         data = two()
+        west = next(d for d in data["devices"] if d["id"] == WEST)
         east = next(d for d in data["devices"] if d["id"] == EAST)
         rendered = heos.files(data["devices"], House(data))
-        aimed = heos.aim(rendered, east, "127.0.0.1:41234")[heos.RULE]
+        aimed_files = heos.aim(rendered, east, "127.0.0.1:41234")
+        self.assertEqual(aimed_files[heos.rule_path(west)], rendered[heos.rule_path(west)])
+        aimed = aimed_files[heos.rule_path(east)]
         line = next(line for line in aimed.splitlines() if line.startswith("const DEVICES = "))
         entries = {entry["id"]: entry for entry in json.loads(line[len("const DEVICES = "):-1])}
         self.assertEqual(entries[EAST]["host"], "127.0.0.1")

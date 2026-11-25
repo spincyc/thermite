@@ -55,7 +55,8 @@ function openhabStub({ things = {}, items = {}, rules, strict = false }) {
       } },
       things: { getThing: uid => things[uid] || null },
       rules: { JSRule(rule) { rules[rule.id] = rule; } },
-      triggers: { ItemCommandTrigger: name => ({ name }), ThingStatusChangeTrigger: uid => ({ uid }), GenericCronTrigger: cron => ({ cron }) },
+      triggers: { ItemCommandTrigger: name => ({ name }), ItemStateChangeTrigger: name => ({ name }),
+        ThingStatusChangeTrigger: uid => ({ uid }), GenericCronTrigger: cron => ({ cron }) },
     },
   };
 }
@@ -101,45 +102,48 @@ const ran = [];
 
 const VERIFIED = name => '<?xml version="1.0" encoding="utf-8"?>\r\n<tx>\r\n<cmd id="1">' + name + '</cmd>\r\n</tx>\r\n';
 
-// The Java types heos.js loads: HTTP reads answered by replies(body), and
-// HEOS CLI sockets that network says how to answer.
-function heosJava(requests, replies, network = {}, sockets = []) {
+// The Java types and thermiteIO heos.js loads: XML DOM parsing (caching one
+// DocumentBuilderFactory per script) plus bounded HTTP reads answered by
+// replies(body) and HEOS CLI sockets that network says how to answer.
+function heosJava(factories) {
   return {
-    'java.net.URL': class { constructor(url) { this.url = url; }
-      openConnection() {
-        let body = '', reply = null, offset = 0;
-        return { setConnectTimeout() {}, setReadTimeout() {}, setInstanceFollowRedirects() {}, setUseCaches() {},
-          setRequestMethod() {}, setDoOutput() {}, setRequestProperty() {}, setFixedLengthStreamingMode() {}, disconnect() {},
-          getOutputStream: () => ({ write: bytes => { body += Buffer.from(bytes).toString('utf8'); }, close() {} }),
-          getResponseCode: () => { requests.push(body); reply = Buffer.from(replies(body), 'utf8'); return 200; },
-          getContentLengthLong: () => reply.length,
-          getInputStream: () => ({ read(buffer, start, length) {
-            if (offset >= reply.length) return -1;
-            const count = reply.copy(buffer, start, offset, Math.min(reply.length, offset + length)); offset += count; return count;
-          }, close() {} }) };
-      } },
-    'java.net.Proxy': { NO_PROXY: {} },
-    'java.net.Socket': class { constructor() { sockets.push(this); this.written = ''; }
-      connect(address, ms) { this.address = `${address.host}:${address.port}`; this.connectMs = ms; if (network.refuse) throw Error('Connection refused'); }
-      setSoTimeout(ms) { this.timeout = ms; }
-      getOutputStream() { const socket = this; return { write(bytes) { socket.written += Buffer.from(bytes).toString('ascii'); }, flush() {} }; }
-      getInputStream() { const reply = Buffer.from(network.answer || '', 'utf8'); let offset = 0;
-        return { read: () => { if (offset < reply.length) return reply[offset++]; if (network.answer === undefined) throw Error('Read timed out'); return -1; } }; }
-      close() { this.closed = true; } },
-    'java.net.InetSocketAddress': class { constructor(host, port) { this.host = host; this.port = port; } },
-    'java.nio.charset.StandardCharsets': { UTF_8: 'utf8', US_ASCII: 'ascii' },
-    'java.lang.String': class { constructor(text, charset) { this.text = Buffer.isBuffer(text) ? text.toString(charset) : text; }
-      getBytes(charset = 'utf8') { return Buffer.from(this.text, charset); } toString() { return this.text; } },
-    'java.io.ByteArrayOutputStream': class { constructor() { this.parts = []; }
-      write(buffer, start, count) { this.parts.push(typeof buffer === 'number' ? Buffer.from([buffer]) : Buffer.from(buffer.subarray(start, start + count))); }
-      size() { return Buffer.concat(this.parts).length; } toByteArray() { return Buffer.concat(this.parts); } },
-    'java.lang.System': { nanoTime: () => Number(process.hrtime.bigint()) },
-    'byte[]': function (length) { return Buffer.alloc(length); },
-    'java.io.ByteArrayInputStream': class { constructor(bytes) { this.bytes = bytes; } close() {} },
-    'javax.xml.parsers.DocumentBuilderFactory': { newInstance: () => ({ setFeature() {}, setAttribute() {}, setXIncludeAware() {},
-      setExpandEntityReferences() {}, newDocumentBuilder: () => ({ setErrorHandler() {}, parse: input => parseXml(Buffer.from(input.bytes).toString('utf8')) }) }) },
+    'java.io.StringReader': class { constructor(text) { this.text = text; } },
+    'org.xml.sax.InputSource': class { constructor(reader) { this.reader = reader; } },
+    'javax.xml.parsers.DocumentBuilderFactory': {
+      newInstance: () => {
+        factories.count += 1;
+        return {
+          setFeature() {}, setAttribute() {}, setXIncludeAware() {}, setExpandEntityReferences() {},
+          newDocumentBuilder: () => ({ setErrorHandler() {}, parse: input => parseXml(input.reader.text) }),
+        };
+      },
+    },
     'org.xml.sax.helpers.DefaultHandler': class {},
     'javax.xml.XMLConstants': { FEATURE_SECURE_PROCESSING: 'secure', ACCESS_EXTERNAL_DTD: 'dtd', ACCESS_EXTERNAL_SCHEMA: 'schema' },
+  };
+}
+
+function heosIO(clock, requests, replies, network = {}, sockets = []) {
+  return {
+    deadline: ms => clock.now + ms,
+    remaining: end => { if (end <= clock.now) throw Error('deadline'); return end - clock.now; },
+    http(url, method, body) {
+      requests.push(body);
+      const text = replies(body);
+      return { getStatus: () => 200, getContentAsString: () => text };
+    },
+    open(host, port, connectMs) {
+      const socket = { address: `${host}:${port}`, connectMs, written: '', closed: false };
+      sockets.push(socket);
+      if (network.refuse) throw Error('Connection refused');
+      return socket;
+    },
+    write(link, text) { link.written += text; },
+    line() {
+      if (network.answer === undefined) throw Error('Read timed out');
+      return network.answer.replace(/\r?\n$/, '');
+    },
+    close(link) { link.closed = true; },
   };
 }
 
@@ -147,21 +151,22 @@ const HEOS_DEVICES = [{ id: 'avr', thing: 'heos:player:1', receiver: 'denon:avr:
   readURL: 'http://192.0.2.10:8080/goform/AppCommand.xml' }];
 
 function heos(replies) {
-  const requests = [];
+  const requests = [], factories = { count: 0 }, clock = { now: 0 };
   const things = { 'heos:player:1': thing('ONLINE'), 'denon:avr:1': thing('ONLINE') };
   const items = { avr_main_power: 'ON', avr_main_input: 'NET', avr_heos_playback: 'NULL', avr_problem: 'NULL', avr_heos_commands: 'NULL' };
-  const loaded = run(heosSource, { DEVICES: HEOS_DEVICES }, { things, items, java: heosJava(requests, replies), clock: { now: 0 } });
+  const loaded = run(heosSource.replace('// THERMITE_BOUNDED_IO', ''), { DEVICES: HEOS_DEVICES },
+    { things, items, java: heosJava(factories), clock, globals: { thermiteIO: heosIO(clock, requests, replies) } });
   loaded.rules.heos_avr_transport.execute({ itemName: 'avr_key', receivedCommand: 'play' });
-  return { requests, handled: things['heos:player:1'].handled, logs: loaded.logs, recorded: loaded.recorded() };
+  return { requests, factories: factories.count, handled: things['heos:player:1'].handled, logs: loaded.logs, recorded: loaded.recorded() };
 }
 
 // A command to the receiver's reboot Item, and the HEOS CLI sockets it opened.
 function heosReboot(command, network, send = true) {
-  const requests = [], sockets = [];
+  const requests = [], sockets = [], factories = { count: 0 }, clock = { now: 0 };
   const things = { 'heos:player:1': thing('ONLINE'), 'denon:avr:1': thing('ONLINE') };
-  const source = send ? heosSource : heosSource.replace('const SEND = true;', 'const SEND = false;');
+  const source = (send ? heosSource : heosSource.replace('const SEND = true;', 'const SEND = false;')).replace('// THERMITE_BOUNDED_IO', '');
   const loaded = run(source, { DEVICES: HEOS_DEVICES }, { things, items: { avr_problem: 'NULL', avr_heos_commands: 'NULL' },
-    java: heosJava(requests, () => '', network, sockets), clock: { now: 0 } });
+    java: heosJava(factories), clock, globals: { thermiteIO: heosIO(clock, requests, () => '', network, sockets) } });
   loaded.rules.heos_avr_reboot.execute({ itemName: 'avr_reboot', receivedCommand: command });
   return { sockets, requests, logs: loaded.said().map(([level, message]) => `${level}: ${message}`),
     recorded: loaded.recorded(), problems: loaded.problems('avr_problem'), tally: loaded.tally('avr_heos_commands') };
@@ -202,10 +207,11 @@ test('every HEOS reboot ends in one record: what the receiver answered, or why n
 });
 
 test('HEOS silently ignores non-HEOS keys on the shared receiver key Item', () => {
-  const requests = [];
+  const requests = [], factories = { count: 0 }, clock = { now: 0 };
   const things = { 'heos:player:1': thing('ONLINE'), 'denon:avr:1': thing('ONLINE') };
   const items = { avr_main_power: 'ON', avr_main_input: 'NET', avr_heos_playback: 'NULL', avr_problem: 'NULL', avr_heos_commands: 'NULL' };
-  const loaded = run(heosSource, { DEVICES: HEOS_DEVICES }, { things, items, java: heosJava(requests, () => ''), clock: { now: 0 } });
+  const loaded = run(heosSource.replace('// THERMITE_BOUNDED_IO', ''), { DEVICES: HEOS_DEVICES },
+    { things, items, java: heosJava(factories), clock, globals: { thermiteIO: heosIO(clock, requests, () => '') } });
   for (const key of ['up', 'down', 'sound_movie', 'menu']) {
     loaded.rules.heos_avr_transport.execute({ itemName: 'avr_key', receivedCommand: key });
   }
@@ -223,6 +229,7 @@ test('HEOS reads the receiver one verified AppCommand at a time before a transpo
     body === VERIFIED('GetSourceStatus') ? `<rx><cmd><source>${source}</source></cmd></rx>` : '<rx>\n</rx>';
   const pressed = heos(firmware('ON', 'NET'));
   assert.deepEqual(pressed.requests, [VERIFIED('GetAllZonePowerStatus'), VERIFIED('GetSourceStatus')]);
+  assert.equal(pressed.factories, 1, 'DocumentBuilderFactory must be cached across XML parses');
   assert.deepEqual(pressed.handled, [['heos:player:1:Control', 'PLAY']]);
   // The binding acknowledges nothing: handed over is all the record can say.
   assert.deepEqual(pressed.recorded, [['info', 'avr_key', 'play', 'sent', '-']]);
@@ -275,11 +282,19 @@ test('IR and CEC keys that cannot be sent warn once a minute per device and reas
 });
 
 function android(options = {}) {
-  const clock = { now: 1000000 }, files = new Set(options.files || []), moves = [];
+  const clock = { now: 1000000 }, files = new Set(options.files || []), moves = [], probes = [];
   const tv = thing(options.status || 'OFFLINE', options.description || 'PIN Process Incomplete');
+  const thermiteIO = {
+    deadline: ms => clock.now + ms,
+    open(host, port, ms) {
+      const link = { host, port, ms, closed: false };
+      probes.push(link);
+      if (options.portClosed) throw Error('Connection refused');
+      return link;
+    },
+    close(link) { link.closed = true; },
+  };
   const java = {
-    'java.net.InetSocketAddress': class { constructor(host, port) { this.host = host; this.port = port; } },
-    'java.net.Socket': class { connect() {} close() {} },
     'java.nio.file.Files': {
       exists: path => files.has(String(path)),
       move(from, to) { moves.push([String(from), String(to)]); if (options.moveFails) throw new Error('Device or resource busy'); files.delete(String(from)); files.add(String(to)); },
@@ -290,18 +305,32 @@ function android(options = {}) {
     'org.openhab.core.OpenHAB': { getUserDataFolder: () => '/srv/openhab/userdata' },
     'java.lang.System': { getProperty: () => null },
   };
-  const source = options.send === false ? androidSource.replace('const SEND = true;', 'const SEND = false;') : androidSource;
+  const source = (options.send === false ? androidSource.replace('const SEND = true;', 'const SEND = false;') : androidSource)
+    .replace('// THERMITE_BOUNDED_IO', '');
   const loaded = run(source, { DEVICES: [{ id: 'tv', thing: 'androidtv:googletv:tv', remote: 'android', volume: options.volume || null,
     keystore: 'androidtv/googletv.tv.keystore' }], PRESSES: { android: { home: ['keypress', 'KEY_HOME'] } } },
   { things: { 'androidtv:googletv:tv': tv }, items: { tv_pairing_status: 'NULL', tv_key: 'NULL', tv_pairing: 'NULL', tv_problem: 'NULL',
-    tv_androidtv_googletv_commands: 'NULL', ...options.items }, java, clock });
+    tv_androidtv_googletv_commands: 'NULL', ...options.items }, java, clock, globals: { thermiteIO } });
   const status = () => { const rows = loaded.posted.filter(([name]) => name === 'tv_pairing_status'); return rows.length ? rows[rows.length - 1][1] : null; };
-  return { ...loaded, clock, files, moves, tv, status,
+  return { ...loaded, clock, files, moves, probes, tv, status,
     key: command => loaded.rules.androidtv_googletv_tv_command.execute({ itemName: 'tv_key', receivedCommand: command }),
-    poll: () => loaded.rules.androidtv_googletv_pairing_poll.execute({}),
+    poll: () => loaded.rules.androidtv_googletv_tv_poll.execute({}),
     pair: command => loaded.rules.androidtv_googletv_tv_command.execute({ itemName: 'tv_pairing', receivedCommand: command }),
     volume: command => loaded.rules.androidtv_googletv_tv_command.execute({ itemName: 'tv_android_volume', receivedCommand: command }) };
 }
+
+test('Android TV probes its pairing port through bounded thermiteIO and closes the socket', () => {
+  const open = android();
+  open.pair('REQUEST');
+  assert.deepEqual(open.probes, [{ host: '192.0.2.20', port: 6467, ms: 3000, closed: true }]);
+  assert.equal(open.status(), 'code_shown');
+  const closed = android({ portClosed: true });
+  closed.pair('REQUEST');
+  assert.equal(closed.probes.length, 1);
+  assert.equal(closed.status(), 'closed');
+  assert.deepEqual(closed.tv.handled, []);
+  assert.deepEqual(closed.recorded(), [['warn', 'tv_pairing', '<private>', 'unsent', 'unreachable']]);
+});
 
 test('an Android TV volume is stepped anywhere on its own scale and never clamped', () => {
   const presses = (r, from) => r.tv.handled.slice(from).map(([channel, code]) => channel + ' ' + code);
@@ -1208,6 +1237,44 @@ test('a Sony TV whose content API still boots after power-on reads as on its way
   bare.tv.power = 'standby'; plain.probe('tv_power'); bare.tv.boot = 5;
   assert.deepEqual(plain.execute('tv_power', 'ON').sample.transition, undefined);
   assert.deepEqual(plain.execute('tv_input', 'hdmi1'), { outcome: 'refused', code: 'not_ready' });
+});
+
+test('Sony TV ItemStateChangeTrigger on <id>_power arms the boot guard on external or sony_rest wakes', () => {
+  const r = sonyTv(), provider = r.context.routingProvider({ tv_power: { settle: { ON: 30000 } } });
+  const powerRule = r.rules.sony_ip_control_tv_power_change;
+  assert(powerRule, 'sony_ip_control_tv_power_change rule must be registered');
+  assert.deepEqual(powerRule.triggers, [{ name: 'tv_power' }]);
+  // TV wakes externally via sony_rest Item update (no prior probe/execute).
+  r.items.tv_power = 'OFF';
+  powerRule.execute({ oldState: 'ON', newState: 'OFF' });
+  r.clock.now += 5000;
+  r.tv.power = 'active'; r.tv.boot = 3; r.items.tv_power = 'ON';
+  powerRule.execute({ oldState: 'OFF', newState: 'ON' });
+  r.clock.now += 1000;
+  assert.deepEqual(provider.execute('tv_input', 'hdmi3'), { outcome: 'busy', code: 'busy', retryAfterMs: 3000 });
+  // Turning back OFF clears woke so standby input declines are refused, not busy.
+  r.tv.power = 'standby'; r.items.tv_power = 'OFF';
+  powerRule.execute({ oldState: 'ON', newState: 'OFF' });
+  assert.deepEqual(provider.execute('tv_input', 'hdmi3'), { outcome: 'refused', code: 'not_ready' });
+});
+
+test('Sony TV routingProvider.execute reuses directRoutingCommand readback without a duplicate probe', () => {
+  const r = sonyTv(), provider = r.context.routingProvider({ tv_power: { settle: { ON: 30000 } } });
+  const sample = (value, extra = {}) => ({ value, fresh: true, basis: 'owned_native_read', observedAt: r.clock.now, ...extra });
+  r.tv.power = 'standby';
+  provider.probe('tv_power');
+  r.tv.requests.length = 0;
+  r.tv.boot = 0;
+  assert.deepEqual(provider.execute('tv_power', 'ON'), { outcome: 'applied', sample: sample('ON') });
+  assert.deepEqual(r.tv.requests, ['setPowerStatus', 'getPowerStatus', 'getPlayingContentInfo']);
+  r.tv.requests.length = 0;
+  assert.deepEqual(provider.execute('tv_input', 'hdmi3'), { outcome: 'applied', sample: sample('hdmi3') });
+  assert.deepEqual(r.tv.requests, ['setPlayContent', 'getPlayingContentInfo']);
+  // Booting power ON also reuses the single getPlayingContentInfo read without re-probing.
+  r.tv.power = 'standby'; provider.probe('tv_power');
+  r.tv.requests.length = 0; r.tv.boot = 1;
+  assert.deepEqual(provider.execute('tv_power', 'ON'), { outcome: 'applied', sample: sample('ON', { transition: true }) });
+  assert.deepEqual(r.tv.requests, ['setPowerStatus', 'getPowerStatus', 'getPlayingContentInfo']);
 });
 
 function device({ send = true, items = {}, thermiteIO = {} } = {}) {

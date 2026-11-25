@@ -163,8 +163,14 @@ static void restart(void)
     esp_restart();
 }
 
-static void press(board_key_t key, bool first);
+static bool press(board_key_t key, bool first);
 static void input(void);
+
+/* Overridden by radio_espnow.c to drop Wi-Fi to WIFI_PS_MIN_MODEM while idle. */
+__attribute__((weak)) void radio_set_active(bool active)
+{
+    (void)active;
+}
 
 /* Test input (PROTOCOL.md, "Remote console lines"): a key or the touch screen, taking
  * the paths a real press or touch takes. */
@@ -322,17 +328,19 @@ static void report_battery(void)
 /* One press of key: its operation. A held key presses again while the screen's
  * spec for its button repeats, read as each repeat falls due: a key that woke the
  * remote, before any screen arrived, repeats once one has. */
-static void press(board_key_t key, bool first)
+static bool press(board_key_t key, bool first)
 {
     const char *const *ids;
     size_t count = keymap_ids(key, &ids);
-    if (count == 0) return; /* no entry (Record), or a wake-only button */
+    if (count == 0) return false; /* no entry (Record), or a wake-only button */
     if (!first && !keymap_repeats(tr_screen(s_remote), ids[0])) {
         key_repeat_up(&s_repeat, key);
-        return;
+        return false;
     }
-    if (!tr_key(s_remote, ids, count)) ESP_LOGW(TAG, "key refused: operations pending");
+    bool sent = tr_key(s_remote, ids, count);
+    if (!sent) ESP_LOGW(TAG, "key refused: operations pending");
     if (first) key_repeat_down(&s_repeat, key, true, (uint32_t)clock_ms());
+    return sent;
 }
 
 static void input(void)
@@ -446,6 +454,7 @@ static void run(void)
         case POWER_NONE:
             break;
         }
+        radio_set_active(!tr_idle(s_remote) || tr_link(s_remote) == TR_LINK_CONNECTING);
         wait = min_u32(wait, key_wait);
         wait = min_u32(wait, key_repeat_wait(&s_repeat, now));
         wait = min_u32(wait, power_wait(&s_power, now));
@@ -499,11 +508,12 @@ void app_main(void)
     bool charging = false;
     tr_status(s_remote, board_battery(&charging), charging);
     board_key_t woke_by = board_wake_key();
+    bool sent_wake = false;
     if (woke_by != BOARD_KEY_NONE) {
         ESP_LOGI(TAG, "woken by key %d", woke_by);
-        press(woke_by, true);
+        sent_wake = press(woke_by, true);
     }
-    tr_wake(s_remote);
+    if (!sent_wake) tr_wake(s_remote);
 
     lv_display_t *display = display_start();
     const tu_keys_t keys = {

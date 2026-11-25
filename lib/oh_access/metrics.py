@@ -48,9 +48,9 @@ CALLBACKS = CollectorRegistry(auto_describe=True)
 
 #: The HTTPS listener, and the opt-in plain-HTTP Guest listener (oh_access.guest).
 LISTENERS = ("https", "guest")
-ROUTES = ("command", "policy", "locks", "history", "alerts", "items", "events", "media", "music", "asset", "auth", "admin", "other")
+ROUTES = ("command", "policy", "locks", "history", "alerts", "items", "events", "media", "music", "telemetry", "asset", "auth", "admin", "other")
 CODE_CLASSES = ("2xx", "3xx", "4xx", "5xx", "aborted")
-REQUEST_BUCKETS = (.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10)
+REQUEST_BUCKETS = (.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 15, 20)
 UPSTREAM_KINDS = ("read", "command", "group", "media")
 UPSTREAM_OUTCOMES = ("ok", "http_error", "timeout", "pool_timeout", "error")
 HTTP_VERSIONS = ("1.1", "2")
@@ -155,6 +155,8 @@ def route_class(path):
         return "media"
     if path == "/api/v1/music" or path.startswith("/api/v1/music/"):
         return "music"
+    if path == "/api/v1/telemetry":
+        return "telemetry"
     if path in ("/api/v1/session", "/api/v1/logout", "/api/v1/me", "/api/v1/security", "/api/v1/token-login"):
         return "auth"
     if path.startswith(("/api/v1/users", "/api/v1/tokens", "/api/v1/security/guests")):
@@ -282,13 +284,17 @@ class Hub:
 
     def collect(self):
         # Never imported here: a process that has not loaded it has no hub.
-        hub, totals, states, hubs = sys.modules.get("oh_identity.hub"), {}, set(), []
-        for _ in range(3 if hub else 0):  # The event loop may add a hub mid-iteration.
-            try:
-                hubs = list(hub._hubs.values())
-                break
-            except RuntimeError:
+        totals, states, hubs = {}, set(), []
+        for module_name in ("oh_identity.hub", "oh_identity.music_hub"):
+            module = sys.modules.get(module_name)
+            if module is None:
                 continue
+            for _ in range(3):  # The event loop may add a hub mid-iteration.
+                try:
+                    hubs.extend(module._hubs.values())
+                    break
+                except RuntimeError:
+                    continue
         for each in hubs:
             status = each.status()
             states.add(status.get("upstream"))

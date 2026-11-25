@@ -61,8 +61,8 @@ import re
 import oh_units
 
 from . import alerts
-from .exporter import (FAILURE_REASONS, HOUSE_LABEL, HOUSE_ROOM, OPERATION_OUTCOMES, ROUND_SECONDS,
-                       ROUTE_BUCKETS)
+from .exporter import (FAILURE_REASONS, HOUSE_LABEL, HOUSE_ROOM, OPERATION_OUTCOMES, QUARANTINE_REASONS,
+                       ROUND_SECONDS, ROUTE_BUCKETS)
 from .yoke import JOB as YOKE_JOB
 
 DATASOURCE_UID = "thermite-prometheus"
@@ -311,7 +311,7 @@ def link(name: str, **variables: str) -> dict:
 
 
 def _base(kind: str, title: str, description: str, since: bool = False) -> dict:
-    panel = {"type": kind, "title": title, "description": description, "datasource": DATASOURCE}
+    panel: dict[str, object] = {"type": kind, "title": title, "description": description, "datasource": DATASOURCE}
     if since:
         panel.update(timeFrom=SINCE_EVENING, hideTimeOverride=True)
     return panel
@@ -336,8 +336,8 @@ def stat(title: str, expr: str, unit: str = "none", steps: tuple | None = None, 
     or, with `mappings`, as the mapped word. `to`: where a click leads."""
     mappings = mappings or []
     thresholds = _thresholds(*steps) if steps else mapped_thresholds(mappings) if mappings else _thresholds((OK, None))
-    defaults = {"unit": unit, "noValue": "Unknown", "color": {"mode": "thresholds"}, "thresholds": thresholds,
-                "mappings": mappings}
+    defaults: dict[str, object] = {"unit": unit, "noValue": "Unknown", "color": {"mode": "thresholds"},
+                                   "thresholds": thresholds, "mappings": mappings}
     if to:
         defaults["links"] = [to]
     return Panel({**_base("stat", title, description), "targets": [target(expr, title, "A", instant=True)],
@@ -1041,8 +1041,10 @@ def _room_column(mapping: dict, last: bool = False) -> Column:
     name, and the columns before it get the rest."""
     words = _room_words(mapping)
     longest = max((len(str(label)) for label in words.values()), default=0)
-    width = {"width": max(110, min(230, 24 + 8 * longest))} if last else {"least": 110}
-    return Column("room", "Room", _words(words), to=link(DEVICES, **{ROOM: "${__value.raw}"}), **width)
+    to = link(DEVICES, **{ROOM: "${__value.raw}"})
+    if last:
+        return Column("room", "Room", _words(words), to=to, width=max(110, min(230, 24 + 8 * longest)))
+    return Column("room", "Room", _words(words), to=to, least=110)
 
 
 def _attention(mapping: dict) -> Panel:
@@ -1208,11 +1210,12 @@ def house(mapping: dict, probes: list[dict]) -> dict:
         changes = 'round(sum by (zone) (increase(thermite_route_seconds_count{outcome="confirmed"}[$__range]))) > 0'
         quantile = ("histogram_quantile({q}, sum by (le, zone) (increase(thermite_route_seconds_bucket"
                     '{{outcome="confirmed"}}[$__range]))) and on (zone) ({changes})')
-        seconds = {"unit": "s", "decimals": 1, "steps": _switch_thresholds(mapping), "width": 110}
+        thresholds = _switch_thresholds(mapping)
         board.add(table("Switch time by room", [quantile.format(q=0.5, changes=changes),
                                                 quantile.format(q=0.95, changes=changes), changes], [
             Column("zone", "Room", _words(_zone_words(mapping))),
-            Column("Value #A", "Median", **seconds), Column("Value #B", "95th", **seconds),
+            Column("Value #A", "Median", unit="s", decimals=1, steps=thresholds, width=110),
+            Column("Value #B", "95th", unit="s", decimals=1, steps=thresholds, width=110),
             Column("Value #C", "Changes", decimals=0, width=110)],
             "Since 18:00 yesterday: how long a source change took until the room's readback showed it, "
             "median and 95th percentile of confirmed changes, estimated from "
@@ -1278,9 +1281,19 @@ def switching(mapping: dict) -> dict:
                 Column("Value", "Failures", decimals=0, width=90)],
                 "Routing operations a device did not take in the selected range, by reason.",
                 none="No device failures"), 12, 6)
-            board.add(table("Quarantined now", "thermite_routing_device_quarantined == 1", [
-                _room_column(mapping), Column("device", "Device", _words(_device_words(mapping)))],
-                "Devices whose routing commands are refused now. A click on a room opens Devices for it.",
+            quarantined_expr = (
+                'thermite_routing_quarantine_info == 1 or '
+                'label_replace(label_replace((thermite_routing_device_quarantined == 1) unless on (device) '
+                '(thermite_routing_quarantine_info == 1), "slot", "device", "", ""), '
+                '"reason", "executor_quarantined", "", "")'
+            )
+            board.add(table("Quarantined now", quarantined_expr, [
+                _room_column(mapping), Column("device", "Device", _words(_device_words(mapping))),
+                Column("slot", "Scope", _words({"device": "Whole device"}), width=150),
+                Column("reason", "Reason", _words({reason: plain(reason.replace("-", "_"))
+                                                   for reason in QUARANTINE_REASONS}), width=190)],
+                "Devices or independent ports whose routing commands are refused now, with the quarantine reason. "
+                "A click on a room opens Devices for it.",
                 none="No device is quarantined"), 12, 6)
     board.row("Remotes and the gateway")
     board.add(timeseries("Event streams", [
@@ -1489,7 +1502,6 @@ def devices(mapping: dict, probes: list[dict]) -> dict:
                ("none", f"count by (device) ({info}) * 0"))
     trouble = "sum by (device) (" + " or ".join(
         f'label_replace({expr}, "signal", "{name}", "", "")' for name, expr in signals) + ")"
-    state = {"width": 78}
     # The device and its states first: a phone shows those, and scrolls to the rest.
     board.add(table("Devices", [
         f"max by (device, room, label) ({info})",
@@ -1503,9 +1515,9 @@ def devices(mapping: dict, probes: list[dict]) -> dict:
         f'min by (device) (thermite_item_value{{point="online",{CHOSEN}}})',
         f"min by (device) (thermite_device_read_ok{{{CHOSEN}}})"], [
         Column("label", "Device", least=130, wrap=True),
-        Column("Value #B", "Thing", states=ONLINE, **state), Column("Value #C", "Port", states=OPEN, **state),
+        Column("Value #B", "Thing", states=ONLINE, width=78), Column("Value #C", "Port", states=OPEN, width=78),
         Column("Value #J", "Reads", states=READS, width=90),
-        Column("Value #G", "Needed", states=NEEDED, **state),
+        Column("Value #G", "Needed", states=NEEDED, width=78),
         Column("Value #F", "Last problem", states=problems, width=230, left=True),
         Column("Value #I", "Ping", states=REACHABLE, width=104),
         Column("Value #D", "Probe", unit="ms", decimals=1, width=86),

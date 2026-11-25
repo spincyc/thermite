@@ -11,9 +11,13 @@ from __future__ import annotations
 
 import json
 import re
+from typing import TYPE_CHECKING, cast
 
 from oh_conf import Addon, House, YamlFile, point, uses
 from oh_shape import MAPPING, NUMBER, TEXT, TRUTH, Key
+
+if TYPE_CHECKING:
+    from oh_inventory import Device
 
 NAME = "unifi_protect"
 PHASE = "control"  # authentication is required; this integration sends no control commands
@@ -109,7 +113,7 @@ def render(device: dict, house: House, out: YamlFile) -> None:
 def native_thing(device: dict, house: House, *, webrtc: bool = False) -> dict:
     """Editable native Thing DTO; no credentials, no writable channel Items."""
     return {"UID": thing_uid(device), "thingTypeUID": "unifi:camera", "bridgeUID": NVR_UID,
-            "label": device.get("name") or house.label(device), "location": house.room_label(device["room"]),
+            "label": device.get("name") or house.label(cast("Device", device)), "location": house.room_label(device["room"]),
             "configuration": {"deviceId": device["protect"]["device_id"], "enableWebRTC": webrtc}}
 
 
@@ -128,8 +132,8 @@ for (const camera of CAMERAS) {
     execute: () => { const item = items.getItem(camera.item, true); if (item !== null) item.postUpdate(time.ZonedDateTime.now().toString()); }});
   rules.JSRule({id: camera.online + '_observer', name: 'Camera availability received',
     description: 'Combine native connection and bridge availability; no camera commands.',
-    triggers: [triggers.ItemStateUpdateTrigger(camera.connection), triggers.ThingStatusUpdateTrigger(camera.thing),
-      triggers.ThingStatusUpdateTrigger('unifi:nvr:protect'), triggers.SystemStartlevelTrigger(100)],
+    triggers: [triggers.ItemStateChangeTrigger(camera.connection), triggers.ThingStatusChangeTrigger(camera.thing),
+      triggers.ThingStatusChangeTrigger('unifi:nvr:protect'), triggers.SystemStartlevelTrigger(100)],
     execute: () => {
       let state = 'UNDEF';
       try {
@@ -143,7 +147,7 @@ for (const camera of CAMERAS) {
         }
       } catch (_) { /* the managed Things may not have been configured yet */ }
       const online = items.getItem(camera.online, true);
-      if (online !== null) online.postUpdate(state);
+      if (online !== null && String(online.state) !== state) online.postUpdate(state);
     }});
 }
 """ % json.dumps(table, separators=(",", ":"))
@@ -157,7 +161,7 @@ def descriptor(device: dict, house: House) -> dict:
     if device["protect"].get("package_camera"):
         qualities.append("package")
     return {
-        "id": device["id"], "label": device.get("name") or house.label(device),
+        "id": device["id"], "label": device.get("name") or house.label(cast("Device", device)),
         "location": house.room_label(device["room"]), "model": device.get("model") or "UniFi camera",
         "doorbell": device["kind"] == "doorbell", "packageCamera": "package" in qualities,
         "thing": uid, "items": item_names(device),

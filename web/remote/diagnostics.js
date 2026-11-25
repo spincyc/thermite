@@ -40,6 +40,46 @@
     ["input", "output", "zone", "inputKind", "inputTransport", "outputTransport", "wiring"].forEach(key => { if (node[key] != null) copy[key] = text(node[key]); });
     return copy;
   }
+  const OUTCOME_STATUS = ["running", "done", "failed", "yielded"];
+  function outcomeList(raw) {
+    const out = [];
+    const push = value => { const clean = text(value); if (clean && !out.includes(clean)) out.push(clean); };
+    if (typeof raw === "string") push(raw);
+    else if (Array.isArray(raw)) {
+      raw.forEach(entry => {
+        if (typeof entry === "string") push(entry);
+        else if (entry && typeof entry === "object") push(entry.reason || entry.message || entry.error || entry.label || entry.resource || entry.id);
+      });
+    }
+    return out;
+  }
+  function routeOutcome(data) {
+    if (!data || typeof data !== "object") return { status: "", reasons: [], waiting: [], detail: "" };
+    const reasons = outcomeList(data.reasons);
+    const addReason = value => { const clean = text(value); if (clean && !reasons.includes(clean)) reasons.push(clean); };
+    if (typeof data.fault === "string") addReason(data.fault);
+    if (data.failures && typeof data.failures === "object" && !Array.isArray(data.failures)) {
+      Object.entries(data.failures).forEach(([resource, entry]) => {
+        const msg = typeof entry === "string" ? entry : entry && typeof entry === "object" ? (entry.reason || entry.message || entry.error || "") : "";
+        addReason(msg ? resource + ": " + msg : resource);
+      });
+    }
+    const waiting = outcomeList(data.waiting);
+    let status = typeof data.status === "string" && OUTCOME_STATUS.includes(data.status) ? data.status : "";
+    if (!status) {
+      if (data.fault || (data.failures && typeof data.failures === "object" && Object.keys(data.failures).length)) status = "failed";
+      else if (data.yielded === true) status = "yielded";
+      else if (data.active === true) status = "running";
+      else if (data.pathReady === true) status = "done";
+    }
+    let detail = "";
+    if (status === "failed") detail = reasons.length ? "Route failed: " + reasons.join("; ") : "Route failed";
+    else if (status === "yielded") detail = reasons.length ? "Route yielded: " + reasons.join("; ") : "Route yielded to another request";
+    else if (status === "running") detail = waiting.length ? "Waiting on " + waiting.join(", ") : reasons.length ? "Route in progress: " + reasons.join("; ") : "";
+    else if (reasons.length) detail = reasons.join("; ");
+    else if (waiting.length) detail = "Waiting on " + waiting.join(", ");
+    return { status, reasons, waiting, detail };
+  }
   function create(manifest) {
     if (!manifest || manifest.version !== 1 || !manifest.rooms || !manifest.devices) throw new Error("Invalid diagnostics manifest");
     function routeStateItem(roomId) {
@@ -54,8 +94,17 @@
       try { data = JSON.parse(snapshot && snapshot.value); } catch (_) { return { ready: false, key: "", variant: "" }; }
       const valid = data && data.version === 1 && data.choice === sourceId && typeof data.synced === "boolean"
         && Number.isSafeInteger(data.generation) && data.generation >= 0;
-      return { ready: Boolean(valid && data.pathReady === true && !data.fault),
-        key: valid ? JSON.stringify([sourceId, data.synced, data.generation]) : "", variant: valid && data.synced ? "synced" : "" };
+      const outcome = valid ? routeOutcome(data) : { status: "", reasons: [], waiting: [], detail: "" };
+      const ready = Boolean(valid && data.pathReady === true && !data.fault && outcome.status !== "failed" && outcome.status !== "yielded");
+      return {
+        ready,
+        key: valid ? JSON.stringify([sourceId, data.synced, data.generation]) : "",
+        variant: valid && data.synced ? "synced" : "",
+        ...(outcome.status ? { status: outcome.status } : {}),
+        ...(outcome.reasons.length ? { reasons: outcome.reasons } : {}),
+        ...(outcome.waiting.length ? { waiting: outcome.waiting } : {}),
+        ...(outcome.detail ? { detail: outcome.detail } : {})
+      };
     }
     function route(roomId, sourceId, routeContext) {
       const room = OWN(manifest.rooms, roomId) ? manifest.rooms[roomId] : null;
@@ -159,7 +208,7 @@
         if ((observed(status) || !snapshot && kind === "format") && (kind === "format" && (pending || !chosen.ready || beforeChange || node.wiring === "unknown" || reading.scalar && !reading.selector) || !matchesRoute)) {
           extra.unassociatedValue = shown;
           status = "awaiting_route"; shown = "";
-          extra.reason = pending ? "Source is switching" : !chosen.ready ? "Route is not confirmed"
+          extra.reason = pending ? "Source is switching" : !chosen.ready ? (routeContext && routeContext.detail || "Route is not confirmed")
             : reading.scalar && !reading.selector ? "Device report has no route association or measurement time"
             : !matchesRoute ? "Reported input does not confirm this path" : node.wiring === "unknown" ? "Audio wiring is not configured" : "Sample predates the route change";
         }
@@ -194,7 +243,12 @@
         source: chosen.source ? { id: sourceId, label: text(chosen.source.label) } : null, pending,
         availability: measured.some(entry => entry.availability === "reported" && !entry.stale) ? "reported"
           : measured.some(entry => entry.availability === "unavailable") ? "unavailable" : "not_reported",
-        routeReady: chosen.ready, routeKey: routeContext && routeContext.key || "", updatedAt: at, route: nodes,
+        routeReady: chosen.ready, routeKey: routeContext && routeContext.key || "",
+        ...(routeContext && routeContext.status ? { routeStatus: routeContext.status } : {}),
+        ...(routeContext && routeContext.reasons && routeContext.reasons.length ? { routeReasons: routeContext.reasons } : {}),
+        ...(routeContext && routeContext.waiting && routeContext.waiting.length ? { routeWaiting: routeContext.waiting } : {}),
+        ...(routeContext && routeContext.detail ? { routeDetail: routeContext.detail } : {}),
+        updatedAt: at, route: nodes,
         ...(audioNodes.length ? { audioRoute: audioNodes } : {}), ...(audioEndpoints.length ? { audioEndpoints } : {}), sections };
     }
     return { items, project, routeStateItem, context };

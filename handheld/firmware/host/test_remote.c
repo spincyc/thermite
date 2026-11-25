@@ -664,6 +664,31 @@ static void deep_sleep(void)
     CHECK(tr_idle(remote), "wake not acknowledged");
     tr_destroy(remote);
 
+    /* Deep-sleep wake on a mapped key coalesces key + have:"" into one op. */
+    fake.read = fake.count = 0;
+    fake.clock += 60000;
+    remote = tr_create(&persist, key, &identity, &platform);
+    CHECK(tr_key(remote, up, 1), "wake key refused");
+    sent = take_data();
+    CHECK(sent && unread() == 0 && has(sent, "key") && same(string(sent, "have"), ""),
+          "wake key did not coalesce have into one op");
+    cJSON_Delete(sent);
+    ack(remote, persist.op);
+    CHECK(tr_idle(remote), "coalesced wake key not acknowledged");
+    /* Next key after ack does not repeat have. */
+    CHECK(tr_key(remote, up, 1), "post-wake key refused");
+    sent = take_data();
+    CHECK(sent && has(sent, "key") && !has(sent, "have"), "have repeated after coalesced wake ack");
+    cJSON_Delete(sent);
+    ack(remote, persist.op);
+    /* Direct put_string escaping handles quotes, backslashes, and control characters cleanly. */
+    CHECK(tr_room(remote, "a\"b\\c\x01"), "escaped room refused");
+    sent = take_data();
+    CHECK(sent && same(string(sent, "room"), "a\"b\\c\x01"), "put_string escaping corrupted string");
+    cJSON_Delete(sent);
+    ack(remote, persist.op);
+    tr_destroy(remote);
+
     /* Garbage magic is a cold start, even with a session in it. */
     persist.magic ^= 1;
     reset_fake();

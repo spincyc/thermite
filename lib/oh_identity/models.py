@@ -72,6 +72,12 @@ class Audit(models.Model):
     principal = models.CharField(max_length=16, blank=True, default="")
     peer = models.CharField(max_length=32, blank=True, default="")
 
+    class Meta:
+        indexes = [
+            models.Index(fields=["outcome", "id"], name="oh_identity_audit_outcome_id"),
+            models.Index(fields=["at"], name="oh_identity_audit_at"),
+        ]
+
 
 class LoginThrottle(models.Model):
     key = models.CharField(max_length=64, unique=True)

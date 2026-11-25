@@ -3,6 +3,7 @@ import copy
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -15,7 +16,18 @@ from oh_conf import House, RULE_SENDS, fill, indented, unfilled  # noqa: E402
 import oh_render  # noqa: E402
 from oh_cli import generate  # noqa: E402
 from oh_features.routing import lifecycle_io  # noqa: E402
-from oh_integrations import _commands, _io, _script, avpro_telnet, pyatv_http, sony_adcp, sony_ip_control  # noqa: E402
+from oh_integrations import (  # noqa: E402
+    _commands,
+    _io,
+    _script,
+    androidtv_googletv,
+    avpro_telnet,
+    heos,
+    pyatv_http,
+    sony_adcp,
+    sony_ip_control,
+    unifi_protect,
+)
 from oh_testing import controls  # noqa: E402
 
 
@@ -189,6 +201,198 @@ class DeviceContexts(unittest.TestCase):
                                 if line.startswith("const DEVICES = "))
                     entry = json.loads(line[len("const DEVICES = "):-1])[0]
                     self.assertEqual((entry["host"], entry["port"], entry["webPort"]), ("127.0.0.1", 40123, 40123))
+
+    def test_heos_and_androidtv_render_one_isolated_script_per_device_with_bounded_io(self):
+        heos_house = {
+            "version": 1,
+            "rooms": {"den": {"label": "Den", "tag": "Room"}, "attic": {"label": "Attic", "tag": "Room"}},
+            "devices": [
+                {"id": "den_avr", "room": "den", "kind": "avr", "make": "Marantz", "model": "Example AVR",
+                 "ip": "192.0.2.10", "heos_pid": 101,
+                 "controls": {"observe": ["denonmarantz_http"], "control": ["denonmarantz_http", "heos"]}},
+                {"id": "attic_avr", "room": "attic", "kind": "avr", "make": "Marantz", "model": "Example AVR",
+                 "ip": "192.0.2.11", "heos_pid": 202,
+                 "controls": {"observe": ["denonmarantz_http"], "control": ["denonmarantz_http", "heos"]}},
+            ],
+        }
+        heos_files = heos.files(heos_house["devices"], House(heos_house))
+        self.assertEqual(set(heos_files), {heos.rule_path(d) for d in heos_house["devices"]})
+        self.assertNotIn(heos.RULE, heos_files)
+        for device in heos_house["devices"]:
+            text = heos_files[heos.rule_path(device)]
+            self.assertEqual(text.count("const thermiteIO = "), 1)
+            self.assertEqual(text.count("const thermiteDevice = "), 1)
+            self.assertLess(text.index("const thermiteIO = "), text.index("const thermiteDevice = "))
+            self.assertNotIn("java.net.Socket'", text)
+            self.assertNotIn("java.net.URL'", text)
+            line = next(line for line in text.splitlines() if line.startswith("const DEVICES = "))
+            self.assertEqual([d["id"] for d in json.loads(line[len("const DEVICES = "):-1])], [device["id"]])
+
+        atv_house = {
+            "version": 1,
+            "rooms": {"den": {"label": "Den", "tag": "Room"}, "attic": {"label": "Attic", "tag": "Room"}},
+            "devices": [
+                {"id": "den_tv", "room": "den", "kind": "tv", "make": "Sony", "model": "XR-TEST",
+                 "ip": "192.0.2.20", "controls": {"control": ["androidtv_googletv"]}},
+                {"id": "attic_tv", "room": "attic", "kind": "tv", "make": "Sony", "model": "XR-TEST",
+                 "ip": "192.0.2.21", "controls": {"control": ["androidtv_googletv"]}},
+            ],
+        }
+        atv_files = androidtv_googletv.files(atv_house["devices"], House(atv_house))
+        self.assertEqual(set(atv_files), {androidtv_googletv.rule_path(d) for d in atv_house["devices"]})
+        self.assertNotIn(androidtv_googletv.RULE, atv_files)
+        for device in atv_house["devices"]:
+            text = atv_files[androidtv_googletv.rule_path(device)]
+            self.assertEqual(text.count("const thermiteIO = "), 1)
+            self.assertEqual(text.count("const thermiteDevice = "), 1)
+            self.assertLess(text.index("const thermiteIO = "), text.index("const thermiteDevice = "))
+            self.assertIn("${DEVICES[0].id}_poll", text)
+            self.assertNotIn("java.net.Socket'", text)
+            line = next(line for line in text.splitlines() if line.startswith("const DEVICES = "))
+            self.assertEqual([d["id"] for d in json.loads(line[len("const DEVICES = "):-1])], [device["id"]])
+
+    @unittest.skipUnless(shutil.which("node"), "node is required to execute generated scripts")
+    def test_unifi_protect_only_posts_online_when_value_changes(self):
+        house_data = {
+            "version": 1,
+            "protect": {"host": "192.0.2.1"},
+            "rooms": {"den": {"label": "Den", "tag": "Room"}},
+            "devices": [{"id": "front_cam", "room": "den", "kind": "camera", "make": "Ubiquiti", "model": "G4 Bullet",
+                         "ip": "192.0.2.30", "protect": {"device_id": "0123456789abcdef01234567"},
+                         "controls": {"control": ["unifi_protect"]}}],
+        }
+        script = unifi_protect.files(house_data["devices"], House(house_data))[unifi_protect.RULE]
+        self.assertNotIn("ItemStateUpdateTrigger", script)
+        self.assertNotIn("ThingStatusUpdateTrigger", script)
+        harness = """
+const vm = require('vm'), assert = require('assert');
+const script = process.argv[1];
+const rules = {}, posted = [];
+const state = { front_cam_online: 'ON', front_cam_connection: 'CONNECTED' };
+const thingStatus = { 'unifi:camera:protect:front_cam': 'ONLINE', 'unifi:nvr:protect': 'ONLINE' };
+const openhab = {
+  rules: { JSRule(r) { rules[r.id] = r; } },
+  triggers: {
+    ChannelEventTrigger: ch => ({ kind: 'ch', ch }),
+    ItemStateChangeTrigger: name => ({ kind: 'itemChange', name }),
+    ThingStatusChangeTrigger: uid => ({ kind: 'thingChange', uid }),
+    SystemStartlevelTrigger: lvl => ({ kind: 'start', lvl }),
+  },
+  items: { getItem: name => ({ get state() { return state[name]; }, postUpdate(v) { posted.push([name, v]); state[name] = String(v); } }) },
+  things: { getThing: uid => ({ get status() { return thingStatus[uid]; } }) },
+  time: { ZonedDateTime: { now: () => '2026-01-01T00:00:00Z' } },
+};
+vm.runInNewContext(script, { require: () => openhab });
+const obs = rules.front_cam_online_observer;
+obs.execute();
+assert.deepEqual(posted, []);
+state.front_cam_connection = 'DISCONNECTED';
+obs.execute();
+obs.execute();
+assert.deepEqual(posted, [['front_cam_online', 'OFF']]);
+state.front_cam_connection = 'CONNECTED';
+obs.execute();
+obs.execute();
+assert.deepEqual(posted, [['front_cam_online', 'OFF'], ['front_cam_online', 'ON']]);
+"""
+        result = subprocess.run([shutil.which("node"), "-e", harness, script], capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    @unittest.skipUnless(shutil.which("node"), "node is required to execute _io.js")
+    def test_shared_jetty_http_client_refcounts_across_scripts_and_stops_on_last_dispose(self):
+        harness = """
+const fs = require('fs'), vm = require('vm'), assert = require('assert');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const sharedBacking = new Map();
+const sharedCache = {
+  get(key, supplier) {
+    if (!sharedBacking.has(key)) sharedBacking.set(key, supplier());
+    return sharedBacking.get(key);
+  },
+};
+const created = [];
+let commonStopped = false;
+const common = {
+  getExecutor: () => ({}), getScheduler: () => ({}), getByteBufferPool: () => ({}),
+  stop() { commonStopped = true; },
+};
+class FakeMap extends Map {
+  put(k, v) { const prev = this.get(k); this.set(k, v); return prev === undefined ? null : prev; }
+  putIfAbsent(k, v) { if (this.has(k)) return this.get(k); this.set(k, v); return null; }
+  remove(k) { const prev = this.get(k); this.delete(k); return prev === undefined ? null : prev; }
+}
+class FakeLock { lock() {} unlock() {} }
+class FakeAtomicInteger {
+  constructor(v) { this.v = v; }
+  set(v) { this.v = v; }
+  incrementAndGet() { return ++this.v; }
+  decrementAndGet() { return --this.v; }
+}
+class FakeHttpClient {
+  constructor(transport) {
+    this.transport = transport; this.started = false; this.stops = 0; this.removed = [];
+    created.push(this);
+  }
+  setExecutor() {} setScheduler() {} setByteBufferPool() {} setCookieStore() {}
+  setFollowRedirects() {} setConnectTimeout(v) { this.connectTimeout = v; }
+  setMaxConnectionsPerDestination(v) { this.maxConn = v; }
+  setMaxRequestsQueuedPerDestination(v) { this.maxQueued = v; }
+  start() { this.started = true; }
+  isStarted() { return this.started; }
+  stop() { this.started = false; this.stops += 1; }
+  getProtocolHandlers() { return { remove: name => this.removed.push(name) }; }
+  newRequest(url) {
+    const req = { url, method() { return req; }, timeout() { return req; }, header() { return req; },
+      content() { return req; }, send() {} };
+    return req;
+  }
+}
+class FakeTransport { constructor(selectors) { this.selectors = selectors; } }
+class FakeListener { get() { return { getStatus: () => 200, getContentAsString: () => 'ok' }; } cancel() {} }
+const classes = {
+  'java.lang.System': { nanoTime: () => 1000000 },
+  'java.util.concurrent.TimeUnit': { MILLISECONDS: 'ms' },
+  'java.util.concurrent.ConcurrentHashMap': FakeMap,
+  'java.util.concurrent.locks.ReentrantLock': FakeLock,
+  'java.util.concurrent.atomic.AtomicInteger': FakeAtomicInteger,
+  'org.eclipse.jetty.client.HttpClient': FakeHttpClient,
+  'org.eclipse.jetty.client.http.HttpClientTransportOverHTTP': FakeTransport,
+  'org.eclipse.jetty.util.HttpCookieStore$Empty': class {},
+  'org.eclipse.jetty.client.util.FutureResponseListener': FakeListener,
+  'org.eclipse.jetty.client.util.StringContentProvider': class {},
+};
+function load() {
+  const hooks = [];
+  const ctx = vm.createContext({
+    Java: { type: name => classes[name] || assert.fail('unexpected ' + name) },
+    require: name => {
+      if (name === '@runtime/cache') return { sharedCache };
+      if (name === '@runtime') return { lifecycleTracker: { addDisposeHook: h => hooks.push(h) } };
+      if (name === 'openhab') return { osgi: { getService: () => ({ getCommonHttpClient: () => common }) } };
+      throw Error(name);
+    },
+  });
+  vm.runInContext(source, ctx);
+  return { io: vm.runInContext('thermiteIO', ctx), dispose: () => hooks.forEach(h => h()) };
+}
+const a = load(), b = load();
+assert.equal(a.io.http('http://127.0.0.1/a', 'GET', null, {}, 1000, 500).getStatus(), 200);
+assert.equal(b.io.http('http://127.0.0.1/b', 'GET', null, {}, 1000, 500).getStatus(), 200);
+assert.equal(created.length, 1);
+assert.equal(created[0].transport.selectors, 2);
+assert.equal(created[0].maxConn, 64);
+assert.equal(created[0].maxQueued, 128);
+a.dispose();
+assert.equal(created[0].stops, 0);
+assert.equal(created[0].started, true);
+b.dispose();
+assert.equal(created[0].stops, 1);
+assert.equal(created[0].started, false);
+assert.equal(commonStopped, false);
+"""
+        result = subprocess.run([shutil.which("node"), "-e", harness, str(_io.SOURCE)],
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 @unittest.skipUnless(all(os.environ.get(name) for name in ("THERMITE_JAVA", "THERMITE_ECJ", "THERMITE_RUNTIME", "THERMITE_GRAAL")),

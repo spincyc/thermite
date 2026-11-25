@@ -211,8 +211,10 @@ def record(path, data):
     try:
         json_private(path, {"version": 1, **data})
     except Unsynced as error:
+        code = error.errno
+        label = errno.errorcode.get(code, code) if code is not None else code
         LOG.warning("Music Assistant: %s was written, but its directory could not be synced (%s); a crash may "
-                    "undo the write.", Path(path).name, errno.errorcode.get(error.errno, error.errno))
+                    "undo the write.", Path(path).name, label)
 
 
 def write_claim(state, claim):
@@ -417,11 +419,23 @@ class Provisioner:
         logged, and the parts after it are still applied; one that loses
         Music Assistant, or the worker stopping, ends the pass."""
         changed = 0
-        for part, apply in (("player providers", self.players), ("speaker addresses", self.discovery),
-                            ("libraries", self.libraries), ("unwanted providers", self.unwanted),
-                            ("remote access", self.remote_access), ("onboarding", self.onboarding)):
+        configs = None
+
+        def get_configs():
+            nonlocal configs
+            if configs is None:
+                configs = self.configs(client)
+            return configs
+
+        for part, run_part in (
+                ("player providers", lambda: self.players(client, info, get_configs())),
+                ("speaker addresses", lambda: self.discovery(client, info, get_configs())),
+                ("libraries", lambda: self.libraries(client, info, get_configs())),
+                ("unwanted providers", lambda: self.unwanted(client, info, get_configs())),
+                ("remote access", lambda: self.remote_access(client, info)),
+                ("onboarding", lambda: self.onboarding(client, info))):
             try:
-                changed += apply(client, info)
+                changed += run_part()
             except (Unavailable, Stopped):
                 raise
             except Exception as error:
@@ -434,14 +448,22 @@ class Provisioner:
         return [config for config in client.call("config/providers") or ()
                 if isinstance(config, dict) and isinstance(config.get("instance_id"), str)]
 
-    def players(self, client, info):
-        domains = {config.get("domain") for config in self.configs(client)}
-        return sum(self.add(client, domain) is not None for domain in PLAYERS if domain not in domains)
+    def players(self, client, info, configs=None):
+        listed = self.configs(client) if configs is None else configs
+        domains = {config.get("domain") for config in listed}
+        added = 0
+        for domain in PLAYERS:
+            if domain not in domains:
+                instance = self.add(client, domain)
+                if instance is not None:
+                    listed.append({"domain": domain, "instance_id": instance, "name": None})
+                    added += 1
+        return added
 
-    def discovery(self, client, info):
+    def discovery(self, client, info, configs=None):
         changed, key = 0, "manual_discovery_ip_addresses"
         speakers = self.spec["speakers"].values()
-        for config in self.configs(client):
+        for config in self.configs(client) if configs is None else configs:
             domain, instance = config.get("domain"), config["instance_id"]
             if domain in ("sonos", "wiim"):
                 wanted = sorted({speaker["ip"] for speaker in speakers if speaker["provider"] == domain and "ip" in speaker})
@@ -450,7 +472,7 @@ class Provisioner:
                     changed += 1
         return changed
 
-    def libraries(self, client, info):
+    def libraries(self, client, info, configs=None):
         """One filesystem_local instance per library. An instance is a
         library's by the ID recorded when thermite added it, else by its
         name; one whose name was lost is named again. Every other instance
@@ -469,11 +491,11 @@ class Provisioner:
             return 0
         self.warned.discard("libraries")
         names = {LIBRARY_NAME.format(library): library for library in self.spec["libraries"]}
-        configs = {config["instance_id"]: config for config in self.configs(client)
-                   if config.get("domain") == "filesystem_local"}
+        fs_configs = {config["instance_id"]: config for config in (self.configs(client) if configs is None else configs)
+                      if config.get("domain") == "filesystem_local"}
         found = {library: instance for library, instance in recorded.items()
-                 if library in self.spec["libraries"] and instance in configs}
-        for instance, config in configs.items():
+                 if library in self.spec["libraries"] and instance in fs_configs}
+        for instance, config in fs_configs.items():
             library = names.get(config.get("name"))
             if library and library not in found and instance not in found.values():
                 found[library] = instance
@@ -487,11 +509,11 @@ class Provisioner:
         if found != recorded:
             write_libraries(self.state, found)
         for library, instance in sorted(found.items()):
-            if instance in configs and configs[instance].get("name") != LIBRARY_NAME.format(library):
+            if instance in fs_configs and fs_configs[instance].get("name") != LIBRARY_NAME.format(library):
                 self.name(client, library, instance)
                 changed += 1
         if found.keys() == set(self.spec["libraries"]):
-            for instance in configs.keys() - set(found.values()):
+            for instance in fs_configs.keys() - set(found.values()):
                 client.call("config/providers/remove", instance_id=instance)
                 changed += 1
         return changed
@@ -527,9 +549,9 @@ class Provisioner:
         client.call("config/providers/save", provider_domain="filesystem_local", instance_id=instance,
                     values={"name": LIBRARY_NAME.format(library)})
 
-    def unwanted(self, client, info):
+    def unwanted(self, client, info, configs=None):
         changed = 0
-        for config in self.configs(client):
+        for config in self.configs(client) if configs is None else configs:
             if config.get("domain") in UNWANTED:
                 client.call("config/providers/remove", instance_id=config["instance_id"])
                 changed += 1

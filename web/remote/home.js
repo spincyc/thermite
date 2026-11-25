@@ -24,10 +24,12 @@
   };
   const kinds = ["watch", "listen"].filter(kind => listed[kind].length);
   let mode = kinds.includes(store.get("remote.mode")) ? store.get("remote.mode") : kinds[0] || "watch";
-  // The "home" view: only the rooms' Sources, and no activity feed; its stream runs only in Watch (live()).
-  const backend = global.RemoteBackend.create(house, { backend: mock ? "mock" : undefined, view: "home", active: document.visibilityState !== "hidden" && mode === "watch" });
-  // Home starts no remote; an idle session still says what each room shows and words its lock as the remote does.
-  const session = global.RemoteSession.create({ backend, house });
+  // Watch backend is created lazily (and reuses Listen's full remote-view
+  // backend when Listen started first), avoiding duplicate OpenHabBackends
+  // and ensuring at most one live SSE stream runs at a time.
+  let backend = null;
+  let watchWired = false;
+  let session = null;
   access?.ready().then(() => access.watchLocks(true)).catch(() => {});
   // The rooms as the session's view reads them (backend getRooms), and what each last read.
   const described = Object.create(null), values = Object.create(null), turns = Object.create(null), rows = new Map();
@@ -37,6 +39,37 @@
   const WORDS = { reported: "Reported", off: "Room off", switching: "Switching", unavailable: "Source unknown", unknown: "Reading…" };
   // Listen's sessions on a remote-view backend, made when Listen is first shown.
   let heard = null;
+  function ensureSession(activeBackend) {
+    if (!session && activeBackend) session = global.RemoteSession.create({ backend: activeBackend, house });
+    return session;
+  }
+  function wireWatch() {
+    if (watchWired) return;
+    watchWired = true;
+    if (!backend) {
+      if (heard && heard.backend && typeof heard.backend.getRooms === "function" && typeof heard.backend.getState === "function") {
+        backend = heard.backend;
+      } else {
+        backend = global.RemoteBackend.create(house, { backend: mock ? "mock" : undefined, view: "home", active: document.visibilityState !== "hidden" && mode === "watch" });
+      }
+    }
+    ensureSession(backend);
+    backend.subscribe(event => {
+      if (event.type === "state") { turns[event.room] = (turns[event.room] || 0) + 1; values[event.room] = event.state; update(event.room); }
+      if (event.type === "access") rows.forEach(showLock);
+      if (event.type === "connection") { house.rooms.forEach(room => update(room.id)); say(); }
+    });
+    if (typeof backend.getRooms === "function") {
+      backend.getRooms().then(list => { list.forEach(room => { described[room.id] = room; update(room.id); }); });
+    }
+    if (typeof backend.getState === "function") {
+      house.rooms.forEach(room => {
+        const turn = turns[room.id] || 0;
+        backend.getState(room.id).then(state => { if ((turns[room.id] || 0) === turn) { values[room.id] = state; update(room.id); } })
+          .catch(() => { if ((turns[room.id] || 0) === turn) { values[room.id] = null; update(room.id); } });
+      });
+    }
+  }
   // The house's alerts (alerts.js): the gateway's feed, in a preview its
   // sample (?alerts=<name>), and none on a page openHAB serves by itself.
   const panel = document.querySelector("[data-home-alerts]");
@@ -112,15 +145,17 @@
     row.element.dataset.state = state;
   }
   function showLock(row, id) {
-    const lock = session.roomLocked(id);
+    const lock = session ? session.roomLocked(id) : { locked: false, text: "" };
     row.element.toggleAttribute("data-locked", lock.locked); row.lock.setAttribute("aria-label", lock.text);
   }
   function hearing() {
     if (heard || !global.RemoteListen) return heard;
     const active = document.visibilityState !== "hidden";
     const speakers = global.RemoteBackend.create(house, { backend: mock ? "mock" : undefined, active });
+    ensureSession(speakers);
     heard = { backend: speakers, sessions: global.RemoteListen.sessions({ backend: speakers, house, store, access, mock, active }) };
     heard.backend.subscribe(event => {
+      if (event.type === "access") rows.forEach(showLock);
       if (event.type === "connection" && mode === "listen") { rows.forEach((row, id) => hear(id)); say(); }
     });
     heard.sessions.listen.subscribe(event => {
@@ -163,7 +198,7 @@
   }
   // The line above the rooms: that the house is not heard, else what the table is.
   function say() {
-    const offline = mode === "watch" ? !session.connected() : !listenConnected();
+    const offline = mode === "watch" ? Boolean(session && !session.connected()) : !listenConnected();
     notice.textContent = offline ? global.RemoteSession.NOT_CONNECTED : words();
   }
   // Watch or Listen: its rooms, its column and note, and the switch.
@@ -178,6 +213,7 @@
     what.textContent = mode === "listen" ? "Playing" : "Reported source";
     note.textContent = mode === "listen" ? "Open a room for its speakers and music." : "Open a room for sources and device controls.";
     if (mode === "listen") hearing();
+    else wireWatch();
     build();
     rows.forEach((row, id) => (mode === "listen" ? hear(id) : update(id)));
     live();
@@ -200,23 +236,18 @@
       show(mode === "watch" ? "listen" : "watch", switcher.contains(document.activeElement) || rooms.contains(document.activeElement));
     }
   });
-  backend.subscribe(event => {
-    if (event.type === "state") { turns[event.room] = (turns[event.room] || 0) + 1; values[event.room] = event.state; update(event.room); }
-    if (event.type === "access") rows.forEach(showLock);
-    if (event.type === "connection") { house.rooms.forEach(room => update(room.id)); say(); }
-  });
-  backend.getRooms().then(list => { list.forEach(room => { described[room.id] = room; update(room.id); }); });
-  house.rooms.forEach(room => {
-    const turn = turns[room.id] || 0;
-    backend.getState(room.id).then(state => { if ((turns[room.id] || 0) === turn) { values[room.id] = state; update(room.id); } })
-      .catch(() => { if ((turns[room.id] || 0) === turn) { values[room.id] = null; update(room.id); } });
-  });
   // Each mode's streams run only while it is on show in a visible page; the alerts are read in both.
   function live() {
     const visible = document.visibilityState !== "hidden";
     watching?.setActive(visible);
-    backend.setActive?.(visible && mode === "watch");
-    if (heard) { heard.backend.setActive?.(visible && mode === "listen"); heard.sessions.setActive(visible && mode === "listen"); }
+    const shared = Boolean(backend && heard && backend === heard.backend);
+    if (shared) {
+      backend.setActive?.(visible);
+      heard.sessions.setActive(visible && mode === "listen");
+    } else {
+      backend?.setActive?.(visible && mode === "watch");
+      if (heard) { heard.backend.setActive?.(visible && mode === "listen"); heard.sessions.setActive(visible && mode === "listen"); }
+    }
   }
   function storage() {
     try {
@@ -233,6 +264,13 @@
   // A page shown again reads the house afresh; until then its rows are what
   // was last read, and once its stream fails they say so (the connection event).
   document.addEventListener("visibilitychange", live);
-  global.addEventListener("pagehide", () => { watching?.setActive(false); backend.setActive?.(false); if (heard) { heard.backend.setActive?.(false); heard.sessions.setActive(false); } });
+  global.addEventListener("pagehide", () => {
+    watching?.setActive(false);
+    backend?.setActive?.(false);
+    if (heard) {
+      if (heard.backend !== backend) heard.backend.setActive?.(false);
+      heard.sessions.setActive(false);
+    }
+  });
   global.addEventListener("pageshow", live);
 })(globalThis);

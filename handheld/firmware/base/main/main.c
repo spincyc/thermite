@@ -33,8 +33,9 @@ static const char *TAG = "base";
 #define NVS_CHANNEL "channel"
 #define SEND_QUEUE 8
 #define RX_QUEUE 16
-/* ESP-NOW reports every send through its callback; this only guards a lost one. */
-#define SEND_TIMEOUT_MS 1000
+/* ESP-NOW reports every send through its callback; keep timeout short so one
+ * sleeping peer cannot stall sibling remotes for a full second. */
+#define SEND_TIMEOUT_MS 150
 #define USB_WRITE_MS 100
 
 typedef struct {
@@ -177,13 +178,41 @@ static bool send_frame(const bp_command_t *command)
 static void sender_task(void *arg)
 {
     (void)arg;
-    static bp_command_t command;
+    static bp_command_t pending[SEND_QUEUE];
+    size_t count = 0;
+    uint8_t last_mac[ESP_NOW_ETH_ALEN] = {0};
+    bool has_last = false;
     for (;;) {
-        xQueueReceive(s_commands, &command, portMAX_DELAY);
+        if (count == 0) {
+            xQueueReceive(s_commands, &pending[count++], portMAX_DELAY);
+        }
+        while (count < SEND_QUEUE && xQueueReceive(s_commands, &pending[count], 0) == pdTRUE) {
+            count++;
+        }
+        /* Round-robin across peer MACs while preserving strict per-peer FIFO
+         * order and never reordering across a BP_CHANNEL barrier. */
+        size_t pick = 0;
+        if (pending[0].kind == BP_SEND && has_last) {
+            for (size_t i = 0; i < count; i++) {
+                if (pending[i].kind != BP_SEND) break;
+                if (memcmp(pending[i].mac, last_mac, ESP_NOW_ETH_ALEN) != 0) {
+                    pick = i;
+                    break;
+                }
+            }
+        }
+        bp_command_t command = pending[pick];
+        if (pick + 1 < count) {
+            memmove(&pending[pick], &pending[pick + 1], (count - pick - 1) * sizeof pending[0]);
+        }
+        count--;
         if (command.kind == BP_SEND) {
+            memcpy(last_mac, command.mac, ESP_NOW_ETH_ALEN);
+            has_last = true;
             char line[40];
             put_line(line, bp_format_sent(line, sizeof line, command.id, send_frame(&command)));
         } else if (command.kind == BP_CHANNEL) {
+            has_last = false;
             esp_err_t err = esp_wifi_set_channel(command.channel, WIFI_SECOND_CHAN_NONE);
             if (err != ESP_OK) {
                 ESP_LOGW(TAG, "set channel: %s", esp_err_to_name(err));

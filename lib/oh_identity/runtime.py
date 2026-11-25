@@ -206,10 +206,18 @@ class RuntimeContract:
         self.views = frozen(views)
         self.history = frozen(valid_history(copy.deepcopy(history), data)) if history is not None else None
         self.music = frozen(valid_music(copy.deepcopy(music), data)) if music is not None else None
+        # Pre-compute plain views once at contract construction instead of
+        # recursively deep-copying the whole house on every command or poll.
+        self._plain_routing = plain(self.routing)
+        self._plain_house = plain(self.house)
+        self._policy_contract = {
+            "rooms": {key: {"sources": list(value["sources"])} for key, value in self.rooms.items()},
+            "routing": self._plain_routing,
+            "house": self._plain_house,
+        }
 
     def policy_contract(self):
-        return {"rooms": {key: {"sources": list(value["sources"])} for key, value in self.rooms.items()},
-                "routing": plain(self.routing), "house": plain(self.house)}
+        return dict(self._policy_contract)
 
     def command(self, room_id, action, value):
         room = self.rooms.get(room_id)
@@ -325,7 +333,7 @@ class RuntimeAdapter:
     def _plan(self, room, choice):
         key = (id(self.contract), room, choice)
         if key not in self._plans:
-            self._plans[key] = self.policy.expected_plan(plain(self.contract.house), room, choice)
+            self._plans[key] = self.policy.expected_plan(self.contract._plain_house, room, choice)
         return self._plans[key]
 
     def _disturbs(self, command, held_room, desired):
@@ -451,16 +459,35 @@ class RuntimeAdapter:
         return project(item, value, spec)
 
     def pairing_list(self):
-        result = []
+        entries = []
+        wanted = []
         for item, metadata in self.contract.pairings.items():
             spec = plain(metadata)
             config = spec.get("config", {})
+            names = [name for field in ("status", "result")
+                     if (name := config.get(field)) in self.contract.states]
+            entries.append((item, spec, names))
+            wanted.extend(names)
+        projected = {}
+        if wanted:
+            unique = list(dict.fromkeys(wanted))
+            bulk = getattr(self.transport, "states", None)
+            if callable(bulk):
+                try:
+                    raw = bulk(unique)
+                except Exception:
+                    raise Problem("runtime_unavailable", 502) from None
+                for name in unique:
+                    projected[name] = project(name, raw.get(name, "NULL"), self.contract.states[name])
+            else:
+                for name in unique:
+                    projected[name] = self.read(name)
+        result = []
+        for item, spec, names in entries:
             # The command Item's state is deliberately never read or forwarded.
             result.append({"name": item, "state": "NULL", "metadata": {"pairing": spec}})
-            for field in ("status", "result"):
-                name = config.get(field)
-                if name in self.contract.states:
-                    result.append({"name": name, "state": self.read(name)})
+            for name in names:
+                result.append({"name": name, "state": projected[name]})
         return result
 
     def pairing_command(self, item, value):

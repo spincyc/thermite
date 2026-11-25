@@ -958,6 +958,64 @@ class Gateway(Scratch):
         self.assertIn("thermite handheld: nothing answers", err)
         execve.assert_not_called()
 
+    @unittest.skipUnless(NODE, "Node runs handheld/bridge.js and handheld/base.js")
+    def test_bridge_skips_compute_while_asleep_and_base_short_circuits_empty_candidates(self):
+        script = r"""
+const assert = require('assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const Shared = require('./tui/remote/shared');
+const Link = require('./handheld/link');
+const Bridge = require('./handheld/bridge');
+const Screen = require('./handheld/screen');
+const Base = require('./handheld/base');
+const shared = Shared.load();
+Shared.mocks();
+const origScreen = Screen.screen;
+let screenCalls = 0;
+Screen.screen = (...args) => { screenCalls += 1; return origScreen(...args); };
+const backend = shared.Remote.create(shared.house, { backend: 'mock', latency: 2 });
+const key = Buffer.alloc(32, 0x55);
+const mac = '02:00:00:00:00:' + '55';
+const end = new Link.RemoteEnd({ key });
+const bridge = Bridge.create({
+  shared: { Session: shared.Session, house: shared.house, layouts: shared.layouts },
+  backend,
+  log() {},
+  send: (m, frame, done) => { setImmediate(() => { done(true); end.receive(frame); }); }
+});
+const store = { data: {}, get(k) { return k in this.data ? this.data[k] : null; }, set(k, v) { this.data[k] = v; } };
+bridge.add({ name: 'test', mac, key, store });
+(async () => {
+  await new Promise((r) => setTimeout(r, 30));
+  // Remote has not woken yet: house state changes must not call Screen.screen().
+  assert.equal(bridge.remote(mac).awake, false);
+  const before = screenCalls;
+  backend.choose(shared.house.rooms[0].id, 'example_player');
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(screenCalls, before, 'asleep remote must not compute screen JSON/hash');
+  // Waking the remote computes the screen once.
+  bridge.receive(mac, end.hello({ have: '', battery: 80, charging: false, board: 'sim', fw: '0.1', w: 240, h: 320 }));
+  await new Promise((r) => setTimeout(r, 40));
+  assert.ok(screenCalls > before, 'waking remote computes screen');
+  Screen.screen = origScreen;
+  // base.js candidates() on an empty dir short-circuits without crawling /proc.
+  const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'base-empty-'));
+  const origReaddir = fs.readdirSync;
+  let procReads = 0;
+  fs.readdirSync = (p, ...rest) => { if (String(p).startsWith('/proc')) procReads += 1; return origReaddir(p, ...rest); };
+  const found = Base.candidates(emptyDir);
+  fs.readdirSync = origReaddir;
+  fs.rmSync(emptyDir, { recursive: true, force: true });
+  assert.deepEqual(found, []);
+  assert.equal(procReads, 0, 'empty candidates directory must not scan /proc');
+  process.exit(0);
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+        run = subprocess.run([NODE, "-e", script], cwd=AREA, text=True, capture_output=True, timeout=30)
+        self.assertEqual(run.returncode, 0, run.stderr or run.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -369,6 +369,35 @@ int main(int argc, char **argv)
     stale_assembly();
     sixteen_parts();
     sync_json();
+    /* Repeated seal/open with same key hits cached CCM schedule; rotating key re-keys cleanly. */
+    {
+        uint8_t k1[TL_KEY_LEN], k2[TL_KEY_LEN], frame[TL_FRAME_MAX], out[TL_PART_MAX];
+        memset(k1, 0x11, sizeof k1);
+        memset(k2, 0x22, sizeof k2);
+        tl_header_t hdr = { .type = TL_DATA, .message = 1, .index = 0, .count = 1, .session = 42, .counter = 1 };
+        tl_header_t got;
+        const char *msg = "{\"op\":1}";
+        for (uint32_t i = 1; i <= 4; i++) {
+            hdr.counter = i;
+            size_t n = tl_seal(k1, TL_FROM_REMOTE, &hdr, (const uint8_t *)msg, strlen(msg), frame, sizeof frame);
+            int d = tl_open(k1, TL_FROM_REMOTE, frame, n, &got, out, sizeof out);
+            if (d != (int)strlen(msg) || memcmp(out, msg, (size_t)d) != 0) {
+                fprintf(stderr, "FAIL: cached ccm round-trip %u\n", i);
+                failures++;
+            }
+        }
+        size_t n2 = tl_seal(k2, TL_FROM_REMOTE, &hdr, (const uint8_t *)msg, strlen(msg), frame, sizeof frame);
+        if (tl_open(k1, TL_FROM_REMOTE, frame, n2, &got, out, sizeof out) != -1) {
+            fprintf(stderr, "FAIL: wrong key accepted after key rotation\n");
+            failures++;
+        }
+        int d2 = tl_open(k2, TL_FROM_REMOTE, frame, n2, &got, out, sizeof out);
+        if (d2 != (int)strlen(msg) || memcmp(out, msg, (size_t)d2) != 0) {
+            fprintf(stderr, "FAIL: rotated key round-trip\n");
+            failures++;
+        }
+        tl_cache_clear();
+    }
     cJSON_Delete(root);
     free(json);
     if (failures) {

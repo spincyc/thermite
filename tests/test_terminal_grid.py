@@ -116,6 +116,31 @@ class TerminalGrid(unittest.TestCase):
         for run in self.proof["fuzz"]:
             self.assertEqual(run, {"diverged": 0, "faults": []})
 
+    def test_ascii_fast_path_and_blit_reuse_preserve_isolation_and_wide_mending(self):
+        script = r"""
+const assert = require('assert/strict');
+const { Grid, length } = require('./tui/remote/grid');
+assert.equal(length('Hello, world! 123'), 17);
+assert.equal(length('a\tb'), 3);
+const src = new Grid(8, 2, 'base');
+src.put(0, 0, 'ABCD', 'strong');
+src.put(0, 1, '東京xy', 'base');
+const dst = new Grid(8, 2, 'base');
+dst.blit(src, 0, 0, 0, 8, 2);
+// Mutating dst with ASCII must not alias/corrupt src cells.
+dst.put(0, 0, 'ZZZZ', 'dim');
+assert.equal(src.text().split('\n')[0], 'ABCD');
+assert.equal(dst.text().split('\n')[0], 'ZZZZ');
+// Overwriting the left half of a wide character with ASCII mends the right half to a space.
+dst.put(0, 1, 'a', 'base');
+assert.equal(dst.rows[1][0].ch, 'a');
+assert.equal(dst.rows[1][1].ch, ' ');
+assert.equal(dst.rows[1][2].ch, '京');
+assert.equal(src.rows[1][0].ch, '東');
+"""
+        run = subprocess.run([shutil.which("node"), "-e", script], cwd=AREA, text=True, capture_output=True, timeout=30)
+        self.assertEqual(run.returncode, 0, run.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

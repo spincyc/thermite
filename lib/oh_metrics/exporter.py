@@ -52,6 +52,7 @@ it is sent only as the Authorization header and never logged.
 from __future__ import annotations
 
 import argparse
+import http.client
 import http.server
 import json
 import math
@@ -60,7 +61,7 @@ import sys
 import threading
 import time
 import urllib.error
-import urllib.request
+import urllib.parse
 from collections.abc import Callable
 from pathlib import Path
 
@@ -159,6 +160,8 @@ FAMILIES = {
     "thermite_routing_quarantined": ("gauge", "Quarantined routing devices, and 1 more while the event queue overflowed."),
     "thermite_routing_events_queued": ("gauge", "Executor outcome events not yet handled."),
     "thermite_routing_device_quarantined": ("gauge", "1 for each device whose routing commands are quarantined."),
+    "thermite_routing_quarantine_info": ("gauge", "1 for each quarantined routing device or independent field slot, "
+                                         "with its quarantine reason."),
     "thermite_routing_metrics_up": ("gauge", "1 when the routing telemetry Item holds valid counts."),
     "thermite_route_seconds": ("histogram", "Seconds from a room's source choice until its readback confirmed it, "
                                "its deadline (the map's routing.deadline_seconds) passed, or a newer choice "
@@ -171,10 +174,17 @@ FAMILIES = {
 #: lifecycle_io.js); anything else is ignored, never turned into a label.
 ROUTE_OUTCOMES = ("confirmed", "deadline", "superseded")
 #: The upper bounds routing.js counts route times in (its BUCKETS).
-ROUTE_BUCKETS = (1, 2, 4, 8, 15, 30, 60)
+ROUTE_BUCKETS = (1, 2, 4, 8, 15, 30, 60, 120, 240, 360)
 OPERATION_OUTCOMES = ("applied", "sampled", "probe_failed", "unsent", "refused", "busy", "unknown", "quarantined",
                       "superseded", "revoked", "journal_failed", "read_only", "other")
 FAILURE_REASONS = ("unsent", "refused", "unknown", "quarantined", "probe_failed", "journal_failed", "recovery_failed")
+#: Planner and executor quarantine reasons (oh_features/routing/lifecycle.js QUARANTINE_REASONS).
+QUARANTINE_REASONS = (
+    "provider_outcome_unknown", "journal_or_admission_failed", "executor_quarantined", "executor_event_overflow",
+    "uncertain", "restart-uncertain", "incompatible-journal", "adapter-threw", "unordered-external-admission",
+)
+#: A valid independent field slot identifier (or "device").
+QUARANTINE_SLOT = re.compile(r"^[A-Za-z0-9_]{1,64}$")
 #: How a command a device script took ended (oh_integrations._commands
 #: OUTCOMES, which a test keeps this equal to).
 COMMAND_OUTCOMES = ("applied", "sent", "dropped", "unsent", "refused", "busy", "unknown")
@@ -225,9 +235,9 @@ def exposition(samples: list[Sample]) -> str:
             continue
         kind, text = FAMILIES.get(name, ("untyped", ""))
         lines += [f"# HELP {name} {escape_help(text)}", f"# TYPE {name} {kind}"]
-        for sample, labels, value in grouped[name]:
+        for metric, labels, value in grouped[name]:
             body = ",".join(f'{key}="{escape_label(str(labels[key]))}"' for key in labels)
-            lines.append(f"{sample}{{{body}}} {format_value(value)}" if body else f"{sample} {format_value(value)}")
+            lines.append(f"{metric}{{{body}}} {format_value(value)}" if body else f"{metric} {format_value(value)}")
     return "\n".join(lines) + "\n"
 
 
@@ -288,29 +298,114 @@ def to_text(state: object) -> str | None:
 # ---------------------------------------------------------------- the collector
 
 
+_token_lock = threading.Lock()
+_token_cache: dict[Path, tuple[tuple[int, int], str | None]] = {}
+
+
 def read_token(path: Path | None) -> str | None:
+    """Read the openHAB API token file, cached by (st_mtime_ns, st_size)."""
     if path is None:
         return None
+    target = Path(path)
     try:
-        token = Path(path).read_text(encoding="utf-8").strip()
+        stat = target.stat()
     except OSError:
+        with _token_lock:
+            _token_cache.pop(target, None)
         return None
-    return token or None
+    stamp = (stat.st_mtime_ns, stat.st_size)
+    with _token_lock:
+        cached = _token_cache.get(target)
+        if cached is not None and cached[0] == stamp:
+            return cached[1]
+    try:
+        token = target.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        with _token_lock:
+            _token_cache.pop(target, None)
+        return None
+    with _token_lock:
+        if len(_token_cache) >= 16 and target not in _token_cache:
+            _token_cache.clear()
+        _token_cache[target] = (stamp, token)
+    return token
 
 
-def http_fetch(base: str, token_file: Path | None) -> Fetch:
-    """GET a path below openHAB's base URL and parse its JSON."""
+class _HttpFetcher:
+    """Persistent HTTP/HTTPS keep-alive JSON fetcher with reconnect-on-error."""
 
-    def fetch(path: str, timeout: float) -> object:
-        headers = {"Accept": "application/json"}
-        token = read_token(token_file)
+    def __init__(self, base: str, token_file: Path | None) -> None:
+        self._base = base.rstrip("/")
+        parsed = urllib.parse.urlsplit(self._base)
+        scheme = parsed.scheme.lower()
+        host = parsed.hostname
+        if scheme not in ("http", "https") or not host:
+            raise ValueError(f"unsupported openHAB URL: {base!r}")
+        self._scheme = scheme
+        self._host = host
+        self._port = parsed.port
+        self._prefix = parsed.path.rstrip("/")
+        self._token_file = token_file
+        self._lock = threading.Lock()
+        self._conn: http.client.HTTPConnection | None = None
+
+    def _open(self, timeout: float) -> http.client.HTTPConnection:
+        if self._scheme == "https":
+            return http.client.HTTPSConnection(self._host, self._port, timeout=timeout)
+        return http.client.HTTPConnection(self._host, self._port, timeout=timeout)
+
+    def _close_unlocked(self) -> None:
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except OSError:
+                pass
+            self._conn = None
+
+    def close(self) -> None:
+        with self._lock:
+            self._close_unlocked()
+
+    def __call__(self, path: str, timeout: float) -> object:
+        effective = max(0.001, float(timeout))
+        headers = {"Accept": "application/json", "Connection": "keep-alive"}
+        token = read_token(self._token_file)
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        request = urllib.request.Request(base.rstrip("/") + path, headers=headers)
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return json.load(response)
+        target = self._prefix + path
+        with self._lock:
+            reused = self._conn is not None
+            for attempt in range(2 if reused else 1):
+                try:
+                    if self._conn is None:
+                        self._conn = self._open(effective)
+                    else:
+                        self._conn.timeout = effective
+                        if self._conn.sock is not None:
+                            self._conn.sock.settimeout(effective)
+                    self._conn.request("GET", target, headers=headers)
+                    response = self._conn.getresponse()
+                    body = response.read()
+                    if response.will_close:
+                        self._close_unlocked()
+                    if response.status >= 400:
+                        raise urllib.error.HTTPError(
+                            self._base + path, response.status, response.reason, response.headers, None,
+                        )
+                    return json.loads(body)
+                except (http.client.HTTPException, OSError):
+                    self._close_unlocked()
+                    if attempt == 0 and reused:
+                        reused = False
+                        continue
+                    raise
+            raise RuntimeError("unreachable")
 
-    return fetch
+
+def http_fetch(base: str, token_file: Path | None) -> _HttpFetcher:
+    """GET a path below openHAB's base URL over a persistent keep-alive
+    connection (reconnecting on error) and parse its JSON."""
+    return _HttpFetcher(base, token_file)
 
 
 def describe(error: BaseException) -> str:
@@ -371,35 +466,49 @@ def collect(mapping: dict, fetch: Fetch, clock: Callable[[], float] = time.monot
     zones = (mapping.get("routing") or {}).get("zones") or {}
     samples += [("thermite_zone_info", {"zone": zone, "room": str(zones[zone].get("room", "")),
                                         "label": str(zones[zone].get("label", zone))}, 1.0) for zone in sorted(zones)]
-    if "things" in answers:
-        samples += _things(mapping, answers["things"])
-    if "items" in answers:
-        samples += _items(mapping, answers["items"], answers.get("things"))
-        samples += _playing(mapping, answers["items"], answers.get("things"))
-        samples += _handler_pool(mapping, answers["items"])
-        samples += _routing(mapping, answers["items"])
-        samples += _commands(mapping, answers["items"])
+    things_answer = answers.get("things")
+    if isinstance(things_answer, list):
+        samples += _things(mapping, things_answer)
+    items_answer = answers.get("items")
+    if isinstance(items_answer, list):
+        things_list = things_answer if isinstance(things_answer, list) else None
+        state_of = _state_of(items_answer)
+        offline = _offline(mapping, things_list)
+        leaders = _leaders(mapping, state_of)
+        samples += _items(mapping, items_answer, things_list, state_of=state_of, offline=offline, leaders=leaders)
+        samples += _playing(mapping, items_answer, things_list, state_of=state_of, offline=offline, leaders=leaders)
+        samples += _handler_pool(mapping, items_answer, state_of=state_of)
+        samples += _routing(mapping, items_answer, state_of=state_of)
+        samples += _commands(mapping, items_answer, state_of=state_of)
     return samples
 
 
-def _handler_pool(mapping: dict, answer: list, now: float | None = None) -> list[Sample]:
+def _state_of(answer: list) -> dict[str, object]:
+    return {item["name"]: item.get("state") for item in answer
+            if isinstance(item, dict) and isinstance(item.get("name"), str)}
+
+
+def _handler_pool(mapping: dict, answer: list, now: float | None = None, *,
+                  state_of: dict[str, object] | None = None) -> list[Sample]:
     spec = mapping.get("handler_pool")
     if not spec:
         return []
-    states = {item["name"]: item.get("state") for item in answer if isinstance(item, dict) and "name" in item}
+    states = _state_of(answer) if state_of is None else state_of
     values = {key: to_number(states.get(name), "number") for key, name in spec.items()}
     now = time.time() if now is None else now
     observed = values.get("observed")
     age = now - observed if observed is not None else None
     fields = {"active": "active_threads", "core": "core_threads", "queued": "queued_tasks", "overdue": "probe_overdue_seconds"}
-    valid = (age is not None and -5 <= age <= 60 and values.get("core") is not None and values["core"] >= 1
-             and all(values.get(key) is not None and values[key] >= 0 for key in fields))
+    core = values.get("core")
+    valid = (age is not None and -5 <= age <= 60 and core is not None and core >= 1
+             and all((v := values.get(key)) is not None and v >= 0 for key in fields))
     labels = {"pool": "thingHandler"}
     samples = [("thermite_handler_pool_up", labels, 1.0 if valid else 0.0)]
     if age is not None and age >= -5:
-        samples.append(("thermite_handler_pool_observation_age_seconds", labels, max(0, age)))
+        samples.append(("thermite_handler_pool_observation_age_seconds", labels, max(0.0, age)))
     if valid:
-        samples += [(f"thermite_handler_pool_{suffix}", labels, values[key]) for key, suffix in fields.items()]
+        samples += [(f"thermite_handler_pool_{suffix}", labels, float(values[key]))  # type: ignore[arg-type]
+                    for key, suffix in fields.items()]
     return samples
 
 
@@ -421,17 +530,17 @@ def _count(value: object) -> float | None:
 
 def _routing_status(spec: dict, row: object) -> list[Sample]:
     fields = {"pending": "pending", "active": "active", "quarantined": "quarantined", "eventsQueued": "events_queued"}
-    valid = (isinstance(row, dict) and set(fields) <= set(row) <= {*fields, "quarantinedKeys"}
-             and all(_count(row[key]) is not None for key in fields))
-    keys = row.get("quarantinedKeys", []) if valid else None
-    if valid and (not isinstance(keys, list) or not all(isinstance(key, str) for key in keys)):
-        valid = False
-    samples: list[Sample] = [("thermite_routing_executor_up", {}, 1.0 if valid else 0.0)]
-    if not valid:
-        return samples
+    if not isinstance(row, dict) or not (set(fields) <= set(row) <= {*fields, "quarantinedKeys"}):
+        return [("thermite_routing_executor_up", {}, 0.0)]
+    counts = {key: _count(row[key]) for key in fields}
+    raw_keys = row.get("quarantinedKeys", [])
+    if (any(val is None for val in counts.values()) or not isinstance(raw_keys, list)
+            or not all(isinstance(key, str) for key in raw_keys)):
+        return [("thermite_routing_executor_up", {}, 0.0)]
+    samples: list[Sample] = [("thermite_routing_executor_up", {}, 1.0)]
     samples += [(f"thermite_routing_{name}", {}, float(row[key])) for key, name in fields.items()]
     devices = spec.get("devices") or {}
-    for key in sorted(set(keys)):
+    for key in sorted(set(raw_keys)):
         # Only the house's own devices become labels.
         if key in devices:
             samples.append(("thermite_routing_device_quarantined",
@@ -444,10 +553,15 @@ def _histogram(value: object) -> tuple[list[float], float, float] | None:
     if not isinstance(value, dict):
         return None
     buckets, count, total = value.get("buckets"), _count(value.get("count")), _count(value.get("sum"))
-    if (count is None or total is None or not isinstance(buckets, list) or len(buckets) != len(ROUTE_BUCKETS)):
+    if count is None or total is None or not isinstance(buckets, list) or len(buckets) != len(ROUTE_BUCKETS):
         return None
-    counts = [_count(bucket) for bucket in buckets]
-    if any(bucket is None for bucket in counts) or counts != sorted(counts) or counts[-1] > count:
+    counts: list[float] = []
+    for bucket in buckets:
+        parsed = _count(bucket)
+        if parsed is None:
+            return None
+        counts.append(parsed)
+    if counts != sorted(counts) or counts[-1] > count:
         return None
     return counts, total, count
 
@@ -462,7 +576,8 @@ def _routing_metrics(spec: dict, data: object) -> list[Sample]:
     samples: list[Sample] = [("thermite_routing_metrics_up", {}, 1.0)]
     zones = spec.get("zones") or {}
     devices = spec.get("devices") or {}
-    route = data.get("route") if isinstance(data.get("route"), dict) else {}
+    raw_route = data.get("route")
+    route: dict = raw_route if isinstance(raw_route, dict) else {}
     none = ([0.0] * len(ROUTE_BUCKETS), 0.0, 0.0)
     for zone in sorted(zones):
         outcomes = route.get(zone, {})
@@ -474,41 +589,61 @@ def _routing_metrics(spec: dict, data: object) -> list[Sample]:
                 continue
             counts, total, count = parsed
             labels = {"room": str(zones[zone].get("room", "")), "zone": zone, "outcome": outcome}
-            samples += [("thermite_route_seconds_bucket", {**labels, "le": format_value(le)}, bucket)
-                        for le, bucket in zip(ROUTE_BUCKETS, counts, strict=True)]
-            samples += [("thermite_route_seconds_bucket", {**labels, "le": "+Inf"}, count),
-                        ("thermite_route_seconds_sum", labels, total),
-                        ("thermite_route_seconds_count", labels, count)]
-    operations = data.get("operations") if isinstance(data.get("operations"), dict) else {}
+            if outcome != "deadline":
+                samples += [("thermite_route_seconds_bucket", {**labels, "le": format_value(le)}, bucket)
+                            for le, bucket in zip(ROUTE_BUCKETS, counts, strict=True)]
+                samples += [("thermite_route_seconds_bucket", {**labels, "le": "+Inf"}, count),
+                            ("thermite_route_seconds_sum", labels, total)]
+            samples.append(("thermite_route_seconds_count", labels, count))
+    raw_operations = data.get("operations")
+    operations: dict = raw_operations if isinstance(raw_operations, dict) else {}
     for outcome in OPERATION_OUTCOMES:
         value = _count(operations.get(outcome, 0))
         if value is not None:
             samples.append(("thermite_routing_operations_total", {"outcome": outcome}, value))
-    failures = data.get("failures") if isinstance(data.get("failures"), dict) else {}
+    raw_failures = data.get("failures")
+    failures: dict = raw_failures if isinstance(raw_failures, dict) else {}
     executors = set(spec.get("executors") or ()) | set(failures)
     for device in sorted(executors & set(devices)):
-        reasons = failures.get(device) if isinstance(failures.get(device), dict) else {}
+        raw_reasons = failures.get(device)
+        reasons: dict = raw_reasons if isinstance(raw_reasons, dict) else {}
         for reason in FAILURE_REASONS:
             value = _count(reasons.get(reason, 0))
             if value is not None:
                 samples.append(("thermite_routing_endpoint_failures_total",
                                 {"device": device, "room": str(devices[device].get("room", "")),
                                  "kind": str(devices[device].get("kind", "")), "reason": reason}, value))
-    resends = data.get("resends") if isinstance(data.get("resends"), dict) else {}
+    raw_resends = data.get("resends")
+    resends: dict = raw_resends if isinstance(raw_resends, dict) else {}
     for zone in sorted(zones):
         value = _count(resends.get(zone, 0))
         if value is not None:
             samples.append(("thermite_routing_resends_total", {"room": str(zones[zone].get("room", "")), "zone": zone},
                             value))
+    quarantines = data.get("quarantines")
+    if isinstance(quarantines, list):
+        seen: dict[tuple[str, str], str] = {}
+        for entry in quarantines:
+            if not isinstance(entry, dict):
+                continue
+            q_device, q_slot, q_reason = entry.get("device"), entry.get("slot"), entry.get("reason")
+            if (isinstance(q_device, str) and q_device in devices
+                    and isinstance(q_slot, str) and QUARANTINE_SLOT.match(q_slot)
+                    and isinstance(q_reason, str) and q_reason in QUARANTINE_REASONS):
+                seen[(q_device, q_slot)] = q_reason
+        for (q_device, q_slot), q_reason in sorted(seen.items()):
+            samples.append(("thermite_routing_quarantine_info",
+                            {"device": q_device, "room": str(devices[q_device].get("room", "")),
+                             "kind": str(devices[q_device].get("kind", "")), "slot": q_slot, "reason": q_reason}, 1.0))
     return samples
 
 
-def _routing(mapping: dict, answer: list) -> list[Sample]:
+def _routing(mapping: dict, answer: list, *, state_of: dict[str, object] | None = None) -> list[Sample]:
     """The routing executor's status and the routing telemetry (map "routing")."""
     spec = mapping.get("routing")
     if not isinstance(spec, dict):
         return []
-    states = {item["name"]: item.get("state") for item in answer if isinstance(item, dict) and "name" in item}
+    states = _state_of(answer) if state_of is None else state_of
     spec = {**spec, "devices": mapping.get("devices") or {}}
     samples: list[Sample] = []
     if spec.get("status"):
@@ -518,7 +653,7 @@ def _routing(mapping: dict, answer: list) -> list[Sample]:
     return samples
 
 
-def _commands(mapping: dict, answer: list) -> list[Sample]:
+def _commands(mapping: dict, answer: list, *, state_of: dict[str, object] | None = None) -> list[Sample]:
     """Each command tally (map "commands": {Item: {device, integration}}) as
     counters by outcome. A tally that is not valid yet has no series; one
     that is has a zero for each outcome it has not counted. A tally of a
@@ -529,12 +664,14 @@ def _commands(mapping: dict, answer: list) -> list[Sample]:
     spec = mapping.get("commands")
     if not isinstance(spec, dict):
         return []
-    states = {item["name"]: item.get("state") for item in answer if isinstance(item, dict) and "name" in item}
+    states = _state_of(answer) if state_of is None else state_of
     samples: list[Sample] = []
     for name in sorted(spec):
         entry = spec[name] if isinstance(spec[name], dict) else {}
         data = _json_state(states.get(name))
-        outcomes = data.get("outcomes") if isinstance(data, dict) and data.get("version") == 1 else None
+        if not isinstance(data, dict) or data.get("version") != 1:
+            continue
+        outcomes = data.get("outcomes")
         if not isinstance(outcomes, dict):
             continue
         labels = {**device_labels(mapping, str(entry.get("device", ""))), "integration": str(entry.get("integration", ""))}
@@ -542,7 +679,8 @@ def _commands(mapping: dict, answer: list) -> list[Sample]:
         if isinstance(reads, str) and reads:
             samples.append(("thermite_device_read_ok", labels, 1.0 if reads in READ_ANSWERS else 0.0))
         for outcome in COMMAND_OUTCOMES:
-            row = outcomes.get(outcome) if isinstance(outcomes.get(outcome), dict) else {}
+            raw_row = outcomes.get(outcome)
+            row: dict = raw_row if isinstance(raw_row, dict) else {}
             count, spent = _count(row.get("count", 0)), _count(row.get("ms", 0))
             if count is not None:
                 samples.append(("thermite_device_commands_total", {**labels, "outcome": outcome}, count))
@@ -661,18 +799,19 @@ def _speaker(name: str, spec: dict, state_of: dict, offline: set[str]) -> tuple[
     return (_no_value(spec, state_of), 1.0) if value is None else ("thermite_item_value", value)
 
 
-def _items(mapping: dict, answer: list, things: list | None = None) -> list[Sample]:
-    state_of = {item["name"]: item.get("state") for item in answer
-                if isinstance(item, dict) and isinstance(item.get("name"), str)}
-    offline = _offline(mapping, things)
-    leaders = _leaders(mapping, state_of)
+def _items(mapping: dict, answer: list, things: list | None = None, *,
+           state_of: dict[str, object] | None = None, offline: set[str] | None = None,
+           leaders: dict[str, str | None] | None = None) -> list[Sample]:
+    states = _state_of(answer) if state_of is None else state_of
+    offline_devices = _offline(mapping, things) if offline is None else offline
+    group_leaders = _leaders(mapping, states) if leaders is None else leaders
     samples: list[Sample] = []
     missing = 0
     for name, spec in sorted((mapping.get("items") or {}).items()):
-        if name not in state_of:
+        if name not in states:
             missing += 1
             continue
-        state = state_of[name]
+        state = states[name]
         device = str(spec.get("device") or "")
         labels = {"device": device, "room": str(spec.get("room", "")), "kind": str(spec.get("kind", ""))}
         item = {**labels, "item": name, "point": str(spec.get("point", ""))}
@@ -682,12 +821,12 @@ def _items(mapping: dict, answer: list, things: list | None = None) -> list[Samp
             item["zone"] = str(spec["zone"])
         convert = spec.get("convert")
         if convert == "playing":
-            reading = _speaker(name, spec, state_of, offline)
-            if name in leaders and reading is not None and reading[0] == "thermite_item_value":
+            reading = _speaker(name, spec, states, offline_devices)
+            if name in group_leaders and reading is not None and reading[0] == "thermite_item_value":
                 # A follower reads stopped while its group plays: what it
                 # plays is its leader's, unknown while that is not known.
-                lead = leaders[name]
-                reading = _speaker(lead, mapping["items"][lead], state_of, offline) if lead else None
+                lead = group_leaders[name]
+                reading = _speaker(lead, mapping["items"][lead], states, offline_devices) if lead else None
                 if reading is None or reading[0] != "thermite_item_value":
                     reading = ("thermite_item_unknown", 1.0)
             if reading is not None:
@@ -696,29 +835,31 @@ def _items(mapping: dict, answer: list, things: list | None = None) -> list[Samp
         if convert == "enum":
             text = to_label(state, spec.get("options"))
             samples.append(("thermite_item_info", {**item, "value": text}, 1.0) if text is not None
-                           else (_no_value(spec, state_of), item, 1.0))
+                           else (_no_value(spec, states), item, 1.0))
             continue
         if convert == "problem":
             value = to_number(state, convert, spec.get("clear_state"))
-            sample = ("thermite_device_problem", labels, value)
-            if value == 1.0:
+            sample: Sample | None = ("thermite_device_problem", labels, value) if value is not None else None
+            if value == 1.0 and isinstance(state, str):
                 # A code of the map's list, or `other`: never the Item's text.
                 code = to_label(state.strip(), spec.get("options") or [OTHER]) or OTHER
                 samples.append(("thermite_device_problem_info", {**labels, "code": code}, 1.0))
         elif convert in ("switch", "number"):
             value = to_number(state, convert)
-            sample = ("thermite_item_value", item, value)
+            sample = ("thermite_item_value", item, value) if value is not None else None
         else:
             continue
-        if value is not None:
+        if sample is not None:
             samples.append(sample)
         elif state in NO_VALUE:
-            samples.append((_no_value(spec, state_of), item, 1.0))
+            samples.append((_no_value(spec, states), item, 1.0))
     samples.append(("thermite_items_missing", {}, float(missing)))
     return samples
 
 
-def _playing(mapping: dict, answer: list, things: list | None = None, now: float | None = None) -> list[Sample]:
+def _playing(mapping: dict, answer: list, things: list | None = None, now: float | None = None, *,
+             state_of: dict[str, object] | None = None, offline: set[str] | None = None,
+             leaders: dict[str, str | None] | None = None) -> list[Sample]:
     """thermite_playing_timestamp_seconds for each device playing something,
     with the zones whose source Item names it. A speaker that follows another
     in a multiroom group plays what its leader plays, and nothing known
@@ -732,22 +873,22 @@ def _playing(mapping: dict, answer: list, things: list | None = None, now: float
     """
     now = time.time() if now is None else now
     spec = mapping.get("playing") or {}
-    state_of = {item["name"]: item.get("state") for item in answer
-                if isinstance(item, dict) and isinstance(item.get("name"), str)}
-    offline = _offline(mapping, things)
+    states = _state_of(answer) if state_of is None else state_of
+    offline_devices = _offline(mapping, things) if offline is None else offline
     kept = mapping.get("items") or {}
+    group_leaders = _leaders(mapping, states) if leaders is None else leaders
     follows = {kept[name].get("device"): kept[lead].get("device") if lead else None
-               for name, lead in _leaders(mapping, state_of).items()}
+               for name, lead in group_leaders.items()}
     zones: dict[str, list[str]] = {}
-    for name, entry in (mapping.get("items") or {}).items():
-        if entry.get("point") == "source" and entry.get("zone") and isinstance(state_of.get(name), str):
-            zones.setdefault(state_of[name], []).append(str(entry["zone"]))
+    for name, entry in kept.items():
+        if entry.get("point") == "source" and entry.get("zone") and isinstance(states.get(name), str):
+            zones.setdefault(str(states[name]), []).append(str(entry["zone"]))
     samples: list[Sample] = []
     for ident in sorted(spec):
         source = follows.get(ident, ident)
-        if source not in spec or ident in offline or source in offline:
+        if source not in spec or ident in offline_devices or source in offline_devices:
             continue
-        app, title = (to_text(state_of.get(spec[source].get(key))) for key in ("app", "title"))
+        app, title = (to_text(states.get(spec[source].get(key))) for key in ("app", "title"))
         if app is None and title is None:
             continue
         samples.append(("thermite_playing_timestamp_seconds", {**device_labels(mapping, ident), "app": app or "",

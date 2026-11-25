@@ -21,9 +21,9 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_room_policy  # noqa: E402
 from oh_room_policy import (Field, Observation, Plan, PolicyError, canonical, conflicts, desired_at,  # noqa: E402
                             due_boundaries, expected_plan, local_instant, repair_plan, verify)
-from oh_room_policy.worker import BACKOFF, RECONCILE_HEARTBEAT, SETTLED, PolicyRecord, Worker  # noqa: E402
+from oh_room_policy.worker import BACKOFF, RECONCILE_HEARTBEAT, ROUTE_IN_FLIGHT_RECHECK, SETTLED, FileLocks, PolicyRecord, ResourceLocks, Worker  # noqa: E402
 from oh_access import AccessError  # noqa: E402
-from oh_access.worker import OBSERVED, NativeCache, PolicyIO, Warnings, observe  # noqa: E402
+from oh_access.worker import OBSERVED, NativeCache, PolicyIO, Warnings, compile_plans, observe, observed_fields  # noqa: E402
 
 HOUSE = json.loads((AREA / "instance/devices.yaml").read_text())
 WEST, EAST = "example_west", "example_east"
@@ -1021,6 +1021,132 @@ class Wildcard(unittest.TestCase):
                                          "payload": "not json"}))
         self.assertEqual(cache.project({"topic": "openhab/items/tv_power/stateupdated", "type": "ItemStateUpdatedEvent",
                                         "payload": json.dumps({"value": "ON"})}), ("tv_power", "ON"))
+
+
+class LockScopingAndLifecycleFence(Harness, unittest.TestCase):
+    def test_policy_io_and_observed_fields_build_routing_table_once(self):
+        from oh_features import routing
+        calls = []
+        original = routing.table
+
+        def counting(house):
+            calls.append(True)
+            return original(house)
+
+        adapter = Adapter()
+        with patch.object(routing, "table", side_effect=counting):
+            plans = compile_plans(HOUSE, adapter.contract.rooms)
+            fields = observed_fields(HOUSE, adapter.contract.rooms, plans=plans)
+            io = PolicyIO(adapter, Revisions(1), None, HOUSE, plans=plans)
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(fields)
+        self.assertEqual(set(io.plans), {WEST, EAST})
+        calls.clear()
+        with patch.object(routing, "table", side_effect=counting):
+            PolicyIO(adapter, Revisions(1), None, HOUSE)
+        self.assertEqual(len(calls), 1)
+
+    def test_repairing_one_room_never_blocks_unrelated_rooms(self):
+        import tempfile
+        import threading
+        with tempfile.TemporaryDirectory() as tmp, patch("oh_room_policy.worker.expected_plan", synthetic(SHARED)):
+            for label, locks in (("FileLocks", FileLocks(Path(tmp) / "locks")), ("ResourceLocks", ResourceLocks())):
+                with self.subTest(locks=label):
+                    entered, release = threading.Event(), threading.Event()
+                    self.make((policy("west", hold="a", enabled=False), at(8)),
+                              (policy("east", enabled=False), at(8)),
+                              (policy("north", enabled=False), at(8)),
+                              house=SYNTHETIC_HOUSE, observed={"amp_input": "0"})
+                    self.worker.locks = locks
+                    original_write = self.devices.write
+
+                    def blocking_write(room, item, value, revision, origin="repair",
+                                       _entered=entered, _release=release, _orig=original_write):
+                        _entered.set()
+                        _release.wait(5)
+                        return _orig(room, item, value, revision, origin)
+
+                    self.devices.write = blocking_write
+                    thread = threading.Thread(target=self.worker.step)
+                    thread.start()
+                    try:
+                        self.assertTrue(entered.wait(5))
+                        # Unrelated room 'north' and unlocked room 'east' are NOT locked.
+                        with locks.hold(["room:north", "device:north_tv"], blocking=False):
+                            pass
+                        with locks.hold(["room:east"], blocking=False):
+                            pass
+                        # Target room 'west' and its shared device 'amp' ARE held.
+                        with self.assertRaises(BlockingIOError):
+                            with locks.hold(["room:west"], blocking=False):
+                                pass
+                        with self.assertRaises(BlockingIOError):
+                            with locks.hold(["device:amp"], blocking=False):
+                                pass
+                    finally:
+                        release.set()
+                        thread.join(5)
+                    self.assertEqual(self.devices.writes, [("west", "amp_input", "1")])
+
+    def test_stage_3b_running_route_defers_repairs_until_settled(self):
+        lifecycle_item = f"loc_{WEST}_source_lifecycle"
+
+        def plan_with_lifecycle(house, room, choice):
+            base = expected_plan(house, room, choice)
+            return Plan(base.room, base.target, base.source_item, base.fields, base.resources,
+                        base.boundary_effects, base.limitations, base.conditions, base.leader,
+                        base.unsynced_effects, lifecycle_item=f"loc_{room}_source_lifecycle")
+
+        with patch("oh_room_policy.worker.expected_plan", plan_with_lifecycle):
+            running = json.dumps({"version": 1, "choice": PLAYER, "synced": False, "generation": 1,
+                                  "status": "running", "pathReady": False, "fault": None})
+            self.make((policy(WEST, hold=PLAYER, enabled=False), at(8)),
+                      observed={**PLAYER_ROUTE, "example_tv_power": "OFF", lifecycle_item: running})
+            # While route is running: defer repairs, stay enforcing (not degraded), short recheck.
+            status = self.step()[WEST]
+            self.assertEqual((status["phase"], status["state"], status["reason"]), ("enforcing", "unknown", "settling"))
+            self.assertEqual(status["mismatched"], [])
+            self.assertEqual(self.devices.writes, [])
+            self.assertLessEqual(self.worker.next_delay(5.0), ROUTE_IN_FLIGHT_RECHECK)
+
+            # Legacy snapshot without status: pathReady=False and no fault still defers.
+            self.advance(ROUTE_IN_FLIGHT_RECHECK)
+            self.devices.observed[lifecycle_item] = json.dumps({"version": 1, "choice": PLAYER, "pathReady": False, "fault": None})
+            status = self.step()[WEST]
+            self.assertEqual((status["phase"], status["state"], status["reason"]), ("enforcing", "unknown", "settling"))
+            self.assertEqual(self.devices.writes, [])
+
+            # Once status transitions to done, repair dispatches immediately at attempt=1.
+            self.advance(ROUTE_IN_FLIGHT_RECHECK)
+            self.devices.observed[lifecycle_item] = json.dumps({"version": 1, "choice": PLAYER, "status": "done",
+                                                                "pathReady": True, "fault": None})
+            with self.assertLogs("oh_room_policy.worker", "INFO") as logs:
+                status = self.step()[WEST]
+            self.assertEqual(self.devices.writes, [(WEST, "example_tv_power", "ON")])
+            self.assertEqual(status["repair"], "example_tv_power")
+            self.assertIn("attempt=1", trail(logs)[0])
+
+    def test_native_cache_accepts_large_lifecycle_json_and_notifies_on_change(self):
+        lifecycle_item = f"loc_{WEST}_source_lifecycle"
+        changed = []
+        cache = NativeCache(
+            [Field("example_tv_power", "ON", "device:example_tv")],
+            lifecycle_items={lifecycle_item},
+            on_change=changed.append,
+        )
+        payload = json.dumps({
+            "version": 1, "choice": PLAYER, "synced": False, "generation": 4,
+            "status": "running", "pathReady": False, "logicalOff": False,
+            "endpointInactive": False, "active": True, "yielded": False,
+            "cleanup": False, "failures": 0, "fault": None,
+        })
+        self.assertGreater(len(payload), 128)
+        frame = cache.project({"topic": f"openhab/items/{lifecycle_item}/stateupdated",
+                               "type": "ItemStateUpdatedEvent", "payload": json.dumps({"value": payload})})
+        self.assertEqual(frame, (lifecycle_item, payload))
+        cache.accept(frame)
+        self.assertEqual(cache.read((lifecycle_item,))[lifecycle_item].value, payload)
+        self.assertEqual(changed, [lifecycle_item])
 
 
 if __name__ == "__main__":

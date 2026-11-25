@@ -625,6 +625,17 @@ class Configuration(Site):
         provisioner.step()
         self.assertEqual(self.domains(), ["airplay", "filesystem_local", "sonos", "wiim"])
 
+    def test_reconcile_fetches_config_providers_once_per_pass(self):
+        provisioner = self.provisioner(("mp3", "flac"))
+        provisioner.step()
+        initial_fetches = [cmd for cmd, _ in self.sim.calls if cmd == "config/providers"]
+        self.assertEqual(len(initial_fetches), 1)
+        start = len(self.sim.calls)
+        with Client(self.port, self.token()) as client:
+            self.assertEqual(provisioner.reconcile(client, client.info()), 0)
+        steady_fetches = [cmd for cmd, _ in self.sim.calls[start:] if cmd == "config/providers"]
+        self.assertEqual(len(steady_fetches), 1)
+
 
 class Errors(unittest.TestCase):
     """What Music Assistant answers becomes one of three exceptions, none
@@ -829,6 +840,22 @@ class Events(Site):
                 while True:
                     await socket.receive()
             socket.abort()
+        self.check(body)
+
+    def test_pending_queue_uses_deque(self):
+        import collections
+        from wsproto.events import TextMessage
+
+        async def body():
+            socket = await Socket.open(self.port, self.token())
+            try:
+                self.assertIsInstance(socket.pending, collections.deque)
+                socket.pending.append(TextMessage(data='{"event":"first"}', message_finished=True))
+                socket.pending.append(TextMessage(data='{"event":"second"}', message_finished=True))
+                self.assertEqual(await socket.receive(), {"event": "first"})
+                self.assertEqual(await socket.receive(), {"event": "second"})
+            finally:
+                await socket.close()
         self.check(body)
 
 

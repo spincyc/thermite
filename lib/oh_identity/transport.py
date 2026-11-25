@@ -122,7 +122,7 @@ class LoopbackTransport:
                 # Snapshot/media traffic must not consume the connections
                 # reserved for interactive commands. httpx.Client is shared
                 # safely by Django's request threads and reuses keepalives.
-                capacity = {"read": 8, "command": 4, "media": 2}[kind]
+                capacity = {"read": 8, "command": 16, "media": 8}[kind]
                 self._clients[kind] = httpx.Client(
                     trust_env=False, follow_redirects=False, timeout=15 if kind == "media" else self.timeout,
                     limits=httpx.Limits(max_connections=capacity, max_keepalive_connections=capacity))

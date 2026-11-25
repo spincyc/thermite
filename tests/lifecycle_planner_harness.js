@@ -1134,9 +1134,9 @@ test('a field without settle trusts its first read, as before', () => {
 });
 
 test('a settle keeps the route from expiring, up to its cap, and a transition is trusted once its settle passes', () => {
-  // Power on lands after 200 s and startup never ends: 300 s of pending,
-  // then 300 s of transition, but the deadline moves at most 300 s.
-  const r = theater({settle: {ON: 300000, OFF: 30000}, lag: 200000, phase: 1e9});
+  // Cooling takes 20 s, then Power=ON starts a 300 s settle window that
+  // extends past the 300 s deadline cap (deadline stays capped at 310 s).
+  const r = theater({settle: {ON: 300000, OFF: 30000}, device: {status: 'cooling', until: 20000}, lag: 1e9, phase: 1e9});
   r.request('Movie', '1a2b3c4d');
   r.run(10000); assert.equal(r.endpoint().active, true);
   r.run(299999); assert.equal(r.endpoint().active, true); assert.deepEqual(r.endpoint().failures, {});
@@ -1144,6 +1144,17 @@ test('a settle keeps the route from expiring, up to its cap, and a transition is
   assert.equal(r.endpoint().failures.deadline, 'deadline');
   assert.deepEqual(r.warnings, ['routing deadline room=Theater choice=Movie route=1a2b3c4d ms=310000 '
     + 'waiting=Power:settling,Input:unverified cleanup=- failed=-']);
+  // Pending -> transition shares the initial settle window instead of
+  // doubling it: Power=ON landing at 200 s into a 300 s settle is trusted at
+  // 300 s, not 500 s.
+  const cap = theater({settle: {ON: 300000, OFF: 30000}, lag: 200000, phase: 1e9});
+  cap.request('Movie');
+  cap.run(299999);
+  assert.deepEqual(cap.writes(), ['0 Power=ON']); assert.deepEqual(cap.endpoint().failures, {});
+  cap.run(1);
+  assert.deepEqual(cap.warnings, ['routing settle resource=Power value=ON ms=300000 outcome=still_moving']);
+  assert.deepEqual(cap.writes(), ['0 Power=ON', '300000 Input=hdmi1 refused']);
+  assert.equal(cap.endpoint().failures.Input, 'device-refused');
   // Within the cap: a transition that outlasts its settle is trusted then,
   // logged once, and the route goes on.
   const t = theater({lag: 0, phase: 1e9});
@@ -1319,16 +1330,17 @@ function patient(deadlineMs = 120000, settle) {
   const config = theaterDescriptor(settle); config.deadlineMs = deadlineMs; return config;
 }
 
-test('a write a busy projector declines is sent again after its retryAfterMs until it takes it', () => {
+test('a write a busy projector declines is sent again with backoff from its retryAfterMs until it takes it', () => {
   // On during cooling, then the input during startup: both declined as
-  // busy, both sent again every 3 s without a read in between.
+  // busy, retried with exponential backoff up to 5 s (at least retryAfterMs)
+  // without a read in between.
   const r = theater({config: patient(), hidden: true, busy: 3000, lag: 0, device: {status: 'cooling', until: 20000}});
   r.request('Movie'); r.run(60000);
-  assert.deepEqual(r.writes(), ['0 Power=ON busy', '3000 Power=ON busy', '6000 Power=ON busy', '9000 Power=ON busy',
-    '12000 Power=ON busy', '15000 Power=ON busy', '18000 Power=ON busy', '21000 Power=ON',
-    '21000 Input=hdmi1 busy', '24000 Input=hdmi1 busy', '27000 Input=hdmi1 busy', '30000 Input=hdmi1 busy',
-    '33000 Input=hdmi1 busy', '36000 Input=hdmi1']);
-  assert.deepEqual(r.sent.filter(line => line.includes('?')), ['0 Power?OFF', '21000 Input?hdmi2']);
+  assert.deepEqual(r.writes(), ['0 Power=ON busy', '3000 Power=ON busy', '6000 Power=ON busy', '10000 Power=ON busy',
+    '15000 Power=ON busy', '20000 Power=ON',
+    '20000 Input=hdmi1 busy', '23000 Input=hdmi1 busy', '26000 Input=hdmi1 busy', '30000 Input=hdmi1 busy',
+    '35000 Input=hdmi1']);
+  assert.deepEqual(r.sent.filter(line => line.includes('?')), ['0 Power?OFF', '20000 Input?hdmi2']);
   assert(r.endpoint().pathReady); assert.deepEqual(r.endpoint().failures, {});
   assert.equal(r.device.status, 'on'); assert.equal(r.device.input, 'hdmi1');
   assert.equal(r.coordinator.snapshot().resources.Power.retry, null);
@@ -1348,14 +1360,19 @@ test('a busy retry never goes past the deadline: the goal fails at once instead,
     + 'waiting=Power:unverified,Input:unverified cleanup=- failed=Power:device-busy']);
 });
 
-test('a busy answer without a usable retryAfterMs is retried no sooner than 1 s, never in a loop', () => {
+test('a busy answer without a usable retryAfterMs backs off exponentially up to 5 s and is capped in count', () => {
   for (const busy of [null, 0, -5, 1]) {
     const r = theater({config: patient(10000, null), hidden: true, busy, device: {status: 'cooling', until: 1e9}});
     r.request('Movie'); r.run(20000);
     const times = r.writes().map(line => Number(line.split(' ')[0]));
-    assert.deepEqual(times, [0, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000], `${busy}: ${r.sent.join()}`);
+    assert.deepEqual(times, [0, 1000, 3000, 7000], `${busy}: ${r.sent.join()}`);
     assert.equal(r.endpoint().failures.Power, 'device-busy');
   }
+  // Persistently busy across a long deadline stops at the retry cap instead of spamming fsyncs.
+  const long = theater({config: patient(300000, null), hidden: true, busy: 1000, device: {status: 'cooling', until: 1e9}});
+  long.request('Movie'); long.run(300000);
+  assert.equal(long.writes().length, 21); // initial write + 20 retries
+  assert.equal(long.endpoint().failures.Power, 'device-busy');
 });
 
 test('a write that never reached the device is retried only when its outcome says transient', () => {
@@ -1507,6 +1524,191 @@ test('independence must be a boolean', () => {
     const config = descriptor(); config.resources.D1.independent = value;
     assert.throws(() => createCoordinator(config, deps), /^Error: invalid lifecycle independence: D1/, String(value));
   }
+});
+
+test('journal stores descriptorDigest instead of full descriptor, saves descriptor once, and coalesces writes per pump', () => {
+  const config = descriptor();
+  let saved = null, savedText = null, saves = 0, descriptorSaves = 0;
+  const pending = [];
+  const store = {
+    load: () => clone(saved),
+    saveDescriptor(digest, text) {
+      descriptorSaves += 1;
+      savedText = text;
+      assert.match(digest, /^[0-9a-f]{64}$/);
+      assert(text.length > 100);
+    },
+    save(value) { saves += 1; saved = clone(value); },
+  };
+  const c = createCoordinator(config, {
+    instanceId: 'coalesce', now: () => 1000, store,
+    dispatch: (op, report) => pending.push({op, report}),
+    probe: (op, report) => pending.push({op, report}),
+    setTimer: () => 1, clearTimer() {},
+  });
+  c.beginBatch();
+  c.request('Desk', 'SharedComputer');
+  c.request('Media', 'SharedComputer');
+  c.endBatch(true);
+  // Three distinct device slots (a, display, receiver) dispatched in one pump(), persisted in ONE journal save!
+  assert.equal(pending.length, 3, `expected 3 ops dispatched, got ${pending.length}`);
+  assert.equal(saves, 1, 'pump must coalesce journal persistence to one save');
+  assert.equal(descriptorSaves, 1, 'descriptor is saved once per digest');
+  assert(!('descriptor' in saved), 'journal must not embed full descriptor JSON');
+  assert.match(saved.descriptorDigest, /^[0-9a-f]{64}$/);
+  // Subsequent mutations never re-save the immutable descriptor.
+  c.observe('UnusedHDMI', '0');
+  assert.equal(descriptorSaves, 1);
+  // Restoring from digest-only journal succeeds cleanly; legacy journal with embedded descriptor still restores.
+  const reloaded = createCoordinator(config, {
+    instanceId: 'reloaded', now: () => 2000, store: {load: () => clone(saved), save() {}},
+    dispatch() {}, probe() {}, setTimer: () => 1, clearTimer() {},
+  });
+  assert.equal(reloaded.snapshot().fault, null);
+  assert.equal(reloaded.snapshot().endpoints.Desk.choice, 'SharedComputer');
+  const legacySaved = clone(saved);
+  delete legacySaved.descriptorDigest;
+  legacySaved.descriptor = savedText;
+  const fromLegacy = createCoordinator(config, {
+    instanceId: 'legacy', now: () => 2000, store: {load: () => clone(legacySaved), save() {}},
+    dispatch() {}, probe() {}, setTimer: () => 1, clearTimer() {},
+  });
+  assert.equal(fromLegacy.snapshot().fault, null);
+  assert.equal(fromLegacy.snapshot().endpoints.Desk.choice, 'SharedComputer');
+  c.close(); reloaded.close(); fromLegacy.close();
+});
+
+test('yieldEndpoint clears releases and ownerRelease ignores yielded owners so a follower never parks a yielded leader output', () => {
+  const r = synced();
+  // Leader starts Off (recording releases: {LeaderOut: '8'}), then is yielded
+  // by a manual takeover before Follower releases its lease.
+  r.coordinator.request('Leader', 'Off');
+  assert.deepEqual(r.coordinator.takeover('Screen', 'ON'), ['Leader']);
+  assert(r.coordinator.snapshot().endpoints.Leader.yielded);
+  r.drain();
+  r.writes.length = 0;
+  r.coordinator.request('Follower', 'S');
+  r.drain();
+  assert(!r.writes.includes('LeaderOut=8'), `must not park yielded leader output: ${r.writes.join()}`);
+  assert.equal(r.actual.LeaderOut, '1');
+});
+
+test('request preserves another active room busy retry timer on a shared resource', () => {
+  const config = descriptor();
+  const r = rig({config, actual: {APower: 'OFF', Zone: 'OFF', Display: 'ON', D1: 'H2', D2: 'H2'}});
+  r.coordinator.request('Desk', 'SharedComputer');
+  r.drain(op => op.resource === 'APower' && op.kind === 'write');
+  const write = r.take(op => op.resource === 'APower' && op.kind === 'write');
+  assert(write); assert(r.begin(write));
+  write.report({type: 'terminal', token: write.operation.token, admitted: true, busy: true, reason: 'device_busy', retryAfterMs: 4000});
+  assert.equal(r.coordinator.snapshot().resources.APower.retry.at, 4000);
+  // Media also requests SharedComputer (requiring APower=ON): must NOT wipe Desk's retry timer.
+  r.coordinator.request('Media', 'SharedComputer');
+  assert.equal(r.coordinator.snapshot().resources.APower.retry.at, 4000);
+  assert(!r.pending.some(e => e.operation.resource === 'APower' && e.operation.kind === 'write'));
+  r.advance(4000);
+  assert(r.pending.some(e => e.operation.resource === 'APower' && e.operation.kind === 'write'));
+});
+
+test('preserve lease sets leases[port]=null so manual change on unused preserved port does not yield endpoint', () => {
+  const r = rig(); r.seed();
+  r.coordinator.request('Desk', 'Preserve'); r.drain();
+  assert.equal(r.coordinator.snapshot().endpoints.Desk.leases.D2, null);
+  // Another endpoint still cannot claim exclusive preserved port D2.
+  const config = descriptor();
+  config.endpoints.Media.choices.TakeD2 = {requirements: {D2: 'H1', CPower: 'ON'}};
+  const r2 = rig({config}); r2.seed();
+  r2.coordinator.request('Desk', 'Preserve'); r2.drain();
+  assert.throws(() => r2.coordinator.request('Media', 'TakeD2'), /resource conflict/);
+  // Manual takeover on preserved D2 does NOT yield Desk.
+  const affected = r.coordinator.takeover('D2', 'H1', true);
+  assert.deepEqual(affected, []);
+  assert.equal(r.coordinator.snapshot().endpoints.Desk.yielded, false);
+  assert(Object.hasOwn(r.coordinator.snapshot().holds, 'manual:D2'));
+});
+
+test('deferManual holds manual command targeting a settling property until settled or capped, and journals it', () => {
+  let time = 0, seq = 0, saved = null;
+  const ready = [], pending = [], timers = new Map();
+  const config = theaterDescriptor({ON: 60000, OFF: 30000});
+  const make = () => createCoordinator(config, {
+    instanceId: 'defer', now: () => time,
+    store: {load: () => clone(saved), save: v => { saved = clone(v); }},
+    dispatch: (op, report) => pending.push({op, report}),
+    probe: (op, report) => pending.push({op, report}),
+    onManualReady: entry => ready.push(entry),
+    setTimer: (fn, ms) => { const id = ++seq; timers.set(id, {at: time + ms, fn}); return id; },
+    clearTimer: id => timers.delete(id),
+  });
+  let c = make();
+  c.request('Theater', 'Movie');
+  // Initial probe OFF -> write Power=ON accepted without readback -> pending settle until 60000.
+  let entry = pending.shift();
+  entry.report({type: 'sample', token: entry.op.token, value: 'OFF', fresh: true, retired: true});
+  entry = pending.shift();
+  entry.report({type: 'terminal', token: entry.op.token, admitted: true});
+  assert.equal(c.snapshot().resources.Power.pending.value, 'ON');
+  // Defer manual Power=OFF while Power is settling; hold & takeover as routing.js does.
+  c.hold('legacy-off', {resources: ['Power', 'Input'], sources: ['S']});
+  c.takeover('Power', 'OFF', true);
+  assert.equal(c.deferManual('legacy-off', 'Power', 'OFF'), true);
+  assert.equal(saved.deferredManual.Power.token, 'legacy-off');
+  assert.equal(ready.length, 0);
+  // Reload restores deferredManual with remaining cap.
+  c.close(); timers.clear(); pending.length = 0;
+  time = 10000;
+  c = make();
+  assert.equal(c.snapshot().deferredManual.Power.token, 'legacy-off');
+  assert.equal(c.snapshot().deferredManual.Power.until, 70000);
+  // When Power finishes settling (stable ON read), deferred manual command releases immediately.
+  c.observe('Power', 'ON'); // triggers pump -> settle probe
+  const probe = pending.find(e => e.op.phase === 'settle' && e.op.resource === 'Power');
+  assert(probe, 'expected settle probe for deferred manual');
+  probe.report({type: 'sample', token: probe.op.token, value: 'ON', fresh: true, retired: true});
+  assert.equal(ready.length, 1);
+  assert.equal(ready[0].token, 'legacy-off');
+  assert(!Object.hasOwn(c.snapshot().deferredManual, 'Power'));
+  c.close();
+});
+
+test('Stage 2b route outcome status, waiting, reasons, and quarantines summary', () => {
+  const r = rig();
+  assert.equal(r.coordinator.snapshot().endpoints.Desk.status, 'done');
+  r.coordinator.request('Desk', 'SharedComputer');
+  let desk = r.coordinator.snapshot().endpoints.Desk;
+  assert.equal(desk.status, 'running');
+  assert(desk.waiting.length > 0 && desk.waiting.every(w => w.includes(':')), desk.waiting.join());
+  assert.deepEqual(desk.reasons, []);
+  r.drain();
+  desk = r.coordinator.snapshot().endpoints.Desk;
+  assert.equal(desk.status, 'done');
+  assert.deepEqual(desk.waiting, []);
+  assert.deepEqual(desk.reasons, []);
+  // Failure exposes sorted unique reasons + quarantine summary.
+  r.coordinator.request('Desk', 'LocalComputer');
+  r.drain(op => op.resource === 'BPower' && op.kind === 'write');
+  const write = r.take(op => op.resource === 'BPower' && op.kind === 'write');
+  assert(r.begin(write));
+  write.report({type: 'uncertain', token: write.operation.token, reason: 'provider_outcome_unknown'});
+  assert.deepEqual(r.coordinator.quarantines(), [{device: 'b', slot: 'device', reason: 'provider_outcome_unknown'}]);
+  r.advance(10000);
+  desk = r.coordinator.snapshot().endpoints.Desk;
+  assert.equal(desk.status, 'failed');
+  assert(desk.reasons.includes('deadline'));
+  // Takeover transitions endpoint to yielded.
+  r.coordinator.takeover('D1', 'H1');
+  assert.equal(r.coordinator.snapshot().endpoints.Desk.status, 'yielded');
+});
+
+test('validateClaims rejects conflicts without mutating state or clearing manual holds', () => {
+  const r = synced();
+  r.coordinator.hold('manual:Zone', {resources: ['Zone'], sources: []});
+  assert.throws(() => r.coordinator.validateClaims([['Leader', 'T']]), /lifecycle resource conflict: LeaderOut/);
+  assert.equal(r.coordinator.snapshot().endpoints.Leader.choice, 'S');
+  assert(Object.hasOwn(r.coordinator.snapshot().holds, 'manual:Zone'));
+  // Sequence where follower releases lease BEFORE leader moves validates cleanly!
+  assert.equal(r.coordinator.validateClaims([['Follower', 'S'], ['Leader', 'T']]), true);
+  assert.equal(r.coordinator.snapshot().endpoints.Follower.choice, 'S@Leader', 'validateClaims must not mutate state');
 });
 
 let failed = 0;

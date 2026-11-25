@@ -276,10 +276,29 @@ class StreamMetering(TransactionTestCase):
         self.assertEqual((peer._value.get(), total._value.get()), (before[0] + 1, before[1] + 1))
 
     def test_without_a_hub_the_subscription_is_closed(self):
-        with patch.object(hubs, "_hubs", {}):
+        from oh_identity import music_hub
+        with patch.object(hubs, "_hubs", {}), patch.object(music_hub, "_hubs", {}):
             samples = hub_samples()
         self.assertEqual(samples[("thermite_gateway_upstream_state", (("state", "closed"),))], 1)
         self.assertEqual(samples[("thermite_gateway_upstream_failures_total", ())], 0)
+
+    def test_gateway_metrics_include_telemetry_route_wide_buckets_and_music_hub(self):
+        from oh_identity import music_hub
+        self.assertEqual(metrics.REQUEST_BUCKETS, (.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 15, 20))
+        self.assertIn("telemetry", metrics.ROUTES)
+        self.assertEqual(metrics.route_class("/api/v1/telemetry"), "telemetry")
+
+        class FakeMusicHub:
+            def status(self):
+                return {"upstream": "serving", "upstream_failures": 2, "events": 7, "frames": 11, "overflows": 1}
+
+        with patch.object(hubs, "_hubs", {}), patch.object(music_hub, "_hubs", {object(): FakeMusicHub()}):
+            samples = hub_samples()
+        self.assertEqual(samples[("thermite_gateway_upstream_state", (("state", "serving"),))], 1)
+        self.assertEqual(samples[("thermite_gateway_upstream_failures_total", ())], 2)
+        self.assertEqual(samples[("thermite_gateway_upstream_events_total", ())], 7)
+        self.assertEqual(samples[("thermite_gateway_sse_frames_total", ())], 11)
+        self.assertEqual(samples[("thermite_gateway_sse_overflows_total", ())], 1)
 
     def test_hub_join_failure_does_not_leak_open_stream_gauges(self):
         meta = {"view": "home", "origin": "https", "principal": "guest", "http_version": "2", "peer": "leak-test"}

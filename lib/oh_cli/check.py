@@ -82,7 +82,16 @@ def unreadable(error: inventory.ConfigError) -> int:
     return 2 if isinstance(error, inventory.Unreadable) else 1
 
 
-def built(house_path: Path) -> tuple[dict, int]:
+def _built_from_conf(house, conf, versions: dict, host: dict) -> tuple[dict, int]:
+    import oh_deploy as deploy
+    import oh_metrics as metrics
+    files = conf.render()
+    monitoring = metrics.render(house, host, versions, conf=conf)
+    units = deploy.render_units(versions, host)
+    return {"conf": len(files), "metrics": len(monitoring), "units": len(units)}, 0
+
+
+def built(house_path: Path, house=None) -> tuple[dict, int]:
     """Build everything thermite generate would write for the site, and
     write none of it: (the count of each, 0), or ({"error": ...}, 1) with
     what stopped it, as it would stop thermite generate (2: a file it could
@@ -90,10 +99,11 @@ def built(house_path: Path) -> tuple[dict, int]:
     import oh_deploy as deploy
     from oh_cli import generate
     from oh_conf import House
-    try:
-        house = House.load(house_path)
-    except inventory.ConfigError as error:
-        return failed(error)
+    if house is None:
+        try:
+            house = House.load(house_path)
+        except inventory.ConfigError as error:
+            return failed(error)
     try:
         versions, host = deploy.load(oh_cli.AREA)
     except OSError as error:
@@ -105,6 +115,9 @@ def built(house_path: Path) -> tuple[dict, int]:
     except inventory.ConfigError as error:
         return failed(error)
     return {"conf": len(files), "metrics": len(monitoring), "units": len(units)}, 0
+
+
+_DEFAULT_BUILT = built
 
 
 def said_built(report: dict) -> None:
@@ -133,9 +146,44 @@ def main(argv: list[str] | None = None) -> int:
     human = not arguments.json
     report: dict = {}
     codes = [0]
+    loaded_house = None
+    shared_conf = None
+    shared_disagreement = None
+    shared_deploy: tuple[dict, dict] | None = None
     if "house" in chosen:
         try:
-            report["house"] = validate.checked(House.load(arguments.house))
+            loaded_house = House.load(arguments.house)
+            unpatched = getattr(validate.checked, "__module__", None) == "oh_cli.validate" and built is _DEFAULT_BUILT
+            if "build" in chosen and unpatched:
+                import oh_deploy as deploy
+                import oh_metrics as metrics
+                import oh_render as render
+                try:
+                    shared_deploy = deploy.load(oh_cli.AREA)
+                except (OSError, ValueError):
+                    shared_deploy = None
+                if shared_deploy is not None:
+                    versions, host = shared_deploy
+                    try:
+                        shared_conf = render.build(loaded_house, host=host, versions=versions)
+                        problems: list[str] = []
+                    except render.Disagreement as error:
+                        shared_disagreement = error
+                        shared_conf, problems = error.conf, error.problems
+                    things, items, _ = render.objects(shared_conf)
+                    notes = [metrics.unobserved_text(*found) for found in metrics.unobserved(loaded_house, shared_conf)]
+                    report["house"] = {
+                        "devices": len(loaded_house.devices),
+                        "items": len(items),
+                        "notes": notes,
+                        "problems": problems,
+                        "status": "ok" if not problems else "problems",
+                        "things": len(things),
+                    }
+                else:
+                    report["house"] = validate.checked(loaded_house)
+            else:
+                report["house"] = validate.checked(loaded_house)
         except inventory.ConfigError as error:
             report["house"] = validate.invalid(error)
             if human:
@@ -148,7 +196,18 @@ def main(argv: list[str] | None = None) -> int:
             if human:
                 validate.said(report["house"], PROGRAM)
     if "build" in chosen:
-        report["build"], code = built(arguments.house)
+        if shared_disagreement is not None and built is _DEFAULT_BUILT:
+            report["build"], code = failed(shared_disagreement)
+        elif shared_conf is not None and shared_deploy is not None and built is _DEFAULT_BUILT:
+            versions, host = shared_deploy
+            try:
+                report["build"], code = _built_from_conf(loaded_house, shared_conf, versions, host)
+            except inventory.ConfigError as error:
+                report["build"], code = failed(error)
+        elif loaded_house is not None and built is _DEFAULT_BUILT:
+            report["build"], code = built(arguments.house, loaded_house)
+        else:
+            report["build"], code = built(arguments.house)
         codes.append(code)
         if human:
             said_built(report["build"])

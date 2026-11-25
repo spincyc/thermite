@@ -67,7 +67,7 @@ class Rule(unittest.TestCase):
                                      str(vrroom_telnet.SOURCE), str(scripts.shared(directory, [vrroom_telnet.NAME])),
                                      str(_io.SOURCE)], capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(json.loads(result.stdout)["passed"], 14)
+        self.assertEqual(json.loads(result.stdout)["passed"], 17)
 
 
 class Rendering(unittest.TestCase):

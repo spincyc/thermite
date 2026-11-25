@@ -107,12 +107,12 @@ test('a choice confirmed by its readback is observed once, in its bucket', () =>
   assert.equal(w.source('den'), 'tv');
   w.apply('den_tv_input', 'hdmi2'); w.apply('den_tv_input', 'hdmi1');  // later readbacks
   const m = flush(w);
-  assert.deepEqual(m.route, { den: { confirmed: histogram([0, 1, 1, 1, 1, 1, 1], 1, 1.5) } });
+  assert.deepEqual(m.route, { den: { confirmed: histogram([0, 1, 1, 1, 1, 1, 1, 1, 1, 1], 1, 1.5) } });
   assert.deepEqual(Object.keys(m).sort(), ['failures', 'operations', 'resends', 'route', 'version']);
   assert.equal(m.version, 1);
 });
 
-test('a held choice the readback never shows counts its deadline', () => {
+test('a held choice the readback never shows counts its deadline without observing histogram buckets', () => {
   const w = load({ states: { den_tv_power: 'OFF' } });
   assert.equal(w.source('den'), 'off');
   w.command('den', 'tv');
@@ -120,7 +120,7 @@ test('a held choice the readback never shows counts its deadline', () => {
   assert.equal(w.timers.size, 1, 'only the hold waits: nothing is observed before the deadline');
   w.advance(1);
   assert.equal(w.source('den'), 'off');
-  assert.deepEqual(flush(w).route, { den: { deadline: histogram([0, 0, 0, 0, 1, 1, 1], 1, 15) } });
+  assert.deepEqual(flush(w).route, { den: { deadline: histogram([0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 1, 0) } });
 });
 
 test('a newer choice supersedes, and an immediate readback confirms at once', () => {
@@ -130,7 +130,7 @@ test('a newer choice supersedes, and an immediate readback confirms at once', ()
   w.command('den', 'off');
   assert.equal(w.source('den'), 'off');
   assert.deepEqual(flush(w).route, { den: {
-    superseded: histogram([0, 0, 1, 1, 1, 1, 1], 1, 3), confirmed: histogram([1, 1, 1, 1, 1, 1, 1], 1, 0) } });
+    superseded: histogram([0, 0, 1, 1, 1, 1, 1, 1, 1, 1], 1, 3), confirmed: histogram([1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 1, 0) } });
 });
 
 test('a choice still open after its deadline counts the deadline when a newer one comes', () => {
@@ -141,7 +141,7 @@ test('a choice still open after its deadline counts the deadline when a newer on
   w.command('office', 'tv');
   w.apply('matrix_output2_input', '1');
   assert.deepEqual(flush(w).route.office, {
-    deadline: histogram([0, 0, 0, 0, 1, 1, 1], 1, 15), confirmed: histogram([1, 1, 1, 1, 1, 1, 1], 1, 0) });
+    deadline: histogram([0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 1, 0), confirmed: histogram([1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 1, 0) });
 });
 
 test('only resend rounds that send are counted', () => {
@@ -156,7 +156,7 @@ test('only resend rounds that send are counted', () => {
   assert.equal(w.sent.filter(([name]) => name === 'den_tv_input').length, 2, 'later rounds send nothing');
   const m = flush(w);
   assert.deepEqual(m.resends, { den: 1 });
-  assert.deepEqual(m.route, { den: { confirmed: histogram([0, 0, 0, 1, 1, 1, 1], 1, 6) } });
+  assert.deepEqual(m.route, { den: { confirmed: histogram([0, 0, 0, 1, 1, 1, 1, 1, 1, 1], 1, 6) } });
 });
 
 test('posts only changes, at most once per 10 s, the last change by a timer', () => {
@@ -336,6 +336,75 @@ test('outcome and reason names are fixed, few and exporter-safe', () => {
   f.broker.events.offer(JSON.stringify({ type: 'telemetry', key: 'switch', reason: 'free text' }));
   f.drain();
   assert.deepEqual(f.bridge.telemetry(), { operations: { other: 1 }, failures: {} });
+});
+
+test('lifecycle telemetry uses route declared deadline, widened buckets up to 360 s, and exports quarantines', () => {
+  const w = { clock: 1000, items: new Map(), rules: {}, timers: new Map(), serial: 0, logs: [], posts: [] };
+  const states = { den_tv_power: 'OFF', den_tv_input: 'hdmi1', office_tv_power: 'ON', office_tv_input: 'hdmi1',
+    matrix_output1_input: '9', matrix_output2_input: '9', house_routing_io_events: 'NULL', [METRICS]: 'NULL' };
+  for (const r of Object.values(ROOMS)) { states[r.item] = 'NULL'; states[r.diagnosis.item] = 'NULL'; }
+  for (const [name, st] of Object.entries(states)) {
+    w.items.set(name, { state: st, sendCommand() {}, postUpdate(v) { w.posts.push([name, String(v)]); this.state = String(v); } });
+  }
+  const table = { rooms: ROOMS, edid: null, off: 'off', holdMs: 15000, reads: {},
+    lifecycle: { resources: {}, io: { wake: 'house_routing_io_events' }, consumers: [] } };
+  const executor = { transaction: fn => fn(), invalidateStale() {}, dispatch() {}, probe() {}, authorizeLegacy() {},
+    onLegacy() {}, events() {}, telemetry: () => ({ operations: {}, failures: {} }),
+    quarantines: () => [{ device: 'matrix', slot: 'matrix_input1_edid', reason: 'executor_quarantined' }] };
+  const lifecycle = { request() {}, observe() {}, snapshot: () => ({ slots: {}, holds: {}, endpoints: {} }), close() {},
+    endpointDeadlineMs: () => 240000,
+    quarantines: () => [{ device: 'den_tv', slot: 'device', reason: 'provider_outcome_unknown' }] };
+  const modules = {
+    openhab: {
+      items: { getItem: (name, nullable) => w.items.get(name) || (nullable ? null : assert.fail(name)) },
+      rules: { JSRule(rule) { w.rules[rule.id] = rule; } },
+      triggers: { ItemCommandTrigger: name => ({ kind: 'command', name }), ItemStateChangeTrigger: name => ({ kind: 'change', name }),
+        ItemStateUpdateTrigger: name => ({ kind: 'update', name }) },
+    },
+    'thermite-routing-io': { create: () => executor, nativeJournal: () => ({ load: () => null, save() {}, path: '/j' }) },
+    'thermite-routing-lifecycle': { createCoordinator: () => lifecycle },
+    '@runtime': { lifecycleTracker: { addDisposeHook() {} } },
+  };
+  const ctx = vm.createContext({
+    require: n => modules[n] || assert.fail(n),
+    console: { info() {}, warn() {}, error() {} },
+    setTimeout: (fn, ms) => { const id = ++w.serial; w.timers.set(id, { at: w.clock + ms, fn }); return id; },
+    clearTimeout: id => w.timers.delete(id),
+    Date: { now: () => w.clock }, JSON, Map, Set, Object, String, Number, Error, Math, Array,
+  });
+  vm.runInContext(routingSource.replace('const TABLE = null;', 'const TABLE = ' + JSON.stringify(table) + ';'), ctx);
+  const advance = ms => {
+    const end = w.clock + ms;
+    for (;;) {
+      const due = [...w.timers].filter(([, t]) => t.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+      if (!due) break;
+      w.timers.delete(due[0]); w.clock = Math.max(w.clock, due[1].at); due[1].fn();
+    }
+    w.clock = end;
+  };
+  const apply = (name, val) => {
+    const it = w.items.get(name), prev = it.state;
+    if (prev === val) return;
+    it.state = val;
+    for (const rule of Object.values(w.rules))
+      if (rule.triggers.some(t => t.kind === 'change' && t.name === name)) rule.execute({ itemName: name, oldState: prev, newState: val });
+  };
+  w.rules.routing_den_command.execute({ receivedCommand: 'tv' });
+  // 15 s hold expires -> readback shows 'off', but declared deadline is 240 s so NOT counted as deadline!
+  advance(20000);
+  let m = JSON.parse(w.items.get(METRICS).state);
+  assert.deepEqual(m.route, {}, 'must not expire at 15 s RECENT_MS when declared deadline is 240 s');
+  // Device confirms at 180 s (200 s total) -> lands in 240 s and 360 s buckets!
+  advance(180000);
+  apply('den_tv_power', 'ON');
+  apply('matrix_output1_input', '1');
+  advance(10000);
+  m = JSON.parse(w.items.get(METRICS).state);
+  assert.deepEqual(m.route, { den: { confirmed: histogram([0, 0, 0, 0, 0, 0, 0, 0, 1, 1], 1, 200) } });
+  assert.deepEqual(m.quarantines, [
+    { device: 'den_tv', slot: 'device', reason: 'provider_outcome_unknown' },
+    { device: 'matrix', slot: 'matrix_input1_edid', reason: 'executor_quarantined' },
+  ]);
 });
 
 process.stdout.write(JSON.stringify({ passed: tests.length, tests }));

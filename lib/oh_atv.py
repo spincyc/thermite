@@ -93,6 +93,8 @@ MAX_BODY = 4096
 MAX_HEAD = 8192
 #: How long a client may take to send its request.
 READ_TIMEOUT = 10.0
+#: How long a keep-alive connection may sit idle waiting for its next request.
+IDLE_TIMEOUT = 30.0
 
 NOT_PAIRED = "Not paired yet. Pair it on the Pairing page."
 NO_ANSWER = "The Apple TV did not answer. Is it on and on the network?"
@@ -175,6 +177,8 @@ class Device:
         self.pairing: Any = None
         self.pairing_since = 0.0
         self.error: str | None = None
+        #: Serializes power commands (always acquired before `lock`).
+        self.power_lock = asyncio.Lock()
         #: Serializes connecting, commands and pairing for this Apple TV.
         self.lock = asyncio.Lock()
         self.last_attempt = -math.inf
@@ -220,14 +224,21 @@ class Bridge:
         self.wall_clock = wall_clock
         self.devices: dict[str, Device] = {}
         self._tasks: set[asyncio.Future] = set()
+        self._clients: set[asyncio.StreamWriter] = set()
+        self._credentials: dict[str, str | None] = {}
 
     # -- state ---------------------------------------------------------------
 
     def _note(self, device: Device, message: str) -> None:
         self.log(f"{device.id}: {message}")
 
+    def _get_credentials(self, ident: str) -> str | None:
+        if ident not in self._credentials:
+            self._credentials[ident] = read_credentials(self.secrets, ident)
+        return self._credentials[ident]
+
     def paired(self, ident: str) -> bool:
-        return read_credentials(self.secrets, ident) is not None
+        return self._get_credentials(ident) is not None
 
     def status(self, device: Device) -> dict[str, Any]:
         return {"id": device.id, "host": device.host, "paired": self.paired(device.id),
@@ -325,13 +336,14 @@ class Bridge:
             return False
         seen = set()
         native_rejection = False
-        while error is not None and id(error) not in seen:
-            seen.add(id(error))
-            if isinstance(error, (TimeoutError, OSError)):
+        current: BaseException | None = error
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            if isinstance(current, (TimeoutError, OSError)):
                 return False
-            if isinstance(error, rejected):
+            if isinstance(current, rejected):
                 native_rejection = True
-            error = error.__cause__
+            current = current.__cause__
         return native_rejection
 
     # -- connecting ----------------------------------------------------------
@@ -350,7 +362,9 @@ class Bridge:
     async def _connect(self, device: Device) -> None:
         """Open the device's connection; the caller holds its lock."""
         device.last_attempt = self.clock()
-        credentials = read_credentials(self.secrets, device.id)
+        if device.id not in self._credentials:
+            self._credentials[device.id] = await asyncio.to_thread(read_credentials, self.secrets, device.id)
+        credentials = self._credentials[device.id]
         if credentials is None:
             raise HttpError(409, NOT_PAIRED, terminal=True)
         try:
@@ -436,7 +450,7 @@ class Bridge:
         # Includes time queued for this device's lock and any reconnect.
         started = self.clock()
         self._note(device, f"power {word} command start; at_ms={int(self.wall_clock() * 1000)}")
-        async with device.lock:
+        async with device.power_lock, device.lock:
             await self._run(device, f"power {word}",
                             lambda atv: atv.power.turn_on() if on else atv.power.turn_off())
             # An acknowledged Sleep/Wake request is not a standby/wake report.
@@ -486,44 +500,57 @@ class Bridge:
         submitted = False
         try:
             async with asyncio.timeout(self.connect_timeout):
-                async with device.lock:
-                    if not self.paired(device.id):
-                        raise HttpError(409, NOT_PAIRED)
-                    if device.atv is None:
-                        await self._connect(device)
-                    if kind == "probe":
+                if kind == "probe":
+                    async with device.lock:
+                        if not self.paired(device.id):
+                            raise HttpError(409, NOT_PAIRED)
+                        if device.atv is None:
+                            await self._connect(device)
                         await self._fresh_power(device)
-                    else:
-                        target = "on" if on else "off"
-                        fresh = False
-                        try:
-                            await self._fresh_power(device)
-                            fresh = True
-                        except Exception:
-                            pass
-                        if not fresh or device.power != target:
-                            sequence = device.native_sequence
-                            submitted = True
-                            await self._run(device, f"lifecycle power {target}",
-                                            lambda atv: atv.power.turn_on() if on else atv.power.turn_off())
-                            device.commanded_power = target
-                            device.power_command_ack_at = int(self.wall_clock() * 1000)
+                else:
+                    target = "on" if on else "off"
+                    async with device.power_lock:
+                        wait_for_push = False
+                        sequence = 0
+                        atv = None
+                        async with device.lock:
+                            if not self.paired(device.id):
+                                raise HttpError(409, NOT_PAIRED)
+                            if device.atv is None:
+                                await self._connect(device)
+                            fresh = False
                             try:
                                 await self._fresh_power(device)
+                                fresh = True
                             except Exception:
                                 pass
-                            while device.native_sequence <= sequence or device.power != target:
-                                if device.atv is None:
-                                    raise HttpError(502, NO_ANSWER)
-                                device.power_event.clear()
-                                # No await separates this condition from clear;
-                                # a subsequent push wakes the finite wait.
-                                if device.native_sequence > sequence and device.power == target:
-                                    break
-                                await device.power_event.wait()
-                    return 200, self.status(device) | {"ok": True, "error": None,
-                        "operation": operation, "terminal": True, "submitted": submitted,
-                        "native_sequence": device.native_sequence}
+                            if not fresh or device.power != target:
+                                sequence = device.native_sequence
+                                submitted = True
+                                await self._run(device, f"lifecycle power {target}",
+                                                lambda conn: conn.power.turn_on() if on else conn.power.turn_off())
+                                device.commanded_power = target
+                                device.power_command_ack_at = int(self.wall_clock() * 1000)
+                                try:
+                                    await self._fresh_power(device)
+                                except Exception:
+                                    pass
+                                atv = device.atv
+                                wait_for_push = device.native_sequence <= sequence or device.power != target
+                        # Release device.lock during long push waits so keys/apps/polls are
+                        # not stalled, while device.power_lock keeps power commands serialized.
+                        while wait_for_push and (device.native_sequence <= sequence or device.power != target):
+                            if device.atv is None or device.atv is not atv:
+                                raise HttpError(502, NO_ANSWER)
+                            device.power_event.clear()
+                            # No await separates this condition from clear;
+                            # a subsequent push wakes the finite wait.
+                            if device.native_sequence > sequence and device.power == target:
+                                break
+                            await device.power_event.wait()
+                return 200, self.status(device) | {"ok": True, "error": None,
+                    "operation": operation, "terminal": True, "submitted": submitted,
+                    "native_sequence": device.native_sequence}
         except Exception as error:
             message = error.message if isinstance(error, HttpError) else (
                 "The native power operation timed out; its outcome is uncertain." if isinstance(error, TimeoutError)
@@ -594,12 +621,14 @@ class Bridge:
             if not isinstance(credentials, str) or not credentials.strip():
                 self._note(device, f"pairing failed: {reason}")
                 raise HttpError(422, REJECTED, terminal=finished and closed)
+            cleaned = credentials.strip()
             try:
-                write_credentials(self.secrets, device.id, credentials.strip())
+                await asyncio.to_thread(write_credentials, self.secrets, device.id, cleaned)
             except OSError as error:
                 self._note(device, f"pairing succeeded but could not be stored: {error.strerror}")
                 raise HttpError(500, f"Paired, but the helper could not store the pairing: {error.strerror}. "
                                      "Fix that and pair again.") from None
+            self._credentials[device.id] = cleaned
             # The open connection, if any, was made with the old credential.
             self._drop(device)
             device.last_attempt = self.clock()
@@ -609,6 +638,9 @@ class Bridge:
 
     async def close(self) -> None:
         """Close every connection and pairing and stop background work."""
+        for writer in list(self._clients):
+            with contextlib.suppress(Exception):
+                writer.close()
         for device in self.devices.values():
             handler = self._take_pairing(device)
             if handler is not None:
@@ -635,7 +667,8 @@ class Bridge:
             if method != "GET":
                 raise HttpError(405, f"{method} is not allowed here; use GET.", allow="GET")
             query = urllib.parse.parse_qs(split.query)
-            return 200, self.look(ident, check_host((query.get("host") or [None])[-1]))
+            hosts = query.get("host")
+            return 200, self.look(ident, check_host(hosts[-1] if hosts else None))
         action = urllib.parse.unquote(segments[3])
         if action not in ("key", "power", "app", "pair", "lifecycle"):
             raise HttpError(404, f"No such path: {split.path[:100]}")
@@ -705,75 +738,94 @@ def parse_body(body: bytes) -> dict[str, Any]:
     return data
 
 
-async def read_request(reader: asyncio.StreamReader) -> tuple[str, str, bytes]:
-    """(method, target, body) of one HTTP/1.x request: Content-Length bodies only."""
-    line = await reader.readline()
+async def read_request(reader: asyncio.StreamReader, *, first_timeout: float = READ_TIMEOUT) -> tuple[str, str, bytes, bool]:
+    """(method, target, body, keep_alive) of one HTTP/1.x request: Content-Length bodies only."""
+    line = await asyncio.wait_for(reader.readline(), first_timeout)
     if not line:
         raise ConnectionError("closed before a request")
     parts = line.decode("latin-1").rstrip("\r\n").split(" ")
     if len(parts) != 3 or not parts[2].startswith("HTTP/1."):
         raise HttpError(400, "That is not an HTTP/1.1 request.")
-    method, target = parts[0], parts[1]
+    method, target, version = parts[0], parts[1], parts[2]
     size, length = len(line), 0
-    while True:
-        header = await reader.readline()
-        size += len(header)
-        if size > MAX_HEAD:
-            raise HttpError(431, "The request headers are too large.")
-        if not header:
-            raise ConnectionError("closed in the headers")
-        if header in (b"\r\n", b"\n"):
-            break
-        name, _, value = header.decode("latin-1").partition(":")
-        name = name.strip().lower()
-        if name == "content-length":
-            try:
-                length = int(value.strip())
-            except ValueError:
-                raise HttpError(400, "Content-Length is not a number.") from None
-            if length < 0:
-                raise HttpError(400, "Content-Length is negative.")
-        elif name == "transfer-encoding":
-            raise HttpError(400, "Send the body with Content-Length, not Transfer-Encoding.")
-    if length > MAX_BODY:
-        raise HttpError(413, f"The body is larger than {MAX_BODY} bytes.")
-    return method, target, await reader.readexactly(length) if length else b""
+    connection_tokens: set[str] = set()
+    async with asyncio.timeout(READ_TIMEOUT):
+        while True:
+            header = await reader.readline()
+            size += len(header)
+            if size > MAX_HEAD:
+                raise HttpError(431, "The request headers are too large.")
+            if not header:
+                raise ConnectionError("closed in the headers")
+            if header in (b"\r\n", b"\n"):
+                break
+            name, _, value = header.decode("latin-1").partition(":")
+            name = name.strip().lower()
+            if name == "content-length":
+                try:
+                    length = int(value.strip())
+                except ValueError:
+                    raise HttpError(400, "Content-Length is not a number.") from None
+                if length < 0:
+                    raise HttpError(400, "Content-Length is negative.")
+            elif name == "transfer-encoding":
+                raise HttpError(400, "Send the body with Content-Length, not Transfer-Encoding.")
+            elif name == "connection":
+                connection_tokens.update(token.strip().lower() for token in value.split(",") if token.strip())
+        if length > MAX_BODY:
+            raise HttpError(413, f"The body is larger than {MAX_BODY} bytes.")
+        body = await reader.readexactly(length) if length else b""
+    keep_alive = ("close" not in connection_tokens) and (
+        version == "HTTP/1.1" or "keep-alive" in connection_tokens
+    )
+    return method, target, body, keep_alive
 
 
-def response(status: int, body: dict[str, Any], allow: str | None = None) -> bytes:
+def response(status: int, body: dict[str, Any], allow: str | None = None, *, keep_alive: bool = False) -> bytes:
     payload = json.dumps(body).encode("utf-8")
     head = [f"HTTP/1.1 {status} {http.HTTPStatus(status).phrase}", "Content-Type: application/json",
-            f"Content-Length: {len(payload)}", "Connection: close"]
+            f"Content-Length: {len(payload)}",
+            "Connection: keep-alive" if keep_alive else "Connection: close"]
     if allow:
         head.append(f"Allow: {allow}")
     return ("\r\n".join(head) + "\r\n\r\n").encode("latin-1") + payload
 
 
 async def _exchange(bridge: Bridge, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-    allow = None
+    bridge._clients.add(writer)
+    first = True
     try:
-        try:
-            method, target, body = await asyncio.wait_for(read_request(reader), READ_TIMEOUT)
-        except (ConnectionError, TimeoutError, asyncio.IncompleteReadError):
-            return
-        except HttpError as error:
-            status, answer = error.status, {"ok": False, "error": error.message}
-        except ValueError:
-            # StreamReader.readline past its limit.
-            status, answer = 431, {"ok": False, "error": "The request line or a header is too long."}
-        else:
+        while True:
+            allow = None
+            keep_alive = False
             try:
-                status, answer = await bridge.request(method, target, body)
+                method, target, body, keep_alive = await read_request(
+                    reader, first_timeout=READ_TIMEOUT if first else IDLE_TIMEOUT
+                )
+            except (ConnectionError, TimeoutError, asyncio.IncompleteReadError):
+                return
             except HttpError as error:
-                status, answer, allow = error.status, {"ok": False, "error": error.message}, error.allow
-            except Exception as error:
-                bridge.log(f"internal error: {type(error).__name__}: {describe(error)}")
-                status, answer = 500, {"ok": False, "error": f"The helper failed: {type(error).__name__}"}
-        writer.write(response(status, answer, allow))
-        await writer.drain()
+                status, answer, keep_alive = error.status, {"ok": False, "error": error.message}, False
+            except ValueError:
+                # StreamReader.readline past its limit.
+                status, answer, keep_alive = 431, {"ok": False, "error": "The request line or a header is too long."}, False
+            else:
+                try:
+                    status, answer = await bridge.request(method, target, body)
+                except HttpError as error:
+                    status, answer, allow = error.status, {"ok": False, "error": error.message}, error.allow
+                except Exception as error:
+                    bridge.log(f"internal error: {type(error).__name__}: {describe(error)}")
+                    status, answer, keep_alive = 500, {"ok": False, "error": f"The helper failed: {type(error).__name__}"}, False
+            first = False
+            writer.write(response(status, answer, allow, keep_alive=keep_alive))
+            await writer.drain()
+            if not keep_alive:
+                return
     except (ConnectionError, OSError):
         pass
     finally:
+        bridge._clients.discard(writer)
         writer.close()
         with contextlib.suppress(Exception):
             await writer.wait_closed()

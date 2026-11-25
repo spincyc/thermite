@@ -138,7 +138,7 @@ test('zone 2 reads its XmlStatusLite page',()=>{
 });
 test('every parse is secure: no DTD, no external entity or schema, no XInclude',()=>{
  const f=rig();f.probe('avr_main_power');f.probe('avr_zone2_input');
- assert.equal(f.parsers.length,2);for(const settings of f.parsers)assert.deepEqual(settings,SECURE);
+ assert.equal(f.parsers.length,1);for(const settings of f.parsers)assert.deepEqual(settings,SECURE);
 });
 test('a DOCTYPE, a duplicate field or a nested one is no reading',()=>{
  for(const xml of ['<?xml version="1.0"?><!DOCTYPE rx [<!ENTITY x "ON">]><rx><cmd><zone1>&x;</zone1></cmd></rx>',

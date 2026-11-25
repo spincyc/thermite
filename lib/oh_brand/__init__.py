@@ -26,7 +26,7 @@ import re
 import struct
 import zlib
 from pathlib import Path
-from typing import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 
 HERE = Path(__file__).resolve().parent
 PALETTES = HERE / "palettes"
@@ -324,7 +324,7 @@ def stroke_shapes(path: str, width: float, steps: int = 16) -> tuple[tuple[tuple
     """
     points = polygon(path, steps)
     radius = width / 2
-    shapes = []
+    shapes: list[tuple[tuple[float, float], ...]] = []
     for (x0, y0), (x1, y1) in zip(points, points[1:], strict=False):
         length = math.hypot(x1 - x0, y1 - y0)
         if not length:
@@ -482,16 +482,16 @@ def spec() -> dict:
             "samples": TERMINAL_SAMPLES, "steps": TERMINAL_STEPS, "spark": list(SPARK), "flames": list(FLAMES),
             "body": list(BODY), "glow": GLOW, "strokes": dict(STROKE_WIDTHS)}
 
-def color_depth(stream=None, env: dict | None = None) -> int:
+def color_depth(stream=None, env: Mapping[str, str] | None = None) -> int:
     """24, 8 or 0 bits: what the terminal shows, honoring NO_COLOR."""
-    env = os.environ if env is None else env
-    if env.get("NO_COLOR"):
+    mapping: Mapping[str, str] = os.environ if env is None else env
+    if mapping.get("NO_COLOR"):
         return 0
     if stream is not None and not (hasattr(stream, "isatty") and stream.isatty()):
         return 0
-    if env.get("COLORTERM", "").lower() in ("truecolor", "24bit"):
+    if mapping.get("COLORTERM", "").lower() in ("truecolor", "24bit"):
         return 24
-    return 8 if "256" in env.get("TERM", "") or env.get("TERM", "").startswith("xterm") else 0
+    return 8 if "256" in mapping.get("TERM", "") or mapping.get("TERM", "").startswith("xterm") else 0
 
 
 def xterm256(color: str) -> int:
@@ -552,7 +552,7 @@ def terminal(palette: Palette | None = None, mode: str = "dark", rows: int = 12,
         lines.append("".join(out).rstrip())
     return lines
 
-def _spans(points: list[tuple[float, float]], y: float, left: float, step: float, count: int):
+def _spans(points: Sequence[tuple[float, float]], y: float, left: float, step: float, count: int):
     """(first, end) indexes of the samples left + (i + 0.5) * step on the
     line at y that fall inside the outline, by the even-odd rule."""
     xs = []
@@ -580,33 +580,76 @@ def png(palette: Palette | None = None, mode: str = "dark", size: int = 180, sam
     return _painted(colors["surface"], tuple((colors[role], path, STROKE_WIDTHS[role]) for role, path in TORCH), size, samples)
 
 
-@functools.lru_cache(maxsize=8)
+def _edges(points: Sequence[tuple[float, float]]) -> tuple[tuple[float, float, float, float], ...]:
+    """Precomputed non-horizontal polygon edges as (yi, yj, xi, slope) for scanline crossings."""
+    edges: list[tuple[float, float, float, float]] = []
+    xj, yj = points[-1]
+    for xi, yi in points:
+        if yi != yj:
+            edges.append((yi, yj, xi, (xj - xi) / (yj - yi)))
+        xj, yj = xi, yi
+    return tuple(edges)
+
+
+def _spans_edges(edges: Sequence[tuple[float, float, float, float]], y: float, left: float, inv_step: float, count: int):
+    xs = [xi + (y - yi) * slope for yi, yj, xi, slope in edges if (yi > y) != (yj > y)]
+    if not xs:
+        return
+    xs.sort()
+    ceil = math.ceil
+    for i in range(0, len(xs), 2):
+        first = max(0, ceil((xs[i] - left) * inv_step - 0.5))
+        end = min(count, ceil((xs[i + 1] - left) * inv_step - 0.5))
+        if end > first:
+            yield first, end
+
+
+@functools.lru_cache(maxsize=64)
 def _painted(surface: str, layers: tuple[tuple[str, str, float], ...], size: int, samples: int) -> bytes:
     left, top, side = (float(value) for value in TILE)
     count = size * samples
     step = side / count
-    # With each outline's vertical extent: a line outside it crosses none of its edges.
-    shapes = [(bytes(rgb(color)), shape, min(y for _, y in shape), max(y for _, y in shape))
+    inv_step = count / side
+    # With each outline's vertical extent and precomputed non-horizontal edge slopes.
+    shapes = [(bytes(rgb(color)), _edges(shape), min(y for _, y in shape), max(y for _, y in shape))
               for color, path, width in layers for shape in stroke_shapes(path, width)]
-    back = bytes(rgb(surface))
+    back_rgb = rgb(surface)
+    back_bytes = bytes(back_rgb)
+    back_line = back_bytes * count
+    back_row = back_bytes * size
+    back_sub_sum = [back_rgb[0] * samples, back_rgb[1] * samples, back_rgb[2] * samples] * size
     total = samples * samples
+    half = total // 2
     stride = 3 * samples
-    rows = []
+    rows: list[bytes] = []
     for row in range(size):
+        row_y0 = top + (row * samples + 0.5) * step
+        row_y1 = top + ((row + 1) * samples - 0.5) * step
+        active = [shape for shape in shapes if shape[2] <= row_y1 and row_y0 < shape[3]]
+        if not active:
+            rows.append(back_row)
+            continue
         sums = [0] * (size * 3)
+        any_painted = False
         for sub in range(samples):
             y = top + (row * samples + sub + 0.5) * step
-            # Each sample's RGB, 3 bytes apiece; byte k of a pixel's sample j
-            # is at 3 * (x * samples + j) + k.
-            line = bytearray(back * count)
-            for color, points, low, high in shapes:
+            painted = False
+            line: bytearray | None = None
+            for color, edges, low, high in active:
                 if not low <= y < high:
                     continue
-                for first, end in _spans(points, y, left, step, count):
+                for first, end in _spans_edges(edges, y, left, inv_step, count):
+                    if line is None:
+                        line = bytearray(back_line)
                     line[3 * first:3 * end] = color * (end - first)
-            for k in range(3):
-                sums[k::3] = map(sum, zip(sums[k::3], *(line[3 * j + k::stride] for j in range(samples)), strict=True))
-        rows.append(bytes((value + total // 2) // total for value in sums))
+                    painted = True
+            if not painted or line is None:
+                sums = [a + b for a, b in zip(sums, back_sub_sum, strict=True)]
+            else:
+                any_painted = True
+                for k in range(3):
+                    sums[k::3] = map(sum, zip(sums[k::3], *(line[3 * j + k::stride] for j in range(samples)), strict=True))
+        rows.append(bytes((value + half) // total for value in sums) if any_painted else back_row)
     return _png(rows, size, size)
 
 
@@ -614,9 +657,19 @@ def _png(rows: list[bytes], width: int, height: int) -> bytes:
     """8-bit RGB rows as a PNG, each row filtered the way that leaves it
     the most zeros (None, Sub or Up), which deflate() packs best."""
     raw = bytearray()
-    previous = bytes(width * 3)
+    row_len = width * 3
+    zero_row = bytes(row_len)
+    previous = zero_row
     for row in rows:
-        sub = bytes((row[i] - (row[i - 3] if i >= 3 else 0)) & 255 for i in range(len(row)))
+        if row == previous:
+            if row == zero_row:
+                raw.append(0)
+                raw += zero_row
+            else:
+                raw.append(2)
+                raw += zero_row
+            continue
+        sub = row[:3] + bytes((a - b) & 255 for a, b in zip(row[3:], row, strict=False))
         up = bytes((a - b) & 255 for a, b in zip(row, previous, strict=True))
         kind, data = max(((0, row), (1, sub), (2, up)), key=lambda choice: choice[1].count(0))
         raw.append(kind)
@@ -635,22 +688,9 @@ _LENGTHS = (3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51,
 _LENGTH_BITS = (0,) * 8 + (1,) * 4 + (2,) * 4 + (3,) * 4 + (4,) * 4 + (5,) * 4 + (0,)
 
 
-def deflate(data: bytes) -> bytes:
-    """data as a zlib stream: one block of deflate's fixed codes whose only
-    matches repeat the byte before (distance 1). zlib.compress's bytes
-    change with the zlib build; these depend on the data alone."""
-    out = bytearray(b"\x78\x01")
-    pending = [0, 0]  # bits not yet written, and how many
-
-    def put(value: int, count: int) -> None:
-        pending[0] |= value << pending[1]
-        pending[1] += count
-        while pending[1] >= 8:
-            out.append(pending[0] & 255)
-            pending[0] >>= 8
-            pending[1] -= 8
-
-    def symbol(value: int) -> None:
+def _build_fixed_codes() -> tuple[tuple[int, int], ...]:
+    table = []
+    for value in range(288):
         if value < 144:
             code, count = 0x30 + value, 8
         elif value < 256:
@@ -659,29 +699,56 @@ def deflate(data: bytes) -> bytes:
             code, count = value - 256, 7
         else:
             code, count = 0xC0 + value - 280, 8
-        # A Huffman code goes out from its most significant bit.
-        put(int(format(code, f"0{count}b")[::-1], 2), count)
+        table.append((int(format(code, f"0{count}b")[::-1], 2), count))
+    return tuple(table)
+
+
+_FIXED_CODES = _build_fixed_codes()
+
+
+def deflate(data: bytes) -> bytes:
+    """data as a zlib stream: one block of deflate's fixed codes whose only
+    matches repeat the byte before (distance 1). zlib.compress's bytes
+    change with the zlib build; these depend on the data alone."""
+    out = bytearray(b"\x78\x01")
+    bits = 0
+    have = 0
+    codes = _FIXED_CODES
+
+    def put(value: int, count: int) -> None:
+        nonlocal bits, have
+        bits |= value << have
+        have += count
+        while have >= 8:
+            out.append(bits & 255)
+            bits >>= 8
+            have -= 8
 
     put(1, 1)
     put(1, 2)
     index = 0
-    while index < len(data):
+    n = len(data)
+    while index < n:
         byte = data[index]
         run = 1
-        while index + run < len(data) and data[index + run] == byte and run <= 258:
+        limit = min(259, n - index)
+        while run < limit and data[index + run] == byte:
             run += 1
-        symbol(byte)
+        code, count = codes[byte]
+        put(code, count)
         index += 1
         if run > 3:
             length = run - 1
             at = bisect.bisect_right(_LENGTHS, length) - 1
-            symbol(257 + at)
+            code, count = codes[257 + at]
+            put(code, count)
             put(length - _LENGTHS[at], _LENGTH_BITS[at])
             put(0, 5)
             index += length
-    symbol(256)
-    if pending[1]:
-        out.append(pending[0] & 255)
+    code, count = codes[256]
+    put(code, count)
+    if have:
+        out.append(bits & 255)
     return bytes(out) + struct.pack(">I", zlib.adler32(data))
 
 

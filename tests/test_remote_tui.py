@@ -294,6 +294,11 @@ class RemoteTUI(unittest.TestCase):
         self.assertTrue(reg["formSwallowedQL"], "q and l must be swallowed inside access-form")
         self.assertTrue(reg["lockedRepeatBlocked"], "mouse hold repeat must check controlBlock()")
         self.assertTrue(reg["emptySettingsOk"], "empty house settings must not call loadPolicy")
+        self.assertTrue(reg["singleRenderPass"], "steady-state frame() should call View.render() once")
+        self.assertTrue(reg["idleNoRedraw"], "idle 500ms tick without clock change or blinking LED must not redraw")
+        self.assertTrue(reg["clockRedraw"], "clock second change should trigger 1 redraw without blinking")
+        self.assertTrue(reg["switchingBlinks"], "visible switching LED should toggle blink at 500ms")
+        self.assertTrue(reg["storeAtomicOk"], "fileStore should debounce and atomically flush without leftover .tmp files")
 
     def test_not_heard_home_shows_no_source_and_listen_no_speaker_as_playing(self):
         failure = self.proof["failure"]

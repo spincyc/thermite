@@ -1,9 +1,15 @@
 """Small JSON interfaces; framework authentication owns credential handling."""
 
+from collections import OrderedDict
+import copy
+from datetime import timedelta
 import gzip
 import json
 import mimetypes
+import stat
+import threading
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.contrib.auth import logout
@@ -16,9 +22,10 @@ from django.utils.cache import get_conditional_response
 
 from oh_features.remote_system import ADMIN_ASSETS
 from oh_room_policy import STALE_AFTER, active, empty, manual_hold, with_manual_hold
+from oh_room_policy.schedule import local_instant, utc
 from oh_routes import ASSET_ROUTES, asset_version
 
-from .auth import api, failure, login_user, not_allowed, problem_response, require_admin
+from .auth import api, bump_auth_revocation, failure, login_user, not_allowed, problem_response, require_admin
 from .guest import access_config, listener
 from .models import PersonalToken, ReconcileState, RoomPolicy, User
 from .policy_store import TOKEN_RETENTION, next_revision
@@ -78,7 +85,9 @@ def guests(request):
     data = body(request)
     if not data or set(data) - set(GUEST_SETTINGS) or any(type(value) is not bool for value in data.values()):
         raise Problem("invalid_security")
-    return JsonResponse(set_guests(request.identity_user, data, request=request))
+    answer = set_guests(request.identity_user, data, request=request)
+    bump_auth_revocation()
+    return JsonResponse(answer)
 
 
 def enforcement_data(reconciled, state, now):
@@ -159,6 +168,7 @@ def signout(request):
         token.revoked = True
         token.save(update_fields=["revoked"])
     logout(request)
+    bump_auth_revocation()
     response = JsonResponse({"ok": True})
     response["Cache-Control"] = "no-store"
     return response
@@ -183,6 +193,7 @@ def tokens(request, ident=None):
         token = PersonalToken.objects.get(pk=ident, user=user)
         token.revoked = True
         token.save(update_fields=["revoked"])
+        bump_auth_revocation()
         audit(user, "token.revoke", token_label(token))
         return JsonResponse({"ok": True})
     if getattr(request, "identity_token", None):
@@ -205,6 +216,40 @@ def users(request, ident=None):
     return JsonResponse(user_data(user), status=200 if ident is not None else 201)
 
 
+LOCK_CACHE_MAX = 512
+_lock_cache_lock = threading.Lock()
+_lock_cache: OrderedDict = OrderedDict()
+
+
+def _lock_window_bounds(config, state, now):
+    """Return (valid_from, valid_until) UTC bounds during which this room's
+    lock summary cannot change without a policy edit, or None if uncacheable."""
+    if config.get("manual_lock") is not None:
+        return None, None
+    if state is None:
+        return None
+    if state.get("locked"):
+        start, end = state.get("start"), state.get("end")
+        return (start, end) if start is not None and end is not None else None
+    locks = config.get("locks")
+    tz_name = config.get("timezone")
+    if not isinstance(locks, list) or not isinstance(tz_name, str):
+        return None
+    if not locks:
+        return None, None
+    now_utc = utc(now)
+    today = now_utc.astimezone(ZoneInfo(tz_name)).date()
+    until = now_utc + timedelta(hours=24)
+    for offset in (0, 1, 2):
+        day = today + timedelta(days=offset)
+        for rule in locks:
+            if day.weekday() in rule["days"]:
+                at = local_instant(day, rule["start"], tz_name)
+                if now_utc < at < until:
+                    until = at
+    return now_utc, until
+
+
 def effective_lock(adapter, room, saved, now):
     """A room's effective lock now, its desired state and its manual hold. A
     saved active policy that cannot be evaluated locks the room."""
@@ -212,6 +257,16 @@ def effective_lock(adapter, room, saved, now):
                  "evaluated_at": now}
     state, manual = {"locked": False}, None
     if saved and active(saved.config):
+        cache_key = (id(adapter.contract), id(adapter.policy), room, saved.revision)
+        with _lock_cache_lock:
+            cached = _lock_cache.get(cache_key)
+            if cached is not None and cached["raw"] == saved.config:
+                valid_from, valid_until = cached["bounds"]
+                now_cmp = utc(now) if (valid_from is not None or valid_until is not None) else None
+                if ((valid_from is None or now_cmp >= valid_from)
+                        and (valid_until is None or now_cmp < valid_until)):
+                    _lock_cache.move_to_end(cache_key)
+                    return {**cached["effective"], "evaluated_at": now}, dict(cached["state"]), cached["manual"]
         try:
             config = adapter.policy.validate(saved.config, room, adapter.contract.policy_contract())
             authorization = adapter.policy.authorize(config, now)
@@ -220,6 +275,20 @@ def effective_lock(adapter, room, saved, now):
             effective.update(locked=not authorization["allowed"], desired=authorization.get("desired"),
                              allowed=authorization["allowed"], reason=authorization.get("reason"),
                              until=state.get("end") if state else None)
+            bounds = _lock_window_bounds(config, state, now)
+            if bounds is not None:
+                entry = {
+                    "raw": copy.deepcopy(saved.config),
+                    "bounds": bounds,
+                    "effective": {k: v for k, v in effective.items() if k != "evaluated_at"},
+                    "state": dict(state),
+                    "manual": copy.deepcopy(manual),
+                }
+                with _lock_cache_lock:
+                    _lock_cache[cache_key] = entry
+                    _lock_cache.move_to_end(cache_key)
+                    while len(_lock_cache) > LOCK_CACHE_MAX:
+                        _lock_cache.popitem(last=False)
         except Exception as error:
             from .trail import policy_unavailable
             policy_unavailable("status", room, error)
@@ -480,15 +549,65 @@ def asset(request, name):
                 return response
             return problem_response(exc)
     target = (adapter.contract.asset_root / name).resolve()
-    if target.parent != adapter.contract.asset_root or not target.is_file():
+    if target.parent != adapter.contract.asset_root:
         return failure("not_found", 404)
-    return file_response(request, name, target.read_bytes(), shared=not gated)
+    shared = not gated
+    cached = _cached_asset(target, shared=shared, compressible=name.endswith(TEXT))
+    if cached is None:
+        return failure("not_found", 404)
+    raw, version, compressed = cached
+    return file_response(request, name, raw, shared=shared, version=version, compressed=compressed)
 
 
 #: A ?v= URL names exact bytes (oh_routes.asset_version), so a browser may keep it.
 IMMUTABLE = "public, max-age=31536000, immutable"
 #: Static text worth compressing; images are already compressed.
 TEXT = (".css", ".html", ".js", ".svg", ".webmanifest")
+#: Bounded in-memory cache of static assets keyed by (resolved_path, mtime_ns, size).
+ASSET_CACHE_MAX = 256
+_asset_cache_lock = threading.Lock()
+_asset_cache: OrderedDict = OrderedDict()
+
+
+def _cached_asset(target, *, shared, compressible):
+    """Return (raw_bytes, sha256_etag_or_None, gzip_level6_bytes_or_None) for
+    target, caching by (resolved_path, mtime_ns, size) so repeated GETs avoid
+    disk I/O, SHA-256 hashing and gzip compression."""
+    try:
+        info = target.stat()
+    except OSError:
+        return None
+    if not stat.S_ISREG(info.st_mode):
+        return None
+    path_str = str(target)
+    key = (path_str, info.st_mtime_ns, info.st_size)
+    with _asset_cache_lock:
+        entry = _asset_cache.get(key)
+        if entry is not None:
+            _asset_cache.move_to_end(key)
+            raw, version, compressed = entry
+            if (not shared or version is not None) and (not (shared and compressible) or compressed is not None):
+                return raw, version, compressed
+        else:
+            raw = version = compressed = None
+    if raw is None:
+        try:
+            raw = target.read_bytes()
+        except OSError:
+            return None
+    if shared and version is None:
+        version = asset_version(raw)
+    if shared and compressible and compressed is None:
+        compressed = gzip.compress(raw, compresslevel=6, mtime=0)
+    with _asset_cache_lock:
+        # Evict any older version of the same path before storing the new one.
+        for stale in [existing for existing in _asset_cache if existing[0] == path_str and existing != key]:
+            del _asset_cache[stale]
+        _asset_cache[key] = (raw, version, compressed)
+        _asset_cache.move_to_end(key)
+        while len(_asset_cache) > ASSET_CACHE_MAX:
+            _asset_cache.popitem(last=False)
+    return raw, version, compressed
 
 
 def accepts_gzip(header):
@@ -509,7 +628,7 @@ def accepts_gzip(header):
     return weights.get("gzip", weights.get("*", 0.0)) > 0
 
 
-def file_response(request, name, data, *, shared):
+def file_response(request, name, data, *, shared, version=None, compressed=None):
     """One asset's bytes, read whole: assets are small, and an in-memory body
     needs no file handle or synchronous iterator under ASGI.
 
@@ -524,7 +643,8 @@ def file_response(request, name, data, *, shared):
     """
     encoding, headers = None, {"Cache-Control": "no-store"}
     if shared:
-        version = asset_version(data)
+        if version is None:
+            version = asset_version(data)
         current = not name.endswith(".html") and list(request.GET.lists()) == [("v", [version])]
         headers = {"Cache-Control": IMMUTABLE if current else "no-cache", "ETag": f'"{version}"'}
         if name.endswith(TEXT):
@@ -538,7 +658,7 @@ def file_response(request, name, data, *, shared):
         if conditional is not response:
             return conditional
     if encoding:
-        data = gzip.compress(data, mtime=0)
+        data = compressed if compressed is not None else gzip.compress(data, compresslevel=6, mtime=0)
     response["Content-Length"] = str(len(data))
     # HEAD keeps GET's headers without a body, even when this view is called
     # without a server's HEAD suppression.

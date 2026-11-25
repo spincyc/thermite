@@ -99,6 +99,7 @@ function create(options) {
   const music = { picked: new Set(), typed: null, running: false, openedFrom: {} };
   const timers = { toast: 0, flash: {}, repeat: null, tick: 0 };
   let frame = null;
+  let frameStale = false;
   let size = { width: 80, height: 24 };
   let dragging = null;
   let listenDragging = null;
@@ -164,6 +165,24 @@ function create(options) {
     };
   }
 
+  function needsBlink() {
+    if (ui.still) return false;
+    if (!ui.ready) return ["remote", "home", "pairing"].includes(ui.screen);
+    if (!session.connected()) return false;
+    if (ui.screen === "home" || ui.screen === "remote") {
+      const list = session.listed ? session.listed() : [];
+      for (let i = 0; i < list.length; i += 1) {
+        const state = session.state(list[i].id);
+        if (state && state.status === "switching") return true;
+      }
+    }
+    if (ui.screen === "pairing" && pairing.backend && pairing.selected) {
+      const view = pairing.backend.view ? pairing.backend.view(pairing.selected) : null;
+      if (view && view.tone === "busy") return true;
+    }
+    return false;
+  }
+
   // ---- start and stop --------------------------------------------------
 
   function start(roomId, chosen) {
@@ -171,9 +190,20 @@ function create(options) {
     session.subscribe(onSession);
     if (listen) listen.subscribe(onListen);
     timers.tick = (options.setInterval || setInterval)(() => {
-      if (!ui.still) ui.blink = !ui.blink;
-      ui.clock = clock();
-      changed();
+      const nextClock = clock();
+      let dirty = false;
+      if (needsBlink()) {
+        ui.blink = !ui.blink;
+        dirty = true;
+      } else if (ui.blink) {
+        ui.blink = false;
+        dirty = true;
+      }
+      if (nextClock !== ui.clock) {
+        ui.clock = nextClock;
+        dirty = true;
+      }
+      if (dirty) changed();
     }, TICK_MS);
     return Promise.resolve(options.access ? options.access.ready() : null).then(() => { if (ui.screen === "pairing") openPairing(); return session.start(roomId); })
       .then(() => {
@@ -214,6 +244,8 @@ function create(options) {
     system.backend?.close();
     if (signalRunning && session.closeDiagnostics) session.closeDiagnostics();
     signalRunning = false;
+    if (store && typeof store.stop === "function") store.stop();
+    else if (store && typeof store.flush === "function") store.flush();
     if (options.backend && options.backend.stop) options.backend.stop();
   }
 
@@ -399,9 +431,7 @@ function create(options) {
     const view = listen.view();
     if (!view || !view.library) return;
     if (search) listen.music.setTab("search");
-    openSheet("music-library", "Library");
-    if (search && frame.focusables.some((hit) => hit.key === "music-search")) ui.focus = "music-search";
-    changed();
+    openSheet("music-library", "Library", search ? { focus: "music-search" } : undefined);
   }
 
   // ← and → off the controls: the room's previous or next speaker.
@@ -440,6 +470,7 @@ function create(options) {
       ui.overlay = { kind: "signal", title: "" }; ui.pane = "sheet:signal"; ui.returnPane = "remote";
     }
     syncDiagnostics();
+    frameStale = false;
     let ctx = context();
     frame = View.render(ctx, width, height);
     if (ui.ready) {
@@ -448,8 +479,10 @@ function create(options) {
       if (!ui.overlay && ui.pane === "rooms" && !frame.regions.some((region) => region.key === "rooms")) {
         ui.overlay = { kind: "rooms", title: "" };
         ui.pane = "sheet:rooms";
-        frame = View.render(context(), width, height);
+        ctx = context();
+        frame = View.render(ctx, width, height);
       }
+      const beforePane = ui.pane, beforeFocus = ui.focus, beforeVisible = ui.focusVisible, beforeReveal = ui.revealFocus;
       // The library's search field back under the typing that went on without it: the focus goes back to it.
       const field = typing() && ui.overlay?.kind === "music-library" && frame.focusables.find((hit) => hit.key === "music-search");
       if (field && ui.focus !== field.key) {
@@ -461,8 +494,10 @@ function create(options) {
       if (!panes.includes(ui.pane)) enterPane(twin ? [twin, "rooms", "remote"].find((pane) => panes.includes(pane)) || panes[0]
         : panes.includes("remote") ? "remote" : panes[0]);
       else if (!ui.focus || !frame.focusables.some((hit) => hit.key === ui.focus && hit.pane === ui.pane)) enterPane(ui.pane);
-      ctx = context();
-      frame = View.render(ctx, width, height);
+      if (ui.pane !== beforePane || ui.focus !== beforeFocus || ui.focusVisible !== beforeVisible || ui.revealFocus !== beforeReveal) {
+        ctx = context();
+        frame = View.render(ctx, width, height);
+      }
     }
     frame.animate = !ui.overlay && !ui.still && Number.isFinite(ctx.animate) && ctx.animate > 0 ? ctx.animate : null;
     ui.scroll = frame.scroll;
@@ -473,7 +508,12 @@ function create(options) {
     return frame;
   }
 
+  function ensureFrame() {
+    if (!frame || frameStale) render(size.width, size.height);
+  }
+
   function focusedHit() {
+    if (frameStale) ensureFrame();
     if (!frame || !ui.focus) return null;
     return frame.focusables.find((hit) => hit.key === ui.focus) || null;
   }
@@ -509,7 +549,7 @@ function create(options) {
   }
 
   function movePane(delta) {
-    render(size.width, size.height);
+    ensureFrame();
     const list = visiblePanes();
     if (!list.length) return;
     const index = list.indexOf(ui.pane);
@@ -520,6 +560,7 @@ function create(options) {
   // The focus to the pane's next or previous control, which the panel then
   // scrolls into sight; round: from the last on to the first, and back.
   function moveControl(delta, round) {
+    ensureFrame();
     const list = frame.focusables.filter((hit) => hit.pane === ui.pane);
     const index = list.findIndex((hit) => hit.key === ui.focus);
     const next = round && index >= 0 ? (index + delta + list.length) % list.length : Math.max(0, Math.min(list.length - 1, index + delta));
@@ -551,9 +592,18 @@ function create(options) {
   }
 
   function focusRemote() {
-    if (ui.overlay && ui.overlay.kind === "rooms") ui.overlay = null;
-    render(size.width, size.height);
-    enterPane("remote");
+    const hadOverlay = Boolean(ui.overlay && ui.overlay.kind === "rooms");
+    if (hadOverlay) {
+      ui.overlay = null;
+      ui.pane = "remote";
+      ui.focus = null;
+      ui.focusVisible = true;
+      ui.revealFocus = true;
+      frameStale = true;
+    } else {
+      ensureFrame();
+      enterPane("remote");
+    }
     changed();
   }
 
@@ -608,8 +658,12 @@ function create(options) {
     if (kind === "topology") return setScreen("topology");
     if (kind === "signal" && ui.screen === "remote" && View.signalInline(size.width, size.height, ui.logVisible !== false)) {
       ui.overlay = null;
-      render(size.width, size.height);
-      enterPane("signal"); changed(); return;
+      ui.pane = "signal";
+      ui.focus = null;
+      ui.focusVisible = true;
+      ui.revealFocus = true;
+      frameStale = true;
+      changed(); return;
     }
     if (ui.overlay && ui.overlay.kind === "day" && kind !== "day" && day.backend) day.backend.close();
     // A sheet over a sheet (a setting's choices over Info, an item's over
@@ -622,7 +676,7 @@ function create(options) {
     ui.pane = "sheet:" + kind;
     ui.scroll["sheet:" + kind] = 0;
     ui.focusVisible = kind !== "help";
-    ui.focus = null;
+    ui.focus = extra && extra.focus ? extra.focus : null;
     if (kind === "rooms" && session.current()) ui.focus = "room:" + session.current().id;
     if (kind === "inputs") {
       const options = session.inputOptions();
@@ -634,8 +688,7 @@ function create(options) {
       const input = listen.view() && listen.view().input;
       ui.focus = input ? "audio-input:" + input.value : null;
     }
-    render(size.width, size.height);
-    if (!ui.focus && ui.focusVisible && frame.focusables.length) ui.focus = frame.focusables[0].key;
+    frameStale = true;
     changed();
     if (kind === "day") openDay();
   }
@@ -693,7 +746,7 @@ function create(options) {
       stopRepeat();
       music.typed = null;
       Object.assign(ui, { overlay: parent.overlay, pane: "sheet:" + parent.overlay.kind, focus: parent.focus, returnPane: parent.returnPane, focusVisible: true });
-      render(size.width, size.height);
+      frameStale = true;
       changed();
       return;
     }
@@ -702,7 +755,7 @@ function create(options) {
     ui.focus = null;
     ui.pane = ui.returnPane || (ui.screen === "pairing" ? "pair-list" : "remote");
     ui.focusVisible = true;
-    render(size.width, size.height);
+    frameStale = true;
     changed();
   }
 
@@ -742,7 +795,7 @@ function create(options) {
     if (name === "topology") openTopology();
     if (name === "system") system.backend?.open().then(changed);
     if (["security", "settings", "users", "account"].includes(name)) access.open(name, session.current()?.id);
-    render(size.width, size.height);
+    frameStale = true;
     changed();
   }
 

@@ -1,5 +1,6 @@
 #include "thermite_link.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "cJSON.h"
@@ -9,9 +10,51 @@
 #define NONCE_LEN 13
 #define PARTS_MAX TL_PARTS_MAX
 
+/* Cached AES-256-CCM key schedule in ordinary BSS RAM (never RTC memory, so
+ * deep sleep wakes clean with ready=false). Re-keys only when the key changes. */
+static struct {
+    bool ready;
+    bool exit_registered;
+    uint8_t key[TL_KEY_LEN];
+    mbedtls_ccm_context ccm;
+} s_ccm;
+
 void tl_zeroize(void *buf, size_t len)
 {
     if (buf && len) mbedtls_platform_zeroize(buf, len);
+}
+
+void tl_cache_clear(void)
+{
+    if (s_ccm.ready) {
+        mbedtls_ccm_free(&s_ccm.ccm);
+        s_ccm.ready = false;
+    }
+    tl_zeroize(s_ccm.key, sizeof s_ccm.key);
+}
+
+static mbedtls_ccm_context *ccm_for(const uint8_t key[TL_KEY_LEN])
+{
+    if (s_ccm.ready && memcmp(s_ccm.key, key, TL_KEY_LEN) == 0) return &s_ccm.ccm;
+    if (s_ccm.ready) {
+        mbedtls_ccm_free(&s_ccm.ccm);
+        s_ccm.ready = false;
+    }
+    mbedtls_ccm_init(&s_ccm.ccm);
+    if (mbedtls_ccm_setkey(&s_ccm.ccm, MBEDTLS_CIPHER_ID_AES, key, TL_KEY_LEN * 8) != 0) {
+        mbedtls_ccm_free(&s_ccm.ccm);
+        tl_zeroize(s_ccm.key, sizeof s_ccm.key);
+        return NULL;
+    }
+    memcpy(s_ccm.key, key, TL_KEY_LEN);
+    s_ccm.ready = true;
+#if !defined(ESP_PLATFORM)
+    if (!s_ccm.exit_registered) {
+        atexit(tl_cache_clear);
+        s_ccm.exit_registered = true;
+    }
+#endif
+    return &s_ccm.ccm;
 }
 
 static void put64(uint8_t *at, uint64_t value)
@@ -57,12 +100,10 @@ size_t tl_seal(const uint8_t key[TL_KEY_LEN], tl_direction_t direction, const tl
     put32(out + 12, header->counter);
     uint8_t nonce[NONCE_LEN];
     nonce_of(direction, out, nonce);
-    mbedtls_ccm_context ccm;
-    mbedtls_ccm_init(&ccm);
-    int failed = mbedtls_ccm_setkey(&ccm, MBEDTLS_CIPHER_ID_AES, key, TL_KEY_LEN * 8)
-        || mbedtls_ccm_encrypt_and_tag(&ccm, length, nonce, NONCE_LEN, out, TL_HEADER, plaintext, out + TL_HEADER,
+    mbedtls_ccm_context *ccm = ccm_for(key);
+    int failed = !ccm
+        || mbedtls_ccm_encrypt_and_tag(ccm, length, nonce, NONCE_LEN, out, TL_HEADER, plaintext, out + TL_HEADER,
                                        out + TL_HEADER + length, TL_TAG);
-    mbedtls_ccm_free(&ccm);
     return failed ? 0 : TL_HEADER + length + TL_TAG;
 }
 
@@ -78,12 +119,10 @@ int tl_open(const uint8_t key[TL_KEY_LEN], tl_direction_t direction, const uint8
     if (index >= count || (frame[1] != TL_DATA && count != 1) || body > capacity) return -1;
     uint8_t nonce[NONCE_LEN];
     nonce_of(direction, frame, nonce);
-    mbedtls_ccm_context ccm;
-    mbedtls_ccm_init(&ccm);
-    int failed = mbedtls_ccm_setkey(&ccm, MBEDTLS_CIPHER_ID_AES, key, TL_KEY_LEN * 8)
-        || mbedtls_ccm_auth_decrypt(&ccm, body, nonce, NONCE_LEN, frame, TL_HEADER, frame + TL_HEADER, out,
+    mbedtls_ccm_context *ccm = ccm_for(key);
+    int failed = !ccm
+        || mbedtls_ccm_auth_decrypt(ccm, body, nonce, NONCE_LEN, frame, TL_HEADER, frame + TL_HEADER, out,
                                     frame + TL_HEADER + body, TL_TAG);
-    mbedtls_ccm_free(&ccm);
     if (failed) {
         tl_zeroize(out, body);
         return -1;

@@ -329,6 +329,29 @@ class Feed(TestCase):
         answer = json.loads(response.content)
         self.assertEqual((answer["firing"], [each["name"] for each in answer["alerts"]]), (2, ["ThermiteControlUnknown"]))
 
+    def test_lock_is_not_held_during_prometheus_http_fetch(self):
+        import threading
+        entered, release = threading.Event(), threading.Event()
+        lock_free = []
+
+        def slow_fetch(port, method, path):
+            entered.set()
+            release.wait(5)
+            return rules()["data"]
+
+        thread = threading.Thread(target=alerts.feed, args=(self.adapter.contract,), kwargs={"fetch": slow_fetch})
+        thread.start()
+        try:
+            self.assertTrue(entered.wait(5))
+            acquired = alerts._lock.acquire(blocking=False)
+            lock_free.append(acquired)
+            if acquired:
+                alerts._lock.release()
+        finally:
+            release.set()
+            thread.join(5)
+        self.assertEqual(lock_free, [True], "alerts._lock must not be held across blocking HTTP")
+
 
 class Vocabulary(TestCase):
     def test_every_alert_the_feed_reads_labels_of_is_catalogued_and_reads_only_known_labels(self):

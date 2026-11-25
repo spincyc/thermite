@@ -131,8 +131,8 @@ function panel(frame, ctx, rect, options) {
   const g = frame.grid;
   const { x, y, w, h } = rect;
   if (w < 6 || h < 3) return;
-  const inner = new Grid(w - 2, null, "base");
-  options.content(inner, w - 2, h - 2);
+  const inner = options.grid || new Grid(w - 2, null, "base");
+  if (!options.grid) options.content(inner, w - 2, h - 2);
   const active = ctx.ui.focusVisible && (!ctx.ui.overlay || options.solid) && ctx.ui.pane === options.key;
   // Rows out of sight: how to reach them (options.hidden) goes first in the bottom edge.
   const footer = options.hidden && inner.height > h - 2 ? options.hidden.concat(options.footer || []) : options.footer;
@@ -196,8 +196,9 @@ function heading(g, y, text, style) {
 
 // Words wrapped to width from (x, y); returns the row after them.
 function paragraph(g, x, y, width, text, style) {
-  wrap(text, Math.max(4, width)).forEach((line, index) => g.put(x, y + index, line, style));
-  return y + wrap(text, Math.max(4, width)).length;
+  const lines = wrap(text, Math.max(4, width));
+  lines.forEach((line, index) => g.put(x, y + index, line, style));
+  return y + lines.length;
 }
 
 // A light's style and its glyph, each state its own (styles.js LIGHTS).
@@ -509,14 +510,16 @@ function remoteScreen(frame, ctx, rect) {
   if (infoWidth) {
     // Above the signal the info is as tall as what it says, up to two fifths of the column.
     let infoHeight = mainHeight;
+    let infoGrid = null;
     if (inline) {
-      const probe = new Grid(infoWidth - 2, null, "base");
-      infoContent(probe, infoWidth - 2, ctx, true);
-      infoHeight = Math.max(3, Math.min(probe.height + 2, Math.floor(mainHeight * 0.4)));
+      infoGrid = new Grid(infoWidth - 2, null, "base");
+      infoContent(infoGrid, infoWidth - 2, ctx, true);
+      infoHeight = Math.max(3, Math.min(infoGrid.height + 2, Math.floor(mainHeight * 0.4)));
     }
     panel(frame, ctx, { x: rect.x + roomsWidth + remoteWidth, y: rect.y, w: infoWidth, h: infoHeight }, {
       key: "info", color: "info", title: "info",
-      content: (inner, w) => infoContent(inner, w, ctx, inline)
+      grid: infoGrid,
+      content: infoGrid ? null : (inner, w) => infoContent(inner, w, ctx, inline)
     });
     if (inline) panel(frame, ctx, { x: rect.x + roomsWidth + remoteWidth, y: rect.y + infoHeight, w: infoWidth, h: mainHeight - infoHeight }, {
       key: "signal", color: "info", title: "signal & audio", right: "d", footer: [["PgUp/Dn", "scroll"]],
@@ -1213,7 +1216,7 @@ function sheet(frame, ctx, width, height) {
   panel(frame, ctx, { x: x, y: y, w: w, h: h }, {
     key: "sheet:" + overlay.kind, color: "sheet", solid: true, footer: [["Esc", "close"]],
     title: overlay.title || { rooms: "Rooms", info: "Info", help: "Keys", signal: "Signal & audio", "remotes-menu": "Remotes", day: "Rooms through the day" }[overlay.kind],
-    content: content
+    grid: probe
   });
 }
 
@@ -1243,7 +1246,9 @@ function signalContent(g, w, ctx) {
   if (model.audioRoute && model.audioRoute.length) y = paragraph(g, 1, y, w - 2, "Audio · " + model.audioRoute.map((step) => step.label).join(" → "), "dim");
   if (model.audioEndpoints && model.audioEndpoints.length) y = paragraph(g, 1, y, w - 2,
     "Audio endpoint · " + model.audioEndpoints.map(step => step.label + (step.input ? " · input " + step.input : "")).join(", ") + " · wiring unknown", "dim");
-  if (model.routeReady === false) y = paragraph(g, 1, y, w - 2, "Awaiting confirmation of the physical route.", "tone.busy");
+  if (model.routeReady === false || (model.routeStatus && model.routeStatus !== "done" && model.routeDetail)) {
+    y = paragraph(g, 1, y, w - 2, model.routeDetail || "Awaiting confirmation of the physical route.", "tone.busy");
+  }
   if (model.pending) y = paragraph(g, 1, y, w - 2, "Switching to " + model.pending.label + "; current formats await the confirmed route.", "tone.busy");
   if (model.connected === false) y = paragraph(g, 1, y, w - 2, "Room updates unavailable; format attribution is unconfirmed.", "tone.busy");
   const view = globalThis.RemoteDiagnostics.outline(model, ctx.now);

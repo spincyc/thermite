@@ -392,10 +392,17 @@
       if (!loading) loading = (async () => {
         const mode = security || await loadSecurity(), revision = authRevision;
         if (mode.enabled && !token && config.getToken) token = config.getToken();
+        let me;
         if (mode.enabled && !token && !guestOnly) {
-          const answer = await firstRead("/api/v1/session"); csrf = answer.csrf;
+          const [sessionAnswer, meAnswer] = await Promise.all([firstRead("/api/v1/session"), firstRead("/api/v1/me", true)]);
+          stale(revision);
+          csrf = sessionAnswer.csrf;
+          me = meAnswer;
+        } else {
+          me = await firstRead("/api/v1/me", true);
+          stale(revision);
         }
-        const answer = principal(await firstRead("/api/v1/me", true)); stale(revision);
+        const answer = principal(me);
         user = answer; notify("change"); return user;
       })().catch((error) => { if (error.status === 401 && !ended && !error.stale) lost(error.code); throw error; })
         .finally(() => { loading = null; });

@@ -2,17 +2,20 @@
 bounded authorization revalidation. hub.py holds the one upstream."""
 
 import asyncio
+import os
 import threading
 import time
 import weakref
 
 from asgiref.sync import sync_to_async
+from django.conf import settings
 from django.contrib.sessions.models import Session
+from django.db import close_old_connections, connection
 from django.http import StreamingHttpResponse
 from django.utils import timezone
 
 from .addresses import peer_bucket
-from .auth import not_allowed, principal, problem_response, require_admin
+from .auth import auth_revocation_version, not_allowed, principal, problem_response, require_admin
 from .guest import listener as guest_listener
 from .hub import hub_for, notify
 from .models import PersonalToken, User
@@ -27,9 +30,13 @@ from .topics import VIEWS, WITHOUT_TEXT, views as view_topics
 #: frame for three heartbeats.
 HEARTBEAT = 5
 HEARTBEAT_FRAME = b'data: {"type":"heartbeat"}\n\n'
-# A busy stream rechecks its credential at most this often; a quiet one at
-# every heartbeat.
+# Minimum seconds between SQLite rechecks on cross-process DB changes.
+# In-process revocations bump auth_revocation_version() and revalidate immediately.
 REVALIDATE = 1.0
+# Calm fallback interval (seconds) to re-verify against SQLite even when neither
+# the in-process revocation counter nor the SQLite file stamp changed (e.g. for
+# natural token/session expiry).
+REVALIDATE_DB = 30.0
 clock = time.monotonic
 # Streams are unauthenticated for Guests. A page holds one, a terminal remote
 # one more while it pairs, and a stream lingers up to one heartbeat after its
@@ -118,6 +125,37 @@ def valid(snapshot):
     return Session.objects.filter(session_key=snapshot.get("session"), expire_date__gt=timezone.now()).exists()
 
 
+def _db_stamp():
+    """Lock-free SQLite change stamp from the WAL index (-shm) and DB/WAL file
+    metadata. Changes on any committed write (including CLI/worker processes
+    and direct ORM updates) without opening a SQLite connection."""
+    name = settings.DATABASES.get("default", {}).get("NAME")
+    if not name or str(name) == ":memory:":
+        return None
+    base = str(name)
+    parts: list[object] = []
+    try:
+        with open(base + "-shm", "rb") as handle:
+            parts.append(handle.read(48))
+    except OSError:
+        parts.append(None)
+    for path in (base, base + "-wal"):
+        try:
+            info = os.stat(path)
+            parts.append((info.st_ino, info.st_mtime_ns, info.st_size))
+        except OSError:
+            parts.append(None)
+    return tuple(parts)
+
+
+def _check_valid(snapshot):
+    try:
+        return valid(snapshot)
+    finally:
+        if not connection.in_atomic_block:
+            close_old_connections()
+
+
 def opened(meta):
     """A client stream has started. meta: its view; origin, "guest" for the
     plain-HTTP Guest listener, else "https"; principal, "guest", "session" or
@@ -141,22 +179,34 @@ async def stream(adapter, view, snapshot, release=None, meta=None, hub=None):
     subscriber = None
     started, reason = clock(), "client"
     try:
-        if not await sync_to_async(valid)(snapshot):
+        last_auth_ver = auth_revocation_version()
+        last_db_stamp = _db_stamp()
+        if not await sync_to_async(_check_valid)(snapshot):
             reason = "revoked"
             return
         subscriber = (hub() if hub else hub_for(adapter)).join(view, meta)
         opened(meta)
-        checked = clock()
+        checked = last_db_check = clock()
         while True:
             data = await subscriber.next(HEARTBEAT)
-            # Every heartbeat is checked, bounding a quiet stream's revocation
-            # by HEARTBEAT; a busy stream is checked at most once per REVALIDATE,
-            # always before the next frame is sent.
-            if data is None or clock() - checked >= REVALIDATE:
-                if not await sync_to_async(valid)(snapshot):
+            now = clock()
+            auth_ver = auth_revocation_version()
+            db_stamp = _db_stamp()
+            auth_changed = auth_ver != last_auth_ver
+            db_changed = db_stamp is not None and db_stamp != last_db_stamp
+            # In-process revocations revalidate immediately on the next frame/heartbeat.
+            # Cross-process DB changes revalidate at most every REVALIDATE (or on heartbeat);
+            # otherwise re-verify calmly every REVALIDATE_DB seconds without 1 Hz ORM polling.
+            periodic = (data is None or now - checked >= REVALIDATE) and (
+                REVALIDATE <= 0 or db_changed or now - last_db_check >= REVALIDATE_DB
+            )
+            if auth_changed or periodic:
+                if not await sync_to_async(_check_valid)(snapshot):
                     reason = "revoked"
                     return
-                checked = clock()
+                last_auth_ver = auth_revocation_version()
+                last_db_stamp = _db_stamp()
+                checked = last_db_check = clock()
             yield HEARTBEAT_FRAME if data is None else data
     except asyncio.CancelledError:
         raise
@@ -172,17 +222,26 @@ async def stream(adapter, view, snapshot, release=None, meta=None, hub=None):
             release()
 
 
-def events(request, view):
-    if request.method != "GET":
-        return not_allowed("GET")
+def _authorize_events(request, view):
     try:
-        if view not in VIEWS or request.GET:
-            raise Problem("not_found", 404)
         user = principal(request)
         if view == "pair":
             # Pairing is an Admin's page, as its device list is (views.pairing_items).
             require_admin(user)
         adapter = get_adapter()
+        return user, adapter
+    finally:
+        if not connection.in_atomic_block:
+            close_old_connections()
+
+
+async def events(request, view):
+    if request.method != "GET":
+        return not_allowed("GET")
+    try:
+        if view not in VIEWS or request.GET:
+            raise Problem("not_found", 404)
+        user, adapter = await sync_to_async(_authorize_events)(request, view)
         return respond(request, user, adapter, view, lambda joined: len(view_topics(adapter.contract)[joined]))
     except Problem as exc:
         return problem_response(exc)

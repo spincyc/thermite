@@ -41,6 +41,8 @@
 #define REPEAT_FIRST_MS 420
 #define REPEAT_EVERY_MS 150
 #define TOAST_MS 2500
+#define BLINK_MS 500
+#define BLINK_MAX 16
 #define TEXT_MAX 256
 #define ROOMS_MAX 24
 #define COMPACT_WIDTH 160
@@ -73,8 +75,12 @@ static struct {
     lv_obj_t *bubbles, *body, *all_off, *all_off_label;
     lv_obj_t *footer, *volume_down, *volume_up, *mute, *audio_short, *audio_text;
     lv_obj_t *toast, *inputs;
-    lv_timer_t *update, *toast_timer, *repeat;
+    lv_timer_t *update, *toast_timer, *repeat, *blink_timer;
 
+    lv_obj_t *blink_dots[BLINK_MAX];
+    size_t blink_count;
+    bool blink_dim;
+    int8_t all_off_armed; /* -1 unset, 0 unarmed, 1 armed */
     unsigned pending; /* TR_CHANGED_* bits waiting for the update timer */
     uint32_t bubbles_hash, body_hash;
     int waiting_link; /* the tr_link_t the waiting body shows, or -1 */
@@ -293,23 +299,60 @@ static lv_obj_t *led_dot(lv_obj_t *parent, int32_t size)
     return dot;
 }
 
-static void blink_cb(void *dot, int32_t value)
+static void blink_timer_cb(lv_timer_t *timer)
 {
-    lv_obj_set_style_bg_opa(dot, (lv_opa_t)value, 0);
+    (void)timer;
+    ui.blink_dim = !ui.blink_dim;
+    lv_opa_t opa = ui.blink_dim ? LV_OPA_20 : LV_OPA_COVER;
+    for (size_t i = 0; i < ui.blink_count; i++) {
+        lv_obj_set_style_bg_opa(ui.blink_dots[i], opa, 0);
+    }
 }
 
-/* Switching blinks, as the web remote's LED does. */
-static void blink(lv_obj_t *dot)
+static void blink_sync(void)
 {
-    lv_anim_t anim;
-    lv_anim_init(&anim);
-    lv_anim_set_var(&anim, dot);
-    lv_anim_set_exec_cb(&anim, blink_cb);
-    lv_anim_set_values(&anim, LV_OPA_COVER, LV_OPA_20);
-    lv_anim_set_duration(&anim, 500);
-    lv_anim_set_playback_duration(&anim, 500);
-    lv_anim_set_repeat_count(&anim, LV_ANIM_REPEAT_INFINITE);
-    lv_anim_start(&anim);
+    if (ui.blink_count == 0) {
+        if (ui.blink_timer) lv_timer_pause(ui.blink_timer);
+        ui.blink_dim = false;
+        return;
+    }
+    if (!ui.blink_timer) ui.blink_timer = lv_timer_create(blink_timer_cb, BLINK_MS, NULL);
+    else lv_timer_resume(ui.blink_timer);
+}
+
+/* Switching toggles at 2 Hz via one shared timer instead of a continuous 33 FPS fade. */
+static void blink_add(lv_obj_t *dot)
+{
+    for (size_t i = 0; i < ui.blink_count; i++) {
+        if (ui.blink_dots[i] == dot) return;
+    }
+    if (ui.blink_count < BLINK_MAX) {
+        ui.blink_dots[ui.blink_count++] = dot;
+        lv_obj_set_style_bg_opa(dot, ui.blink_dim ? LV_OPA_20 : LV_OPA_COVER, 0);
+        blink_sync();
+    }
+}
+
+static void blink_remove(lv_obj_t *dot)
+{
+    for (size_t i = 0; i < ui.blink_count; i++) {
+        if (ui.blink_dots[i] == dot) {
+            ui.blink_dots[i] = ui.blink_dots[--ui.blink_count];
+            break;
+        }
+    }
+    lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+    blink_sync();
+}
+
+static void blink_clear_bubbles(void)
+{
+    size_t kept = 0;
+    for (size_t i = 0; i < ui.blink_count; i++) {
+        if (ui.blink_dots[i] == ui.led) ui.blink_dots[kept++] = ui.blink_dots[i];
+    }
+    ui.blink_count = kept;
+    blink_sync();
 }
 
 /* No padlock among the built-in symbols: a shackle (a box bordered on three sides) over a body. */
@@ -594,13 +637,16 @@ static void make_all_off(void)
     ui.all_off_label = label(ui.all_off, ui.m.body, C_BAD, "");
     lv_obj_center(ui.all_off_label);
     lv_obj_add_event_cb(ui.all_off, all_off_cb, LV_EVENT_CLICKED, NULL);
+    ui.all_off_armed = -1;
 }
 
 /* The first press arms All off; armed, it asks for the second (web remote.js showAllOff). */
 static void show_all_off(const cJSON *screen)
 {
     if (!ui.all_off) return;
-    bool armed = true_of(screen, "allOff");
+    int8_t armed = true_of(screen, "allOff") ? 1 : 0;
+    if (ui.all_off_armed == armed) return;
+    ui.all_off_armed = armed;
     lv_obj_set_style_bg_color(ui.all_off, lv_color_hex(armed ? C_BAD : C_RAISED), 0);
     lv_obj_set_style_text_color(ui.all_off_label, lv_color_hex(armed ? C_INK : C_BAD), 0);
     set_text(ui.all_off_label, armed ? LV_SYMBOL_POWER "  Press again to confirm" : LV_SYMBOL_POWER "  All off");
@@ -627,11 +673,12 @@ static void disable_keys(lv_obj_t *parent)
     }
 }
 
-static void build_body(const cJSON *screen)
+static void build_body(const cJSON *screen, bool is_blocked)
 {
     stop_repeat();
     lv_obj_clean(ui.body);
     ui.all_off = NULL;
+    ui.all_off_armed = -1;
     ui.body_ids.used = 0;
     ui.waiting_link = -1;
     lv_obj_scroll_to_y(ui.body, 0, LV_ANIM_OFF);
@@ -663,13 +710,12 @@ static void build_body(const cJSON *screen)
         make_all_off();
         show_all_off(screen);
     }
-    if (blocked(screen)) disable_keys(ui.body);
+    if (is_blocked) disable_keys(ui.body);
 }
 
 /* The volume line follows the room's block, as every key on the web remote does. */
-static void block_footer(const cJSON *screen)
+static void block_footer(bool is_blocked)
 {
-    bool is_blocked = blocked(screen);
     if (is_blocked) stop_repeat();
     lv_obj_t *keys[] = { ui.volume_down, ui.volume_up, ui.mute };
     for (size_t i = 0; i < 3; i++) {
@@ -720,9 +766,8 @@ static void show_status(const cJSON *screen)
     if (strcmp(led, ui.led_shown) != 0) {
         snprintf(ui.led_shown, sizeof ui.led_shown, "%s", led);
         lv_obj_set_style_bg_color(ui.led, lv_color_hex(led_color(led)), 0);
-        lv_anim_delete(ui.led, blink_cb);
-        lv_obj_set_style_bg_opa(ui.led, LV_OPA_COVER, 0);
-        if (strcmp(led, "busy") == 0) blink(ui.led);
+        blink_remove(ui.led);
+        if (strcmp(led, "busy") == 0) blink_add(ui.led);
     }
     show(ui.led, true);
     set_text(ui.short_label, string_of(screen, "short"));
@@ -751,6 +796,7 @@ static void reveal_bubble(lv_obj_t *bubble)
 
 static void build_bubbles(const cJSON *screen)
 {
+    blink_clear_bubbles();
     lv_obj_clean(ui.bubbles);
     ui.bubble_ids.used = 0;
     const char *selected = string_of(screen, "selected");
@@ -776,7 +822,7 @@ static void build_bubbles(const cJSON *screen)
         } else {
             lv_obj_t *dot = led_dot(bubble, ui.m.compact ? 6 : 8);
             lv_obj_set_style_bg_color(dot, lv_color_hex(color), 0);
-            if (switching) blink(dot);
+            if (switching) blink_add(dot);
         }
         set_text(lv_label_create(bubble), string_of(item, "label"));
         lv_obj_add_style(bubble, &ui.key_disabled, LV_STATE_DISABLED);
@@ -884,10 +930,13 @@ static void show_waiting(void)
     tr_link_t link = tr_link(ui.remote);
     lv_obj_clean(ui.body);
     ui.all_off = NULL;
+    ui.all_off_armed = -1;
     ui.waiting_link = (int)link;
     ui.body_hash = 0;
     ui.bubbles_hash = 0;
+    blink_clear_bubbles();
     lv_obj_clean(ui.bubbles);
+    blink_remove(ui.led);
     show(ui.led, false);
     ui.led_shown[0] = '\0';
     set_text(ui.room_label, "");
@@ -1058,11 +1107,12 @@ static void show_screen(void)
     if (hash != ui.bubbles_hash || was_waiting) build_bubbles(screen);
     ui.bubbles_hash = hash;
     /* The bubbles count for the body only through inert, which blocks its keys. */
-    hash = hash_members(screen, body_parts, sizeof body_parts / sizeof body_parts[0]) ^ (blocked(screen) ? 1u : 0u);
-    if (hash != ui.body_hash || was_waiting) build_body(screen);
+    bool is_blocked = blocked(screen);
+    hash = hash_members(screen, body_parts, sizeof body_parts / sizeof body_parts[0]) ^ (is_blocked ? 1u : 0u);
+    if (hash != ui.body_hash || was_waiting) build_body(screen, is_blocked);
     ui.body_hash = hash;
     show_all_off(screen);
-    block_footer(screen);
+    block_footer(is_blocked);
 }
 
 static void update_cb(lv_timer_t *timer)
@@ -1182,6 +1232,7 @@ static void reset(void)
     stop_repeat();
     close_toast();
     if (ui.inputs) lv_obj_delete(ui.inputs);
+    if (ui.blink_timer) lv_timer_delete(ui.blink_timer);
     if (ui.update) lv_timer_delete(ui.update);
     if (ui.screen) lv_obj_clean(ui.screen);
     lv_style_t *styles[] = { &ui.key, &ui.key_pressed, &ui.key_lit, &ui.key_disabled, &ui.bubble,
@@ -1189,6 +1240,7 @@ static void reset(void)
     for (size_t i = 0; i < sizeof styles / sizeof styles[0]; i++) lv_style_reset(styles[i]);
     memset(&ui, 0, sizeof ui);
     ui.waiting_link = -1;
+    ui.all_off_armed = -1;
 }
 
 void tu_create(lv_display_t *display, tr_t *remote, const tu_keys_t *keys)

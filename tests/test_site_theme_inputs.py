@@ -58,3 +58,15 @@ class ThemeInputs(unittest.TestCase):
                 bad.write_text(body, encoding='utf-8')
                 with self.subTest(file=filename), self.assertRaises(oh_brand.PaletteError):
                     oh_brand.load(bad)
+
+    def test_png_rasterization_is_memoized_and_deterministic(self):
+        oh_brand._painted.cache_clear()
+        palette = oh_brand.load("thermite")
+        first = oh_brand.png(palette, mode="dark", size=64, samples=2)
+        info1 = oh_brand._painted.cache_info()
+        second = oh_brand.png(palette, mode="dark", size=64, samples=2)
+        info2 = oh_brand._painted.cache_info()
+        self.assertTrue(first.startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertEqual(first, second)
+        self.assertEqual(info1.misses, 1)
+        self.assertEqual(info2.hits, info1.hits + 1)

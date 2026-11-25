@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import cast
 
 import oh_cli
 import oh_deploy as deploy
@@ -131,7 +132,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     files, monitoring, units = rendered(house, versions, host)
     root = arguments.root
-    trees = [(arguments.conf, arguments.conf.name, files), (root / "metrics", "metrics", monitoring)]
+    trees: list[tuple[Path, str, dict[str, str | bytes]]] = [
+        (arguments.conf, arguments.conf.name, files),
+        (root / "metrics", "metrics", cast("dict[str, str | bytes]", monitoring)),
+    ]
     stale: list[str] = []
     missing: list[str] = []
     stray: list[tuple[str, str]] = []
@@ -147,10 +151,11 @@ def main(argv: list[str] | None = None) -> int:
             stale += old
             missing += absent
         else:
-            for path in render.write(directory, tree):
+            old, absent, extra = render.compare(directory, tree)
+            for path in sorted(old + absent):
+                render.put(directory / path, tree[path])
                 print(f"wrote {shown}/{path}")
                 written.append(path)
-            extra = render.compare(directory, tree)[2]
         for path in extra:
             ours = generated(directory / path) or (directory == arguments.conf and path.startswith(OWNED))
             if ours and arguments.prune:
@@ -193,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"thermite generate: {path}: nothing generates it now; {why}", file=sys.stderr)
     # Valid, and rendered as nothing: said here, or a device would look set up.
     notes = [integrations.planned_text(device["id"], phase, name)
-             for device in house.devices for phase, name in integrations.planned(device)]
+             for device in house.devices for phase, name in integrations.planned(cast(dict, device))]
     for note in notes:
         print(f"thermite generate: note: {note}", file=sys.stderr)
     count = len(files) + len(monitoring)

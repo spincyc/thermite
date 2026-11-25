@@ -276,7 +276,6 @@ function create(options) {
 
   function flushRemote(remote) {
     if (remote.removed) return;
-    compute(remote);
     if (!remote.awake) {
       remote.ack = null;
       remote.toast = null;
@@ -295,6 +294,7 @@ function create(options) {
       if (out.ack !== undefined) transmit(remote, out);
       return;
     }
+    compute(remote);
     if (remote.toast) out.toast = remote.toast;
     if (remote.inputs) out.inputs = remote.inputs;
     remote.ack = null;

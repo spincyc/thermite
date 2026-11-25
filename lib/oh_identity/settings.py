@@ -22,10 +22,10 @@ MIDDLEWARE = ["oh_identity.hardening.SecurityHeaders", "oh_identity.guest.Transp
               "django.contrib.auth.middleware.AuthenticationMiddleware", "oh_identity.auth.IdentityCSRF"]
 AUTH_USER_MODEL = "oh_identity.User"
 DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": STATE / "identity.sqlite3",
-                         # WAL lets status reads proceed beside the worker's writes.
-                         "OPTIONS": {"timeout": 5, "transaction_mode": "IMMEDIATE",
-                                     "init_command": "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL"}}}
-CONN_MAX_AGE = 0
+                         # WAL and per-connection pragmas are configured in apps.py:ready().
+                         "CONN_MAX_AGE": 60,
+                         "OPTIONS": {"timeout": 5, "transaction_mode": "IMMEDIATE"}}}
+CONN_MAX_AGE = 60
 USE_TZ = True
 TIME_ZONE = os.environ.get("THERMITE_TIME_ZONE", "UTC")
 PASSWORD_HASHERS = ["django.contrib.auth.hashers.Argon2PasswordHasher"]

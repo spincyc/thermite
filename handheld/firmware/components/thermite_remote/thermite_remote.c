@@ -111,17 +111,50 @@ static void put(writer_t *w, const char *text)
     w->left -= length;
 }
 
+static void put_char(writer_t *w, char ch)
+{
+    if (w->full || w->left < 2) {
+        w->full = true;
+        return;
+    }
+    *w->at++ = ch;
+    *w->at = '\0';
+    w->left--;
+}
+
 static void put_string(writer_t *w, const char *text)
 {
-    put(w, "\"");
+    static const char hex[] = "0123456789abcdef";
+    put_char(w, '"');
     for (const unsigned char *c = (const unsigned char *)text; *c && !w->full; c++) {
-        char one[8];
-        if (*c == '"' || *c == '\\') snprintf(one, sizeof one, "\\%c", *c);
-        else if (*c < 0x20) snprintf(one, sizeof one, "\\u%04x", *c);
-        else snprintf(one, sizeof one, "%c", *c);
-        put(w, one);
+        if (*c == '"' || *c == '\\') {
+            if (w->left < 3) {
+                w->full = true;
+                return;
+            }
+            *w->at++ = '\\';
+            *w->at++ = (char)*c;
+            *w->at = '\0';
+            w->left -= 2;
+        } else if (*c < 0x20) {
+            if (w->left < 7) {
+                w->full = true;
+                return;
+            }
+            w->at[0] = '\\';
+            w->at[1] = 'u';
+            w->at[2] = '0';
+            w->at[3] = '0';
+            w->at[4] = hex[*c >> 4];
+            w->at[5] = hex[*c & 0x0f];
+            w->at[6] = '\0';
+            w->at += 6;
+            w->left -= 6;
+        } else {
+            put_char(w, (char)*c);
+        }
     }
-    put(w, "\"");
+    put_char(w, '"');
 }
 
 static void put_number(writer_t *w, long long value)
@@ -322,6 +355,9 @@ tr_t *tr_create(tr_persist_t *persist, const uint8_t key[TL_KEY_LEN], const tr_i
     r->channel = persist->channel;
     r->platform.set_channel(r->platform.context, r->channel);
     r->want_session = persist->link.session == 0;
+    /* Waking from deep sleep with a live session has no cached screen yet:
+     * carry "have":"" on the first outgoing op (e.g. the wake key itself). */
+    r->have_due = persist->link.session != 0;
     r->link = persist->link.session ? TR_LINK_CONNECTED : TR_LINK_OFFLINE;
     return r;
 }
@@ -334,6 +370,7 @@ void tr_destroy(tr_t *r)
     cJSON_Delete(r->toast);
     cJSON_Delete(r->inputs);
     tl_zeroize(r->key, sizeof r->key);
+    tl_cache_clear();
     free(r);
 }
 
@@ -447,8 +484,8 @@ static void acknowledged(tr_t *r, uint32_t number)
 }
 
 /* Moves the member name, an object (or null when nullable), into *slot.
- * Returns -1 when absent, else whether *slot now differs. */
-static int take(cJSON *message, const char *name, cJSON **slot, bool nullable)
+ * Returns -1 when absent, else whether *slot now differs (always 1 when !compare). */
+static int take(cJSON *message, const char *name, cJSON **slot, bool nullable, bool compare)
 {
     cJSON *item = cJSON_GetObjectItemCaseSensitive(message, name);
     if (!item || !(cJSON_IsObject(item) || (nullable && cJSON_IsNull(item)))) return -1;
@@ -457,7 +494,7 @@ static int take(cJSON *message, const char *name, cJSON **slot, bool nullable)
         cJSON_Delete(item);
         item = NULL;
     }
-    bool same = (*slot == NULL && item == NULL) || (*slot && item && cJSON_Compare(*slot, item, true));
+    bool same = compare && ((*slot == NULL && item == NULL) || (*slot && item && cJSON_Compare(*slot, item, true)));
     cJSON_Delete(*slot);
     *slot = item;
     return !same;
@@ -478,11 +515,11 @@ static void apply(tr_t *r, const char *text, size_t length)
     const cJSON *screen = cJSON_GetObjectItemCaseSensitive(message, "screen");
     const cJSON *id = cJSON_GetObjectItemCaseSensitive(screen, "id");
     bool same = r->screen && cJSON_IsString(id) && id->valuestring[0] && strcmp(id->valuestring, screen_id(r)) == 0;
-    if (take(message, "screen", &r->screen, false) >= 0 && !same) r->what |= TR_CHANGED_SCREEN;
-    if (take(message, "audio", &r->audio, true) > 0) r->what |= TR_CHANGED_AUDIO;
+    if (!same && take(message, "screen", &r->screen, false, false) >= 0) r->what |= TR_CHANGED_SCREEN;
+    if (take(message, "audio", &r->audio, true, true) > 0) r->what |= TR_CHANGED_AUDIO;
     /* A toast or an input list shows each time it arrives, even when repeated. */
-    if (take(message, "toast", &r->toast, false) >= 0) r->what |= TR_CHANGED_TOAST;
-    if (take(message, "inputs", &r->inputs, false) >= 0) r->what |= TR_CHANGED_INPUTS;
+    if (take(message, "toast", &r->toast, false, false) >= 0) r->what |= TR_CHANGED_TOAST;
+    if (take(message, "inputs", &r->inputs, false, false) >= 0) r->what |= TR_CHANGED_INPUTS;
     cJSON_Delete(message);
 }
 

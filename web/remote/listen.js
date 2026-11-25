@@ -64,10 +64,15 @@
     placeLibrary();
     if (wide && wide.addEventListener) wide.addEventListener("change", placeLibrary);
     // While it plays, the time gone moves on each second.
-    global.setInterval(() => {
+    const tick = global.setInterval(() => {
       const view = listening && document.visibilityState !== "hidden" && listen.view();
       if (view && view.playing && view.progress) drawProgress(view);
     }, 1000);
+
+    function stop() {
+      global.clearInterval(tick);
+      if (wide && wide.removeEventListener) wide.removeEventListener("change", placeLibrary);
+    }
 
     // ---- drawing ------------------------------------------------------------
 
@@ -942,7 +947,7 @@
       return parts.filter((value, index, list) => value && list.indexOf(value) === index).join(" · ");
     }
 
-    return { update: update, press: press, key: key, alert: alert, openInputs: openInputs };
+    return { update: update, press: press, key: key, alert: alert, openInputs: openInputs, stop: stop };
   }
 
   global.RemoteListenPage = { create: create };

@@ -1010,8 +1010,62 @@ async function regressions(proof) {
   const emptyGrid = new Grid(80, null, "base");
   adminEmpty.content(emptyGrid, 80, { ui: {} });
   const emptySettingsOk = policyCalls === 0 && emptyGrid.text().includes("No rooms configured.");
+
+  // Steady-state frame() runs View.render() once (no unconditional double render).
+  const View = require("../tui/remote/view");
+  const { fileStore } = require("../tui/remote/store");
+  const os = require("os");
+  const pPerf = await open({}, WEST);
+  draw(pPerf); // prime initial focus/pane
+  const origRender = View.render;
+  let renderCalls = 0;
+  View.render = (...args) => { renderCalls += 1; return origRender(...args); };
+  pPerf.controller.frame(110, 50);
+  View.render = origRender;
+  const singleRenderPass = renderCalls === 1;
+  pPerf.controller.stop();
+
+  // Idle 500ms tick does not redraw when clock second is unchanged and nothing is switching; switching DOES blink at 500ms.
+  let tickFn = null, tickChanges = 0, fakeNow = Date.UTC(2026, 10, 15, 12, 0, 0);
+  const pTick = Main.assemble(Main.parse(["--mock", "--latency", "0"]), {
+    shared: Shared.load(),
+    now: () => fakeNow,
+    setInterval: (fn) => { tickFn = fn; return 1; },
+    clearInterval() {},
+    onChange: () => { tickChanges += 1; }
+  });
+  await pTick.controller.start(WEST);
+  pTick.controller.ui.still = false;
+  tickChanges = 0;
+  tickFn(); // same second, idle -> no blink, no redraw
+  const idleNoRedraw = tickChanges === 0 && pTick.controller.ui.blink === false;
+  fakeNow += 1000;
+  tickFn(); // clock second advanced -> 1 redraw, still no blink
+  const clockRedraw = tickChanges === 1 && pTick.controller.ui.blink === false;
+  pTick.backend.timeout = 60000;
+  pTick.session.choose("example_computer");
+  await until(pTick, () => pTick.session.state(WEST).status === "switching", "switching for blink test");
+  tickChanges = 0;
+  tickFn(); // same second, switching -> blinks and redraws
+  const switchingBlinks = tickChanges === 1 && pTick.controller.ui.blink === true;
+  pTick.controller.stop();
+
+  // fileStore debounces writes, uses non-colliding temp files, and flushes cleanly on stop().
+  const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), "tui-store-"));
+  const storeFile = path.join(storeDir, "state.json");
+  const st = fileStore(storeFile, { debounceMs: 500 });
+  st.set("a", 1);
+  st.set("b", 2);
+  const debouncedBeforeFlush = !fs.existsSync(storeFile);
+  st.stop();
+  const flushedData = JSON.parse(fs.readFileSync(storeFile, "utf8"));
+  const leftoverTmps = fs.readdirSync(storeDir).filter((name) => name.endsWith(".tmp"));
+  fs.rmSync(storeDir, { recursive: true, force: true });
+  const storeAtomicOk = debouncedBeforeFlush && flushedData.a === 1 && flushedData.b === 2 && leftoverTmps.length === 0;
+
   proof.regressions = { stillEnv, f6BeforeF10, disabledLockOk, infoTabFocus: [infoFocusBeforeTab, infoFocusAfterTab],
-    securityStatusClean, formSwallowedQL, lockedRepeatBlocked, emptySettingsOk };
+    securityStatusClean, formSwallowedQL, lockedRepeatBlocked, emptySettingsOk,
+    singleRenderPass, idleNoRedraw, clockRedraw, switchingBlinks, storeAtomicOk };
   size = [110, 50];
 }
 

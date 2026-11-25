@@ -25,7 +25,7 @@ import yaml  # noqa: E402
 from oh_cli import reboot as cli  # noqa: E402
 from oh_conf import House, unfilled  # noqa: E402
 from oh_features import reboots  # noqa: E402
-from oh_integrations import _io, ukm404_http  # noqa: E402
+from oh_integrations import _io, heos, ukm404_http  # noqa: E402
 from tests.test_vrroom_telnet import HOUSE as VRROOM_HOUSE  # noqa: E402
 from tests.test_zone_sync import HOUSE as ROUTED  # noqa: E402
 
@@ -307,10 +307,13 @@ class Render(unittest.TestCase):
         self.assertNotIn(reboots.ITEMS, files)
 
     def test_the_receivers_rule_knows_their_addresses(self):
-        text = render.render(House(house()))["automation/js/heos.js"]
-        line = next(line for line in text.splitlines() if line.startswith("const DEVICES = "))
-        self.assertEqual([entry["host"] for entry in json.loads(line[len("const DEVICES = "):-1])],
-                         ["192.0.2.50", "192.0.2.51"])
+        files = render.render(House(house()))
+        hosts = []
+        for receiver in (RECEIVER, SMALL):
+            text = files[heos.rule_path(receiver)]
+            line = next(line for line in text.splitlines() if line.startswith("const DEVICES = "))
+            hosts.extend(entry["host"] for entry in json.loads(line[len("const DEVICES = "):-1]))
+        self.assertEqual(hosts, ["192.0.2.50", "192.0.2.51"])
 
 
 @unittest.skipUnless(shutil.which("node"), "node is required for the production reboots rule")

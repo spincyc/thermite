@@ -28,12 +28,17 @@ every zone is off (reboot(), oh_features.reboots).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import ipaddress
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
 from oh_conf import Addon, House, YamlFile, point, uses
 from oh_shape import NUMBER, TEXT, TRUTH, Key
+
+if TYPE_CHECKING:
+    from oh_inventory import Device
 
 from . import _commands, _script, denonmarantz_http
 
@@ -67,7 +72,7 @@ def enabled(device: dict) -> bool:
     return uses(device, PHASE, NAME) and device.get("heos_pid") is not None
 
 
-def host(devices: list[dict]) -> dict | None:
+def host(devices: Sequence[Any]) -> dict[str, Any] | None:
     """The receiver whose HEOS CLI the house's one bridge connects to: the
     HEOS device marked `heos_bridge: true`, else the first in the house
     file; None in a house without HEOS."""
@@ -76,12 +81,18 @@ def host(devices: list[dict]) -> dict | None:
 
 
 def bridge_uid(house: House) -> str:
-    return f"heos:bridge:{host(house.devices)['id']}"
+    hub = host(house.devices)
+    if hub is None:
+        raise ValueError("house has no HEOS receiver")
+    return f"heos:bridge:{hub['id']}"
 
 
 def thing_uid(device: dict, house: House) -> str:
     """The receiver's player, on the house's bridge."""
-    return f"heos:player:{host(house.devices)['id']}:{device['id']}"
+    hub = host(house.devices)
+    if hub is None:
+        raise ValueError("house has no HEOS receiver")
+    return f"heos:player:{hub['id']}:{device['id']}"
 
 
 def playback_item(device: dict) -> str:
@@ -113,7 +124,8 @@ def validate(device: dict) -> list[str]:
     if device.get("kind") != "avr" or not uses(device, "control", "denonmarantz_http"):
         problems.append(f"{where}: heos transport needs an AVR controlled by denonmarantz_http")
     pid = device.get("heos_pid")
-    if isinstance(pid, bool) or not re.fullmatch(r"-?[1-9][0-9]{0,9}", str(pid)) or not -2147483648 <= int(pid) <= 2147483647:
+    if (isinstance(pid, bool) or not isinstance(pid, (int, str))
+            or not re.fullmatch(r"-?[1-9][0-9]{0,9}", str(pid)) or not -2147483648 <= int(pid) <= 2147483647):
         problems.append(f"{where}.heos_pid: needs the nonzero signed player ID verified by local HEOS get_players")
     return problems
 
@@ -132,12 +144,14 @@ def render(device: dict, house: House, out: YamlFile) -> None:
     house's one bridge on its host, so that every player's bridge is in the
     same file."""
     ident, hub = device["id"], host(house.devices)
+    if hub is None:
+        raise ValueError("house has no HEOS receiver")
     out.things.setdefault(bridge_uid(house), {
-        "isBridge": True, "label": f"HEOS connection via {house.label(hub)}",
+        "isBridge": True, "label": f"HEOS connection via {house.label(cast('Device', hub))}",
         "location": house.room_label(hub["room"]), "config": {"ipAddress": hub["ip"], "heartbeat": 60},
     })
     uid = thing_uid(device, house)
-    out.things[uid] = {"bridge": bridge_uid(house), "label": f"{house.label(device)} HEOS transport",
+    out.things[uid] = {"bridge": bridge_uid(house), "label": f"{house.label(cast('Device', device))} HEOS transport",
                        "location": house.room_label(device["room"]), "config": {"pid": str(device["heos_pid"])}}
     item = point(ident, "Player", "HEOS Playback", ["Status", "MediaControl"], f"{uid}:Control", guarded=True)
     item["autoupdate"] = False
@@ -156,11 +170,22 @@ def problem(device: dict) -> str | None:
     return _commands.problem_item(device["id"]) if uses(device, PHASE, NAME) else None
 
 
+def _entry(device: dict, house: House) -> dict[str, str]:
+    ip = str(ipaddress.IPv4Address(device["ip"]))
+    return {"id": device["id"], "thing": thing_uid(device, house),
+            "receiver": denonmarantz_http.thing_uid(device),
+            "host": ip, "readURL": f"http://{ip}:8080/goform/AppCommand.xml"}
+
+
+def rule_path(device: dict) -> str:
+    """One script context per receiver so a slow reboot never blocks another."""
+    return _script.per_device(RULE, lambda _: "")[0](device)
+
+
 def files(devices: list[dict], house: House) -> dict[str, str]:
-    table = [{"id": d["id"], "thing": thing_uid(d, house), "receiver": denonmarantz_http.thing_uid(d),
-              "host": str(ipaddress.IPv4Address(d["ip"])),
-              "readURL": f"http://{ipaddress.IPv4Address(d['ip'])}:8080/goform/AppCommand.xml"} for d in devices]
-    return {RULE: _script.rule(SOURCE, NAME, {"DEVICES": table}, connects=False)}
+    _, render_files = _script.per_device(
+        RULE, lambda batch: _script.rule(SOURCE, NAME, {"DEVICES": [_entry(d, house) for d in batch]}))
+    return render_files(devices, house)
 
 
 def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:
@@ -168,5 +193,5 @@ def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:
     host, _, port = address.rpartition(":")
     if not ipaddress.IPv4Address(host).is_loopback or not port.isdigit() or not 1 <= int(port) <= 65535:
         raise ValueError("HEOS fresh-read stand-in must use loopback HTTP")
-    return _script.aimed(files, (RULE,), device, lambda entry: entry.update(
+    return _script.aimed(files, (rule_path(device), RULE), device, lambda entry: entry.update(
         host=host, readURL=f"http://{host}:{int(port)}/goform/AppCommand.xml"))

@@ -23,7 +23,7 @@ from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from .model import PolicyError, active, validate
-from .plan import Observation, Plan, conflicts, expected_plan, repair_plan, verify
+from .plan import Observation, Plan, conflicts, expected_plan, repair_plan, route_in_flight, verify
 from .schedule import GRACE, Boundary, desired_at, due_boundaries, local_instant, utc
 
 LOG = logging.getLogger(__name__)
@@ -33,6 +33,8 @@ LOG = logging.getLogger(__name__)
 # reports while its repair waits is still fresh when the wait ends. Any two
 # repairs in one room are at least BACKOFF[0] apart.
 BACKOFF = (2, 5, 10, 20)
+# Short re-check interval while a room's lifecycle route is in flight.
+ROUTE_IN_FLIGHT_RECHECK = 1.5
 # An Item that needs no repair for this long starts again at BACKOFF[0]. It is
 # longer than BACKOFF[-1]: a remote or CEC that undoes each repair within the
 # longest step keeps it there, even if the room verifies between repairs.
@@ -80,19 +82,25 @@ class IO(Protocol):
 
 
 class ResourceLocks:
-    """Sorted locks, shared with an in-process dispatcher when appropriate."""
+    """Sorted non-reentrant locks, matching FileLocks semantics in-process."""
 
     def __init__(self):
         self._guard = threading.Lock()
         self._locks = {}
 
     @contextlib.contextmanager
-    def hold(self, keys):
+    def hold(self, keys, *, blocking=True, deadline=None):
+        until = None if deadline is None else time.monotonic() + deadline
         with self._guard:
-            locks = [self._locks.setdefault(key, threading.RLock()) for key in sorted(set(keys))]
+            locks = [(key, self._locks.setdefault(key, threading.Lock())) for key in sorted(set(keys))]
         with contextlib.ExitStack() as stack:
-            for lock in locks:
-                stack.enter_context(lock)
+            for key, lock in locks:
+                if until is None:
+                    if not lock.acquire(blocking):
+                        raise BlockingIOError(key)
+                elif not lock.acquire(timeout=max(0.0, until - time.monotonic())):
+                    raise Busy()
+                stack.callback(lock.release)
             yield
 
 
@@ -279,23 +287,51 @@ class Worker:
         LOG.info(_line("boundary", key=event.key, room=event.room, revision=event.revision, event=event.kind,
                        target=event.target, status=status, reason=outcome, cmd=command))
 
-    def _boundary(self, event: Boundary, protected: list[Plan], revisions, policies, states):
+    def _lock_rooms(self, room: str, plan: Plan | None, plans: dict[str, Plan]) -> tuple[str, ...]:
+        """Minimal room-lock set: target room plus any other room whose active
+        plan shares a resource in plan.resources."""
+        rooms = {room}
+        if plan is not None:
+            needed = set(plan.resources)
+            for other, other_plan in plans.items():
+                if other != room and (needed & set(other_plan.resources)):
+                    rooms.add(other)
+        return tuple(sorted(rooms))
+
+    def _relevant_rooms(self, room: str, plan: Plan) -> tuple[str, ...]:
+        """Rooms whose policies could conflict with plan (for revision checks):
+        room plus any room that can touch any resource in plan.resources."""
+        needed = set(plan.resources)
+        rooms = {room}
+        for other in self.contract["rooms"]:
+            if other == room:
+                continue
+            resources = self._room_resources(other)
+            if resources is None or (resources & needed):
+                rooms.add(other)
+        return tuple(sorted(rooms))
+
+    def _boundary(self, event: Boundary, plans: dict[str, Plan], revisions, policies, states):
         if event.key in self._seen or not self._current(revisions) or not self._scheduled(policies, states):
             return False
+        protected = list(plans.values())
         outcome = event.outcome
         target = event.target
         plan = None
+        lock_plan = None
         if outcome == "due" and target is not None:
             try:
                 plan = self._plan(event.room, target)
             except PolicyError:
                 outcome = "invalid_policy"
             else:
+                lock_plan = plan
                 if conflicts(plan, protected, boundary=True):
                     plan = None
                     outcome = "shared_resource_conflict"
+        lock_rooms = self._lock_rooms(event.room, lock_plan, plans)
         if plan is None or target is None:
-            with self.locks.hold(["room:" + room for room in revisions]):
+            with self.locks.hold(["room:" + room for room in lock_rooms]):
                 if not self._current(revisions) or not self._scheduled(policies, states):
                     return False
                 if not self._claim(event):
@@ -304,10 +340,10 @@ class Worker:
             return False
         attempted = False
         command = None
-        # Every room contributes to the conflict/revision snapshot,
-        # including rooms without a policy yet. Serialize edits to that
-        # snapshot through dispatch, using the shared sorted lock order.
-        with self.locks.hold([*("room:" + room for room in revisions), *plan.resources]):
+        # Hold only the minimal conflict set (target room, any active room
+        # sharing resources in plan.resources, and plan.resources), then
+        # verify the atomic revision snapshot before claiming/dispatching.
+        with self.locks.hold([*("room:" + room for room in lock_rooms), *plan.resources]):
             current_time = utc(self.wall_clock())
             if not self._current(revisions) or not self._scheduled(policies, states, now=current_time):
                 return False
@@ -496,7 +532,7 @@ class Worker:
             state = states[room]
             attempted = False
             for event in due_boundaries(now, policy, self._seen, not_before=changed_at):
-                attempted = self._boundary(event, list(plans.values()), revisions, policies, states) or attempted
+                attempted = self._boundary(event, plans, revisions, policies, states) or attempted
             if not self._current(revisions) or not self._scheduled(policies, states):
                 return {"stale": True}
             if not state["locked"]:
@@ -515,48 +551,76 @@ class Worker:
             plan = plans[room]
             status = {"phase": "enforcing", "desired": state["desired"]}
             repair = []
-            with self.locks.hold([*("room:" + name for name in revisions), *plan.resources]):
-                if not self._current(revisions):
+            in_flight = False
+            lock_rooms = self._lock_rooms(room, plan, plans)
+            check_rooms = self._relevant_rooms(room, plan)
+            check_revisions = {name: revisions[name] for name in check_rooms}
+            check_policies = {name: policies[name] for name in check_rooms if name in policies}
+            with self.locks.hold([*("room:" + name for name in lock_rooms), *plan.resources]):
+                if not self._current(check_revisions):
                     return {"stale": True}
                 try:
                     observations = self.io.read(plan.observed())
-                    if not self._current(revisions):
+                    if not self._current(check_revisions):
                         return {"stale": True}
                     observed_now = utc(self.wall_clock())
-                    if not self._scheduled(policies, states):
+                    if not self._scheduled(check_policies, states, now=observed_now):
                         return {"stale": True}
                     mono = self.monotonic()
                     verification = verify(plan, observations, observed_now)
-                    status.update(verification)
-                    repair = repair_plan(plan, verification)
-                    if conflicts(plan, list(plans.values())):
-                        status.update(state="degraded", reason="shared_resource_conflict")
+                    in_flight = route_in_flight(plan, observations, observed_now)
+                    if in_flight:
+                        # Stage 3b fence: route is actively running; defer repairs
+                        # without marking degraded or advancing repair backoff.
+                        status.update(
+                            phase="enforcing",
+                            state="unknown",
+                            reason="settling",
+                            matched=verification["matched"],
+                            mismatched=[],
+                            unknown=list(dict.fromkeys([*verification["unknown"], *verification["mismatched"]])),
+                            limitations=verification["limitations"],
+                            scope=verification["scope"],
+                        )
                         repair = []
-                    # Each Item backs off on its own repairs, so one that a
-                    # remote keeps undoing never holds up another's first. Not
-                    # per device: a second Item of a device would wait out the
-                    # first's step, and its reading would go stale meanwhile.
-                    ready = [(item, value) for item, value in repair if mono >= self._due(runtime, item)]
-                    if ready and self._current(revisions) and self._scheduled(policies, states):
-                        item, value = ready[0]
-                        try:
-                            command, outcome = self.io.write(room, item, value, revision, origin="repair"), "dispatched"
-                            status["repair"] = item
-                        except Exception as error:
-                            command, outcome = getattr(error, "trail_id", None), "dispatch_unconfirmed"
-                            status["reason"] = "dispatch_unconfirmed"
-                        attempt = self._sent(runtime, item, self.monotonic())
-                        LOG.info(_line("repair", room=room, item=item, value=value, revision=revision, cmd=command,
-                                       outcome=outcome, attempt=attempt))
-                    if verification["state"] == "verified" and not status.get("reason"):
-                        status["phase"] = "verified"
+                        if conflicts(plan, list(plans.values())):
+                            status.update(state="degraded", reason="shared_resource_conflict")
+                    else:
+                        status.update(verification)
+                        repair = repair_plan(plan, verification)
+                        if conflicts(plan, list(plans.values())):
+                            status.update(state="degraded", reason="shared_resource_conflict")
+                            repair = []
+                        # Each Item backs off on its own repairs, so one that a
+                        # remote keeps undoing never holds up another's first. Not
+                        # per device: a second Item of a device would wait out the
+                        # first's step, and its reading would go stale meanwhile.
+                        ready = [(item, value) for item, value in repair if mono >= self._due(runtime, item)]
+                        if ready and self._current(check_revisions) and self._scheduled(check_policies, states):
+                            item, value = ready[0]
+                            try:
+                                command, outcome = self.io.write(room, item, value, revision, origin="repair"), "dispatched"
+                                status["repair"] = item
+                            except Exception as error:
+                                command, outcome = getattr(error, "trail_id", None), "dispatch_unconfirmed"
+                                status["reason"] = "dispatch_unconfirmed"
+                            attempt = self._sent(runtime, item, self.monotonic())
+                            LOG.info(_line("repair", room=room, item=item, value=value, revision=revision, cmd=command,
+                                           outcome=outcome, attempt=attempt))
+                        if verification["state"] == "verified" and not status.get("reason"):
+                            status["phase"] = "verified"
                 except Exception:
                     status.update(state="unknown", reason="native_read_unavailable")
                     repair = []
+                    in_flight = False
                 mono = self.monotonic()
-                retry_at = self._schedule(runtime, repair, mono)
+                if in_flight:
+                    runtime["read_due"] = mono + min(self.read_interval, ROUTE_IN_FLIGHT_RECHECK)
+                    retry_at = None
+                else:
+                    retry_at = self._schedule(runtime, repair, mono)
                 retry = 0 if retry_at is None else retry_at - mono
-            if not self._current(revisions) or not self._scheduled(policies, states):
+            if not self._current(check_revisions) or not self._scheduled(check_policies, states):
                 return {"stale": True}
             status["retry_seconds"] = retry
             result[room] = status

@@ -599,6 +599,37 @@ class Phase0Regressions(unittest.TestCase):
             check = controls.Check(house)
         self.assertIs(check.controls["example_player"][0], first)
 
+    def test_cross_check_indexed_network_and_prefix_matching(self):
+        data = {
+            "version": 1,
+            "rooms": {"living_room_main": {"label": "Living Room", "tag": "Room"}},
+            "devices": [
+                {"id": "living_room_tv", "room": "living_room_main", "ip": "192.0.2.10", "kind": "tv",
+                 "controls": {"observe": ["network_ping"]}},
+                {"id": "living_room_box", "room": "living_room_main", "ip": "192.0.2.11", "kind": "streamer",
+                 "controls": {"observe": ["network_ping"]}},
+            ],
+        }
+        house = House.unchecked(data)
+        things = {
+            "network:pingdevice:living_room_tv": {"file": "conf/yaml/network.yaml",
+                                                  "body": {"configuration": {"hostname": "192.0.2.10"}}},
+        }
+        items = {
+            "loc_living_room_main": {"file": "conf/yaml/house.yaml", "body": {}},
+            "loc_living_room_main_source": {"file": "conf/yaml/routing.yaml", "body": {}},
+            "living_room_tv": {"file": "conf/yaml/house.yaml", "body": {}},
+            "living_room_tv_online": {"file": "conf/yaml/network.yaml", "body": {}},
+            "loc_unknown_room_source": {"file": "conf/yaml/routing.yaml", "body": {}},
+            "stray_widget_power": {"file": "conf/yaml/other.yaml", "body": {}},
+        }
+        problems = oh_inventory.cross_check(house, things, items)
+        self.assertIn("living_room_box: observes network_ping but has no network Thing", problems)
+        self.assertTrue(any("loc_unknown_room_source" in p for p in problems), problems)
+        self.assertTrue(any("stray_widget_power" in p for p in problems), problems)
+        self.assertFalse(any("living_room_tv" in p for p in problems), problems)
+        self.assertFalse(any("loc_living_room_main" in p for p in problems), problems)
+
 
 if __name__ == "__main__":
     unittest.main()

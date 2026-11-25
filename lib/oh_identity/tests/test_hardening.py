@@ -261,7 +261,81 @@ class HttpSemantics(Requests, TestCase):
         with connection.cursor() as cursor:
             cursor.execute("PRAGMA journal_mode")
             self.assertEqual(cursor.fetchone()[0], "wal")
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='oh_identity_audit'")
+            indexes = {row[0] for row in cursor.fetchall()}
+            self.assertLessEqual({"oh_identity_audit_outcome_id", "oh_identity_audit_at"}, indexes)
+            cursor.execute("EXPLAIN QUERY PLAN SELECT id FROM oh_identity_audit WHERE outcome = 'denied' ORDER BY id DESC LIMIT 1 OFFSET 999")
+            plan = " ".join(str(row) for row in cursor.fetchall())
+            self.assertIn("oh_identity_audit_outcome_id", plan)
         self.assertFalse(settings.DATABASES["default"].get("ATOMIC_REQUESTS", False))
+
+    def test_callback_relay_offloads_xml_parsing_off_event_loop(self):
+        import asyncio
+        import threading
+        from contextlib import asynccontextmanager
+        from asgiref.sync import async_to_sync
+        from oh_access import callbacks
+
+        cb_path = "/upnpcallback/dev/RINCON_02000000000101400_MR/svc/upnp-org/RenderingControl/event/cb"
+        peer, host = "192.0.2.40", "192.0.2.2:8088"
+        body = (b'<?xml version="1.0" encoding="utf-8"?>'
+                b'<e:propertyset xmlns:e="urn:schemas-upnp-org:event-1-0">'
+                b'<e:property><LastChange>ok</LastChange></e:property></e:propertyset>')
+
+        class FakeClient:
+            @asynccontextmanager
+            async def stream(self, method, url, **kwargs):
+                yield type("Resp", (), {"status_code": 200})()
+
+        async def exercise():
+            loop_tid = threading.get_ident()
+            parse_tids = []
+            started = threading.Event()
+            release = threading.Event()
+            original = callbacks.xml_notification
+
+            def instrumented(data):
+                parse_tids.append(threading.get_ident())
+                started.set()
+                release.wait(5)
+                return original(data)
+
+            app = callbacks.CallbackRelay({cb_path: peer}, "http://127.0.0.1:8080", [host], client=FakeClient())
+            scope = {
+                "type": "http", "method": "NOTIFY", "path": cb_path, "raw_path": cb_path.encode(),
+                "query_string": b"", "client": (peer, 1400),
+                "headers": [
+                    (b"host", host.encode()), (b"nt", b"upnp:event"), (b"nts", b"upnp:propchange"),
+                    (b"sid", b"uuid:RINCON_02000000000101400_sub0000001234"), (b"seq", b"0"),
+                    (b"content-type", b'text/xml; charset="utf-8"'), (b"content-length", str(len(body)).encode()),
+                ],
+            }
+            sent = []
+            pending = iter([{"type": "http.request", "body": body, "more_body": False}])
+
+            async def receive():
+                return next(pending)
+
+            async def send(msg):
+                sent.append(msg)
+
+            with patch.object(callbacks, "xml_notification", side_effect=instrumented):
+                task = asyncio.create_task(app(scope, receive, send))
+                while not started.is_set():
+                    await asyncio.sleep(0.005)
+                # Event loop stays responsive while XML parsing is blocked in worker thread.
+                ticked = []
+                async def concurrent():
+                    ticked.append(True)
+                await asyncio.wait_for(concurrent(), timeout=1.0)
+                self.assertEqual(ticked, [True])
+                release.set()
+                await asyncio.wait_for(task, timeout=5.0)
+            self.assertEqual(sent[0]["status"], 200)
+            self.assertEqual(len(parse_tids), 1)
+            self.assertNotEqual(parse_tids[0], loop_tid)
+
+        async_to_sync(exercise)()
 
     def test_token_list_omits_revoked_and_long_expired_tokens(self):
         live, _ = issue_token(self.owner, "live")

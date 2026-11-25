@@ -106,7 +106,7 @@ class NativeTransport(SimpleTestCase):
             transport.command("power", "ON")
             self.assertEqual(transport.media("/media/image", "GET", None, 20), ("image/jpeg", b"image"))
             self.assertEqual(create.call_count, 3)
-            self.assertEqual(capacities, [(8, 8), (4, 4), (2, 2)])
+            self.assertEqual(capacities, [(8, 8), (16, 16), (8, 8)])
             transport.close()
             transport.close()
             self.assertTrue(all(instance.is_closed for instance in clients))

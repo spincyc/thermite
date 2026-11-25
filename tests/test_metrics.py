@@ -663,20 +663,29 @@ class RoutingSeries(unittest.TestCase):
                                  [("thermite_routing_executor_up", {}, 0.0)])
 
     def test_route_histograms_and_counters_keep_only_known_names(self):
+        n = len(exporter.ROUTE_BUCKETS)
         data = {"version": 1,
-                "route": {"example_west": {"confirmed": {"buckets": [1, 3, 4, 4, 4, 4, 4], "count": 4, "sum": 6.5},
-                                           "deadline": {"buckets": [0, 0, 0, 0, 1, 1, 1], "count": 1, "sum": 15},
-                                           "bogus": {"buckets": [1] * 7, "count": 1, "sum": 1}},
-                          "unknown_zone": {"confirmed": {"buckets": [1] * 7, "count": 1, "sum": 1}}},
+                "route": {"example_west": {"confirmed": {"buckets": [1, 3, 4, 4, 4, 4, 4, 4, 4, 4], "count": 4, "sum": 6.5},
+                                           "deadline": {"buckets": [0] * n, "count": 1, "sum": 0},
+                                           "bogus": {"buckets": [1] * n, "count": 1, "sum": 1}},
+                          "unknown_zone": {"confirmed": {"buckets": [1] * n, "count": 1, "sum": 1}}},
                 "operations": {"applied": 5, "free text": 9}, "failures": {"example_matrix": {"unsent": 2, "x": 1},
                                                                             "stranger": {"unsent": 1}},
-                "resends": {"example_west": 3}}
+                "resends": {"example_west": 3},
+                "quarantines": [
+                    {"device": "example_matrix", "slot": "example_matrix_output1_input", "reason": "provider_outcome_unknown"},
+                    {"device": "example_matrix", "slot": "device", "reason": "bad reason"},
+                    {"device": "stranger", "slot": "device", "reason": "uncertain"},
+                    {"device": "example_matrix", "slot": "bad slot!", "reason": "uncertain"},
+                ]}
         text = exporter.exposition(self.series(house_routing_metrics=json.dumps(data)))
         self.assertIn("# TYPE thermite_route_seconds histogram", text)
         self.assertIn('thermite_route_seconds_bucket{room="example_west",zone="example_west",outcome="confirmed",'
                       'le="2"} 3', text)
-        self.assertIn('thermite_route_seconds_bucket{room="example_west",zone="example_west",outcome="deadline",'
-                      'le="+Inf"} 1', text)
+        self.assertIn('thermite_route_seconds_bucket{room="example_west",zone="example_west",outcome="confirmed",'
+                      'le="360"} 4', text)
+        self.assertIn('thermite_route_seconds_count{room="example_west",zone="example_west",outcome="deadline"} 1', text)
+        self.assertNotIn('thermite_route_seconds_bucket{room="example_west",zone="example_west",outcome="deadline"', text)
         self.assertIn('thermite_route_seconds_sum{room="example_west",zone="example_west",outcome="confirmed"} 6.5',
                       text)
         self.assertIn("# TYPE thermite_routing_operations_total counter", text)
@@ -685,15 +694,18 @@ class RoutingSeries(unittest.TestCase):
         self.assertIn('thermite_routing_endpoint_failures_total{device="example_matrix",room="example_west",'
                       'kind="hdmi_matrix",reason="unsent"} 2', text)
         self.assertIn('thermite_routing_resends_total{room="example_west",zone="example_west"} 3', text)
-        for absent in ("bogus", "unknown_zone", "free text", "stranger", 'reason="x"'):
+        self.assertIn('thermite_routing_quarantine_info{device="example_matrix",room="example_west",'
+                      'kind="hdmi_matrix",slot="example_matrix_output1_input",reason="provider_outcome_unknown"} 1', text)
+        for absent in ("bogus", "unknown_zone", "free text", "stranger", 'reason="x"', "bad reason", "bad slot"):
             self.assertNotIn(absent, text)
         self.assertEqual(text.count("# TYPE thermite_route_seconds "), 1)
 
     def test_inconsistent_histograms_are_dropped(self):
-        for histogram in ({"buckets": [2, 1, 1, 1, 1, 1, 1], "count": 2, "sum": 1},
-                          {"buckets": [1, 1, 1, 1, 1, 1, 3], "count": 2, "sum": 1},
+        n = len(exporter.ROUTE_BUCKETS)
+        for histogram in ({"buckets": [2] + [1] * (n - 1), "count": 2, "sum": 1},
+                          {"buckets": [1] * (n - 1) + [3], "count": 2, "sum": 1},
                           {"buckets": [1, 1], "count": 1, "sum": 1},
-                          {"buckets": [1] * 7, "count": 1, "sum": -1}):
+                          {"buckets": [1] * n, "count": 1, "sum": -1}):
             with self.subTest(histogram=histogram):
                 data = {"version": 1, "route": {"example_west": {"confirmed": histogram}}}
                 samples = self.series(house_routing_metrics=json.dumps(data))
@@ -784,8 +796,101 @@ class RoutingSeries(unittest.TestCase):
         source = routing.SOURCE.read_text(encoding="utf-8")
         counted = re.search(r"const BUCKETS = \[([^\]]*)\]", source).group(1)
         self.assertEqual(tuple(int(value) for value in counted.split(",")), exporter.ROUTE_BUCKETS)
+        self.assertEqual(exporter.ROUTE_BUCKETS, (1, 2, 4, 8, 15, 30, 60, 120, 240, 360))
         for inventory in (INVENTORY, zones.house()):
             self.assertGreater(exporter.ROUTE_BUCKETS[-1], routing.hold_ms(House(inventory)) / 1000)
+
+    def test_quarantine_reasons_match_lifecycle_js_and_surface_in_switching_dashboard(self):
+        from oh_features import routing
+        from tests import test_zone_sync as zones
+        lifecycle_src = routing.SOURCE.with_name("lifecycle.js").read_text(encoding="utf-8")
+        match = re.search(r"const QUARANTINE_REASONS = Object\.freeze\(\[([^\]]*)\]\)", lifecycle_src, re.S)
+        body = re.sub(r"//.*", "", match.group(1))
+        reasons = tuple(re.findall(r"'([^']+)'", body))
+        self.assertEqual(reasons, exporter.QUARANTINE_REASONS)
+        files = rendered(zones.house())
+        switching = json.loads(files[f"{oh_metrics.GRAFANA_DASHBOARDS}/{dashboards.SWITCHING}.json"])
+        panel = next(p for p in panels(switching) if p["title"] == "Quarantined now")
+        self.assertIn("thermite_routing_quarantine_info", panel["targets"][0]["expr"])
+        reason_override = next(o for o in panel["fieldConfig"]["overrides"] if o["matcher"]["options"] == "reason")
+        mapped = next(p["value"][0]["options"] for p in reason_override["properties"] if p["id"] == "mappings")
+        self.assertEqual(set(mapped), set(exporter.QUARANTINE_REASONS))
+
+    def test_exporter_collect_builds_state_of_and_leaders_once_and_caches_token(self):
+        from unittest import mock
+        items = [{"name": "example_tv_power", "state": "ON", "type": "Switch"}]
+        things = [{"UID": "example:tv:example_tv", "statusInfo": {"status": "ONLINE"}}]
+        with mock.patch.object(exporter, "_state_of", wraps=exporter._state_of) as state_spy, \
+                mock.patch.object(exporter, "_leaders", wraps=exporter._leaders) as leaders_spy, \
+                mock.patch.object(exporter, "_offline", wraps=exporter._offline) as offline_spy:
+            exporter.collect(MAP, lambda path, _t: things if "things" in path else items)
+        self.assertEqual(state_spy.call_count, 1)
+        self.assertEqual(leaders_spy.call_count, 1)
+        self.assertEqual(offline_spy.call_count, 1)
+        # Token cache avoids re-reading unchanged file, refreshes on update, and clears on delete.
+        with tempfile.TemporaryDirectory() as directory:
+            token_path = Path(directory) / "token"
+            token_path.write_text("first-token\n", encoding="utf-8")
+            with mock.patch.object(Path, "read_text", wraps=Path.read_text, autospec=True) as read_spy:
+                self.assertEqual(exporter.read_token(token_path), "first-token")
+                self.assertEqual(exporter.read_token(token_path), "first-token")
+                self.assertEqual(read_spy.call_count, 1)
+                token_path.write_text("second-longer-token\n", encoding="utf-8")
+                self.assertEqual(exporter.read_token(token_path), "second-longer-token")
+                self.assertEqual(read_spy.call_count, 2)
+                token_path.unlink()
+                self.assertIsNone(exporter.read_token(token_path))
+
+    def test_http_fetch_reuses_keep_alive_connection_and_reconnects_on_drop(self):
+        import http.server
+        import threading
+        accepted = []
+        close_after = [0]
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_GET(self):  # noqa: N802
+                if close_after[0] and len(accepted) == 1 and self.path == "/drop":
+                    self.close_connection = True
+                    self.connection.close()
+                    return
+                body = json.dumps({"path": self.path, "auth": self.headers.get("Authorization")}).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format, *args):  # noqa: A002
+                pass
+
+        class CountingServer(http.server.ThreadingHTTPServer):
+            def get_request(self):
+                conn, addr = super().get_request()
+                accepted.append(addr)
+                return conn, addr
+
+        server = CountingServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                token_path = Path(directory) / "token"
+                token_path.write_text("tok123\n", encoding="utf-8")
+                fetch = exporter.http_fetch(f"http://127.0.0.1:{server.server_port}", token_path)
+                try:
+                    self.assertEqual(fetch("/one", 2.0), {"path": "/one", "auth": "Bearer tok123"})
+                    self.assertEqual(fetch("/two", 2.0), {"path": "/two", "auth": "Bearer tok123"})
+                    self.assertEqual(len(accepted), 1, "expected persistent HTTP/1.1 keep-alive connection reuse")
+                    close_after[0] = 1
+                    self.assertEqual(fetch("/drop", 2.0), {"path": "/drop", "auth": "Bearer tok123"})
+                    self.assertEqual(len(accepted), 2, "expected transparent reconnect after dropped keep-alive socket")
+                finally:
+                    fetch.close()
+        finally:
+            server.shutdown()
+            server.server_close()
 
 
 class Checks(unittest.TestCase):
@@ -2032,7 +2137,7 @@ class Textfiles(unittest.TestCase):
         self.assertEqual(route("/api/v1/music/example_desk_wiim/play"), "music")
         self.assertEqual(route("/api/v1/musical"), "other")
         self.assertEqual(route("/rest/events"), "other")
-        self.assertEqual(route("/api/v1/telemetry"), "other")
+        self.assertEqual(route("/api/v1/telemetry"), "telemetry")
         self.assertEqual(route("/../../etc/passwd"), "other")
         self.assertEqual(self.metrics.code_class(None), "aborted")
         self.assertEqual(self.metrics.code_class(503), "5xx")

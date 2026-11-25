@@ -697,18 +697,27 @@ def cross_check(house: House, things: dict, items: dict) -> list[str]:
             problems.append(
                 f"{thing['file']}: Thing {uid} uses {address}, but "
                 + (f"its approved transport addresses are {sorted(allowed)}" if owners == 1 else f"{last} is at {home}"))
+    network_devices = {uid.rsplit(":", 1)[-1] for uid in things if uid.startswith("network:")}
     for device_id, device in sorted(devices.items()):
         observe = (device.get("controls") or {}).get("observe") or []
-        if "network_ping" in observe and not any(
-                uid.startswith("network:") and uid.endswith(":" + device_id)
-                for uid in things):
+        if "network_ping" in observe and device_id not in network_devices:
             problems.append(f"{device_id}: observes network_ping but has no "
                             "network Thing")
+
+    def _matches_prefix(candidate: str, ids: set[str] | dict[str, Device]) -> bool:
+        if candidate in ids:
+            return True
+        pos = candidate.find("_")
+        while pos != -1:
+            if candidate[:pos] in ids:
+                return True
+            pos = candidate.find("_", pos + 1)
+        return False
+
     for name, item in sorted(items.items()):
-        if name.startswith("loc_") and any(name[4:] == room or name[4:].startswith(room + "_")
-                                           for room in rooms):
+        if name.startswith("loc_") and _matches_prefix(name[4:], rooms):
             continue
-        if name in devices or any(name.startswith(d + "_") for d in devices) or name in house_items:
+        if name in house_items or _matches_prefix(name, devices):
             continue
         problems.append(f"{item['file']}: Item {name} is neither loc_<room>[_<point>], "
                         "named after a device id, nor one of HOUSE_ITEMS")

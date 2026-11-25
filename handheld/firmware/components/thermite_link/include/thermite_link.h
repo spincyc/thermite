@@ -93,6 +93,9 @@ void tl_hex(uint64_t value, char out[17]);
 /* Scrubs sensitive memory (keys, console buffers) in a way the compiler will not elide. */
 void tl_zeroize(void *buf, size_t len);
 
+/* Releases and scrubs the cached AES-CCM key schedule (called on teardown or key wipe). */
+void tl_cache_clear(void);
+
 #ifdef __cplusplus
 }
 #endif

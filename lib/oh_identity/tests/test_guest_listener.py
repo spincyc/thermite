@@ -167,7 +167,7 @@ class Listening(TestCase):
                 self.assertEqual(response["Cache-Control"], "public, max-age=31536000, immutable")
                 self.assertEqual(stale["Cache-Control"], "no-cache")
                 text = not name.endswith(".png")
-                self.assertEqual(response.content, gzip.compress(data, mtime=0) if text else data)
+                self.assertEqual(response.content, gzip.compress(data, compresslevel=6, mtime=0) if text else data)
                 tag = response["ETag"]
                 self.assertEqual(tag, f'"{version}-gzip"' if text else f'"{version}"')
                 again = call("get", f"/static/remote/{name}?v={version}", **{"Accept-Encoding": "gzip", "If-None-Match": tag})
@@ -284,7 +284,7 @@ class Listening(TestCase):
         telemetry.limits = telemetry.Limits(per_peer=100)
         report = {"client": "web", "protocol": "http/1.1", "events": {"policy_timeout": {"count": 2, "waits": [8.5]}}}
         events = metrics.CLIENT_EVENTS.labels("web", "policy_timeout")
-        guests = metrics.REQUESTS.labels("guest", "other", "2xx")
+        guests = metrics.REQUESTS.labels("guest", "telemetry", "2xx")
         before, requests = events._value.get(), guests._value.get()
         for origin in (None, "http://attacker.example", "https://house.example.test:13601"):
             with self.subTest(origin=origin):

@@ -139,6 +139,48 @@ class RoomHistory(TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertEqual(prometheus.asked, [])
 
+    def test_prometheus_client_is_reused_and_lock_not_held_during_http(self):
+        import threading
+
+        history.close_client()
+        self.addCleanup(history.close_client)
+        created = []
+        original = httpx.Client
+
+        def make_client(**options):
+            instance = original(
+                transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"status": "success", "data": {"resultType": "matrix", "result": []}})),
+                **options,
+            )
+            created.append(instance)
+            return instance
+
+        with patch.object(history.httpx, "Client", side_effect=make_client):
+            self.assertEqual(history.ask(15607, "GET", "/api/v1/rules"), {"resultType": "matrix", "result": []})
+            self.assertEqual(history.ask(15607, "GET", "/api/v1/rules"), {"resultType": "matrix", "result": []})
+        self.assertEqual(len(created), 1, "history.ask must reuse one persistent httpx.Client")
+
+        entered, release = threading.Event(), threading.Event()
+        lock_free = []
+
+        def slow_fetch(port, expr, start, end, step):
+            entered.set()
+            release.wait(5)
+            return []
+
+        thread = threading.Thread(target=history.rooms, args=(self.adapter.contract,), kwargs={"fetch": slow_fetch})
+        thread.start()
+        try:
+            self.assertTrue(entered.wait(5))
+            acquired = history._lock.acquire(blocking=False)
+            lock_free.append(acquired)
+            if acquired:
+                history._lock.release()
+        finally:
+            release.set()
+            thread.join(5)
+        self.assertEqual(lock_free, [True], "history._lock must not be held across blocking HTTP")
+
 
 class Contract(TestCase):
     def test_history_must_name_the_contracts_rooms_and_values(self):

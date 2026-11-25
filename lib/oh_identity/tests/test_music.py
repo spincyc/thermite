@@ -1164,6 +1164,71 @@ class Gateway(Stand_in, Requests, TestCase):
         self.assertEqual(ROUTES["api/v1/events/music"], ("GET",))
         self.assertFalse([route for route in ROUTES if "tidal" in route])
 
+    def test_claim_file_is_cached_by_stat_and_invalidated_on_write_or_chmod(self):
+        claim = provision.read_claim(self.state)
+        fresh = music.Music(self.adapter, self.state)
+        with patch.object(provision, "read_claim", wraps=provision.read_claim) as reader:
+            with fresh.connected() as client1:
+                self.assertEqual(client1.token, claim["token"])
+            with fresh.connected() as client2:
+                self.assertEqual(client2.token, claim["token"])
+            self.assertEqual(reader.call_count, 1)
+            updated = "updated-" + "claim"
+            provision.write_claim(self.state, {**claim, "token": updated})
+            with fresh.connected() as client3:
+                self.assertEqual(client3.token, updated)
+            self.assertEqual(reader.call_count, 2)
+            path = provision.token_file(self.state)
+            os.chmod(path, 0o644)
+            try:
+                self.assertEqual(fresh.read()["problem"], "music_unavailable")
+                self.assertEqual(reader.call_count, 3)
+            finally:
+                os.chmod(path, 0o600)
+
+    def test_guarded_fetches_players_once_and_does_not_hold_room_locks_during_ma_calls(self):
+        real_lock = self.adapter.command_lock
+        real_call = self.music.call
+        in_lock = [0]
+        seen = []
+
+        @contextmanager
+        def tracking_lock(rooms, resources):
+            in_lock[0] += 1
+            try:
+                with real_lock(rooms, resources):
+                    yield
+            finally:
+                in_lock[0] -= 1
+
+        def tracking_call(command, timeout=None, /, **args):
+            seen.append((command, in_lock[0]))
+            return real_call(command, timeout, **args)
+
+        with patch.object(self.adapter, "command_lock", tracking_lock), \
+                patch.object(self.music, "call", side_effect=tracking_call):
+            self.assertEqual(self.post(f"/api/v1/music/{WIIM}/volume", {"level": 25}).status_code, 202)
+            volume_calls = list(seen)
+            seen.clear()
+            self.assertEqual(self.post(f"/api/v1/music/{WIIM}/play", {"ref": ALBUM}).status_code, 202)
+            play_calls = list(seen)
+        self.assertEqual([c for c, _ in volume_calls].count("players/all"), 1)
+        self.assertEqual([c for c, _ in play_calls].count("players/all"), 1)
+        self.assertTrue(all(held == 0 for _, held in volume_calls + play_calls), volume_calls + play_calls)
+
+    def test_browse_only_projects_items_in_the_requested_slice(self):
+        projected = []
+        real_project = self.music._project_item
+
+        def spy_project(raw, parsed, sources):
+            projected.append(raw.get("uri"))
+            return real_project(raw, parsed, sources)
+
+        with patch.object(self.music, "_project_item", side_effect=spy_project):
+            page = self.get(f"/api/v1/music/browse?ref={ALBUM}&offset=1&limit=1").json()
+        self.assertEqual(([item["name"] for item in page["items"]], page["total"]), (["Morning Rain"], 3))
+        self.assertEqual(len(projected), 1)
+
 
 class Events(Stand_in, TransactionTestCase):
     """The music event stream's hub on a running loop."""
@@ -1368,3 +1433,42 @@ class Events(Stand_in, TransactionTestCase):
             {"message_id": "1", "result": [], "partial": True},
             {"message_id": "1", "result": [], "partial": True},
         ], max_items=100, max_chunks=2)
+
+    def test_queue_time_updated_recomputes_only_the_affected_speakers(self):
+        async def body(hub):
+            subscriber = hub.join(music_hub.VIEW)
+            await self.next(subscriber, "snapshot")
+            await asyncio.to_thread(self.music.play, self.guest, AMP, ALBUM, "replace")
+            frame = await self.next(subscriber, "speaker")
+            while frame["speaker"]["id"] != AMP or frame["speaker"]["now_playing"] is None:
+                frame = await self.next(subscriber, "speaker")
+            amp_pid = self.player_id(AMP)
+            computed = []
+            real_speaker = self.music.speaker
+
+            def spy_speaker(ident, *args, **kwargs):
+                computed.append(ident)
+                return real_speaker(ident, *args, **kwargs)
+
+            with patch.object(self.music, "speaker", side_effect=spy_speaker):
+                self.sim.emit("queue_time_updated", amp_pid, 42)
+                frame = await self.next(subscriber, "speaker")
+                while frame["speaker"]["now_playing"]["elapsed"] != 42:
+                    frame = await self.next(subscriber, "speaker")
+                self.assertEqual(computed, [AMP])
+
+                # When MINI is grouped under AMP, queue_time_updated updates AMP and MINI, not WIIM.
+                await asyncio.to_thread(self.music.group, self.guest, AMP, [MINI])
+                while hub.players.get(MINI, {}).get("synced_to") != amp_pid:
+                    await self.next(subscriber, "speaker")
+                computed.clear()
+                self.sim.emit("queue_time_updated", amp_pid, 55)
+                seen_ids = set()
+                while seen_ids != {AMP, MINI}:
+                    frame = await self.next(subscriber, "speaker")
+                    if frame["speaker"]["now_playing"] and frame["speaker"]["now_playing"]["elapsed"] == 55:
+                        seen_ids.add(frame["speaker"]["id"])
+                self.assertEqual(set(computed), {AMP, MINI})
+                self.assertNotIn(WIIM, computed)
+            hub.leave(subscriber)
+        self.check(body)

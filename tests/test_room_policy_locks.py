@@ -17,7 +17,7 @@ import unittest
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
-from oh_room_policy.worker import Busy, FileLocks  # noqa: E402
+from oh_room_policy.worker import Busy, FileLocks, ResourceLocks  # noqa: E402
 
 # Holds the keys it is given until its stdin closes.
 HOLDER = """
@@ -160,6 +160,21 @@ class Deadline(unittest.TestCase):
         self.assertFalse(held.wait(0.5))
         self.release(holder)
         self.assertTrue(held.wait(5))
+
+    def test_resource_locks_match_non_reentrant_file_lock_semantics(self):
+        locks = ResourceLocks()
+        with locks.hold(["room:example_west"]):
+            with self.assertRaises(BlockingIOError):
+                with locks.hold(["room:example_west"], blocking=False):
+                    self.fail("ResourceLocks must be non-reentrant")
+            with self.assertRaises(Busy):
+                with locks.hold(["room:example_west", "device:example_matrix"], deadline=0.05):
+                    self.fail("ResourceLocks must time out with Busy")
+            # Earlier sorted key released cleanly after Busy on later key.
+            with locks.hold(["device:example_matrix"], blocking=False):
+                pass
+        with locks.hold(["room:example_west"], blocking=False):
+            pass
 
 
 if __name__ == "__main__":

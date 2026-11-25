@@ -198,6 +198,17 @@ int main(void)
         CHECK(lv_obj_get_child_count(top) == 0, "inputs overlay not cleaned up by update timer");
     }
 
+    /* Switching LED uses stepped 2 Hz timer (no lv_anim) and allOff state stays idempotent. */
+    tr_apply(remote,
+             "{\"screen\":{\"id\":\"s_busy\",\"room\":\"den\",\"label\":\"Den\",\"led\":\"busy\",\"short\":\"Switching\","
+             "\"selected\":\"pc\",\"hidden\":false,\"allOff\":false,\"locked\":false,"
+             "\"rooms\":[{\"id\":\"den\",\"label\":\"Den\"}],"
+             "\"bubbles\":[{\"id\":\"pc\",\"label\":\"PC\",\"state\":\"switching\",\"lock\":false,\"inert\":false}],"
+             "\"remote\":{\"label\":\"PC\",\"note\":\"Use PC\"},\"pad\":null,\"rows\":[],\"beside\":[],\"channel\":false,"
+             "\"buttons\":{}}}");
+    lv_timer_handler();
+    CHECK(lv_anim_count_running() == 0, "switching blink should use stepped timer, not lv_anim");
+
     tr_destroy(remote);
     if (failures) {
         fprintf(stderr, "%d failure(s)\n", failures);

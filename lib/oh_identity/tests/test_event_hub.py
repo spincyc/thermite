@@ -637,3 +637,38 @@ class EventEndpoints(TransactionTestCase):
             release()
             release()
             self.assertEqual(slots.count(), 0)
+
+    def test_events_view_is_async_and_instant_revocation_on_logout_and_user_update(self):
+        from oh_identity.services import save_user
+
+        self.assertTrue(asyncio.iscoroutinefunction(streams.events))
+        # Token stream revoked immediately via POST /api/v1/logout without REVALIDATE=0.
+        _, raw_token = issue_token(self.admin, "instant-logout")
+        token_obj = PersonalToken.objects.get(name="instant-logout")
+        snapshot = {"user": self.admin.pk, "revision": self.admin.auth_revision, "token": str(token_obj.pk)}
+
+        async def check_logout_and_user_update():
+            upstream = Upstream()
+            adapter = RuntimeAdapter(contract(), upstream)
+            frames = streams.stream(adapter, "remote", snapshot)
+            self.assertEqual((await frame(frames))["type"], "snapshot")
+            # Revoke via logout endpoint.
+            response = await sync_to_async(Client().post)(
+                "/api/v1/logout", secure=True, HTTP_AUTHORIZATION="Bearer " + raw_token,
+            )
+            self.assertEqual(response.status_code, 200)
+            upstream.send(event("loc_den_source", "off"))
+            with self.assertRaises(StopAsyncIteration):
+                await frame(frames)
+
+            # User update revokes another active token stream immediately.
+            token2, _ = await sync_to_async(issue_token)(self.admin, "instant-update")
+            snap2 = {"user": self.admin.pk, "revision": self.admin.auth_revision, "token": str(token2.pk)}
+            frames2 = streams.stream(adapter, "remote", snap2)
+            self.assertEqual((await frame(frames2))["type"], "snapshot")
+            await sync_to_async(save_user)(self.admin, {"password": PASSPHRASE + " updated"}, self.admin.pk)
+            upstream.send(event("loc_den_source", "player"))
+            with self.assertRaises(StopAsyncIteration):
+                await frame(frames2)
+
+        async_to_sync(check_logout_and_user_update)()

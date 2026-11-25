@@ -103,8 +103,10 @@ def bootstrap(username, secret, *, request=None):
         raise Problem("invalid_user") from None
     password(user, secret)
     user.save()
+    from .auth import bump_auth_revocation
     from .models import SecurityState
     SecurityState.objects.update_or_create(pk=1, defaults={"setup_digest": "", "setup_expires_at": None})
+    bump_auth_revocation()
     audit(user, "bootstrap", user.pk, request=request, kind="setup" if request is not None else None)
     return user
 
@@ -124,6 +126,8 @@ def reset_admin(username, secret):
     user.is_active = user.admin = True
     user.auth_revision += 1
     user.save()
+    from .auth import bump_auth_revocation
+    bump_auth_revocation()
     audit(user, "user.reset_admin", user.pk)
     return user
 
@@ -159,6 +163,8 @@ def save_user(actor, data, ident=None):
         # Any account change ends that account's sessions and tokens.
         user.auth_revision += 1
     user.save()
+    from .auth import bump_auth_revocation
+    bump_auth_revocation()
     audit(actor, "user.update" if ident is not None else "user.create", user.pk)
     return user
 

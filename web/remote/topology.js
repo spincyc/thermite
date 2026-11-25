@@ -410,14 +410,27 @@
       $("[data-unlinked-count]").textContent = unlinked.length + " other inventory devices";
       unlinked.forEach(node => $("[data-unlinked]").appendChild(element("li", {}, node.label + " · " + locationLabel(node.room))));
       headers("video", VIDEO_COLUMNS); headers("data", DATA_COLUMNS);
+      let drawQueued = false;
+      const scheduleDraw = () => {
+        if (typeof global.requestAnimationFrame !== "function") return draw();
+        if (drawQueued) return;
+        drawQueued = true;
+        global.requestAnimationFrame(() => { drawQueued = false; draw(); });
+      };
+      let resizeQueued = false;
+      const updateOverflow = () => {
+        const video = $("[data-video]"), data = $("[data-data]");
+        if (video) tellMore(video);
+        if (data) tellMore(data);
+      };
       backend = global.RemoteBackend.create(global.REMOTE_HOUSE, { backend: params.get("backend") === "mock" ? "mock" : undefined, view: "home", active: document.visibilityState !== "hidden" });
       backend.subscribe(event => {
-        if (event.type === "state") { turns[event.room] = (turns[event.room] || 0) + 1; states[event.room] = event.state; draw(); }
-        if (event.type === "connection") { connected = event.connected; draw(); }
+        if (event.type === "state") { turns[event.room] = (turns[event.room] || 0) + 1; states[event.room] = event.state; scheduleDraw(); }
+        if (event.type === "connection") { connected = event.connected; scheduleDraw(); }
       });
       global.REMOTE_HOUSE.rooms.forEach(entry => {
         const turn = turns[entry.id] || 0;
-        backend.getState(entry.id).then(state => { if ((turns[entry.id] || 0) === turn) { states[entry.id] = state; draw(); } }).catch(() => { if ((turns[entry.id] || 0) === turn) { states[entry.id] = { value: "NULL" }; draw(); } });
+        backend.getState(entry.id).then(state => { if ((turns[entry.id] || 0) === turn) { states[entry.id] = state; scheduleDraw(); } }).catch(() => { if ((turns[entry.id] || 0) === turn) { states[entry.id] = { value: "NULL" }; scheduleDraw(); } });
       });
       $("[data-room]").addEventListener("change", event => { room = event.target.value; source = ""; selected = ""; zoom = 1; fillSources(true); resetScroll(); draw(); });
       $("[data-source]").addEventListener("change", event => { source = event.target.value; selected = ""; zoom = 1; resetScroll(); draw(); });
@@ -429,13 +442,18 @@
       const active = () => {
         const visible = document.visibilityState !== "hidden";
         if (backend.setActive) backend.setActive(visible);
-        if (!visible || backend.mock) { connected = visible && backend.mock ? true : false; draw(); }
+        if (!visible || backend.mock) { connected = visible && backend.mock ? true : false; scheduleDraw(); }
       };
       document.addEventListener("visibilitychange", active);
       global.addEventListener("pagehide", () => { if (backend.setActive) backend.setActive(false); });
       global.addEventListener("pageshow", active);
       active();
-      global.addEventListener("resize", draw);
+      global.addEventListener("resize", () => {
+        if (typeof global.requestAnimationFrame !== "function") return updateOverflow();
+        if (resizeQueued) return;
+        resizeQueued = true;
+        global.requestAnimationFrame(() => { resizeQueued = false; updateOverflow(); });
+      });
       document.querySelectorAll(".table-region").forEach(box => box.addEventListener("scroll", () => tellMore(box), { passive: true }));
       $("[data-catalogue]").open = false;
       draw();

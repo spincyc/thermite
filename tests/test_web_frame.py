@@ -394,6 +394,290 @@ const sess = sCtx.RemoteSession.create({ backend: mockBe, house: orderHouse, lay
   await new Promise((r) => setImmediate(r));
   assert.equal(setDoc2.querySelector(".policy-status strong").textContent, "Unlocked · schedule on");
 
+  // 9. listen.js: stop() clears the 1s progress interval and removes matchMedia listener
+  let clearedIntervals = 0, removedMedia = 0;
+  const stopDoc = new DOM.Document(read("index.html"));
+  const stopCtx = vm.createContext({
+    document: stopDoc,
+    window: null,
+    setInterval: () => 4242,
+    clearInterval: (id) => { if (id === 4242) clearedIntervals += 1; },
+    setTimeout,
+    clearTimeout,
+    matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener: () => { removedMedia += 1; } }),
+    CSS: { escape: (v) => String(v) },
+    RemoteSession: { SHORTCUTS: [], LISTEN_SHORTCUTS: [], NOT_CONNECTED: "Not connected" },
+    RemoteMusic: { PLAY: {} }
+  });
+  stopCtx.window = stopCtx;
+  vm.runInContext(read("listen.js"), stopCtx);
+  const stopPage = stopCtx.RemoteListenPage.create({
+    session: { mode: () => "watch", connected: () => true, listen: null, pressKey: () => null },
+    sessions: { listen: { view: () => null, speakers: () => [], subscribe: () => () => {} }, music: null },
+    ui: { $: (s) => stopDoc.querySelector(s), all: (s) => stopDoc.querySelectorAll(s),
+      node: (t) => stopDoc.createElement(t), icon: () => stopDoc.createElement("span"),
+      openSheet() {}, markOverflow() {}, reveal() {} }
+  });
+  assert.equal(typeof stopPage.stop, "function");
+  stopPage.stop();
+  assert.equal(clearedIntervals, 1, "listen.js stop() clears its 1s interval");
+  assert.equal(removedMedia, 1, "listen.js stop() removes matchMedia listener");
+
+  // 10. access.js: ready() parallelizes /api/v1/session and /api/v1/me when accounts enabled without token
+  let inFlight = 0, peakInFlight = 0;
+  const gates = [];
+  const parAccess = Access.create({
+    base: "https://site.example",
+    fetch: (url) => {
+      const route = new URL(url).pathname;
+      if (route === "/api/v1/security") {
+        return Promise.resolve({
+          ok: true, status: 200,
+          headers: { getSetCookie: () => [] },
+          json: async () => ({ bootstrap_required: false, setup_available: false, guest_text: true, guest_cameras: false, csrf: "C".repeat(32) })
+        });
+      }
+      inFlight += 1;
+      peakInFlight = Math.max(peakInFlight, inFlight);
+      return new Promise((resolve) => {
+        gates.push(() => {
+          inFlight -= 1;
+          resolve({
+            ok: true, status: 200,
+            headers: { getSetCookie: () => [] },
+            json: async () => (route === "/api/v1/session"
+              ? { csrf: "D".repeat(32) }
+              : { id: 0, username: "Guest", admin: false, can_edit: false, is_guest: true, permissions: ["site.read"] })
+          });
+        });
+      });
+    }
+  });
+  const readyPromise = parAccess.ready();
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(peakInFlight, 2, "session and me run concurrently via Promise.all");
+  while (gates.length) gates.shift()();
+  const principal = await readyPromise;
+  assert.equal(principal.is_guest, true);
+  parAccess.stop();
+
+  // 11. home.js: starting in Listen creates only one OpenHabBackend (no duplicate view:"home" backend)
+  let homeBackendsCreated = 0;
+  const hDoc2 = new DOM.Document(read("home.html"));
+  const hCtx2 = vm.createContext({
+    document: hDoc2,
+    window: null,
+    location: { search: "", origin: "https://site.example", protocol: "https:", pathname: "/" },
+    URLSearchParams,
+    localStorage: { getItem: (k) => (k === "remote.mode" ? "listen" : null), setItem() {} },
+    console, setTimeout, clearTimeout, addEventListener() {},
+    ThermiteShell: { href: (id) => "/" + id + "/" },
+    ThermiteNavigation: { pages: [], allowed: () => false },
+    REMOTE_HOUSE: listenHouse,
+    RemoteSession: {
+      NOT_CONNECTED: "Not connected",
+      create: () => ({ connected: () => true, view: () => ({ led: "off", short: "Off", connected: true }), roomLocked: () => ({ locked: false, text: "" }) })
+    },
+    RemoteBackend: {
+      create: () => {
+        homeBackendsCreated += 1;
+        return { connected: true, subscribe() { return () => {}; }, getRooms: async () => [], getState: async () => ({ value: "off" }), setActive() {} };
+      }
+    },
+    RemoteListen: {
+      sessions: () => ({
+        music: { status: () => ({ state: "ready", text: "" }) },
+        listen: { subscribe() {}, status: () => ({ led: "ok", short: "Playing", spoken: "Playing", playing: "♪ Song" }) },
+        start: async () => {}, setActive() {}
+      })
+    }
+  });
+  hCtx2.window = hCtx2;
+  vm.runInContext(read("home.js"), hCtx2);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(homeBackendsCreated, 1, "starting in Listen creates only 1 backend");
+  // Switching to Watch reuses the single backend when it supports getRooms/getState.
+  hDoc2.querySelector('[data-home-modes] [data-mode="watch"]').click();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(homeBackendsCreated, 1, "switching Listen -> Watch reuses the existing backend");
+
+  // 12. topology.js: window resize debounces via rAF and calls tellMore without rebuilding table rows, and SSE state events coalesce via rAF
+  const tDoc2 = new DOM.Document(read("topology.html"));
+  let tResizeCb = null, tStateCb = null, tRafQueue = [];
+  const tManifest = {
+    version: 1,
+    nodes: [{ id: "pc", label: "PC", room: "den", kind: "computer" }, { id: "tv", label: "TV", room: "den", kind: "tv" }],
+    rooms: [{ id: "den", label: "Den", devices: ["pc", "tv"] }],
+    routes: { den: { pc: { label: "PC", nodes: [{ device: "pc", label: "PC", role: "source" }, { device: "tv", label: "TV", role: "display" }] } } },
+    edges: []
+  };
+  const tCtx2 = vm.createContext({
+    document: tDoc2,
+    window: null,
+    location: { search: "", origin: "https://site.example", protocol: "https:", pathname: "/site/" },
+    URLSearchParams,
+    console,
+    setTimeout, clearTimeout,
+    requestAnimationFrame: (fn) => { tRafQueue.push(fn); return tRafQueue.length; },
+    addEventListener: (ev, fn) => { if (ev === "resize") tResizeCb = fn; },
+    ThermiteNavigation: { asset: (n) => "/" + n },
+    REMOTE_HOUSE: { rooms: [{ id: "den", label: "Den" }], sources: {}, devices: {} },
+    RemoteBackend: {
+      create: () => ({ mock: true, connected: true, subscribe(fn) { tStateCb = fn; return () => {}; }, getState: async () => ({ value: "pc" }), setActive() {} })
+    },
+    fetch: async () => ({ ok: true, status: 200, json: async () => tManifest })
+  });
+  tCtx2.window = tCtx2;
+  vm.runInContext(read("topology.js"), tCtx2);
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  while (tRafQueue.length) tRafQueue.shift()();
+  const videoRowBefore = tDoc2.querySelector("[data-video-body] tr");
+  assert.ok(videoRowBefore);
+  assert.ok(tResizeCb, "topology registers resize handler");
+  tResizeCb();
+  tResizeCb();
+  assert.equal(tRafQueue.length, 1, "resize coalesces into one rAF");
+  tRafQueue.shift()();
+  assert.equal(tDoc2.querySelector("[data-video-body] tr"), videoRowBefore, "resize does not rebuild table DOM");
+  // Burst SSE state events coalesce into one rAF draw:
+  tStateCb({ type: "state", room: "den", state: { value: "off" } });
+  tStateCb({ type: "state", room: "den", state: { value: "pc" } });
+  assert.equal(tRafQueue.length, 1, "burst SSE state events coalesce into one rAF");
+  tRafQueue.shift()();
+
+  // 13. music-session.js: clock skew compensation (+120s ahead and -120s behind gateway clock)
+  const mCtx = vm.createContext({ console, setTimeout, clearTimeout, URLSearchParams });
+  mCtx.window = mCtx; mCtx.globalThis = mCtx;
+  vm.runInContext(read("music-session.js"), mCtx);
+  for (const skewSec of [120, -120]) {
+    let localNow = 1763208000000 + skewSec * 1000;
+    const serverAt = 1763208000;
+    const subs = [];
+    const fakeBackend = {
+      overview: async () => ({
+        version: 1, available: true, problem: null, sources: { tidal: false, libraries: {} },
+        speakers: [{
+          id: "sp1", label: "Speaker", room: "den", room_label: "Den", provider: "sonos",
+          available: true, state: "playing", volume: 30, muted: false, group: null, shuffle: false, repeat: "off",
+          now_playing: { title: "Track", artist: "Artist", album: "Album", duration: 240, elapsed: 60, at: serverAt }
+        }]
+      }),
+      subscribe: (fn) => { subs.push(fn); return () => {}; },
+      open() {}, close() {},
+      transport: async () => ({ accepted: true })
+    };
+    const ms = mCtx.RemoteMusic.create({ backend: fakeBackend, now: () => localNow, setTimeout, clearTimeout, watchLocks: false });
+    await ms.start("sp1");
+    assert.equal(ms.view().progress.elapsed, 60, "skew " + skewSec + "s starts at reported elapsed");
+    localNow += 5000;
+    assert.equal(ms.view().progress.elapsed, 65, "skew " + skewSec + "s advances 5s in 5s");
+    ms.stop();
+  }
+
+  // 14. remote.js: rAF coalescing, Signal/Info memoization, and Stage 3b routeDetail display
+  const rDoc = new DOM.Document(read("index.html"));
+  let rRafQueue = [], sessionSub = null, infoCalls = 0, diagModel = null;
+  let diagOpen = false;
+  const rRoom = { id: "den", label: "Den", options: [{ id: "off", label: "Off" }, { id: "pc", label: "PC" }], speakers: [] };
+  const rCtx = vm.createContext({
+    document: rDoc,
+    window: null,
+    location: { search: "?backend=mock&room=den", href: "file:///remote/index.html" },
+    URLSearchParams, console, setTimeout, clearTimeout,
+    requestAnimationFrame: (fn) => { rRafQueue.push(fn); return rRafQueue.length; },
+    matchMedia: () => ({ matches: false, addEventListener() {} }),
+    getComputedStyle: (el) => ({ getPropertyValue: () => "", display: el.classList && el.classList.contains("panel--signal") ? "flex" : "none" }),
+    addEventListener() {},
+    REMOTE_HOUSE: { rooms: [rRoom], devices: {}, sources: {} },
+    REMOTE_LAYOUTS: { remotes: {}, buttons: {} },
+    RemoteBackend: { create: () => ({ setActive() {}, subscribe() { return () => {}; } }) },
+    RemoteLog: { create: () => ({ capture() {} }) },
+    RemoteListen: { sessions: () => ({ listen: { subscribe() { return () => {}; }, stop() {} }, start: async () => {}, setActive() {} }) },
+    RemoteListenPage: { create: () => ({ update() {}, alert: () => "", stop() {} }) },
+    ThermiteShell: { href: () => "#" },
+    RemoteDiagnostics: vm.runInContext(read("diagnostics.js") + "\nRemoteDiagnostics;", vm.createContext({})),
+    RemoteSession: {
+      NOT_CONNECTED: "Not connected", DEVICE_ROLE: {}, SHORTCUTS: [], LISTEN_SHORTCUTS: [],
+      keyHints: () => ({}),
+      memoryStore: () => { const m = new Map(); return { get: (k) => m.get(k) ?? null, set: (k, v) => m.set(k, v) }; },
+      create: () => ({
+        demo: false,
+        subscribe: (fn) => { sessionSub = fn; },
+        start: async () => {},
+        current: () => rRoom,
+        connected: () => true,
+        mode: () => "watch",
+        modes: () => ["watch"],
+        kinds: () => ["watch"],
+        listed: () => [rRoom],
+        room: () => rRoom,
+        state: () => ({ value: "pc", pending: null, status: "current" }),
+        view: () => ({ led: "ok", short: "PC", spoken: "PC", playing: "", problem: "" }),
+        roomLocked: () => ({ locked: false, text: "" }),
+        roomLock: () => ({ canManage: false, label: "Lock room", disabled: false, busy: false, text: "", room: "den" }),
+        lockNotice: () => "",
+        controlBlock: () => "",
+        controlAllowed: () => true,
+        controls: () => [],
+        activeTarget: () => null,
+        remoteHidden: () => true,
+        bubbles: () => [{ id: "off", label: "Off", role: "off", choose: true }],
+        selectedBubble: () => "off",
+        bubbleState: () => "idle",
+        bubbleLock: () => ({ locked: false, inert: false }),
+        bubbleLabel: () => "Off",
+        remoteOf: () => null,
+        spec: () => ({ label: "Key" }),
+        drives: () => "TV",
+        canPress: () => true,
+        audioView: () => ({ muted: null, slider: false }),
+        info: () => { infoCalls += 1; return { rows: [["Keys", "PC"]], controls: [], devices: [] }; },
+        diagnostics: () => diagModel,
+        openDiagnostics: async () => { diagOpen = true; },
+        closeDiagnostics: () => { diagOpen = false; },
+        isAnswering: () => true,
+        itemStateText: () => "pc"
+      })
+    }
+  });
+  rCtx.window = rCtx; rCtx.globalThis = rCtx;
+  vm.runInContext(read("remote.js"), rCtx);
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  // Coalesce 4 burst change events into 1 rAF update:
+  const infoBeforeBurst = infoCalls;
+  sessionSub({ type: "change" });
+  sessionSub({ type: "change" });
+  sessionSub({ type: "access" });
+  sessionSub({ type: "change" });
+  assert.equal(rRafQueue.length, 1, "burst change/access events coalesce into 1 rAF");
+  assert.equal(infoCalls, infoBeforeBurst, "update deferred until rAF");
+  rRafQueue.shift()();
+  assert.equal(infoCalls, infoBeforeBurst + 1, "single update runs on rAF");
+  // Unchanged Signal panel skips DOM teardown & rebuild:
+  diagModel = {
+    room: { id: "den", label: "Den" }, source: { id: "pc", label: "PC" }, pending: null,
+    connected: true, routeReady: false, routeStatus: "failed", routeDetail: "Route failed: matrix timeout",
+    route: [], sections: { path: [], video: [], audio: [], edid: [], processing: [] }
+  };
+  sessionSub({ type: "diagnostics" });
+  const sigPanel = rDoc.querySelector(".panel--signal [data-signal]");
+  assert.ok(sigPanel.textContent.includes("Route failed: matrix timeout"), "Stage 3b routeDetail rendered in Signal panel");
+  const headRef = sigPanel.firstChild;
+  sessionSub({ type: "diagnostics" });
+  assert.equal(sigPanel.firstChild, headRef, "unchanged Signal panel skips DOM teardown");
+  // Unchanged Info panel skips DOM teardown & closed Info sheet skips rebuild:
+  const inlineInfo = rDoc.querySelector(".panel--info [data-map]");
+  const sheetInfo = rDoc.querySelector("#info-sheet [data-map]");
+  const dtRef = inlineInfo.firstChild;
+  assert.equal(sheetInfo.children.length, 0, "closed Info sheet is not populated eagerly");
+  sessionSub({ type: "change" });
+  rRafQueue.shift()();
+  assert.equal(inlineInfo.firstChild, dtRef, "unchanged Info panel skips DOM teardown");
+  assert.ok(diagOpen);
+
   process.stdout.write(JSON.stringify({ ok: true }));
 })().catch((err) => { process.stderr.write(err.stack + "\n"); process.exit(1); });
 """

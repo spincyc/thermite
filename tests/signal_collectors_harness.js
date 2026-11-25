@@ -50,6 +50,11 @@ function device(name, {send = true} = {}) {
       clock.now += Math.max(0, Math.min(ms, link.deadline === undefined ? ms : (link.deadline - monotonic()) / 1000000));
       throw Error('quiet');
     },
+    pollLine(link) {
+      if (link.closed) return null;
+      if (link.lines.length) { clock.now += 1; return link.lines.shift(); }
+      return null;
+    },
     quietTimeout:(_link, error) => error.message === 'quiet',
     waitedOut:(_link, error) => error.message === 'quiet',
     write(link, text) {

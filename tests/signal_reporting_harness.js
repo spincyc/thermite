@@ -231,5 +231,54 @@ function topologyCases() {
   assert.equal(terminal.routeRows(manifest, "desk", { value: "a" }, true)[0].status, "Route unconfirmed");
   cases.push("topology_preserves_variants_and_unconnected_endpoints_without_false_confirmation");
 }
-(async () => { await sessionCases(); await backendCases(); renderingCases(); topologyCases(); process.stdout.write(JSON.stringify({ passed: cases.length, cases })); })()
+
+function stage3bOutcomeCases() {
+  const m = fixture();
+  m.rooms.desk.routeStateItem = "loc_desk_source_lifecycle";
+  const diag = D.create(m);
+  const failedCtx = diag.context("desk", "a", { value: JSON.stringify({
+    version: 1, choice: "a", synced: false, generation: 2, pathReady: false,
+    status: "failed", reasons: ["matrix timeout", "display offline"]
+  }) });
+  assert.equal(failedCtx.ready, false);
+  assert.equal(failedCtx.status, "failed");
+  assert.equal(failedCtx.detail, "Route failed: matrix timeout; display offline");
+  const failedModel = diag.project("desk", "a", { switch_signal: snapshot({ input: "0", "Input video": "2160p60" }) }, 100000, null, 0, failedCtx);
+  assert.equal(failedModel.routeReady, false);
+  assert.equal(failedModel.routeStatus, "failed");
+  assert.equal(failedModel.routeDetail, "Route failed: matrix timeout; display offline");
+  assert.equal(field(failedModel, "Input video").status, "awaiting_route");
+  assert.equal(field(failedModel, "Input video").reason, "Route failed: matrix timeout; display offline");
+
+  const runningCtx = diag.context("desk", "a", { value: JSON.stringify({
+    version: 1, choice: "a", synced: false, generation: 3, pathReady: false,
+    status: "running", waiting: ["tv_power", "matrix_input"]
+  }) });
+  assert.equal(runningCtx.ready, false);
+  assert.equal(runningCtx.status, "running");
+  assert.equal(runningCtx.detail, "Waiting on tv_power, matrix_input");
+  const runningModel = diag.project("desk", "a", { switch_signal: snapshot({ input: "0", "Input video": "2160p60" }) }, 100000, null, 0, runningCtx);
+  assert.equal(runningModel.routeDetail, "Waiting on tv_power, matrix_input");
+  assert.equal(field(runningModel, "Input video").reason, "Waiting on tv_power, matrix_input");
+
+  const yieldedCtx = diag.context("desk", "a", { value: JSON.stringify({
+    version: 1, choice: "a", synced: false, generation: 4, pathReady: false,
+    status: "yielded"
+  }) });
+  assert.equal(yieldedCtx.ready, false);
+  assert.equal(yieldedCtx.status, "yielded");
+  assert.equal(yieldedCtx.detail, "Route yielded to another request");
+
+  // Terminal signalContent surfaces the routeDetail instead of generic waiting text.
+  const file = path.join(area, "tui/remote/view.js"), loaded = { exports: {} };
+  const c = vm.createContext({ module: loaded, exports: loaded.exports, require: createRequire(file), RemoteDiagnostics: D });
+  vm.runInContext(read("tui/remote/view.js") + "\nmodule.exports.signalContent = signalContent;", c);
+  const { Grid } = require("../tui/remote/grid");
+  const grid = new Grid(100, null, "base");
+  loaded.exports.signalContent(grid, 100, { session: { diagnostics: () => failedModel }, ui: { signalGroups: ["video"] }, now: 100000 });
+  const text = grid.rows.map(row => row.map(cell => cell.ch).join("")).join("\n");
+  assert(text.includes("Route failed: matrix timeout; display offline"), text);
+  cases.push("stage3b_route_outcomes_surface_reasons_and_waiting");
+}
+(async () => { await sessionCases(); await backendCases(); renderingCases(); topologyCases(); stage3bOutcomeCases(); process.stdout.write(JSON.stringify({ passed: cases.length, cases })); })()
   .catch(error => { console.error(error); process.exitCode = 1; });

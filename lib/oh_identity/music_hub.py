@@ -18,6 +18,7 @@ WITHOUT_TEXT view: the same frames without titles or art.
 
 import asyncio
 import time
+from typing import Any
 import weakref
 
 from oh_music import provision
@@ -33,7 +34,7 @@ VIEW = "music"
 #: player_queues/all, providers) so a misbehaving server cannot OOM the gateway.
 MAX_ANSWER_ITEMS = 4096
 MAX_PARTIAL_CHUNKS = 64
-_hubs = weakref.WeakKeyDictionary()
+_hubs: weakref.WeakKeyDictionary[Any, Any] = weakref.WeakKeyDictionary()
 
 
 class MusicHub(Fanout):
@@ -46,6 +47,9 @@ class MusicHub(Fanout):
         self.players, self.queues, self.sources = {}, {}, None
         self.sent = {}
         self._snapshots = {}
+        # Speaker IDs narrowed by the last event (e.g. 1 Hz queue_time_updated),
+        # or None when every speaker should be recomputed.
+        self._affected = None
         # Whether the last connection failed before serving or since.
         self.down = False
 
@@ -73,17 +77,34 @@ class MusicHub(Fanout):
             self.sent[view] = {speaker["id"]: speaker for speaker in overview["speakers"]}
         return self._snapshots[view]
 
-    def changed(self):
-        """Send each view's speakers that changed since it was last sent."""
+    def _queue_speakers(self, queue_id):
+        """Matched speakers whose view reads `queue_id` (its owner and synced followers)."""
+        return [
+            ident for ident, player in self.players.items()
+            if player["player_id"] == queue_id or player.get("synced_to") == queue_id
+        ]
+
+    def changed(self, only=None):
+        """Send each view's speakers that changed since it was last sent.
+        When narrowed to specific speaker IDs, recompute only those speakers."""
+        targets = self._affected if only is None else only
+        self._affected = None
         self._snapshots.clear()
         if not self.ready:
             return
+        ids = self.music.ids(self.players) if targets is not None else None
+        narrowed = [ident for ident in targets if ident in self.music.spec["speakers"]] if targets is not None else None
         for view, subscribers in self.subscribers.items():
             if not subscribers:
                 self.sent.pop(view, None)
                 continue
             last = self.sent.setdefault(view, {})
-            for ident, speaker in self.speakers(view == VIEW).items():
+            see_text = view == VIEW
+            current = (self.speakers(see_text) if narrowed is None else {
+                ident: self.music.speaker(ident, self.players, ids, self.queues, see_text)
+                for ident in narrowed
+            })
+            for ident, speaker in current.items():
                 if last.get(ident) != speaker:
                     last[ident] = speaker
                     data = encode({"type": "speaker", "speaker": speaker})
@@ -91,6 +112,7 @@ class MusicHub(Fanout):
                         subscriber.push(data)
 
     def resync(self):
+        self._affected = None
         self._snapshots.clear()
         self.sent.clear()
         self._broadcast(self.snapshot)
@@ -113,6 +135,7 @@ class MusicHub(Fanout):
 
     def event(self, message):
         """Apply one Music Assistant event; whether it changed what is kept."""
+        self._affected = None
         kind, data, ident = message.get("event"), message.get("data"), message.get("object_id")
         if kind in ("player_added", "player_updated"):
             return self.keep_player(data)
@@ -124,9 +147,13 @@ class MusicHub(Fanout):
                 self.queues.pop(ident, None)
             return bool(gone)
         if kind in ("queue_added", "queue_updated"):
-            return self.keep_queue(data)
+            if self.keep_queue(data):
+                self._affected = self._queue_speakers(data["queue_id"])
+                return True
+            return False
         if kind == "queue_time_updated" and ident in self.queues and type(data) in (int, float):
             self.queues[ident] = {**self.queues[ident], "elapsed_time": data, "elapsed_time_last_updated": time.time()}
+            self._affected = self._queue_speakers(ident)
             return True
         if kind == "providers_updated" and isinstance(data, list):
             self.sources = Sources(data, self.music.spec["libraries"])
@@ -137,6 +164,7 @@ class MusicHub(Fanout):
 
     def _forget(self):
         self.players, self.queues, self.sources = {}, {}, None
+        self._affected = None
         self._snapshots.clear()
         self.sent.clear()
 
@@ -169,7 +197,8 @@ class MusicHub(Fanout):
             self.counters["upstream_connects"] += 1
             asked = {await socket.command("players/all"): "players", await socket.command("player_queues/all"): "queues",
                      await socket.command("providers"): "providers"}
-            answers, partials = {}, {}
+            answers: dict[str, list[Any]] = {}
+            partials: dict[str, int] = {}
             while True:
                 message = await socket.receive()
                 if self.task is not owner:

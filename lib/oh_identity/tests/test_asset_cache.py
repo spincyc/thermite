@@ -113,7 +113,7 @@ class AssetCache(TransactionTestCase):
                 self.assertEqual(response["ETag"], f'"{version}-gzip"')
                 self.assertEqual(response["Vary"], "Accept-Encoding")
                 self.assertEqual(response["Cache-Control"], IMMUTABLE)
-                compressed = gzip.compress(SCRIPT, mtime=0)
+                compressed = gzip.compress(SCRIPT, compresslevel=6, mtime=0)
                 self.assertLess(len(compressed), len(SCRIPT))
                 self.assertEqual(response["Content-Length"], str(len(compressed)))
                 self.assertEqual(gzip.decompress(response.content) if method == "get" else response.content,
@@ -184,3 +184,34 @@ class AssetCache(TransactionTestCase):
         self.assertEqual([str(warning.message) for warning in caught], [])
         self.assertEqual(sent[0]["status"], 200)
         self.assertEqual(b"".join(message.get("body", b"") for message in sent[1:]), SCRIPT)
+
+    def test_static_asset_memory_cache_hits_and_invalidates_on_mtime_change(self):
+        from unittest.mock import patch
+        import os
+        from oh_identity import views
+
+        views._asset_cache.clear()
+        first = self.get("code.js", accept_encoding="gzip")
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.content, gzip.compress(SCRIPT, compresslevel=6, mtime=0))
+
+        # Second request hits memory cache: zero disk reads, zero SHA-256, zero gzip.
+        with patch.object(Path, "read_bytes", side_effect=AssertionError("unexpected disk read")), \
+                patch.object(views, "asset_version", side_effect=AssertionError("unexpected hash")), \
+                patch.object(views.gzip, "compress", side_effect=AssertionError("unexpected gzip")):
+            second = self.get("code.js", accept_encoding="gzip")
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.content, first.content)
+        self.assertEqual(second["ETag"], first["ETag"])
+
+        # Modifying file mtime/content invalidates the cache entry cleanly.
+        from oh_identity.runtime import get_adapter
+        asset_path = get_adapter().contract.asset_root / "code.js"
+        updated = b"/* updated program */\n" + b"globalThis.answer = 99;\n" * 64
+        asset_path.write_bytes(updated)
+        st = asset_path.stat()
+        os.utime(asset_path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+        third = self.get("code.js", accept_encoding="gzip")
+        self.assertEqual(third.status_code, 200)
+        self.assertEqual(third.content, gzip.compress(updated, compresslevel=6, mtime=0))
+        self.assertEqual(third["ETag"], f'"{asset_version(updated)}-gzip"')

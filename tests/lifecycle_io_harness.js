@@ -745,4 +745,110 @@ test('pyatv_http unreachable helper returns unsent/unreachable instead of quaran
  assert(updates.some(([item,v])=>item==='source_pairing_status'&&v==='unavailable'));
  assert.throws(()=>provider.probe('source_power',op));
 });
+test('non-blocking timer-driven settle polling releases rule thread without sleep and completes on virtual-clock ticks',()=>{
+ let now=1000,timerSeq=0;
+ const timers=new Map();
+ const f=setup(null,source,{now:()=>now});
+ const schedule=(fn,ms)=>{const id=++timerSeq;timers.set(id,{at:now+ms,fn});return id;};
+ const cancelSchedule=id=>timers.delete(id);
+ let probeCalls=0;
+ f.provider.execute=()=>({outcome:'applied',sample:{value:'1',fresh:true}});
+ f.provider.probe=()=>{probeCalls+=1;return {value:probeCalls>=3?'3':'1',fresh:true};};
+ const asyncActor=f.module.actor({key:'switch',io:f.descriptor.io},f.provider,{...f.env,journal:f.journal,sleep:undefined,schedule,cancelSchedule});
+ f.submit('nonblocking','D1','3');
+ asyncActor.drain();
+ // Returned immediately without blocking sleep, flight stays active, 1 settle timer pending.
+ assert.equal(f.sleeps.length,0);
+ assert.equal(f.broker.active.get(),1);
+ assert.equal(timers.size,1);
+ assert.equal(probeCalls,0);
+ for(let step=0;step<3;step++){
+  const [id,t]=[...timers.entries()][0];timers.delete(id);now=t.at;t.fn();
+ }
+ assert.equal(probeCalls,3);
+ assert.equal(timers.size,0);
+ assert.equal(f.broker.active.get(),0);
+ f.bridge.events();
+ const receipt=f.events.find(e=>e.token==='nonblocking'&&e.type==='terminal');
+ assert(receipt&&receipt.sample&&receipt.sample.value==='3');
+ assert(tickets(f).some(l=>l.includes('polls=3')&&l.includes('readback=confirmed')));
+});
+test('journal.save runs outside broker.lock during drain and recovery',()=>{
+ let time=1000;const f=setup(null,source,{now:()=>time}),depths=[];
+ const lockCheckingJournal={data:null,load(){return this.data;},save(row){depths.push(f.broker.lock.depth);this.data=JSON.parse(JSON.stringify(row));}};
+ const a=f.module.actor({key:'switch',io:f.descriptor.io},f.provider,{...f.env,journal:lockCheckingJournal});
+ f.submit('no-lock-save','D1','3');a.drain();f.bridge.events();
+ assert(depths.length>=2&&depths.every(d=>d===0),`expected broker.lock.depth===0 during journal.save, got ${depths}`);
+ // Also during quarantine recovery!
+ f.provider.execute=()=>{throw Error('lost');};
+ f.submit('lost-save','D1','3');a.drain();f.bridge.events();
+ depths.length=0;time+=61000;
+ assert.equal(a.recover(),true);
+ assert(depths.length>=1&&depths.every(d=>d===0),`expected broker.lock.depth===0 during recover save, got ${depths}`);
+});
+test('manualPending slot isolates manual commands from pending planner writes and preserves origin/actorSource',()=>{
+ const f=setup(),manual=[];
+ f.bridge.onLegacy(e=>{manual.push(e);if(e.type==='legacy')f.bridge.authorizeLegacy(e.token);});
+ f.submit('plan-1','D1','3');
+ assert(f.actor.legacy('D1','3',false,'thermite.repair:1a2b3c4d=>org.openhab.core.io.rest$thermite'));
+ // Planner pending slot was NOT overwritten or failed with not-admitted!
+ const st=JSON.parse(f.broker.states.get('switch'));
+ assert.equal(st.pending.D1.token,'plan-1');
+ assert.equal(st.manualPending.D1.origin,'repair');
+ assert.equal(st.manualPending.D1.actorSource,'thermite.repair:1a2b3c4d');
+ f.bridge.events();
+ const leg=manual.find(e=>e.type==='legacy');
+ assert(leg&&leg.origin==='repair'&&leg.actorSource==='thermite.repair:1a2b3c4d'&&leg.route==='1a2b3c4d');
+ assert(!f.events.some(e=>e.token==='plan-1'&&e.type==='terminal'&&e.admitted===false));
+ // Hostile eventSource never leaks raw text into origin or actorSource.
+ assert(f.actor.legacy('D2','2',false,'hostile\nforged text'));
+ const st2=JSON.parse(f.broker.states.get('switch'));
+ assert.equal(st2.manualPending.D2.origin,'other');
+ assert.equal(st2.manualPending.D2.actorSource,'other');
+});
+test('limitActive scales dynamically with house actor count and httpActor pre-compiles transforms once',()=>{
+ const actors={};
+ for(let i=0;i<14;i++)actors[`dev${i}`]={wake:`w${i}`,resources:[`R${i}`],fields:{[`R${i}`]:{allowed:['1','2'],independent:true}}};
+ const f=setup();
+ const bigDesc={io:{epoch:'config-1',wake:'events',actors}};
+ const wakes=[];
+ const bigBridge=f.module.create(bigDesc,{...f.env,wake:n=>wakes.push(n)});
+ const dev0=f.module.actor({key:'dev0',io:bigDesc.io},f.provider,{...f.env,journal:{load:()=>null,save(){}}});
+ f.broker.active.n=10; // above legacy 8 cap, below dynamic 14 cap
+ f.provider.has=()=>true;
+ bigBridge.dispatch({token:String('big-1'),key:'dev0',resource:'R0',value:'1',phase:'acquire'},()=>{});
+ assert(wakes.includes('w0'),'14-actor house must wake above old LIMIT_ACTIVE=8');
+ dev0.drain();
+ assert.equal(f.writes.length,1);
+ f.broker.active.n=0;
+ // Direct controller command queues unmanaged field in FIFO order ahead of planner write.
+ const edidDesc={io:{epoch:'config-1',wake:'events',actors:{matrix:{wake:'mw',resources:['out1'],
+   fields:{out1:{allowed:['1','2'],independent:true},edid1:{allowed:['40','41'],independent:true}}}}}};
+ const eBridge=f.module.create(edidDesc,f.env);
+ const order=[];
+ const eProv={has:()=>true,execute:(r,v)=>{order.push(`${r}=${v}`);return {outcome:'applied',sample:{value:v,fresh:true}};},probe:()=>({value:'1',fresh:true})};
+ const eActor=f.module.actor({key:'matrix',io:edidDesc.io,fields:edidDesc.io.actors.matrix.fields},eProv,{...f.env,journal:{load:()=>null,save(){}}});
+ assert.equal(eBridge.hasField('edid1'),true);
+ assert.equal(eBridge.command('edid1','40',{route:'1a2b3c4d'}),true);
+ eBridge.dispatch({token:String('sw-1'),key:'matrix',resource:'out1',value:'1',phase:'acquire'},()=>{});
+ eActor.drain();eActor.drain();
+ assert.deepEqual(order,['edid1=40','out1=1']);
+ // httpActor pre-compiles JS transform once at init instead of calling Function on every command.
+ let compiles=0;
+ const RealFunction=Function;
+ function CountingFunction(...args){compiles+=1;return RealFunction(...args);}
+ const nativeThing={getConfiguration:()=>new Map([['baseURL','http://owned'],['commandMethod','GET'],['stateMethod','GET']]),
+  getChannel:()=>({getConfiguration:()=>new Map([['commandExtension','/cmd?v=%2$s'],['commandTransformation',['JS(|parseInt(input))']],['stateExtension','/s'],['stateTransformation',['JSONPATH($.v)']]])})};
+ const openhab={things:{getThing:()=>({rawThing:nativeThing})},items:{getItem:()=>({postUpdate(){}})}};
+ const ctx=vm.createContext({module:{exports:{}},Function:CountingFunction,Date,JSON,Map,Object,String,Error,Array,Number,encodeURIComponent,
+  require(n){assert.equal(n,'openhab');return openhab;},
+  thermiteIO:{http:url=>({getStatus:()=>200,getContentAsString:()=>url.includes('/cmd')?JSON.stringify({result:1}):JSON.stringify({v:3})})}});
+ vm.runInContext(source,ctx);
+ const hm=ctx.module.exports,hf=setup();
+ const hBridge=hm.create(hf.descriptor,hf.env);
+ const hActor=hm.httpActor({key:'switch',io:hf.descriptor.io,fields:{D1:{kind:'http',thing:'t',channel:'c',ack:'result',allowed:['1','2','3']}}},{...hf.env,journal:{load:()=>null,save(){}}});
+ assert.equal(compiles,1,'transform compiled once at actor init');
+ for(let n=0;n<5;n++){hBridge.dispatch({token:`t${n}`,key:'switch',resource:'D1',value:'3',phase:'acquire'},()=>{});hActor.drain();hBridge.events();}
+ assert.equal(compiles,1,'zero additional Function compilations across 5 commands');
+});
 process.stdout.write(JSON.stringify({passed:tests.length,tests}));

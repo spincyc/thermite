@@ -108,23 +108,26 @@ def seconds(text):
 
 def known(contract):
     """label -> the ids a client may be given for it, from the compiled house."""
-    ids = _known.get(contract)
-    if ids is None:
-        devices = [device for device in contract.house.get("devices") or () if isinstance(device.get("id"), str)]
-        ids = _known[contract] = {
-            "room": frozenset((*(contract.house.get("rooms") or ()), *(device.get("room") for device in devices))),
-            "zone": frozenset(contract.rooms),
-            "device": frozenset(device["id"] for device in devices),
-            "check": frozenset(catalogue.CHECK_WORDS)}
-    return ids
+    with _lock:
+        ids = _known.get(contract)
+        if ids is None:
+            devices = [device for device in contract.house.get("devices") or () if isinstance(device.get("id"), str)]
+            ids = _known[contract] = {
+                "room": frozenset((*(contract.house.get("rooms") or ()), *(device.get("room") for device in devices))),
+                "zone": frozenset(contract.rooms),
+                "device": frozenset(device["id"] for device in devices),
+                "check": frozenset(catalogue.CHECK_WORDS)}
+        return ids
 
 
 def dropped(name, label):
     """Say once that something Prometheus returned was not passed on:
     which alert and which label, never the value."""
-    if (name, label) not in _logged:
+    with _lock:
+        if (name, label) in _logged:
+            return
         _logged.add((name, label))
-        LOG.warning("Alert feed left out a value the house does not define: alert=%s label=%s", name, label)
+    LOG.warning("Alert feed left out a value the house does not define: alert=%s label=%s", name, label)
 
 
 def read(data, now):
@@ -212,27 +215,29 @@ def feed(contract, fetch=None):
         cached = _cache.get(key)
         if cached is not None and 0 <= now - cached[0] < CACHE_SECONDS:
             return cached[1]
-        try:
-            if not contract.history:
-                raise ValueError("The contract names no Prometheus")
-            ask = fetch
-            if ask is None:
-                from . import history
-                ask = history.ask
-            monitoring, evaluated, firing = read(ask(contract.history["port"], "GET", PATH), now)
-        except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError):
-            answer = {"monitoring": UNREACHABLE, "evaluated": None, "firing": None, "records": ()}
-        else:
-            firing = uninhibited(firing)
-            records = []
-            for name, labels, since in firing:
-                if name in catalogue.CATALOG:
-                    records.append(record(name, labels, since, known(contract)))
-                else:
-                    dropped("uncatalogued", "alertname")
-            answer = {"monitoring": monitoring,
-                      "evaluated": int(evaluated) if evaluated is not None and evaluated > 0 else None,
-                      "firing": len(firing), "records": tuple(sorted(records, key=_order))}
+    try:
+        if not contract.history:
+            raise ValueError("The contract names no Prometheus")
+        ask = fetch
+        if ask is None:
+            from . import history
+            ask = history.ask
+        monitoring, evaluated, firing = read(ask(contract.history["port"], "GET", PATH), now)
+    except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError):
+        answer = {"monitoring": UNREACHABLE, "evaluated": None, "firing": None, "records": ()}
+    else:
+        firing = uninhibited(firing)
+        ids = known(contract)
+        records = []
+        for name, labels, since in firing:
+            if name in catalogue.CATALOG:
+                records.append(record(name, labels, since, ids))
+            else:
+                dropped("uncatalogued", "alertname")
+        answer = {"monitoring": monitoring,
+                  "evaluated": int(evaluated) if evaluated is not None and evaluated > 0 else None,
+                  "firing": len(firing), "records": tuple(sorted(records, key=_order))}
+    with _lock:
         _cache.clear()
         _cache[key] = (now, answer)
         return answer

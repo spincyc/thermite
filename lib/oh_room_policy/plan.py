@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import json
 import re
 
 import oh_integrations as integrations
@@ -53,10 +54,14 @@ class Plan:
     conditions: tuple[Field, ...] = ()
     leader: str | None = None
     unsynced_effects: tuple[tuple[str, str], ...] = ()
+    lifecycle_item: str | None = None
 
     def observed(self) -> tuple[str, ...]:
-        """Every Item verify() reads: the fields', then the conditions'."""
-        return tuple(dict.fromkeys(field.item for field in (*self.fields, *self.conditions)))
+        """Every Item verify() reads: the fields', the conditions', and the lifecycle item if any."""
+        items = [field.item for field in (*self.fields, *self.conditions)]
+        if self.lifecycle_item:
+            items.append(self.lifecycle_item)
+        return tuple(dict.fromkeys(items))
 
 
 def native_power_observations(devices) -> dict[str, str]:
@@ -74,7 +79,25 @@ def native_power_observations(devices) -> dict[str, str]:
     return out
 
 
-def expected_plan(house, room: str, choice: str) -> Plan:
+def _as_house(house) -> House:
+    """Wrap a validated contract's plain mapping without re-validating it."""
+    return house if hasattr(house, "data") else House.unchecked(house)
+
+
+def compile_plans(house, rooms) -> dict[str, dict[str, Plan]]:
+    """Compile every room's route plans once, building routing.table(house) a single time."""
+    data = house.data if hasattr(house, "data") else house
+    if isinstance(data, dict) and "routing" in data and "devices" in data:
+        house_obj = _as_house(house)
+        table = routing.table(house_obj)
+    else:
+        house_obj, table = house, None
+    return {room: {choice: expected_plan(house_obj, room, choice, table=table)
+                   for choice in ("off", *spec["sources"])}
+            for room, spec in rooms.items()}
+
+
+def expected_plan(house, room: str, choice: str, *, table: dict | None = None) -> Plan:
     """Use routing's command generators; never duplicate physical wiring.
 
     Only the chosen physical path is verified. Parking an unused matrix
@@ -93,12 +116,13 @@ def expected_plan(house, room: str, choice: str) -> Plan:
     entry = config["rooms"][room]
     # The gateway hands over the mapping its contract carries, which the
     # contract's compiler took from a loaded house.
-    house = house if hasattr(house, "data") else House.unchecked(data)
+    house = _as_house(house)
     devices = house.by_id
     for source in entry.get("sleep_sources", []):
         if any(other != room and source in spec["sources"] for other, spec in config["rooms"].items()):
             raise PolicyError("unsafe_shared_source_sleep")
-    table = routing.table(house)
+    if table is None:
+        table = routing.table(house)
     raw = table["rooms"][room]
     stage_list = list(routing.stages(house, room))
     inputs = routing.inputs(house, room, choice)
@@ -163,9 +187,11 @@ def expected_plan(house, room: str, choice: str) -> Plan:
     conditions = ()
     if synced:
         conditions = (Field(sync["hdmi"], leader_input, "device:" + config["hdmi_matrix"]),)
+    lifecycle_item = f"loc_{room}_source_lifecycle" if "lifecycle" in table else None
     return Plan(room, choice, raw["item"], tuple(fields), tuple(sorted(resources)),
                 tuple((item, str(value)) for item, value in effects), tuple(limits), conditions,
-                sync["leader"] if synced else None, tuple((item, str(value)) for item, value in unsynced))
+                sync["leader"] if synced else None, tuple((item, str(value)) for item, value in unsynced),
+                lifecycle_item)
 
 
 #: A decimal number as a Number Item reports it: "3", "3.0", "-0.50".
@@ -231,6 +257,40 @@ def verify(plan: Plan, observations: dict[str, Observation], now_utc: datetime) 
     state = "degraded" if mismatched else "unknown" if unknown or not plan.fields else "verified"
     return {"state": state, "matched": matched, "mismatched": mismatched, "unknown": unknown,
             "limitations": list(plan.limitations), "scope": "configured_native_controls"}
+
+
+def route_in_flight(plan: Plan, observations: dict[str, Observation], now_utc: datetime, *, max_age: float = 60.0) -> bool:
+    """Stage 3b fence: whether the room's lifecycle Item reports a route
+    currently running. While running, the policy worker defers repairs
+    rather than firing premature repairs against an in-flight route switch."""
+    item = plan.lifecycle_item or f"loc_{plan.room}_source_lifecycle"
+    reading = observations.get(item)
+    if not isinstance(reading, Observation) or reading.observed_at is None:
+        return False
+    try:
+        now = utc(now_utc)
+        at = utc(reading.observed_at)
+    except PolicyError:
+        return False
+    if not 0 <= (now - at).total_seconds() <= max_age:
+        return False
+    raw = reading.value
+    if isinstance(raw, str):
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            return False
+    elif isinstance(raw, dict):
+        data = raw
+    else:
+        return False
+    if not isinstance(data, dict):
+        return False
+    status = data.get("status")
+    if status is not None:
+        return status == "running"
+    # Legacy lifecycle snapshot without an explicit status field.
+    return data.get("pathReady") is False and not data.get("fault")
 
 
 def repair_plan(plan: Plan, verification: dict) -> list[tuple[str, str]]:

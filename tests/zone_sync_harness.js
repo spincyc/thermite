@@ -705,6 +705,19 @@ test('moved() sends an unmanaged synced zone input even when lifecycle is enable
   assert(w.sent.some(([name, value]) => name === ZONE2 && value === 'AUX2'), JSON.stringify(w.sent));
 });
 
+test('EDID write is sent before HDMI output dispatch under lifecycle', () => {
+  const w = load(TABLES.lifecycle);
+  w.clear();
+  w.command(CINEMA, COMPUTER);
+  const edidAt = w.log.indexOf(`send ${EDID1}=40`);
+  const outAt = w.log.findIndex((line) => line.startsWith(`dispatch ${OUT1}=`) || line.startsWith(`apply ${OUT1}=`));
+  assert(edidAt >= 0, `expected EDID send in log: ${w.log.join(', ')}`);
+  assert(outAt === -1 || edidAt < outAt, `expected EDID before matrix dispatch: ${w.log.join(', ')}`);
+  w.settle();
+  assert.equal(w.state(EDID1), '40');
+  assert.equal(w.state(OUT1), '1');
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
   try { fn(); } catch (error) { failed += 1; process.stderr.write(`${name}\n${error.stack}\n`); }

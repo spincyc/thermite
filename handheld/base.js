@@ -220,40 +220,51 @@ function candidates(directory) {
   } catch (_) {
     return [];
   }
-  const busy = opened();
-  return names.map((name) => path.join(where, name)).filter((device) => {
+  if (!names.length) return [];
+  const resolved = [];
+  for (const name of names) {
+    const device = path.join(where, name);
     try {
-      return !busy.has(fs.realpathSync(device));
+      resolved.push({ device, real: fs.realpathSync(device) });
     } catch (_) {
-      return false;
+      // gone meanwhile
     }
-  });
+  }
+  if (!resolved.length) return [];
+  const devTargets = new Set(resolved.filter((entry) => entry.real.startsWith("/dev/")).map((entry) => entry.real));
+  const busy = devTargets.size ? opened(devTargets) : new Set();
+  return resolved.filter((entry) => !busy.has(entry.real)).map((entry) => entry.device);
 }
 
-/* The files this user's other processes hold open, as /proc shows them. */
-function opened() {
+/* The files in targets (or all open files when targets is omitted) this user's other processes hold open. */
+function opened(targets) {
   const files = new Set();
+  if (targets && !targets.size) return files;
   let processes;
   try {
     processes = fs.readdirSync("/proc").filter((name) => /^[0-9]+$/.test(name) && Number(name) !== process.pid);
   } catch (_) {
     return files;
   }
-  processes.forEach((pid) => {
+  for (const pid of processes) {
     let fds;
     try {
       fds = fs.readdirSync("/proc/" + pid + "/fd");
     } catch (_) {
-      return;
+      continue;
     }
-    fds.forEach((fd) => {
+    for (const fd of fds) {
       try {
-        files.add(fs.readlinkSync("/proc/" + pid + "/fd/" + fd));
+        const link = fs.readlinkSync("/proc/" + pid + "/fd/" + fd);
+        if (!targets || targets.has(link)) {
+          files.add(link);
+          if (targets && files.size === targets.size) return files;
+        }
       } catch (_) {
         // closed meanwhile
       }
-    });
-  });
+    }
+  }
   return files;
 }
 

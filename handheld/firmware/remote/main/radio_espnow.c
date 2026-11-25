@@ -18,6 +18,15 @@ static uint8_t s_base[RADIO_MAC_LEN];
 static QueueHandle_t s_frames;
 static TaskHandle_t s_notify;
 static uint32_t s_bit;
+static bool s_active = true;
+
+void radio_set_active(bool active)
+{
+    if (active == s_active) return;
+    s_active = active;
+    esp_err_t err = esp_wifi_set_ps(active ? WIFI_PS_NONE : WIFI_PS_MIN_MODEM);
+    if (err != ESP_OK) ESP_LOGW(TAG, "ps %d: %s", active ? 0 : 1, esp_err_to_name(err));
+}
 
 static void on_receive(const esp_now_recv_info_t *info, const uint8_t *data, int length)
 {
@@ -48,6 +57,7 @@ void radio_start(const uint8_t base[RADIO_MAC_LEN], uint8_t channel, QueueHandle
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start()); /* never associates */
+    s_active = true;
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
     ESP_ERROR_CHECK(esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE));
     ESP_ERROR_CHECK(esp_now_init());
@@ -60,6 +70,7 @@ void radio_start(const uint8_t base[RADIO_MAC_LEN], uint8_t channel, QueueHandle
 
 void radio_send(const uint8_t *frame, size_t length)
 {
+    radio_set_active(true);
     esp_err_t err = esp_now_send(s_base, frame, length);
     if (err != ESP_OK) ESP_LOGW(TAG, "send: %s", esp_err_to_name(err));
 }

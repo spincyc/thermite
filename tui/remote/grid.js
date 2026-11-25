@@ -41,18 +41,53 @@ class Grid {
   // glyph's foreground and background (the torch's two-tone metal cells),
   // in a narrow cell only.
   put(x, y, text, style, hit, mono) {
-    const chars = characters(text);
+    const str = String(text);
+    const cellStyle = style || this.style;
+    if (isPlainAscii(str)) {
+      const len = str.length;
+      if (hit && len && hit.focus) this.order.push(hit);
+      if (!this.ensure(y)) return x + len;
+      const row = this.rows[y];
+      const start = Math.max(0, -x), end = Math.min(len, this.width - x);
+      for (let index = start; index < end; index += 1) {
+        const at = x + index;
+        const cell = row[at];
+        if (cell && !cell.wide && !cell.mono && cell.ch !== "") {
+          cell.ch = str[index];
+          cell.style = cellStyle;
+          if (mono) cell.mono = mono;
+        } else {
+          const next = { ch: str[index], style: cellStyle };
+          if (mono) next.mono = mono;
+          row[at] = next;
+        }
+      }
+      mend(row, x, x + len);
+      if (hit && len) this.hit(x, y, len, 1, hit, false);
+      return x + len;
+    }
+    const chars = characters(str);
     if (hit && chars.length && hit.focus) this.order.push(hit);
     if (!this.ensure(y)) return x + chars.length;
+    const row = this.rows[y];
     chars.forEach((ch, index) => {
       const at = x + index;
       if (at >= 0 && at < this.width) {
-        this.rows[y][at] = { ch: ch, style: style || this.style };
-        if (chars[index + 1] === "") this.rows[y][at].wide = true;
-        if (mono && ch && chars[index + 1] !== "") this.rows[y][at].mono = mono;
+        const wide = chars[index + 1] === "";
+        const useMono = Boolean(mono && ch && !wide);
+        const cell = row[at];
+        if (cell && !cell.wide && !cell.mono && cell.ch !== "" && !wide && !useMono) {
+          cell.ch = ch;
+          cell.style = cellStyle;
+        } else {
+          const next = { ch: ch, style: cellStyle };
+          if (wide) next.wide = true;
+          if (useMono) next.mono = mono;
+          row[at] = next;
+        }
       }
     });
-    mend(this.rows[y], x, x + chars.length);
+    mend(row, x, x + chars.length);
     if (hit && chars.length) this.hit(x, y, chars.length, 1, hit, false);
     return x + chars.length;
   }
@@ -91,14 +126,24 @@ class Grid {
 
   // Copies rows from..from+h of src to (x, y), with their hits.
   blit(src, from, x, y, w, h) {
+    const cols = Math.min(w, src.width);
     for (let row = 0; row < h; row += 1) {
       const line = src.rows[from + row];
       if (!line || !this.ensure(y + row)) continue;
-      for (let col = 0; col < Math.min(w, src.width); col += 1) {
+      const dest = this.rows[y + row];
+      for (let col = 0; col < cols; col += 1) {
         const at = x + col;
-        if (at >= 0 && at < this.width) this.rows[y + row][at] = line[col];
+        if (at >= 0 && at < this.width) {
+          const cell = line[col], dst = dest[at];
+          if (dst && !dst.wide && !dst.mono && !cell.wide && !cell.mono) {
+            dst.ch = cell.ch;
+            dst.style = cell.style;
+          } else {
+            dest[at] = Object.assign({}, cell);
+          }
+        }
       }
-      mend(this.rows[y + row], x, x + Math.min(w, src.width));
+      mend(dest, x, x + cols);
     }
     src.hits.forEach((entry) => {
       const top = Math.max(from, entry.y);
@@ -161,9 +206,19 @@ function fitTail(text, tail, width) {
   return fit(fit(text, width - length(tail)).trimEnd() + tail, width);
 }
 
+function isPlainAscii(text) {
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code < 0x20 || code > 0x7e) return false;
+  }
+  return true;
+}
+
 // The columns text takes.
 function length(text) {
-  return characters(text).length;
+  const str = String(text);
+  if (isPlainAscii(str)) return str.length;
+  return characters(str).length;
 }
 
 // How many columns a code point takes, as wcwidth counts them (glibc's,
@@ -197,7 +252,13 @@ const INDICATOR = /^\p{Regional_Indicator}$/u;
 // wcwidth gives a soft hyphen or an Arabic number sign a column some
 // terminals draw and others don't, and a bidi control would reorder the row.
 function characters(text) {
-  const clean = String(text).replace(FORMAT, "").normalize("NFC").replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ");
+  const str = String(text);
+  if (isPlainAscii(str)) {
+    const out = new Array(str.length);
+    for (let i = 0; i < str.length; i += 1) out[i] = str[i];
+    return out;
+  }
+  const clean = str.replace(FORMAT, "").normalize("NFC").replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ");
   if (!UNEVEN.test(clean)) return Array.from(clean);
   const cells = [];
   for (const point of clean) {

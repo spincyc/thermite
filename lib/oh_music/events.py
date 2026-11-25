@@ -12,8 +12,10 @@ that does not answer, or that lets 512 messages queue unread.
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 import json
 import secrets
+from typing import Any
 
 from wsproto import ConnectionType, WSConnection
 from wsproto.events import (AcceptConnection, CloseConnection, Message, Ping, RejectConnection, RejectData,
@@ -42,7 +44,7 @@ class Socket:
     def __init__(self, reader, writer, *, quiet=QUIET):
         self.reader, self.writer, self.quiet = reader, writer, quiet
         self.ws = WSConnection(ConnectionType.CLIENT)
-        self.pending = []
+        self.pending: deque[Any] = deque()
         self.text = []
         self.size = 0
 
@@ -104,7 +106,7 @@ class Socket:
                 raise Closed("Music Assistant broke the protocol") from None
             if not data and not self.pending:
                 raise Closed("Music Assistant closed the connection")
-        return self.pending.pop(0)
+        return self.pending.popleft()
 
     async def send(self, message):
         try:

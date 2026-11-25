@@ -39,7 +39,10 @@
   window.addEventListener("pagehide", (event) => {
     if (backend.setActive) backend.setActive(false);
     heard.setActive(false);
-    if (!event.persisted) heard.listen.stop();
+    if (!event.persisted) {
+      heard.listen.stop();
+      if (listenPage && listenPage.stop) listenPage.stop();
+    }
   });
   window.addEventListener("pageshow", syncLive);
 
@@ -68,6 +71,12 @@
   let shortcutsFor = "";
   // The mode whose rooms the room lists hold.
   let listedFor = "";
+  const hasRaf = typeof globalThis.requestAnimationFrame === "function";
+  let updateQueued = false;
+  let overflowQueued = false;
+  let pendingReveal = null;
+  const signalMemo = new WeakMap();
+  const infoMemo = new WeakMap();
 
   session.subscribe(onSession);
   heard.listen.subscribe(onListen);
@@ -112,7 +121,7 @@
     }
     if (!ready) return;
     if (event.type === "diagnostics") return updateSignal();
-    if (event.type === "change" || event.type === "access") update();
+    if (event.type === "change" || event.type === "access") scheduleUpdate();
     else if (event.type === "audio") updateAudio();
     else if (event.type === "device") {
       updateAudio();
@@ -135,6 +144,52 @@
   }
 
   // ---- rendering ---------------------------------------------------------
+
+  function scheduleUpdate() {
+    if (!hasRaf) {
+      update();
+      return;
+    }
+    if (updateQueued) return;
+    updateQueued = true;
+    globalThis.requestAnimationFrame(() => {
+      updateQueued = false;
+      if (ready) update();
+    });
+  }
+
+  function flushOverflow() {
+    overflowQueued = false;
+    const box = $("[data-targets]");
+    if (pendingReveal) {
+      const args = pendingReveal;
+      pendingReveal = null;
+      reveal(args.box, args.tab, args.fromStart);
+    }
+    if (box) markOverflow(box);
+  }
+
+  function scheduleOverflow() {
+    if (!hasRaf) {
+      flushOverflow();
+      return;
+    }
+    if (overflowQueued) return;
+    overflowQueued = true;
+    Promise.resolve().then(() => {
+      if (overflowQueued) flushOverflow();
+    });
+  }
+
+  function applyPolicyBlock(root) {
+    const blocked = session.controlBlock();
+    const scope = root || document;
+    Array.prototype.slice.call(scope.querySelectorAll('#controls [data-button], [data-action="control"], [data-action="input"]')).forEach((button) => {
+      if (blocked && !button.hasAttribute("data-policy-disabled")) { button.dataset.policyDisabled = String(button.disabled); button.disabled = true; }
+      else if (!blocked && button.hasAttribute("data-policy-disabled")) { button.disabled = button.dataset.policyDisabled === "true"; delete button.dataset.policyDisabled; }
+    });
+    if (!root && blocked) $("[data-fader-input]").disabled = true;
+  }
 
   function update() {
     const current = session.current();
@@ -179,13 +234,9 @@
     updateRoomLock();
     updateLockMenu();
     // The bubbles follow the lock themselves (updateTargets).
-    const blocked = session.controlBlock();
-    all('#controls [data-button], [data-action="control"], [data-action="input"]').forEach((button) => {
-      if (blocked && !button.hasAttribute("data-policy-disabled")) { button.dataset.policyDisabled = String(button.disabled); button.disabled = true; }
-      else if (!blocked && button.hasAttribute("data-policy-disabled")) { button.disabled = button.dataset.policyDisabled === "true"; delete button.dataset.policyDisabled; }
-    });
-    if (blocked) $("[data-fader-input]").disabled = true;
+    applyPolicyBlock(null);
     updateMode();
+    scheduleOverflow();
   }
 
   // Watch or Listen: the switch where the house has both, then the half on
@@ -365,9 +416,8 @@
     const litId = lit ? lit.item.id : null;
     if (fresh || box.lit !== litId) {
       box.lit = litId;
-      reveal(box, lit, fresh);
+      pendingReveal = { box: box, tab: lit, fromStart: fresh };
     }
-    markOverflow();
   }
 
   // Keep what the room shows in sight, clear of the fade at the row's ends
@@ -708,22 +758,52 @@
     });
     if (open && view === "signal" && !inlineSignal()) openSheet("info-sheet");
     syncSignal();
+    updateInfo();
     updateSignal();
     if (open) all("[data-signal]").find((element) => element.offsetParent !== null)?.focus({ preventScroll: true });
+  }
+
+  function panelSignalVisible(panel) {
+    if (document.visibilityState === "hidden" || session.mode() === "listen") return false;
+    if (panel.closest("#info-sheet")) return Boolean($("#info-sheet").open && infoView === "signal" && !panel.hidden);
+    return inlineSignal();
   }
 
   function updateSignal() {
     const current = session.current();
     if (!current) return;
+    const panels = all("[data-signal]").filter(panelSignalVisible);
+    if (!panels.length) return;
     const model = session.diagnostics();
     const view = model ? globalThis.RemoteDiagnostics.outline(model, Date.now()) : null;
-    all("[data-signal]").forEach((panel) => {
-      const context = current.id + ":" + session.state(current.id).value;
+    const confirmed = session.state(current.id).value;
+    const context = current.id + ":" + confirmed;
+    const source = current.options.find((option) => option.id === confirmed);
+    const sourceLabel = model && model.source ? model.source.label
+      : source ? source.label : confirmed === "off" ? "Off" : "Source unknown";
+    const routeNote = model && (model.routeReady === false || (model.routeStatus && model.routeStatus !== "done" && model.routeDetail))
+      ? (model.routeDetail || "Awaiting confirmation of the physical route.") : "";
+    const sig = JSON.stringify({
+      context: context,
+      ready: Boolean(model),
+      source: sourceLabel,
+      route: model && model.route || null,
+      audioRoute: model && model.audioRoute || null,
+      audioEndpoints: model && model.audioEndpoints || null,
+      routeNote: routeNote,
+      pending: model && model.pending || null,
+      connected: model && model.connected,
+      reason: model && model.reason || null,
+      view: view
+    });
+    panels.forEach((panel) => {
       if (panel.dataset.context !== context) {
         const scroller = panel.closest(".panel--signal") || panel.closest(".sheet");
         if (scroller) scroller.scrollTop = 0;
         panel.dataset.context = context;
       }
+      if (signalMemo.get(panel) === sig) return;
+      signalMemo.set(panel, sig);
       // A group redrawn while its heading has the focus keeps it.
       const active = document.activeElement;
       const held = active && active !== panel && panel.contains(active) ? active.closest("[data-group]") : null;
@@ -734,15 +814,12 @@
         panel.appendChild(node("p", { class: "info__note" }, "Reading the confirmed signal path\u2026"));
         return;
       }
-      const confirmed = session.state(session.current().id).value;
-      const source = session.current().options.find((option) => option.id === confirmed);
-      head.appendChild(node("p", { class: "signal__source" }, model.source ? model.source.label
-        : source ? source.label : confirmed === "off" ? "Off" : "Source unknown"));
+      head.appendChild(node("p", { class: "signal__source" }, sourceLabel));
       if (model.route && model.route.length) panel.appendChild(node("p", { class: "signal__route" }, model.route.map((step) => step.label).join(" → ")));
       if (model.audioRoute && model.audioRoute.length) panel.appendChild(node("p", { class: "signal__route" }, "Audio · " + model.audioRoute.map((step) => step.label).join(" → ")));
       if (model.audioEndpoints && model.audioEndpoints.length) panel.appendChild(node("p", { class: "signal__route" },
         "Audio endpoint · " + model.audioEndpoints.map(step => step.label + (step.input ? " · input " + step.input : "")).join(", ") + " · wiring unknown"));
-      if (model.routeReady === false) panel.appendChild(node("p", { class: "info__note" }, "Awaiting confirmation of the physical route."));
+      if (routeNote) panel.appendChild(node("p", { class: "info__note" }, routeNote));
       if (model.pending) panel.appendChild(node("p", { class: "info__note" }, "Switching to " + model.pending.label + "; current formats await the confirmed route."));
       if (model.connected === false) panel.appendChild(node("p", { class: "info__note" }, "Room updates unavailable; format attribution is unconfirmed."));
       if (view.blank) {
@@ -814,41 +891,58 @@
   }
 
   function updateInfo() {
+    if (document.visibilityState === "hidden") return;
+    const sheet = $("#info-sheet");
+    const panels = all("[data-info]").filter((info) => {
+      if (info.closest("#info-sheet")) return Boolean(sheet && sheet.open && infoView === "devices" && !info.hidden);
+      return session.mode() !== "listen";
+    });
+    if (!panels.length) return;
     const shown = session.info();
-    all("[data-map]").forEach((map) => {
-      map.textContent = "";
-      shown.rows.forEach((row) => {
-        map.appendChild(node("dt", null, row[0]));
-        map.appendChild(node("dd", null, row[1]));
-      });
-    });
-    all("[data-room-controls-section]").forEach((section) => { section.hidden = !shown.controls.length; });
-    all("[data-room-controls-note]").forEach((noteEl) => { noteEl.hidden = !shown.controls.some((control) => !control.connected); });
-    all("[data-room-controls]").forEach((box) => {
-      box.textContent = "";
-      shown.controls.forEach((control) => {
-        box.appendChild(node("div", { class: "room-control", role: "group", "aria-label": control.label + ", " + control.device }, [
-          node("div", { class: "room-control__head" }, [
-            node("span", { class: "room-control__label" }, control.label),
-            node("span", { class: "room-control__meta" }, control.device)
-          ]),
-          node("div", { class: "room-control__actions" }, control.actions.map((action) => node("button", {
-            type: "button", class: "button", "data-action": "control", "data-control": control.id, "data-step": action.id,
-            "aria-disabled": control.connected ? null : "true",
-            "aria-label": control.label + " " + action.label + (control.connected ? "" : ", not connected")
-          }, action.label)))
-        ]));
-      });
-    });
-    all("[data-devices]").forEach((list) => {
-      list.textContent = "";
-      if (!shown.devices.length) list.appendChild(node("li", { class: "device device--none" }, "No devices in the inventory"));
-      shown.devices.forEach((device) => {
-        list.appendChild(node("li", { class: "device" }, [
-          node("span", { class: "device__text" }, [node("span", { class: "device__name" }, device.label), " ",
-            node("span", { class: "device__meta" }, device.meta)])
-        ].concat(device.roles.map((role) => node("span", { class: "device__role" }, role)))));
-      });
+    const sig = JSON.stringify(shown);
+    panels.forEach((info) => {
+      if (infoMemo.get(info) === sig) return;
+      infoMemo.set(info, sig);
+      const map = info.querySelector("[data-map]");
+      if (map) {
+        map.textContent = "";
+        shown.rows.forEach((row) => {
+          map.appendChild(node("dt", null, row[0]));
+          map.appendChild(node("dd", null, row[1]));
+        });
+      }
+      const controlsSection = info.querySelector("[data-room-controls-section]");
+      if (controlsSection) controlsSection.hidden = !shown.controls.length;
+      const controlsNote = info.querySelector("[data-room-controls-note]");
+      if (controlsNote) controlsNote.hidden = !shown.controls.some((control) => !control.connected);
+      const box = info.querySelector("[data-room-controls]");
+      if (box) {
+        box.textContent = "";
+        shown.controls.forEach((control) => {
+          box.appendChild(node("div", { class: "room-control", role: "group", "aria-label": control.label + ", " + control.device }, [
+            node("div", { class: "room-control__head" }, [
+              node("span", { class: "room-control__label" }, control.label),
+              node("span", { class: "room-control__meta" }, control.device)
+            ]),
+            node("div", { class: "room-control__actions" }, control.actions.map((action) => node("button", {
+              type: "button", class: "button", "data-action": "control", "data-control": control.id, "data-step": action.id,
+              "aria-disabled": control.connected ? null : "true",
+              "aria-label": control.label + " " + action.label + (control.connected ? "" : ", not connected")
+            }, action.label)))
+          ]));
+        });
+      }
+      const list = info.querySelector("[data-devices]");
+      if (list) {
+        list.textContent = "";
+        if (!shown.devices.length) list.appendChild(node("li", { class: "device device--none" }, "No devices in the inventory"));
+        shown.devices.forEach((device) => {
+          list.appendChild(node("li", { class: "device" }, [
+            node("span", { class: "device__text" }, [node("span", { class: "device__name" }, device.label), " ",
+              node("span", { class: "device__meta" }, device.meta)])
+          ].concat(device.roles.map((role) => node("span", { class: "device__role" }, role)))));
+        });
+      }
     });
   }
 
@@ -914,7 +1008,7 @@
     });
     // iOS Safari only applies :active styles once a touch listener exists.
     document.addEventListener("touchstart", () => {}, { passive: true });
-    document.addEventListener("visibilitychange", syncSignal);
+    document.addEventListener("visibilitychange", () => { syncSignal(); updateInfo(); updateSignal(); });
 
     $("#room-switch").addEventListener("click", () => openSheet("room-sheet"));
     const range = $("[data-fader-input]");
@@ -1309,6 +1403,11 @@
     const dialog = document.getElementById(id);
     if (typeof dialog.showModal === "function") dialog.showModal();
     else dialog.setAttribute("open", "");
+    if (id === "info-sheet") {
+      updateInfo();
+      applyPolicyBlock(dialog);
+      updateSignal();
+    }
     const selected = dialog.querySelector('[aria-current="true"]');
     if (selected) selected.focus();
     syncSignal();

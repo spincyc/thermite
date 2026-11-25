@@ -100,3 +100,39 @@ class LockSummary(TestCase):
     def test_only_get_is_allowed(self):
         response = Client().post("/api/v1/locks", secure=True)
         self.assertEqual((response.status_code, response["Allow"], response.json()["error"]), (405, "GET", "method_not_allowed"))
+
+    def test_policy_contract_and_effective_lock_summaries_are_cached(self):
+        from oh_identity import runtime, views
+        views._lock_cache.clear()
+        self.schedule()
+        self.hold()
+        # policy_contract() reuses pre-computed plain house/routing without calling plain().
+        with patch.object(runtime, "plain", side_effect=AssertionError("unexpected recursive plain()")):
+            first_contract = self.adapter.contract.policy_contract()
+            second_contract = self.adapter.contract.policy_contract()
+        self.assertIs(first_contract["house"], second_contract["house"])
+        self.assertIs(first_contract["routing"], second_contract["routing"])
+
+        # Repeated /api/v1/locks polls within the same window validate each room once.
+        calls = []
+        original_validate = oh_room_policy.validate
+
+        def counting_validate(config, room, contract):
+            calls.append((room, config.get("revision")))
+            return original_validate(config, room, contract)
+
+        with patch.object(self.adapter.policy, "validate", side_effect=counting_validate):
+            first = self.read()
+            second = self.read()
+        self.assertEqual(first, second)
+        self.assertEqual(sorted(calls), [("den", 1), ("desk", 1)])
+
+        # Crossing the scheduled window boundary (11:00Z) invalidates the schedule cache entry.
+        later = datetime(2026, 11, 2, 11, 1, tzinfo=timezone.utc)
+        calls.clear()
+        with patch("django.utils.timezone.now", return_value=later), \
+                patch.object(self.adapter.policy, "validate", side_effect=counting_validate):
+            after = self.read()["rooms"]
+        self.assertEqual(after["den"], UNLOCKED)
+        self.assertTrue(after["desk"]["locked"])
+        self.assertEqual(calls, [("den", 1)])

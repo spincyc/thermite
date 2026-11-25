@@ -66,8 +66,12 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 from oh_conf import Addon, House, YamlFile, point, retarget, uses
+
+if TYPE_CHECKING:
+    from oh_inventory import Device
 
 from .. import _commands, _pairing, _script
 
@@ -78,7 +82,7 @@ HEADER = (
     "Android and Google TVs and NVIDIA SHIELDs over the Android TV Remote",
     "protocol (androidtv binding, TLS port 6466), paired from the Pairing page;",
     "the binding's keystore in userdata holds the pairing. Power and mute are",
-    "the binding's own channels; the rule conf/automation/js/androidtv_googletv.js",
+    "the binding's own channels; the rule conf/automation/js/androidtv_googletv_<device>.js",
     "presses the remote keys, steps the volume on its own scale, and pairs.",
     "Items are autoupdate off: they show only what the device reports.",
 )
@@ -295,7 +299,7 @@ def render(device: dict, house: House, out: YamlFile) -> None:
     ident = device["id"]
     uid = thing_uid(device)
     out.things[uid] = {
-        "label": f"{house.label(device)} Android TV remote",
+        "label": f"{house.label(cast('Device', device))} Android TV remote",
         "location": house.room_label(device["room"]),
         "config": {"ipAddress": device["ip"], "googletvPort": PORT},
     }
@@ -333,12 +337,11 @@ def rule(devices: list[dict]) -> str:
     """androidtv_googletv.js with its tables filled in for these devices."""
     used = sorted({remote_of(d) for d in devices}, key=REMOTES.index)
     return _script.rule(SOURCE, NAME, {"DEVICES": table(devices),
-                                       "PRESSES": {remote: presses(remote) for remote in used}}, connects=False)
+                                       "PRESSES": {remote: presses(remote) for remote in used}})
 
 
-def files(devices: list[dict], house: House) -> dict[str, str]:
-    """The conf files rendered from all of this integration's devices."""
-    return {RULE: rule(devices)}
+#: One script context per device; its polls and commands stay ordered.
+rule_path, files = _script.per_device(RULE, rule)
 
 
 def power_item(device: dict) -> str | None:

@@ -237,3 +237,43 @@ class Features(TestCase):
         self.adapter.command_lock = revoke
         self.assertEqual(self.call("post", "/api/v1/rooms/den/commands", {"action": "source", "value": "off"}).status_code, 401)
         self.assertEqual(self.adapter.transport.commands, [])
+
+    def test_pairing_list_batches_reads_in_one_bulk_states_call(self):
+        class BulkTransport:
+            def __init__(self):
+                self.values = {
+                    "tv_pairing_status": "failed",
+                    "tv_pairing_result": json.dumps({"state": "failed"}),
+                    "tv2_pairing_status": "paired",
+                    "tv2_pairing_result": json.dumps({"state": "paired"}),
+                }
+                self.bulk_calls = []
+
+            def states(self, names):
+                self.bulk_calls.append(list(names))
+                return {name: self.values[name] for name in names if name in self.values}
+
+            def read(self, item):
+                raise AssertionError("pairing_list must use bulk states() when available")
+
+        pair1 = {"value": "sony_ip_control", "config": {"device": "tv", "label": "TV", "room": "Den", "length": 4,
+                 "chars": "digits", "status": "tv_pairing_status", "result": "tv_pairing_result"}}
+        pair2 = {"value": "sony_ip_control", "config": {"device": "tv2", "label": "TV2", "room": "Desk", "length": 4,
+                 "chars": "digits", "status": "tv2_pairing_status", "result": "tv2_pairing_result"}}
+        contract = RuntimeContract(
+            {"den": {"source_item": "loc_den_source", "sources": ["player"]}},
+            states={"tv_pairing_status": {"kind": "pairing_status"}, "tv_pairing_result": {"kind": "pairing_result"},
+                    "tv2_pairing_status": {"kind": "pairing_status"}, "tv2_pairing_result": {"kind": "pairing_result"}},
+            pairings={"tv_pairing": pair1, "tv2_pairing": pair2},
+        )
+        bulk = BulkTransport()
+        bulk_adapter = RuntimeAdapter(contract, bulk, Policy())
+        items = bulk_adapter.pairing_list()
+        self.assertEqual(len(bulk.bulk_calls), 1)
+        self.assertEqual(bulk.bulk_calls[0],
+                         ["tv_pairing_status", "tv_pairing_result", "tv2_pairing_status", "tv2_pairing_result"])
+        by_name = {entry["name"]: entry["state"] for entry in items}
+        self.assertEqual(by_name["tv_pairing"], "NULL")
+        self.assertEqual(by_name["tv_pairing_status"], "failed")
+        self.assertEqual(by_name["tv2_pairing_status"], "paired")
+        self.assertEqual(json.loads(by_name["tv2_pairing_result"]), {"state": "paired"})

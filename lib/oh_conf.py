@@ -80,11 +80,18 @@ class Addon(NamedTuple):
 
 # ---------------------------------------------------------------- emitter
 
+_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+_SAFE_PLAIN = re.compile(r"^[A-Za-z][A-Za-z0-9_./-]*$")
+_YAML_NON_STRINGS = frozenset({"y", "n", "yes", "no", "on", "off", "true", "false", "null"})
+
+
 @functools.lru_cache(maxsize=None)
 def _plain(text: str, context: str) -> bool:
     """Whether `text` reads back as the same string written plain in `context`."""
     if not text or text != text.strip() or not text.isprintable() or CORE_NON_STRING.fullmatch(text):
         return False
+    if _SAFE_PLAIN.fullmatch(text) and text.lower() not in _YAML_NON_STRINGS:
+        return True
     probe, expected = {
         "key": (f"{text}: x", {text: "x"}),
         "value": (f"k: {text}", {"k": text}),
@@ -92,7 +99,7 @@ def _plain(text: str, context: str) -> bool:
         "flow": (f"k: [{text}]", {"k": [text]}),
     }[context]
     try:
-        return yaml.safe_load(probe) == expected
+        return yaml.load(probe, Loader=_YAML_LOADER) == expected
     except yaml.YAMLError:
         return False
 
@@ -214,7 +221,7 @@ def retarget(text: str, path: str, uid: str, change) -> str:
     header comments are kept."""
     lines = text.split("\n")
     start = lines.index("version: 1")
-    document = yaml.safe_load(text) or {}
+    document = yaml.load(text, Loader=_YAML_LOADER) or {}
     thing = (document.get("things") or {}).get(uid)
     if thing is None:
         raise ValueError(f"{path} has no Thing {uid}")

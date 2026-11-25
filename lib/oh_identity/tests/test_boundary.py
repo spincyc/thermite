@@ -344,25 +344,40 @@ class Boundary(TransactionTestCase):
             async_to_sync(check)(path)
 
     def test_busy_stream_checks_at_most_once_per_interval_and_fences_quiet_heartbeats(self):
+        from oh_identity.auth import bump_auth_revocation
+
         async def check():
             upstream = Upstream()
             live = RuntimeAdapter(self.adapter.contract, upstream)
             frames = stream(live, "remote", {})
             clock = [1000.0]
             with patch("oh_identity.streams.valid", return_value=True) as valid, \
-                    patch("oh_identity.streams.clock", side_effect=lambda: clock[0]):
+                    patch("oh_identity.streams.clock", side_effect=lambda: clock[0]), \
+                    patch("oh_identity.streams._db_stamp", return_value=("stable",)):
                 await anext(frames)
                 for index in range(100):
                     clock[0] = 1000.0 + index * .05
                     upstream.send(native_event("loc_den_source", "player"))
                     self.assertIn(b"player", await anext(frames))
-                # One opening check, then one per elapsed second of frames.
-                self.assertEqual(valid.call_count, 1 + 4)
+                # Steady state avoids 1 Hz SQLite polling: only the opening check runs.
+                self.assertEqual(valid.call_count, 1)
+                # In-process revocation triggers immediate revalidation on the very next frame.
+                bump_auth_revocation()
+                upstream.send(native_event("loc_den_source", "off"))
+                self.assertIn(b"off", await anext(frames))
+                self.assertEqual(valid.call_count, 2)
+                # Calm fallback revalidates after REVALIDATE_DB seconds even without a bump.
+                clock[0] = 1040.0
+                upstream.send(native_event("loc_den_source", "player"))
+                self.assertIn(b"player", await anext(frames))
+                self.assertEqual(valid.call_count, 3)
                 await frames.aclose()
 
             frames = stream(live, "remote", {})
-            with patch("oh_identity.streams.HEARTBEAT", .01), patch("oh_identity.streams.valid", side_effect=[True, False]) as valid:
+            with patch("oh_identity.streams.HEARTBEAT", .01), \
+                    patch("oh_identity.streams.valid", side_effect=[True, False]) as valid:
                 await anext(frames)
+                bump_auth_revocation()
                 with self.assertRaises(StopAsyncIteration):
                     await asyncio.wait_for(anext(frames), .5)
                 self.assertEqual(valid.call_count, 2)

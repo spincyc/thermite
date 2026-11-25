@@ -261,10 +261,11 @@ class CallbackRelay:
                 raise NotificationError(408, "body_timeout") from None
             if len(body) != length:
                 raise NotificationError(400, "length_mismatch")
-            xml_notification(body)
+            raw_body = bytes(body)
+            await asyncio.to_thread(xml_notification, raw_body)
             try:
                 async def forward():
-                    async with self.client.stream("NOTIFY", self.upstream + path, content=bytes(body), headers=headers) as response:
+                    async with self.client.stream("NOTIFY", self.upstream + path, content=raw_body, headers=headers) as response:
                         # Do not consume, copy or expose native response bodies/headers.
                         return response.status_code
                 status = await asyncio.wait_for(forward(), timeout=self.timeout)
