@@ -17,8 +17,12 @@ class CanonicalPackage(unittest.TestCase):
         for name, content in files.items():
             self.assertEqual(content, (AREA / name).read_bytes(), name)
         for name in ('lib/oh_features/routing/lifecycle_io.js', 'lib/oh_entry/filter.jar',
-                     'lib/oh_units.py', 'web/remote/home.css', 'lib/oh_metrics/yoke.py'):
+                     'lib/oh_units.py', 'web/remote/home.css', 'lib/oh_metrics/yoke.py',
+                     'handheld/bridge.js', 'handheld/link.js', 'handheld/state.js'):
             self.assertIn(name, files)
+        runtime = oh_package.runtime_files(files)
+        for name in ('handheld/bridge.js', 'handheld/link.js', 'handheld/state.js'):
+            self.assertEqual(runtime[name], (AREA / name).read_bytes(), name)
 
     def test_unreviewed_tree_and_symlink_manifest_are_refused(self):
         scratch = AREA / '.scratch/canonical-package-tests'

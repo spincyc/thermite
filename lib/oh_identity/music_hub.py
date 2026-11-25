@@ -135,30 +135,39 @@ class MusicHub(Fanout):
         self.sent.clear()
 
     async def _session(self):
+        owner = asyncio.current_task()
         try:
             await self._connected()
         except asyncio.CancelledError:
             raise
         except Exception:
-            if not self.ready and not self.down:
-                # Fanout tells only the streams it served; these wait for a first snapshot.
-                self._broadcast(lambda view: UNAVAILABLE)
-            self.down = True
+            if self.task is owner:
+                if not self.ready and not self.down:
+                    # Fanout tells only the streams it served; these wait for a first snapshot.
+                    self._broadcast(lambda view: UNAVAILABLE)
+                self.down = True
             raise
 
     async def _connected(self):
+        owner = asyncio.current_task()
         claim = await asyncio.to_thread(provision.read_claim, self.music.state)
+        if self.task is not owner:
+            return
         if provision.problem(claim):
             raise Unavailable("Music Assistant is not claimed")
         options = {} if self.quiet is None else {"quiet": self.quiet}
         socket = await Socket.open(self.music.spec["port"], claim["token"], **options)
         try:
+            if self.task is not owner:
+                return
             self.counters["upstream_connects"] += 1
             asked = {await socket.command("players/all"): "players", await socket.command("player_queues/all"): "queues",
                      await socket.command("providers"): "providers"}
             answers = {}
             while True:
                 message = await socket.receive()
+                if self.task is not owner:
+                    return
                 if "event" in message:
                     self.counters["events"] += 1
                     if self.event(message):

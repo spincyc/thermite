@@ -45,7 +45,7 @@ class InstalledInstall(unittest.TestCase):
         return self.write("--config", str(self.site), "deploy", "a" * 40, how)
 
     def handoff(self):
-        return ("/usr/bin/python3", str(self.program / "lib/oh_service.py"), "/srv/thermite/runtime",
+        return ("/usr/bin/python3", "-I", "-B", str(self.program / "lib/oh_service.py"), "/srv/thermite/runtime",
                 "--uid", "9001", "--gid", "9001", "--deployment")
 
     def test_runtime_access_credentials_belong_to_the_private_site(self):
@@ -72,7 +72,7 @@ class InstalledInstall(unittest.TestCase):
             self.assertEqual(token.save(self.host), 0)
         action, host, area = perform.call_args.args
         self.assertTrue(action.root)
-        self.assertEqual(action.argv, ("python3", str(self.program / "lib/oh_install/secrets.py"),
+        self.assertEqual(action.argv, ("python3", "-I", "-B", str(self.program / "lib/oh_install/secrets.py"),
                          str(self.site / "installation/runtime"), "--name", "openhab-token", "--source",
                          str(self.site / "var/server/api-token"), "--uid", "9001", "--gid", "9001",
                          "--recover-runtime-token", "--runtime-url", "http://127.0.0.1:13602"))
@@ -294,5 +294,46 @@ class InstalledInstall(unittest.TestCase):
         config = load_config(target / "config.json", tls=False)
         self.assertEqual((config["version"], config["port"], config["guest_http"]),
                          (3, 16301, {"port": 13601, "listen": ["192.0.2.10"], "clients": ["192.0.2.0/24"], "names": []}))
+
+    def test_every_root_python_helper_invokes_python_isolated_without_bytecode(self):
+        import oh_apparmor
+        host = {"uid": 9001, "gid": 9001, "http_port": 13602,
+                "shares": {"music": {"type": "cifs", "server": "nas.example", "share": "music",
+                                     "where": "/mnt/nas-music", "version": "3.1.1"}}}
+        context = steps.Context(self.site, {"openhab": {"version": "5.2.3"}}, host,
+                                "a" * 40, "b" * 64, "server", None)
+        (self.site / "conf/services").mkdir(parents=True, exist_ok=True)
+        (self.site / "conf/services/addons.cfg").write_text("remote = false\nbinding = http\n")
+        self.host.unit.return_value = Mock(active="inactive", enabled="disabled")
+        self.host.stat.return_value = None
+        self.host.read_bytes.return_value = None
+        self.host.which.return_value = oh_apparmor.PARSERS[0]
+        with patch.object(oh_paths, "PROGRAM", self.program), \
+                patch.object(oh_apparmor, "enabled", return_value=True), \
+                patch.object(steps.ownership, "inspect", return_value=steps.ownership.Owned()), \
+                patch.object(deploy, "prepare_openhab_argv", return_value=("fixture-prepare",)):
+            commands = [
+                *steps.NodeConfinement(context).actions(self.host),
+                *steps.NativeListeners(context).actions(self.host),
+                *steps.PairingLogging(context).actions(self.host),
+                *steps.Deploy(context).actions(self.host),
+                *steps.NativePreparation(context).actions(self.host),
+                *steps.AddonRepository(context).actions(self.host),
+                *steps.BindingRepairs(context).actions(self.host),
+                steps._install_secret(context, Path("source"), Path("openhab-token")),
+                *steps.ShareCredentials(context).actions(self.host),
+            ]
+        python_helpers = [action.argv for action in commands
+                          if getattr(action, "root", False) and action.argv
+                          and Path(action.argv[0]).name == "python3"]
+        seen_scripts = set()
+        for argv in python_helpers:
+            self.assertEqual(argv[1:3], ("-I", "-B"), argv)
+            self.assertTrue(argv[3].startswith(str(self.program / "lib") + "/"), argv)
+            seen_scripts.add(Path(argv[3]).relative_to(self.program).as_posix())
+        self.assertEqual(seen_scripts, {
+            "lib/oh_apparmor.py", "lib/oh_ports.py", "lib/oh_logging.py",
+            "lib/oh_service.py", "lib/oh_addons.py", "lib/oh_install/secrets.py",
+        })
 
 if __name__ == "__main__": unittest.main()

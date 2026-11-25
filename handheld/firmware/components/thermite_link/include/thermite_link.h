@@ -67,6 +67,9 @@ typedef void (*tl_emit_t)(void *context, const uint8_t *frame, size_t length);
 /* Forgets the session; the next send needs a HELLO and its SYNC. */
 void tl_remote_reset(tl_remote_t *remote);
 
+/* Discards any partial incoming message held by assembler. */
+void tl_assembler_reset(tl_assembler_t *assembler);
+
 /* A HELLO carrying status (JSON) under a fresh, nonzero nonce. Returns its length, or 0. */
 size_t tl_remote_hello(tl_remote_t *remote, const uint8_t key[TL_KEY_LEN], uint64_t nonce,
                        const char *status, size_t length, uint8_t *out, size_t capacity);

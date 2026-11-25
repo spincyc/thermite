@@ -352,7 +352,7 @@ def _target(root: Path, name: str) -> Path:
         raise PublicError("unsafe managed export path")
     allowed = {MANIFEST, "AGENTS.md", "README.md", "FAQ.md", "Makefile", "requirements.txt", "versions.json", ".gitignore", "pyproject.toml", "CHANGELOG.md",
                ".github/workflows/pages.yml", ".github/workflows/ci.yml"}
-    if name not in allowed and path.parts[0] not in {"docs", "bin", "lib", "site", "web", "tui", "tests", "instance", "iso"}:
+    if name not in allowed and path.parts[0] not in {"docs", "bin", "lib", "site", "web", "tui", "handheld", "tests", "instance", "iso"}:
         raise PublicError("path is outside the managed public source trees")
     target = root / name
     if any(p.is_symlink() for p in [target, *target.parents] if p != root.parent):

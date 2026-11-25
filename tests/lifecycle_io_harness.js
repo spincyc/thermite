@@ -665,4 +665,71 @@ test('Java exceptions are named by class however GraalJS presents it, never by m
  const f=setup();f.provider.execute=()=>{throw {getClass:()=>({}),getCause:()=>null,toString:()=>'secret: message'};};
  f.submit('opaque','D1');f.actor.drain();assert(tickets(f)[0].endsWith(' polls=0'));
 });
+test('actor startup loads its journal under the broker lock',()=>{
+ const f=setup();let depth=0;
+ f.module.actor({key:'switch',io:f.descriptor.io},f.provider,{...f.env,journal:{load(){depth=f.broker.lock.depth;return null;},save(){}}});
+ assert(depth>0,'journal.load() must run inside transaction()');
+});
+test('when one independent field is fenced, healthy independent fields recover across startup, reload, overflow and whole-device recovery without clearing the fenced field',()=>{
+ let time=1000;const f=setup(null,source,{now:()=>time}),proof=[];f.bridge.onLegacy(e=>proof.push(e));
+ const fields={D1:{independent:true},D2:{independent:true}};
+ const actor=f.module.actor({key:'switch',io:f.descriptor.io,fields},f.provider,{...f.env,journal:f.journal});
+ const {createCoordinator}=require(path.join(path.dirname(path.resolve(process.argv[2])),'lifecycle.js'));
+ const planner=createCoordinator({version:1,sources:{},resources:{
+  D1:{key:'switch',values:['1','2','3','4'],capable:true,independent:true},
+  D2:{key:'switch',values:['1','2','3','4'],capable:true,independent:true}},
+  endpoints:{west:{choices:{a:{requirements:{D1:'3'}}}},east:{choices:{b:{requirements:{D2:'4'}}}}}},{
+  instanceId:'test',store:{load:()=>null,save(){}},now:()=>time,setTimer:()=>0,clearTimer(){},
+  dispatch:(op,report)=>f.bridge.dispatch(op,report),probe:(op,report)=>f.bridge.probe(op,report),changed:()=>f.bridge.invalidateStale()});
+ f.bridge.onLegacy(e=>{proof.push(e);if(e.type==='retired'&&e.recovered&&e.key==='switch')planner.recover('switch',e.resource?{terminal:true,resource:e.resource}:{terminal:true});});
+ // Fence D1 via an unknown outcome; D2 remains healthy.
+ f.provider.probe=()=>({value:'1',fresh:true});
+ f.provider.execute=(r,v)=>{if(r==='D1')throw Error('lost reply');return {outcome:'applied',sample:{value:String(v),fresh:true}};};
+ planner.request('west','a');actor.drain();f.bridge.events();actor.drain();f.bridge.events();
+ assert.equal(planner.snapshot().slots['switch#D1'].quarantine,'provider_outcome_unknown');
+ assert.equal(planner.snapshot().slots['switch#D2'].quarantine,null);
+ // Event overflow while D2 has an active operation quarantines switch#D2 in the planner;
+ // overflow drain must recover D2 via per-field ready without touching D1.
+ planner.request('east','b');f.broker.overflow.set(true);f.bridge.events();
+ assert.equal(planner.snapshot().slots['switch#D2'].quarantine,'executor_event_overflow');
+ proof.length=0;f.bridge.events();
+ assert(proof.some(e=>e.type==='retired'&&e.recovered&&e.key==='switch'&&e.resource==='D2'));
+ assert(!proof.some(e=>e.resource==='D1'||!('resource' in e)));
+ assert.equal(planner.snapshot().slots['switch#D2'].quarantine,null);
+ assert.equal(planner.snapshot().slots['switch#D1'].quarantine,'provider_outcome_unknown');
+ // Controller reload while D1 is fenced notifies D2 only, never clearing D1.
+ const reloaded=f.module.create(f.descriptor,f.env);const reloadProof=[];reloaded.onLegacy(e=>reloadProof.push(e));reloaded.events();
+ assert.deepEqual(reloadProof.map(e=>[e.type,e.key,e.resource]),[['retired','switch','D2']]);
+ // Device-level ready while D1 is fenced still must not clear D1.
+ reloadProof.length=0;const row=JSON.parse(f.broker.states.get('switch'));
+ f.broker.events.offer(JSON.stringify({type:'ready',key:'switch',actor:row.actor}));reloaded.events();
+ assert.deepEqual(reloadProof,[]);
+ // Actor startup (with rules enabled) restoring a journal with D1 fenced on a fresh broker announces D2 only.
+ const fresh=setup(null,source,{now:()=>time}),startupProof=[];
+ const startupContext=vm.createContext({module:{exports:{}},Date,JSON,Map,Object,String,Error,setTimeout:()=>1,clearTimeout(){},
+  require(name){if(name==='openhab')return {rules:{JSRule(){}},triggers:{ItemCommandTrigger:n=>n}};if(name==='@runtime')return {lifecycleTracker:{addDisposeHook(){}}};assert.fail(name);}});
+ vm.runInContext(source,startupContext);const sm=startupContext.module.exports;
+ const sBridge=sm.create(fresh.descriptor,fresh.env);sBridge.onLegacy(e=>startupProof.push(e));sBridge.events();startupProof.length=0;
+ const lost='lost';
+ sm.actor({key:'switch',io:fresh.descriptor.io,fields},fresh.provider,{...fresh.env,noRules:false,journal:{load:()=>({version:1,key:'switch',epoch:'config-1',token:lost,status:'retired',fences:{D1:lost}}),save(){}}});
+ sBridge.events();
+ assert.deepEqual(startupProof.map(e=>[e.type,e.key,e.resource]),[['retired','switch','D2']]);
+ // Whole-device quarantine recovery while D1 remains fenced clears quarantine and notifies D2 only.
+ const wholeRow=JSON.parse(f.broker.states.get('switch'));wholeRow.quarantine='whole';wholeRow.quarantinedAt=time-61000;wholeRow.fences={D1:{token:lost,at:time}};
+ f.broker.states.put('switch',JSON.stringify(wholeRow));
+ const recoverActor=f.module.actor({key:'switch',io:f.descriptor.io,fields},f.provider,{...f.env,journal:{load:()=>null,save(){}}});
+ const recoverBridge=f.module.create(f.descriptor,f.env);const recoverProof=[];recoverBridge.onLegacy(e=>recoverProof.push(e));recoverBridge.events();recoverProof.length=0;
+ assert.equal(recoverActor.recover(),true);recoverBridge.events();
+ assert.deepEqual(recoverProof.map(e=>[e.type,e.key,e.resource]),[['retired','switch','D2']]);
+ const afterWhole=JSON.parse(f.broker.states.get('switch'));
+ assert.equal(afterWhole.quarantine,null);assert.equal(afterWhole.fences.D1.token,'lost');
+ // Flight on D1 ending uncertain after overflow (announce=true) still notifies unfenced D2.
+ const ov=setup(null,source,{now:()=>time}),ovProof=[];ov.bridge.onLegacy(e=>ovProof.push(e));
+ const ovActor=ov.module.actor({key:'switch',io:ov.descriptor.io,fields},ov.provider,{...ov.env,journal:ov.journal});
+ ov.provider.execute=()=>{ov.broker.overflow.set(true);ov.bridge.events();throw Error('lost reply');};
+ ov.submit('in-flight-d1','D1','3');ov.submit('queued-d2','D2','4');ovActor.drain();
+ ovProof.length=0;ov.bridge.events();
+ assert.deepEqual(ovProof.map(e=>[e.type,e.key,e.resource]),[['retired','switch','D2']]);
+ assert.equal(JSON.parse(ov.broker.states.get('switch')).fences.D1.token,'in-flight-d1');
+});
 process.stdout.write(JSON.stringify({passed:tests.length,tests}));

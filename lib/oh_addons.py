@@ -29,19 +29,30 @@ there.
 """
 from __future__ import annotations
 
+import os
+from pathlib import Path, PurePosixPath
+import sys
+
+if __name__ == "__main__":
+    # Release validation accepts installer-produced bytecode as inert.
+    # Never execute or write adjacent .pyc files when run directly as root.
+    sys.dont_write_bytecode = True
+    sys.pycache_prefix = str(Path(__file__).resolve().parent / (".uncached-" + os.urandom(16).hex()))
+
 import argparse
 import dataclasses
 import hashlib
 import importlib
 import io
 import json
-import os
-from pathlib import Path, PurePosixPath
 import re
 import shutil
 import stat
 import xml.etree.ElementTree as ElementTree
 import zipfile
+
+if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import oh_ports
 

@@ -62,6 +62,7 @@ import oh_units
 from . import alerts
 from .exporter import (FAILURE_REASONS, HOUSE_LABEL, HOUSE_ROOM, OPERATION_OUTCOMES, ROUND_SECONDS,
                        ROUTE_BUCKETS)
+from .yoke import JOB as YOKE_JOB
 
 DATASOURCE_UID = "thermite-prometheus"
 DATASOURCE = {"type": "prometheus", "uid": DATASOURCE_UID}
@@ -1094,7 +1095,7 @@ def house(mapping: dict, probes: list[dict]) -> dict:
                    description="Alerts firing now, every one Prometheus has: the table below lists them. The "
                                "thermite app's Home shows them without those another firing alert already "
                                "explains, so it can show fewer. Nothing is sent to a phone."), 12, TILE)
-    problems = ('(count(up == 0) or vector(0)) + (count(node_systemd_unit_state{job="node",name=~"thermite-.*",'
+    problems = (f'(count(up{{job!="{YOKE_JOB}"}} == 0) or vector(0)) + (count(node_systemd_unit_state{{job="node",name=~"thermite-.*",'
                 'state="failed"} == 1) or vector(0)) + (count((node_filesystem_avail_bytes{job="node",'
                 'fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes < 0.10) and '
                 '(node_filesystem_readonly == 0)) or vector(0))')
@@ -1860,7 +1861,7 @@ def _played(board: Board, mapping: dict) -> None:
 def yoke() -> dict:
     """Passive control observations, separate from core home-control health."""
     board = Board()
-    job = 'job="yoke"'
+    job = f'job="{YOKE_JOB}"'
     device = "{{instance}} {{node_id}}"
     board.add(note("About these observations",
                    "Yoke observers passively read existing announcements. Device up means a recent "

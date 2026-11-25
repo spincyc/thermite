@@ -64,6 +64,18 @@ class Packaging(unittest.TestCase):
             for name in expected | {"Makefile", "lib/oh_identity/README.md", "lib/oh_cli/__init__.py"}:
                 self.assertEqual(archive.read("thermite_app/runtime/" + name), self.public[name], name)
 
+    def test_handheld_runtime_files_are_included_in_runtime_and_wheel(self):
+        runtime = oh_package.runtime_files(self.public)
+        handheld = {"handheld/bridge.js", "handheld/link.js", "handheld/state.js"}
+        exported_handheld = {name for name in self.public if name.startswith("handheld/")}
+        self.assertTrue(handheld <= exported_handheld)
+        self.assertTrue(exported_handheld <= runtime.keys())
+        self.assertTrue(exported_handheld <= self.release["files"].keys())
+        with zipfile.ZipFile(self.wheel) as archive:
+            for name in sorted(exported_handheld):
+                self.assertEqual(runtime[name], self.public[name], name)
+                self.assertEqual(archive.read("thermite_app/runtime/" + name), self.public[name], name)
+
     def test_new_site_tracks_inputs_and_ignores_derived_configuration(self):
         site = self.root / "new-schema-site"
         oh_init.initialize(site, program=self.program)

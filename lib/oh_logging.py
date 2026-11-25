@@ -42,13 +42,24 @@ payload: protected() and journaled() check both.
 
 from __future__ import annotations
 
-import argparse
 import os
+from pathlib import Path
+import sys
+
+if __name__ == "__main__":
+    # Release validation accepts installer-produced bytecode as inert.
+    # Never execute or write adjacent .pyc files when run directly as root.
+    sys.dont_write_bytecode = True
+    sys.pycache_prefix = str(Path(__file__).resolve().parent / (".uncached-" + os.urandom(16).hex()))
+
+import argparse
 import re
 import socket
 import stat
 import xml.etree.ElementTree as ET
-from pathlib import Path
+
+if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from oh_ports import HTTP_PORT, native_etc, open_directory, read_regular, replace_regular
 

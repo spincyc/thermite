@@ -7,16 +7,27 @@ symlinks. Hard links and mount crossings are refused before any repair.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+import sys
+
+if __name__ == "__main__":
+    # Release validation accepts installer-produced bytecode as inert.
+    # Never execute or write adjacent .pyc files when run directly as root.
+    sys.dont_write_bytecode = True
+    sys.pycache_prefix = str(Path(__file__).resolve().parent / (".uncached-" + os.urandom(16).hex()))
+
 import argparse
 import contextlib
 import ctypes
 import dataclasses
 import json
-import os
-from pathlib import Path
 import re
 import secrets
 import stat
+
+if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 ACCOUNT = GROUP = "thermite"
 UID = GID = 9001

@@ -12,6 +12,7 @@ staging and status use it too. Nothing here depends on the HTTP server.
 """
 
 from dataclasses import dataclass
+import errno
 import ipaddress
 import logging
 import re
@@ -24,6 +25,9 @@ FIELDS = ("port", "listen", "clients", "names")
 #: The ASGI scope key the listener sets. Request data never reaches the scope's
 #: top level, so no client can claim it.
 SCOPE = "thermite.guest_http"
+#: Consecutive unadmitted connections closed in one accept() call before
+#: yielding back to the event loop with BlockingIOError(EAGAIN).
+MAX_REFUSALS = 64
 #: A lowercase DNS name a guest may type, such as remote.guest.example.
 _NAME = re.compile(r"(?=.{1,253}\Z)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*")
 log = logging.getLogger("oh_access")
@@ -143,9 +147,13 @@ class Clients:
     connections. only() turns a bound listening socket into one whose accept()
     closes each connection from elsewhere, so no server reads a byte of it."""
 
-    def __init__(self, networks):
+    def __init__(self, networks, *, max_refusals=None):
         self.networks = tuple(ipaddress.ip_network(value) for value in networks)
         self.refused = Refusals()
+        limit = MAX_REFUSALS if max_refusals is None else max_refusals
+        if type(limit) is not int or limit < 1:
+            raise ValueError("max_refusals must be a positive integer")
+        self.max_refusals = limit
 
     def only(self, sock):
         admitting = _Admitting(sock.family, sock.type, sock.proto, fileno=sock.detach())
@@ -154,14 +162,18 @@ class Clients:
 
 
 class _Admitting(socket.socket):
-    clients = None
+    clients: Clients | None = None
 
     def accept(self):
         # The event loop accepts until this raises BlockingIOError: the
-        # backlog holds no more connections.
-        while True:
+        # backlog holds no more connections, or this call reached its refusal
+        # budget and yields so other listeners keep running.
+        clients = self.clients
+        assert clients is not None
+        for _ in range(clients.max_refusals):
             connection, peer = super().accept()
-            if admitted(peer, self.clients.networks):
+            if admitted(peer, clients.networks):
                 return connection, peer
             connection.close()
-            self.clients.refused()
+            clients.refused()
+        raise BlockingIOError(errno.EAGAIN, "guest refusal budget reached")

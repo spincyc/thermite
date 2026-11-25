@@ -468,7 +468,9 @@ class NativePreparationScope(unittest.TestCase):
                 mock.patch.object(steps.Account, "missing", return_value=[]), \
                 mock.patch.object(deploy, "prepare_openhab_argv", return_value=("fixture-prepare",)):
             preparation = steps.NativePreparation(context()).actions(system)
-        repairs = [action.argv for action in preparation if action.argv[1:2] and action.argv[1].endswith("lib/oh_service.py")]
+        repairs = [action.argv for action in preparation
+                   if action.argv[:3] == ("/usr/bin/python3", "-I", "-B")
+                   and action.argv[3].endswith("lib/oh_service.py")]
         self.assertEqual([argv[-1] for argv in repairs], ["--runtime", "--check-pairing-logging", "--runtime"])
         self.assertFalse(any("--receipt" in argv for argv in repairs), "only a full repair records the receipt")
 

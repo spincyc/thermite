@@ -103,6 +103,15 @@ void tl_remote_reset(tl_remote_t *remote)
     memset(remote, 0, sizeof *remote);
 }
 
+void tl_assembler_reset(tl_assembler_t *assembler)
+{
+    assembler->last_length = 0;
+    assembler->received = 0;
+    assembler->message = 0;
+    assembler->count = 0;
+    assembler->data[0] = '\0';
+}
+
 static void adopt(tl_remote_t *remote, uint64_t session)
 {
     remote->session = session;
@@ -148,6 +157,7 @@ static bool gather(tl_assembler_t *assembler, const tl_header_t *header, const u
 {
     if (header->count > PARTS_MAX || (header->index + 1 < header->count && length != TL_PART_MAX)) return false;
     if (assembler->received == 0 || assembler->message != header->message || assembler->count != header->count) {
+        assembler->last_length = 0;
         assembler->received = 0;
         assembler->message = header->message;
         assembler->count = header->count;
@@ -181,6 +191,7 @@ tl_event_t tl_remote_receive(tl_remote_t *remote, tl_assembler_t *assembler, con
             return TL_NOTHING;
         }
         adopt(remote, header.session);
+        tl_assembler_reset(assembler);
         return TL_SYNCED;
     }
     if (header.type != TL_DATA || remote->session == 0 || header.session != remote->session

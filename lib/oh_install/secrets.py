@@ -7,15 +7,25 @@ command. It never discovers credentials or rotates an existing Grafana password.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+import sys
+
+if __name__ == "__main__":
+    # Release validation accepts installer-produced bytecode as inert.
+    # Never execute or write adjacent .pyc files when run directly as root,
+    # and keep this directory off sys.path so stdlib's secrets module wins.
+    sys.dont_write_bytecode = True
+    _here = Path(__file__).resolve().parent
+    sys.pycache_prefix = str(_here / (".uncached-" + os.urandom(16).hex()))
+    sys.path[:] = [entry for entry in sys.path if Path(entry).resolve() != _here]
+
 import argparse
 from contextlib import ExitStack
 import fcntl
 import json
-import os
-from pathlib import Path
 import re
 import stat
-import sys
 import time
 
 NAMES = ("openhab-token", "grafana-admin-password")
@@ -305,10 +315,18 @@ def _validate_runtime_token(url, content):
     else:
         # Release validation accepts installer-produced bytecode as inert.
         # Match the application's launcher: never execute adjacent .pyc files
-        # when this finite helper runs with administrative privileges.
+        # when this finite helper runs with administrative privileges, and load
+        # the sibling directly so -I works without shadowing stdlib secrets.
+        import importlib.util
         sys.dont_write_bytecode = True
-        sys.pycache_prefix = str(Path(__file__).resolve().parent / (".uncached-" + os.urandom(16).hex()))
-        import native_auth
+        here = Path(__file__).resolve().parent
+        sys.pycache_prefix = str(here / (".uncached-" + os.urandom(16).hex()))
+        spec = importlib.util.spec_from_file_location("native_auth", here / "native_auth.py")
+        if spec is None or spec.loader is None:
+            raise SecretError("installed runtime credential could not be verified")
+        native_auth = importlib.util.module_from_spec(spec)
+        sys.modules["native_auth"] = native_auth
+        spec.loader.exec_module(native_auth)
     try:
         origin = native_auth._origin(url)
         token = content.decode("ascii").strip()

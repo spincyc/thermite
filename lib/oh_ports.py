@@ -5,14 +5,22 @@ Device protocol destinations and discovery multicast ports do not belong here.
 """
 from __future__ import annotations
 
+import os
+from pathlib import Path
+import sys
+
+if __name__ == "__main__":
+    # Release validation accepts installer-produced bytecode as inert.
+    # Never execute or write adjacent .pyc files when run directly as root.
+    sys.dont_write_bytecode = True
+    sys.pycache_prefix = str(Path(__file__).resolve().parent / (".uncached-" + os.urandom(16).hex()))
+
 import argparse
 from contextlib import contextmanager
 import errno
 import fcntl
 import hashlib
 import ipaddress
-import os
-from pathlib import Path
 import re
 import socket
 import stat

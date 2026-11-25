@@ -4,6 +4,7 @@ Requests through it are tested with Django in lib/oh_identity/tests."""
 
 import asyncio
 import contextlib
+import errno
 import http.server
 import io
 import ipaddress
@@ -159,6 +160,119 @@ class Peers(unittest.TestCase):
         self.assertEqual([record.getMessage() for record in logs.records],
                          ["Guest HTTP listener closed 1 connection(s) from outside its client networks"])
         self.assertEqual(clients.refused.count, 1)
+
+    def test_admitting_accept_bounds_refusals_and_yields_to_event_loop(self):
+        self.assertEqual(guest.Clients(["192.0.2.0/24"]).max_refusals, guest.MAX_REFUSALS)
+        for bad in (0, -1, True, "64"):
+            with self.subTest(max_refusals=bad), self.assertRaises(ValueError):
+                guest.Clients(["192.0.2.0/24"], max_refusals=bad)
+
+        # Direct accept() burst over the default MAX_REFUSALS budget raises
+        # BlockingIOError(EAGAIN) after closing exactly MAX_REFUSALS peers,
+        # and accepts an admitted peer on the next call.
+        clients = guest.Clients(["192.0.2.0/24"])
+        refused_conns = [mock.Mock() for _ in range(guest.MAX_REFUSALS + 6)]
+        admitted_conn = mock.Mock()
+        queue = iter([*((conn, ("198.51.100.9", 5000 + i)) for i, conn in enumerate(refused_conns)),
+                      (admitted_conn, ("192.0.2.42", 6000))])
+        bound = socket.socket()
+        bound.bind(("127.0.0.1", 0))
+        admitting = clients.only(bound)
+        try:
+            with mock.patch.object(socket.socket, "accept", side_effect=lambda _self: next(queue), autospec=True), \
+                    self.assertLogs("oh_access", "WARNING"):
+                with self.assertRaises(BlockingIOError) as raised:
+                    admitting.accept()
+                self.assertEqual(raised.exception.errno, errno.EAGAIN)
+                self.assertEqual(sum(conn.close.call_count for conn in refused_conns), guest.MAX_REFUSALS)
+                self.assertEqual(admitted_conn.close.call_count, 0)
+                connection, peer = admitting.accept()
+                self.assertIs(connection, admitted_conn)
+                self.assertEqual(peer, ("192.0.2.42", 6000))
+                self.assertEqual(sum(conn.close.call_count for conn in refused_conns), len(refused_conns))
+        finally:
+            admitting.close()
+
+        # Live asyncio server: a backlog burst larger than max_refusals yields
+        # back to concurrent event-loop tasks while still accepting admitted peers.
+        received = []
+        burst_clients = guest.Clients(["127.0.0.2/32"], max_refusals=4)
+        ticks_before_accept = []
+
+        async def scenario():
+            ticks = 0
+            accepted = asyncio.Event()
+
+            async def answer(reader, writer):
+                ticks_before_accept.append(ticks)
+                accepted.set()
+                received.append(await reader.readuntil(b"\r\n\r\n"))
+                writer.write(b"answered")
+                await writer.drain()
+                writer.close()
+
+            async def ticker():
+                nonlocal ticks
+                while not accepted.is_set():
+                    ticks += 1
+                    await asyncio.sleep(0)
+
+            bound_sock = socket.socket()
+            bound_sock.bind(("127.0.0.1", 0))
+            bound_sock.listen(128)
+            port = bound_sock.getsockname()[1]
+            admitting_sock = burst_clients.only(bound_sock)
+
+            # Queue 12 unadmitted connections and 1 admitted connection in the
+            # kernel backlog before the asyncio selector begins accepting them.
+            raw_clients = []
+            try:
+                for _ in range(12):
+                    client = socket.socket()
+                    client.setblocking(False)
+                    try:
+                        client.connect(("127.0.0.1", port))
+                    except BlockingIOError:
+                        pass
+                    raw_clients.append(client)
+                admitted_client = socket.socket()
+                admitted_client.bind(("127.0.0.2", 0))
+                admitted_client.setblocking(False)
+                try:
+                    admitted_client.connect(("127.0.0.1", port))
+                except BlockingIOError:
+                    pass
+                raw_clients.append(admitted_client)
+
+                server = await asyncio.start_server(answer, sock=admitting_sock, backlog=128)
+                tick_task = asyncio.create_task(ticker())
+                try:
+                    loop = asyncio.get_running_loop()
+                    await asyncio.wait_for(loop.sock_sendall(admitted_client, b"GET / HTTP/1.1\r\n\r\n"), 5)
+                    reply = await asyncio.wait_for(loop.sock_recv(admitted_client, 64), 5)
+                    await asyncio.wait_for(accepted.wait(), 5)
+                    await asyncio.wait_for(tick_task, 5)
+                    # Every unadmitted socket must be closed without receiving data.
+                    for refused in raw_clients[:-1]:
+                        try:
+                            data = await asyncio.wait_for(loop.sock_recv(refused, 64), 5)
+                        except ConnectionResetError:
+                            data = b""
+                        self.assertEqual(data, b"")
+                    return reply
+                finally:
+                    tick_task.cancel()
+                    server.close()
+                    await server.wait_closed()
+            finally:
+                for client in raw_clients:
+                    client.close()
+
+        with self.assertLogs("oh_access", "WARNING"):
+            self.assertEqual(asyncio.run(scenario()), b"answered")
+        self.assertEqual(received, [b"GET / HTTP/1.1\r\n\r\n"])
+        self.assertGreaterEqual(ticks_before_accept[0], 3,
+                                "accept() must yield back to the event loop between refusal batches")
 
     def test_marking_is_set_by_the_listener_in_a_copy_of_the_scope(self):
         seen = []

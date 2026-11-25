@@ -131,7 +131,7 @@ class Installed(Fixture):
         self.assertTrue(command.root)
         from oh_paths import PROGRAM
         self.assertEqual(command.argv, (
-            "python3", str(PROGRAM / "lib/oh_addons.py"), str(self.context.layout.userdata),
+            "python3", "-I", "-B", str(PROGRAM / "lib/oh_addons.py"), str(self.context.layout.userdata),
             "--versions", str(self.site / "versions.json"), "--store", str(self.store),
             "--uid", str(self.context.host["uid"]), "--gid", str(self.context.host["gid"]),
             "automation-jsscripting", "binding-http"))
@@ -147,7 +147,7 @@ class Installed(Fixture):
         (userdata / "etc").mkdir(parents=True)
         (userdata / "etc" / oh_addons.MAVEN_CFG).write_text(
             "org.ops4j.pax.url.mvn.defaultRepositories=file:/system@id=system.repository\n")
-        argv = list(steps.AddonRepository(self.context).actions(self.system)[0].argv[2:])
+        argv = list(steps.AddonRepository(self.context).actions(self.system)[0].argv[4:])
         argv[0] = str(userdata)
         import os
         argv[argv.index("--uid") + 1], argv[argv.index("--gid") + 1] = str(os.getuid()), str(os.getgid())

@@ -3,12 +3,15 @@
 from contextlib import contextmanager, redirect_stdout, redirect_stderr
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import fcntl
+import hashlib
 import importlib.util
 import io
 import json
 import marshal
 import os
 from pathlib import Path
+import shutil
+import socket
 import stat
 import struct
 import subprocess
@@ -464,15 +467,20 @@ class SecretFiles(unittest.TestCase):
         program.mkdir()
         for name in ("secrets.py", "native_auth.py"):
             (program / name).write_bytes((AREA / "lib/oh_install" / name).read_bytes())
-        native = program / "native_auth.py"
-        cache = program / "__pycache__" / f"native_auth.{sys.implementation.cache_tag}.pyc"
-        cache.parent.mkdir()
         marker = self.root / "unverified-bytecode-executed"
-        code = compile(f"from pathlib import Path\nPath({str(marker)!r}).write_text('executed')\n"
-                       "raise RuntimeError('unverified bytecode executed')\n", str(native), "exec")
-        info = native.stat()
-        cache.write_bytes(importlib.util.MAGIC_NUMBER + struct.pack("<III", 0, int(info.st_mtime) & 0xffffffff,
-                          info.st_size & 0xffffffff) + marshal.dumps(code))
+        for name in ("secrets.py", "native_auth.py"):
+            source = program / name
+            cache = program / "__pycache__" / f"{source.stem}.{sys.implementation.cache_tag}.pyc"
+            cache.parent.mkdir(exist_ok=True)
+            code = compile(f"from pathlib import Path\nPath({str(marker)!r}).write_text('executed')\n"
+                           "raise RuntimeError('unverified bytecode executed')\n", str(source), "exec")
+            info = source.stat()
+            cache.write_bytes(importlib.util.MAGIC_NUMBER + struct.pack("<III", 0, int(info.st_mtime) & 0xffffffff,
+                              info.st_size & 0xffffffff) + marshal.dumps(code))
+        poisoned = self.root / "poisoned-pythonpath"
+        poisoned.mkdir()
+        (poisoned / "native_auth.py").write_text(
+            f"from pathlib import Path\nPath({str(marker)!r}).write_text('pythonpath')\nraise RuntimeError('pythonpath')\n")
         environment = {key: value for key, value in os.environ.items() if key != "PYTHONPYCACHEPREFIX"}
         # Prove the forged timestamp/size cache is executable even with -B.
         control = subprocess.run([sys.executable, "-B", "-c", "import native_auth"], cwd=program,
@@ -481,20 +489,195 @@ class SecretFiles(unittest.TestCase):
         self.assertEqual(marker.read_text(), "executed")
         marker.unlink()
         before = {str(path.relative_to(program)): path.read_bytes() for path in program.rglob("*") if path.is_file()}
-        with self.runtime() as (url, requests):
-            result = subprocess.run([sys.executable, "-B", str(program / "secrets.py"), str(self.state),
-                                     "--name", "openhab-token", "--source", str(self.destination),
-                                     "--uid", str(self.uid), "--gid", str(self.gid), "--recover-runtime-token",
-                                     "--runtime-url", url], cwd=program, env=environment,
-                                    capture_output=True, text=True, timeout=5)
+        for flags, extra_env in ((["-I", "-B"], {"PYTHONPATH": str(poisoned)}), (["-B"], {})):
+            with self.subTest(flags=flags), self.runtime() as (url, requests):
+                if self.destination.exists():
+                    self.destination.unlink()
+                result = subprocess.run([sys.executable, *flags, str(program / "secrets.py"), str(self.state),
+                                         "--name", "openhab-token", "--source", str(self.destination),
+                                         "--uid", str(self.uid), "--gid", str(self.gid), "--recover-runtime-token",
+                                         "--runtime-url", url], cwd=program, env={**environment, **extra_env},
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertTrue(json.loads(result.stdout)["recovered"])
+                self.assertEqual(len(requests), 1)
+                self.assertFalse(marker.exists(), "recovery must execute verified source, never adjacent bytecode")
+                self.assertEqual(self.destination.read_bytes(), self.source.read_bytes())
+                after = {str(path.relative_to(program)): path.read_bytes() for path in program.rglob("*") if path.is_file()}
+                self.assertEqual(before, after, "standalone recovery must leave its program and caches unchanged")
+                self.assertNotIn(self.source.read_text().strip(), result.stdout + result.stderr)
+
+
+class RootHelperBytecodeIsolation(unittest.TestCase):
+    """Every root-invoked standalone Python helper runs cleanly under
+    `python3 -I -B`, ignores forged adjacent __pycache__/*.pyc caches (both
+    for itself and imported siblings), ignores PYTHONPATH, and writes no .pyc."""
+
+    LOG4J2 = (
+        b'<?xml version="1.0" encoding="UTF-8"?>\n'
+        b'<Configuration>\n'
+        b'  <Appenders>\n'
+        b'    <RollingFile name="LOGFILE" fileName="openhab.log" filePattern="openhab.log.%i">\n'
+        b'      <PatternLayout pattern="%m%n"/>\n'
+        b'    </RollingFile>\n'
+        b'  </Appenders>\n'
+        b'  <Loggers>\n'
+        b'    <Root level="INFO"><AppenderRef ref="LOGFILE"/></Root>\n'
+        b'  </Loggers>\n'
+        b'</Configuration>\n'
+    )
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.uid, self.gid = os.geteuid(), os.getegid()
+        self.marker = self.root / "forged-bytecode-executed"
+        self.poisoned = self.root / "poisoned-pythonpath"
+        self.poisoned.mkdir()
+        for name in ("oh_ports", "oh_logging", "oh_androidtv_patch", "oh_heos_patch", "json"):
+            (self.poisoned / f"{name}.py").write_text(
+                f"from pathlib import Path\nPath({str(self.marker)!r}).write_text('pythonpath:{name}')\n"
+                f"raise RuntimeError('pythonpath:{name}')\n")
+        self.env = {key: value for key, value in os.environ.items() if key != "PYTHONPYCACHEPREFIX"}
+        self.env["PYTHONPATH"] = str(self.poisoned)
+
+    def forge_pyc(self, source: Path) -> Path:
+        cache = source.parent / "__pycache__" / f"{source.stem}.{sys.implementation.cache_tag}.pyc"
+        cache.parent.mkdir(exist_ok=True)
+        code = compile(f"from pathlib import Path\nPath({str(self.marker)!r}).write_text({source.name!r})\n"
+                       "raise RuntimeError('unverified bytecode executed')\n", str(source), "exec")
+        info = source.stat()
+        cache.write_bytes(importlib.util.MAGIC_NUMBER + struct.pack("<III", 0, int(info.st_mtime) & 0xffffffff,
+                          info.st_size & 0xffffffff) + marshal.dumps(code))
+        return cache
+
+    def tree(self, root: Path) -> dict[str, bytes]:
+        return {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+
+    def unused_port(self) -> int:
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            return sock.getsockname()[1]
+
+    def copy_program(self, *names: str) -> Path:
+        program = self.root / ("program-" + names[0].removesuffix(".py"))
+        program.mkdir()
+        for name in names:
+            source = AREA / "lib" / name
+            target = program / name
+            if source.is_dir():
+                shutil.copytree(source, target, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            else:
+                target.write_bytes(source.read_bytes())
+        for py in program.rglob("*.py"):
+            self.forge_pyc(py)
+        return program
+
+    def test_oh_logging_runs_under_I_B_and_ignores_forged_bytecode(self):
+        import oh_logging
+        program = self.copy_program("oh_logging.py", "oh_ports.py")
+        # Control: forged oh_ports .pyc executes under ordinary `python3 -B`.
+        control = subprocess.run([sys.executable, "-B", "-c", "import oh_ports"], cwd=program,
+                                 env={k: v for k, v in self.env.items() if k != "PYTHONPATH"},
+                                 capture_output=True, text=True, timeout=5)
+        self.assertNotEqual(control.returncode, 0)
+        self.assertEqual(self.marker.read_text(), "oh_ports.py")
+        self.marker.unlink()
+
+        userdata = self.root / "logging-userdata"
+        (userdata / "etc").mkdir(parents=True)
+        (userdata / "etc/log4j2.xml").write_bytes(self.LOG4J2)
+        (userdata / "etc/org.ops4j.pax.logging.cfg").write_bytes(oh_logging.DEFAULT_SELECTOR)
+        before = self.tree(program)
+        result = subprocess.run([sys.executable, "-I", "-B", str(program / "oh_logging.py"), str(userdata),
+                                 "--http-port", str(self.unused_port())],
+                                cwd=program, env=self.env, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertTrue(json.loads(result.stdout)["recovered"])
-        self.assertEqual(len(requests), 1)
-        self.assertFalse(marker.exists(), "recovery must execute verified source, never adjacent bytecode")
-        self.assertEqual(self.destination.read_bytes(), self.source.read_bytes())
-        after = {str(path.relative_to(program)): path.read_bytes() for path in program.rglob("*") if path.is_file()}
-        self.assertEqual(before, after, "standalone recovery must leave its program and caches unchanged")
-        self.assertNotIn(self.source.read_text().strip(), result.stdout + result.stderr)
+        self.assertTrue(oh_logging.configured((userdata / "etc/log4j2.xml").read_bytes()))
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(self.tree(program), before)
+
+    def test_oh_addons_runs_under_I_B_and_ignores_forged_bytecode(self):
+        import oh_addons
+        program = self.copy_program("oh_addons.py", "oh_ports.py", "oh_androidtv_patch", "oh_heos_patch")
+        userdata = self.root / "addons-userdata"
+        (userdata / "etc").mkdir(parents=True)
+        (userdata / "etc" / oh_addons.MAVEN_CFG).write_text(
+            "org.ops4j.pax.url.mvn.defaultRepositories=file:/system@id=system.repository\n")
+        rel = "org/example/bundles/binding.http/1.0/binding.http-1.0.jar"
+        payload = b"fixture http binding bytes"
+        store = self.root / "addons-store"
+        (store / rel).parent.mkdir(parents=True)
+        (store / rel).write_bytes(payload)
+        versions = self.root / "versions.json"
+        versions.write_text(json.dumps({
+            "openhab": {"version": "5.2.3"},
+            "addons": {
+                "repository": "https://repository.example/release",
+                "requires": {"binding-http": [rel]},
+                "files": {rel: {"sha256": hashlib.sha256(payload).hexdigest(), "size": len(payload)}},
+            },
+        }))
+        before = self.tree(program)
+        result = subprocess.run([sys.executable, "-I", "-B", str(program / "oh_addons.py"), str(userdata),
+                                 "--versions", str(versions), "--store", str(store),
+                                 "--uid", str(self.uid), "--gid", str(self.gid), "binding-http"],
+                                cwd=program, env=self.env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((userdata / oh_addons.REPOSITORY / rel).read_bytes(), payload)
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(self.tree(program), before)
+
+    def test_oh_service_runs_under_I_B_and_ignores_forged_bytecode(self):
+        import oh_logging
+        program = self.copy_program("oh_service.py", "oh_logging.py", "oh_ports.py")
+        state = self.root / "service-state"
+        (state / "userdata/etc").mkdir(parents=True)
+        (state / "userdata/etc/log4j2.xml").write_bytes(oh_logging.guarded(self.LOG4J2))
+        (state / "userdata/etc/org.ops4j.pax.logging.cfg").write_bytes(oh_logging.DEFAULT_SELECTOR)
+        before = self.tree(program)
+        for extra in (["--check-pairing-logging"], ["--check"]):
+            with self.subTest(extra=extra):
+                result = subprocess.run([sys.executable, "-I", "-B", str(program / "oh_service.py"), str(state),
+                                         "--uid", str(self.uid), "--gid", str(self.gid), *extra],
+                                        cwd=program, env=self.env, capture_output=True, text=True, timeout=10)
+                if extra == ["--check-pairing-logging"]:
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                else:
+                    self.assertIn(result.returncode, (0, 1), result.stdout + result.stderr)
+                self.assertFalse(self.marker.exists())
+                self.assertEqual(self.tree(program), before)
+
+    def test_oh_ports_runs_under_I_B_and_ignores_forged_bytecode(self):
+        import oh_ports
+        program = self.copy_program("oh_ports.py")
+        userdata = self.root / "ports-userdata"
+        (userdata / "etc").mkdir(parents=True)
+        (userdata / "etc/org.apache.karaf.shell.cfg").write_text("sshPort = 8101\nsshHost = 0.0.0.0\n")
+        (userdata / "etc/custom.properties").write_text("# fixture\n")
+        before = self.tree(program)
+        result = subprocess.run([sys.executable, "-I", "-B", str(program / "oh_ports.py"), str(userdata),
+                                 "--http-port", str(self.unused_port()),
+                                 "--uid", str(self.uid), "--gid", str(self.gid)],
+                                cwd=program, env=self.env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(oh_ports.native_configured_bytes((userdata / "etc/org.apache.karaf.shell.cfg").read_bytes()))
+        self.assertTrue(oh_ports.shutdown_configured_bytes((userdata / "etc/custom.properties").read_bytes()))
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(self.tree(program), before)
+
+    def test_oh_apparmor_runs_under_I_B_and_ignores_forged_bytecode(self):
+        program = self.copy_program("oh_apparmor.py", "thermite-node-exporter.apparmor",
+                                    "thermite-node-exporter.apparmor.LICENSE")
+        before = self.tree(program)
+        result = subprocess.run([sys.executable, "-I", "-B", str(program / "oh_apparmor.py"),
+                                 "--verify", "/tmp/not-a-parser"],
+                                cwd=program, env=self.env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("node confinement:", result.stderr)
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(self.tree(program), before)
 
 
 if __name__ == "__main__":

@@ -127,12 +127,13 @@ class Fanout:
         self.loop = asyncio.get_running_loop()
         self.subscribers = {name: set() for name in views}
         self.ready, self.task, self._idle = False, None, None
+        self._closing = set()
         self.counters = dict.fromkeys(self.COUNTERS, 0)
 
     def status(self):
         """Counters and gauges for metrics: client streams per view, whether
         the upstream is serving, connecting or closed, and running totals."""
-        state = "serving" if self.ready else "connecting" if self.task and not self.task.done() else "closed"
+        state = "serving" if self.ready else "connecting" if (self.task and not self.task.done()) or self._closing else "closed"
         streams = {}
         for name, each in self.subscribers.items():
             # A WITHOUT_TEXT variant's streams count as its view's.
@@ -167,7 +168,13 @@ class Fanout:
     def _close_if_idle(self):
         self._idle = None
         if not any(self.subscribers.values()) and self.task:
-            self.task.cancel()
+            task, self.task = self.task, None
+            self.ready = False
+            self._forget()
+            if not task.done():
+                self._closing.add(task)
+                task.add_done_callback(self._closing.discard)
+                task.cancel()
 
     def _broadcast(self, data_for):
         for view, subscribers in self.subscribers.items():
@@ -191,22 +198,29 @@ class Fanout:
         raise NotImplementedError
 
     async def _run(self):
+        current = asyncio.current_task()
         attempt = 0
         try:
-            while any(self.subscribers.values()) or self._idle:
+            while self.task is current and (any(self.subscribers.values()) or self._idle):
                 try:
                     await self._session()
                 except asyncio.CancelledError:
                     raise
                 except Exception as error:
+                    if self.task is not current:
+                        return
                     self.counters["upstream_failures"] += 1
                     attempt = 0 if self.ready else attempt
                     notify("upstream_close", {"error": type(error).__name__})
+                if self.task is not current:
+                    return
                 self._lost()
                 await asyncio.sleep(self.backoff[min(attempt, len(self.backoff) - 1)])
                 attempt += 1
         finally:
-            self._lost()
+            if self.task is current:
+                self.task = None
+                self._lost()
 
 
 class EventHub(Fanout):
@@ -295,6 +309,7 @@ class EventHub(Fanout):
         self.version += 1
 
     async def _session(self):
+        owner = asyncio.current_task()
         connected = self.loop.create_future()
 
         def opened():
@@ -303,12 +318,16 @@ class EventHub(Fanout):
 
         async def pump():
             async for frame in self.transport.subscribe(self.filters, project=self.projection, opened=opened):
+                if self.task is not owner:
+                    return
                 self.receive(frame)
             raise ConnectionError("Runtime event stream ended")
 
         reader, reading = asyncio.ensure_future(pump()), None
         try:
             await asyncio.wait([reader, connected], return_when=asyncio.FIRST_COMPLETED)
+            if self.task is not owner:
+                return
             if reader.done():
                 reader.result()
             self.counters["upstream_connects"] += 1
@@ -317,6 +336,8 @@ class EventHub(Fanout):
             started = time.monotonic()
             reading = asyncio.ensure_future(asyncio.to_thread(self._read_all))
             await asyncio.wait([reader, reading], return_when=asyncio.FIRST_COMPLETED)
+            if self.task is not owner:
+                return
             if reader.done():
                 reader.result()
             values = reading.result()

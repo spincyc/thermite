@@ -176,6 +176,62 @@ static void session(const cJSON *frames)
           "sync adopted without a hello");
 }
 
+/* A new SYNC discards any incomplete multi-part message left from the previous session. */
+static void stale_assembly(void)
+{
+    static tl_assembler_t assembler;
+    tl_remote_t remote;
+    tl_remote_reset(&remote);
+    tl_assembler_reset(&assembler);
+
+    const char *status = "{\"have\":\"\"}";
+    const uint64_t nonce1 = 0x1111111111111111ull, sess1 = 0xaaaaaaaaaaaaaaaaull;
+    const uint64_t nonce2 = 0x2222222222222222ull, sess2 = 0xbbbbbbbbbbbbbbbbull;
+    char hex[17], sync_plain[64];
+    const char *message = NULL;
+    size_t size = 0;
+
+    CHECK(tl_remote_hello(&remote, key, nonce1, status, strlen(status), frame, sizeof frame) > 0, "hello 1");
+    tl_hex(nonce1, hex);
+    snprintf(sync_plain, sizeof sync_plain, "{\"hello\":\"%s\"}", hex);
+    tl_header_t hdr = { .type = TL_SYNC, .count = 1, .session = sess1 };
+    size_t len = tl_seal(key, TL_FROM_BRIDGE, &hdr, (const uint8_t *)sync_plain, strlen(sync_plain), frame, sizeof frame);
+    CHECK(tl_remote_receive(&remote, &assembler, key, frame, len, &message, &size) == TL_SYNCED, "sync 1");
+
+    /* Part 0 of a 2-part message 0 arrives in session 1, then the session renews. */
+    static uint8_t part_old[TL_PART_MAX], part_new0[TL_PART_MAX];
+    memset(part_old, 'A', sizeof part_old);
+    memset(part_new0, 'B', sizeof part_new0);
+    const char *part_new1 = "END_S2";
+
+    tl_header_t old0 = { .type = TL_DATA, .message = 0, .index = 0, .count = 2, .session = sess1, .counter = 1 };
+    len = tl_seal(key, TL_FROM_BRIDGE, &old0, part_old, sizeof part_old, frame, sizeof frame);
+    CHECK(tl_remote_receive(&remote, &assembler, key, frame, len, &message, &size) == TL_NOTHING, "s1 part 0 partial");
+
+    CHECK(tl_remote_hello(&remote, key, nonce2, status, strlen(status), frame, sizeof frame) > 0, "hello 2");
+    tl_hex(nonce2, hex);
+    snprintf(sync_plain, sizeof sync_plain, "{\"hello\":\"%s\"}", hex);
+    hdr.session = sess2;
+    len = tl_seal(key, TL_FROM_BRIDGE, &hdr, (const uint8_t *)sync_plain, strlen(sync_plain), frame, sizeof frame);
+    CHECK(tl_remote_receive(&remote, &assembler, key, frame, len, &message, &size) == TL_SYNCED, "sync 2");
+
+    /* Part 1 of message 0 in session 2 must NOT complete by splicing with session 1's part 0. */
+    tl_header_t new1 = { .type = TL_DATA, .message = 0, .index = 1, .count = 2, .session = sess2, .counter = 1 };
+    len = tl_seal(key, TL_FROM_BRIDGE, &new1, (const uint8_t *)part_new1, strlen(part_new1), frame, sizeof frame);
+    CHECK(tl_remote_receive(&remote, &assembler, key, frame, len, &message, &size) == TL_NOTHING,
+          "session 1 part 0 spliced with session 2 part 1");
+
+    /* Once session 2's own part 0 arrives, the assembled message contains only session 2 bytes. */
+    tl_header_t new0 = { .type = TL_DATA, .message = 0, .index = 0, .count = 2, .session = sess2, .counter = 2 };
+    len = tl_seal(key, TL_FROM_BRIDGE, &new0, part_new0, sizeof part_new0, frame, sizeof frame);
+    CHECK(tl_remote_receive(&remote, &assembler, key, frame, len, &message, &size) == TL_MESSAGE,
+          "session 2 message did not complete");
+    CHECK(size == sizeof part_new0 + strlen(part_new1)
+          && memcmp(message, part_new0, sizeof part_new0) == 0
+          && memcmp(message + sizeof part_new0, part_new1, strlen(part_new1)) == 0,
+          "session 2 message corrupted by stale assembly");
+}
+
 int main(int argc, char **argv)
 {
     char *json = argc > 1 ? slurp(argv[1]) : NULL;
@@ -188,6 +244,7 @@ int main(int argc, char **argv)
     vectors(cJSON_GetObjectItem(root, "frames"));
     rejects(cJSON_GetObjectItem(root, "rejects"));
     session(cJSON_GetObjectItem(root, "frames"));
+    stale_assembly();
     cJSON_Delete(root);
     free(json);
     if (failures) {

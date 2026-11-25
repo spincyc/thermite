@@ -9,6 +9,9 @@ from __future__ import annotations
 import ipaddress
 import re
 
+#: Prometheus job name for optional external Yoke observers.
+JOB = "yoke"
+
 _LABEL = re.compile(r"[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\Z")
 _PORT = re.compile(r"[0-9]{1,5}\Z")
 
@@ -71,4 +74,4 @@ def scrape_job(host: dict) -> dict | None:
     configured = targets(host)
     if not configured:
         return None
-    return {"job_name": "yoke", "static_configs": [{"targets": list(configured)}]}
+    return {"job_name": JOB, "static_configs": [{"targets": list(configured)}]}

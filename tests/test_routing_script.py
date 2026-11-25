@@ -40,5 +40,33 @@ class RoutingScript(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout)["passed"], 20)
 
 
+class RoomActions(unittest.TestCase):
+    """Room on_actions/off_actions stay distinct from readback problem ACTIONS."""
+
+    def test_room_actions_are_validated_and_rendered_without_clobbering_readback_actions(self):
+        self.assertEqual(routing.ROOM_ACTIONS, ("on_actions", "off_actions"))
+        self.assertEqual(routing.ACTIONS, ("read selected input", "read matrix output input", "read power", routing.DETECT))
+        data = hotplug_house()
+        data["devices"].append({"id": "example_curtain", "room": "example_desk", "kind": "curtain", "ip": "192.0.2.49"})
+        room = data["routing"]["rooms"]["example_desk"]
+        room["on_actions"] = {"example_curtain": "close"}
+        room["off_actions"] = {"example_curtain": "open"}
+        self.assertEqual(routing.validate(data), [])
+        house = House(data)
+        self.assertEqual(routing.after(house, "example_desk", "example_computer"),
+                         [["example_curtain_action", "close"]])
+        self.assertIn(["example_curtain_action", "open"], routing.after(house, "example_desk", routing.OFF))
+        table = routing.table(house)["rooms"]["example_desk"]["after"]
+        self.assertEqual(table["example_computer"], [["example_curtain_action", "close"]])
+        self.assertIn(["example_curtain_action", "open"], table[routing.OFF])
+        # Validation checks device ids and rejects unquoted YAML booleans.
+        room["on_actions"] = {"missing_device": True}
+        room["off_actions"] = {}
+        problems = routing.validate(data)
+        self.assertTrue(any("on_actions.missing_device" in p and "not a device id" in p for p in problems), problems)
+        self.assertTrue(any("on_actions.missing_device" in p and "quote it" in p for p in problems), problems)
+        self.assertTrue(any("off_actions: must map devices" in p for p in problems), problems)
+
+
 if __name__ == "__main__":
     unittest.main()

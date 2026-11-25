@@ -19,3 +19,6 @@ void display_touch(bool touching, uint16_t x, uint16_t y);
 
 /* The screen shown while no enrolment is stored. */
 void display_enrol_screen(const char *mac, const char *board, const char *fw);
+
+/* Blocks the app task until any in-flight asynchronous panel transfer finishes. */
+void display_wait_idle(void);

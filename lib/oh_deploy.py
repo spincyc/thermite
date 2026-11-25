@@ -1646,7 +1646,7 @@ def prepared_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob],
     import oh_site_snapshot
     # A config-only site's launcher is inert scaffolding. Application
     # directories are not inputs and cannot be used as an alternate codebase.
-    if export(area, commit, ("lib", "web", "tui", "iso", "site", "pyproject.toml")):
+    if export(area, commit, ("lib", "web", "tui", "handheld", "iso", "site", "pyproject.toml")):
         raise DeployError("a schema-2 private site must not contain application source directories")
     inputs = {name: blob.data for name, blob in files.items() if name.startswith("instance/") or name == "versions.json"}
     inputs[SITE_FILE] = locked.data
@@ -2110,10 +2110,11 @@ def grafana_url(host: dict, address: str | None = None) -> str:
 
 @dataclasses.dataclass(frozen=True)
 class MetricsHealth:
-    """What the metrics services answer: Prometheus' /-/ready and its
+    """What the metrics services answer: Prometheus' /-/ready and its core
     scrape targets (up, total, the ones down), and Grafana's /api/health;
     systemd is whether node_exporter's systemd collector, which reads the
-    units over D-Bus, last succeeded (None: Prometheus has no answer yet)."""
+    units over D-Bus, last succeeded (None: Prometheus has no answer yet);
+    optional_down lists down targets from optional external jobs (yoke)."""
 
     prometheus: str
     ready: int | None
@@ -2123,6 +2124,7 @@ class MetricsHealth:
     grafana: str
     grafana_status: int | None
     systemd: bool | None = None
+    optional_down: tuple[str, ...] = ()
 
     @property
     def prometheus_ok(self) -> bool:
@@ -2157,6 +2159,7 @@ def metrics_health(host: dict, address: str | None = None, get=http_get) -> Metr
     ready, _ = get(f"{prometheus}/-/ready")
     up = total = None
     down: list[str] = []
+    optional_down: list[str] = []
     if ready == 200:
         code, body = get(f"{prometheus}/api/v1/targets?state=active")
         try:
@@ -2164,11 +2167,19 @@ def metrics_health(host: dict, address: str | None = None, get=http_get) -> Metr
         except (ValueError, KeyError, TypeError):
             targets = None
         if isinstance(targets, list):
+            # Optional external Yoke observers are tracked separately so an
+            # offline observer never gates core monitoring readiness.
+            optional = [target for target in targets
+                        if (target.get("labels") or {}).get("job") == metrics.YOKE_JOB]
+            optional_down = sorted(f"{(target.get('labels') or {}).get('job', '?')} "
+                                   f"{(target.get('labels') or {}).get('instance', '?')}"
+                                   for target in optional if target.get("health") != "up")
             # A device port Prometheus has not probed yet since it started
             # (every DEVICE_PROBE_INTERVAL) is not down: its health is unknown.
             targets = [target for target in targets
-                       if not (target.get("health") == "unknown"
-                               and (target.get("labels") or {}).get("job") == metrics.DEVICE_JOB)]
+                       if (target.get("labels") or {}).get("job") != metrics.YOKE_JOB
+                       and not (target.get("health") == "unknown"
+                                and (target.get("labels") or {}).get("job") == metrics.DEVICE_JOB)]
             total = len(targets)
             up = sum(1 for target in targets if target.get("health") == "up")
             down = sorted(f"{(target.get('labels') or {}).get('job', '?')} "
@@ -2179,7 +2190,7 @@ def metrics_health(host: dict, address: str | None = None, get=http_get) -> Metr
         systemd = None
     grafana = grafana_url(host, address)
     status, _ = get(f"{grafana}api/health")
-    return MetricsHealth(prometheus, ready, up, total, tuple(down), grafana, status, systemd)
+    return MetricsHealth(prometheus, ready, up, total, tuple(down), grafana, status, systemd, tuple(optional_down))
 
 
 def collector_success(get, prometheus: str, collector: str) -> bool | None:

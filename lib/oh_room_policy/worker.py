@@ -259,68 +259,82 @@ class Worker:
                            desired=state.get("desired")))
         return True
 
-    def _scheduled(self, policies, states):
-        now = utc(self.wall_clock())
-        return all(desired_at(now, policy)["key"] == states[room]["key"] for room, policy in policies.items())
+    def _scheduled(self, policies, states, now=None):
+        current = utc(self.wall_clock()) if now is None else now
+        return all(desired_at(current, policy)["key"] == states[room]["key"] for room, policy in policies.items())
 
     def _remember(self, key):
         if len(self._seen) >= 4096:
             del self._seen[next(iter(self._seen))]
         self._seen[key] = None
 
-    def _boundary(self, event: Boundary, protected: list[Plan], revisions, policies, states):
-        if event.key in self._seen or not self._current(revisions):
-            return False
+    def _claim(self, event: Boundary) -> bool:
         claimed = self.store.claim_boundary(event.room, event.revision, event.key, event.at)
         self._remember(event.key)
-        if not claimed:
-            return False
-        outcome = event.outcome
-        attempted = False
-        command = None
-        if outcome == "due" and event.target is not None:
-            try:
-                plan = self._plan(event.room, event.target)
-            except PolicyError:
-                plan = None
-                outcome = "invalid_policy"
-            if plan is not None and conflicts(plan, protected, boundary=True):
-                outcome = "shared_resource_conflict"
-            elif plan is not None:
-                # Every room contributes to the conflict/revision snapshot,
-                # including rooms without a policy yet. Serialize edits to that
-                # snapshot through dispatch, using the shared sorted lock order.
-                with self.locks.hold([*("room:" + room for room in revisions), *plan.resources]):
-                    current_time = utc(self.wall_clock())
-                    current = desired_at(current_time, policies[event.room])
-                    if not self._current(revisions):
-                        outcome = "stale_revision"
-                    elif event.kind == "start" and current["key"] != event.key:
-                        outcome = "stale_schedule"
-                    elif event.kind != "start" and current["locked"]:
-                        outcome = "coalesced_active_lock"
-                    elif not self._scheduled(policies, states):
-                        outcome = "stale_schedule"
-                    elif current_time < event.at or event.kind != "start" and current_time - event.at > GRACE:
-                        outcome = "missed"
-                    elif event.catch_up and self._source_is(event.room, plan.source_item, event.target):
-                        # Re-sending a current source would replay its
-                        # lifecycle actions; field repairs cover any drift.
-                        outcome = "already_current"
-                    else:
-                        attempted = True
-                        try:
-                            command = self.io.write(event.room, plan.source_item, event.target, event.revision,
-                                                    origin="schedule")
-                            outcome = "dispatched"
-                        except Exception as error:
-                            # The transport may have sent it before failing.
-                            command = getattr(error, "trail_id", None)
-                            outcome = "dispatch_unconfirmed"
+        return claimed
+
+    def _finish_boundary(self, event: Boundary, outcome: str, command: str | None = None) -> None:
         status = "applied" if outcome == "dispatched" else "uncertain" if outcome == "dispatch_unconfirmed" else "skipped"
         self.store.finish_boundary(event.room, event.revision, event.key, {"status": status, "reason": outcome})
         LOG.info(_line("boundary", key=event.key, room=event.room, revision=event.revision, event=event.kind,
                        target=event.target, status=status, reason=outcome, cmd=command))
+
+    def _boundary(self, event: Boundary, protected: list[Plan], revisions, policies, states):
+        if event.key in self._seen or not self._current(revisions) or not self._scheduled(policies, states):
+            return False
+        outcome = event.outcome
+        target = event.target
+        plan = None
+        if outcome == "due" and target is not None:
+            try:
+                plan = self._plan(event.room, target)
+            except PolicyError:
+                outcome = "invalid_policy"
+            else:
+                if conflicts(plan, protected, boundary=True):
+                    plan = None
+                    outcome = "shared_resource_conflict"
+        if plan is None or target is None:
+            with self.locks.hold(["room:" + room for room in revisions]):
+                if not self._current(revisions) or not self._scheduled(policies, states):
+                    return False
+                if not self._claim(event):
+                    return False
+            self._finish_boundary(event, outcome)
+            return False
+        attempted = False
+        command = None
+        # Every room contributes to the conflict/revision snapshot,
+        # including rooms without a policy yet. Serialize edits to that
+        # snapshot through dispatch, using the shared sorted lock order.
+        with self.locks.hold([*("room:" + room for room in revisions), *plan.resources]):
+            current_time = utc(self.wall_clock())
+            if not self._current(revisions) or not self._scheduled(policies, states, now=current_time):
+                return False
+            current = desired_at(current_time, policies[event.room])
+            if event.kind == "start" and current["key"] != event.key:
+                return False
+            if event.kind != "start" and current["locked"]:
+                outcome = "coalesced_active_lock"
+            elif current_time < event.at or event.kind != "start" and current_time - event.at > GRACE:
+                outcome = "missed"
+            elif event.catch_up and self._source_is(event.room, plan.source_item, target):
+                # Re-sending a current source would replay its
+                # lifecycle actions; field repairs cover any drift.
+                outcome = "already_current"
+            if not self._claim(event):
+                return False
+            if outcome == "due":
+                attempted = True
+                try:
+                    command = self.io.write(event.room, plan.source_item, target, event.revision,
+                                            origin="schedule")
+                    outcome = "dispatched"
+                except Exception as error:
+                    # The transport may have sent it before failing.
+                    command = getattr(error, "trail_id", None)
+                    outcome = "dispatch_unconfirmed"
+        self._finish_boundary(event, outcome, command)
         return attempted
 
     def _source_is(self, room, item, target):
@@ -483,7 +497,7 @@ class Worker:
             attempted = False
             for event in due_boundaries(now, policy, self._seen, not_before=changed_at):
                 attempted = self._boundary(event, list(plans.values()), revisions, policies, states) or attempted
-            if not self._scheduled(policies, states):
+            if not self._current(revisions) or not self._scheduled(policies, states):
                 return {"stale": True}
             if not state["locked"]:
                 self._runtime.pop(room, None)

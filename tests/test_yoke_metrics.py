@@ -127,6 +127,14 @@ class Integration(unittest.TestCase):
         self.assertTrue(options["includeByName"]["instance"])
         self.assertFalse(options["excludeByName"]["instance"])
         self.assertNotIn("yoke", json.dumps(alerts.rules({})))
+        self.assertEqual(yoke.JOB, "yoke")
+
+    def test_house_dashboard_host_tile_excludes_optional_yoke_targets(self):
+        house = json.loads(self.baseline["grafana/dashboards/house.json"])
+        tile = next(panel for panel in house["panels"] if panel["title"] == "Host")
+        expr = tile["targets"][0]["expr"]
+        self.assertIn('count(up{job!="yoke"} == 0)', expr)
+        self.assertNotIn("count(up == 0)", expr)
 
     def test_host_loader_rejects_bad_targets_before_generation_writes(self):
         scratch = AREA / ".scratch/yoke-metrics-integration"

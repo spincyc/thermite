@@ -946,6 +946,35 @@ class MetricsHealth(unittest.TestCase):
         self.assertEqual((report["targets_up"], report["targets"], report["down"]), (1, 2, ["devices 192.0.2.40:80"]))
         self.assertIn("down: devices 192.0.2.40:80", report["summary"])
 
+    def test_optional_yoke_targets_do_not_gate_core_target_readiness(self):
+        targets = {"data": {"activeTargets": [
+            {"health": "up", "labels": {"job": "openhab", "instance": "127.0.0.1:8080"}},
+            {"health": "up", "labels": {"job": "node", "instance": "127.0.0.1:9100"}},
+            {"health": "down", "labels": {"job": "yoke", "instance": "192.0.2.20:9754"}},
+            {"health": "unknown", "labels": {"job": "yoke", "instance": "192.0.2.21:9754"}},
+            {"health": "up", "labels": {"job": "yoke", "instance": "192.0.2.22:9754"}}]}}
+        table = {"http://127.0.0.1:13607/-/ready": (200, b""),
+                 "http://127.0.0.1:13607/api/v1/targets": (200, json.dumps(targets).encode()),
+                 "http://192.0.2.5:13611/api/health": (200, b"{}")}
+        health = deploy.metrics_health(HOST, "192.0.2.5", self.answers(table))
+        self.assertEqual((health.up, health.total, health.down), (2, 2, ()))
+        self.assertEqual(health.optional_down, ("yoke 192.0.2.20:9754", "yoke 192.0.2.21:9754"))
+        self.assertTrue(health.targets_ok)
+        self.assertTrue(health_cli.metrics_report(HOST, installed=True, health=health)["ok"])
+        # Any down core target still fails targets_ok without mixing yoke into down.
+        targets["data"]["activeTargets"][1]["health"] = "down"
+        table["http://127.0.0.1:13607/api/v1/targets"] = (200, json.dumps(targets).encode())
+        health = deploy.metrics_health(HOST, "192.0.2.5", self.answers(table))
+        self.assertEqual((health.up, health.total, health.down), (1, 2, ("node 127.0.0.1:9100",)))
+        self.assertFalse(health.targets_ok)
+        # Only optional targets with no core targets discovered is still not ready.
+        only_yoke = {"data": {"activeTargets": [
+            {"health": "up", "labels": {"job": "yoke", "instance": "192.0.2.22:9754"}}]}}
+        table["http://127.0.0.1:13607/api/v1/targets"] = (200, json.dumps(only_yoke).encode())
+        health = deploy.metrics_health(HOST, "192.0.2.5", self.answers(table))
+        self.assertEqual((health.up, health.total, health.down, health.optional_down), (0, 0, (), ()))
+        self.assertFalse(health.targets_ok)
+
 
 class Trees(unittest.TestCase):
     def test_digest_covers_paths_and_contents_not_order_or_modes(self):

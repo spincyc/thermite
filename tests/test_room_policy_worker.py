@@ -391,6 +391,63 @@ class Boundaries(Harness, unittest.TestCase):
         self.step()
         self.assertIn((WEST, "loc_example_west_source", COMPUTER), self.devices.writes)
 
+    def test_unrelated_room_revision_change_before_lock_does_not_claim_or_lose_due_boundary(self):
+        west = policy(WEST, revision=1, locks=[window("10:00", "11:00", COMPUTER)])
+        east_v1 = policy(EAST, revision=1, enabled=False)
+        east_v2 = policy(EAST, revision=2, enabled=False)
+        self.make((west, at(9)), (east_v1, at(9)), now=at(10, 0, 30))
+        key = f"{WEST}:1:window:2026-11-02:start"
+        base_locks = self.worker.locks
+        bumped = [False]
+
+        class RacingLocks:
+            def hold(self, keys):
+                # Room EAST changes in the window just before WEST acquires the lock.
+                if not bumped[0]:
+                    bumped[0] = True
+                    self.store.set((west, at(9)), (east_v2, at(10, 0, 29)))
+                return base_locks.hold(keys)
+
+        locks = RacingLocks()
+        locks.store = self.store
+        self.worker.locks = locks
+        first = self.step()
+        self.assertEqual(first, {"stale": True})
+        self.assertEqual(self.store.claims, {}, "stale snapshot must not claim or burn WEST's boundary")
+        self.assertEqual(self.devices.writes, [])
+        self.assertNotIn(key, self.worker._seen)
+        # Next tick reloads the new snapshot and dispatches WEST's boundary cleanly.
+        self.step()
+        self.assertIn((WEST, "loc_example_west_source", COMPUTER), self.devices.writes)
+        self.assertEqual(self.store.claims[key], ("applied", "dispatched"))
+        self.assertEqual(self.log[:2], [("claim", key), ("write", WEST, "loc_example_west_source", COMPUTER)])
+
+    def test_stale_revision_before_non_dispatched_boundary_does_not_burn_key(self):
+        west = policy(WEST, revision=1, daily_off=[{"id": "night", "time": "09:00", "days": [0]}])
+        east_v1 = policy(EAST, revision=1, enabled=False)
+        east_v2 = policy(EAST, revision=2, enabled=False)
+        self.make((west, at(8)), (east_v1, at(8)), now=at(12))
+        key = f"{WEST}:1:night:2026-11-02:daily_off"
+        base_locks = self.worker.locks
+        bumped = [False]
+
+        class RacingLocks:
+            def hold(self, keys):
+                if not bumped[0]:
+                    bumped[0] = True
+                    self.store.set((west, at(8)), (east_v2, at(11, 59)))
+                return base_locks.hold(keys)
+
+        locks = RacingLocks()
+        locks.store = self.store
+        self.worker.locks = locks
+        self.assertEqual(self.step(), {"stale": True})
+        self.assertEqual(self.store.claims, {})
+        self.assertNotIn(key, self.worker._seen)
+        # Next tick records the missed outcome once with a fresh snapshot.
+        self.step()
+        self.assertEqual(self.store.claims[key], ("skipped", "missed"))
+
 
 class DueBoundaries(unittest.TestCase):
     def test_catch_up_targets_only_the_active_occurrence_at_the_revision_start(self):

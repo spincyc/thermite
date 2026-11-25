@@ -1,10 +1,13 @@
 #include "display.h"
 
 #include "board.h"
+#include "esp_attr.h"
 #include "esp_check.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "display";
 
@@ -12,7 +15,9 @@ static const char *TAG = "display";
 #define BUFFER_ROWS 40
 
 static esp_lcd_panel_handle_t s_panel;
-static bool s_swap, s_synchronous;
+static lv_display_t *s_display;
+static SemaphoreHandle_t s_flush_done;
+static bool s_swap, s_synchronous, s_flushing;
 static bool s_touched;
 static struct {
     bool down;
@@ -24,20 +29,47 @@ static uint32_t tick(void)
     return (uint32_t)(esp_timer_get_time() / 1000);
 }
 
-static bool flushed(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data_t *event, void *context)
+IRAM_ATTR static bool flushed(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data_t *event, void *context)
 {
     (void)io;
     (void)event;
-    lv_display_flush_ready((lv_display_t *)context);
-    return false;
+    (void)context;
+    BaseType_t woken = pdFALSE;
+    xSemaphoreGiveFromISR(s_flush_done, &woken);
+    return woken == pdTRUE;
+}
+
+static void flush_wait(lv_display_t *display)
+{
+    if (!s_flushing) return;
+    xSemaphoreTake(s_flush_done, portMAX_DELAY);
+    s_flushing = false;
+    lv_display_flush_ready(display);
 }
 
 static void flush(lv_display_t *display, const lv_area_t *area, uint8_t *pixels)
 {
+    if (s_flushing) flush_wait(display);
     if (s_swap) lv_draw_sw_rgb565_swap(pixels, (uint32_t)lv_area_get_size(area));
-    esp_lcd_panel_draw_bitmap(s_panel, area->x1, area->y1, area->x2 + 1, area->y2 + 1, pixels);
-    /* A bus completes through flushed(), from its interrupt; a panel without one has drawn. */
-    if (s_synchronous) lv_display_flush_ready(display);
+    if (!s_synchronous) s_flushing = true;
+    esp_err_t err = esp_lcd_panel_draw_bitmap(s_panel, area->x1, area->y1, area->x2 + 1, area->y2 + 1, pixels);
+    /* A bus signals completion from its ISR via s_flush_done, and app_main completes
+     * LVGL's flush inside flush_wait(); synchronous panels and failed draws finish at once. */
+    if (s_synchronous || err != ESP_OK) {
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "draw bitmap failed: %s", esp_err_to_name(err));
+            if (s_flushing) {
+                s_flushing = false;
+                xSemaphoreTake(s_flush_done, 0);
+            }
+        }
+        lv_display_flush_ready(display);
+    }
+}
+
+void display_wait_idle(void)
+{
+    if (s_display) flush_wait(s_display);
 }
 
 static void read_touch(lv_indev_t *indev, lv_indev_data_t *data)
@@ -92,9 +124,13 @@ lv_display_t *display_start(void)
     lv_display_set_buffers(display, a, b, (uint32_t)size, LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(display, flush);
     if (io) {
+        s_flush_done = xSemaphoreCreateBinary();
+        configASSERT(s_flush_done);
+        lv_display_set_flush_wait_cb(display, flush_wait);
         const esp_lcd_panel_io_callbacks_t callbacks = {.on_color_trans_done = flushed};
-        ESP_ERROR_CHECK(esp_lcd_panel_io_register_event_callbacks(io, &callbacks, display));
+        ESP_ERROR_CHECK(esp_lcd_panel_io_register_event_callbacks(io, &callbacks, NULL));
     }
+    s_display = display;
 
     /* Every board gets the pointer: test input can touch a board that has no touch screen. */
     lv_indev_t *touch = lv_indev_create();

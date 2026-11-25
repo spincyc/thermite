@@ -472,7 +472,7 @@ class Credentials(unittest.TestCase):
         found = mock_system(stats={copy: Stat(1000, 1000, 0o600, False, 10.0)})
         self.assertEqual(step.check(found).detail, f"to install: {target}")
         self.assertEqual([action.argv for action in step.actions(found)], [
-            ("python3", str(ctx.program / "lib/oh_install/secrets.py"), "--share", "music", "--source", str(copy))])
+            ("python3", "-I", "-B", str(ctx.program / "lib/oh_install/secrets.py"), "--share", "music", "--source", str(copy))])
         self.assertTrue(all(action.root for action in step.actions(found)))
         found = mock_system(stats={copy: Stat(1000, 1000, 0o600, False, 10.0), target: Stat(0, 0, 0o600, False, 20.0)})
         self.assertTrue(step.check(found).done)

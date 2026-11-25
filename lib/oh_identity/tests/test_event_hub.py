@@ -374,6 +374,178 @@ class EventHub(TransactionTestCase):
         self.assertEqual(seen[3][1]["reason"], "client")
         self.assertNotIn("player", json.dumps(seen))
 
+    def test_join_during_idle_close_cleanup_starts_a_fresh_upstream(self):
+        async def run():
+            close_entered = asyncio.Event()
+            release_close = asyncio.Event()
+
+            class SlowCloseUpstream(Upstream):
+                async def subscribe(self, filters, *, project, opened=None):
+                    connection = Connection(filters)
+                    first = not self.connections
+                    self.connections.append(connection)
+                    try:
+                        if opened:
+                            opened()
+                        while True:
+                            value = await connection.queue.get()
+                            if isinstance(value, BaseException):
+                                raise value
+                            projected = project(value)
+                            if projected is not None:
+                                yield projected
+                    finally:
+                        if first:
+                            close_entered.set()
+                            await release_close.wait()
+                        connection.closed = True
+
+            upstream = SlowCloseUpstream()
+            adapter = RuntimeAdapter(contract(), upstream)
+            hub = hubs.EventHub(adapter, linger=0.01)
+            s1 = hub.join("remote")
+            snap1 = decode(await asyncio.wait_for(s1.next(2), 2))
+            self.assertEqual((snap1["type"], snap1["states"]["loc_den_source"]), ("snapshot", "player"))
+            first_task = hub.task
+            hub.leave(s1)
+            await asyncio.wait_for(close_entered.wait(), 2)
+            self.assertFalse(first_task.done())
+            self.assertIsNone(hub.task)
+            self.assertEqual(hub.status()["upstream"], "connecting")
+
+            # A new subscriber joins while the cancelled task is still unwinding cleanup.
+            upstream.values["loc_den_source"] = "off"
+            s2 = hub.join("remote")
+            second_task = hub.task
+            self.assertIsNotNone(second_task)
+            self.assertIsNot(second_task, first_task)
+            snap2 = decode(await asyncio.wait_for(s2.next(2), 2))
+            self.assertEqual((snap2["type"], snap2["states"]["loc_den_source"]), ("snapshot", "off"))
+
+            # Finish unwinding the retiring task: it must not clobber the active task or subscriber.
+            release_close.set()
+            await asyncio.wait_for(asyncio.gather(first_task, return_exceptions=True), 2)
+            self.assertTrue(upstream.connections[0].closed)
+            self.assertIs(hub.task, second_task)
+            self.assertTrue(hub.ready)
+            self.assertEqual(hub.values["loc_den_source"], "off")
+            self.assertEqual(list(s2.frames), [])
+            upstream.send(event("loc_den_source", "player"), connection=1)
+            updated = decode(await asyncio.wait_for(s2.next(2), 2))
+            self.assertEqual(json.loads(updated["payload"])["value"], "player")
+
+            hub.leave(s2)
+            for _ in range(100):
+                if hub.status()["upstream"] == "closed":
+                    break
+                await asyncio.sleep(0.01)
+            self.assertTrue(upstream.connections[1].closed)
+            self.assertEqual(hub.status()["upstream"], "closed")
+        async_to_sync(run)()
+
+    def test_music_hub_join_during_idle_close_cleanup_starts_a_fresh_upstream(self):
+        from oh_identity import music_hub
+
+        class FakeMusic:
+            state = "/fictional/music"
+            spec = {"port": 13627, "speakers": {"den": {}}, "libraries": []}
+
+            def match(self, player):
+                return "den" if player.get("player_id") == "p1" else None
+
+            def ids(self, players):
+                return {ident: player["player_id"] for ident, player in players.items()}
+
+            def speaker(self, ident, players, ids, queues, see_text):
+                return {"id": ident, "volume": players[ident]["volume_level"]}
+
+            def overview(self, players, queues, sources, see_text=True):
+                ids = self.ids(players)
+                return {"available": True, "speakers": [self.speaker("den", players, ids, queues, see_text)]}
+
+        async def scenario(close_error):
+            close_entered = asyncio.Event()
+            release_close = asyncio.Event()
+            sockets = []
+
+            class FakeSocket:
+                def __init__(self, volume, slow_close):
+                    self.volume, self.slow_close = volume, slow_close
+                    self.queue = asyncio.Queue()
+                    self.next_id, self.closed = 0, False
+
+                async def command(self, name):
+                    self.next_id += 1
+                    mid = str(self.next_id)
+                    result = [{"player_id": "p1", "volume_level": self.volume}] if name == "players/all" else []
+                    self.queue.put_nowait({"message_id": mid, "result": result})
+                    return mid
+
+                async def receive(self):
+                    return await self.queue.get()
+
+                async def close(self):
+                    if self.slow_close:
+                        close_entered.set()
+                        await release_close.wait()
+                    self.closed = True
+                    if self.slow_close and close_error is not None:
+                        raise close_error
+
+            async def open_socket(port, token, **options):
+                sock = FakeSocket(40 if not sockets else 55, slow_close=not sockets)
+                sockets.append(sock)
+                return sock
+
+            with patch.object(music_hub.provision, "read_claim", return_value={"token": "<token>"}), \
+                    patch.object(music_hub.provision, "problem", return_value=None), \
+                    patch.object(music_hub.Socket, "open", side_effect=open_socket):
+                hub = music_hub.MusicHub(FakeMusic(), linger=0.01, backoff=(0.01,))
+                s1 = hub.join(music_hub.VIEW)
+                snap1 = decode(await asyncio.wait_for(s1.next(2), 2))
+                self.assertEqual((snap1["type"], snap1["music"]["speakers"][0]["volume"]), ("snapshot", 40))
+                first_task = hub.task
+                hub.leave(s1)
+                await asyncio.wait_for(close_entered.wait(), 2)
+                self.assertFalse(first_task.done())
+                self.assertIsNone(hub.task)
+                self.assertEqual(hub.status()["upstream"], "connecting")
+
+                s2 = hub.join(music_hub.VIEW)
+                second_task = hub.task
+                self.assertIsNotNone(second_task)
+                self.assertIsNot(second_task, first_task)
+                snap2 = decode(await asyncio.wait_for(s2.next(2), 2))
+                self.assertEqual((snap2["type"], snap2["music"]["speakers"][0]["volume"]), ("snapshot", 55))
+
+                release_close.set()
+                await asyncio.wait_for(asyncio.gather(first_task, return_exceptions=True), 2)
+                self.assertTrue(sockets[0].closed)
+                self.assertIs(hub.task, second_task)
+                self.assertTrue(hub.ready)
+                self.assertFalse(hub.down)
+                self.assertEqual(hub.counters["upstream_failures"], 0)
+                self.assertEqual(list(s2.frames), [])
+                sockets[1].queue.put_nowait({
+                    "event": "player_updated",
+                    "object_id": "p1",
+                    "data": {"player_id": "p1", "volume_level": 62},
+                })
+                changed = decode(await asyncio.wait_for(s2.next(2), 2))
+                self.assertEqual((changed["type"], changed["speaker"]["volume"]), ("speaker", 62))
+
+                hub.leave(s2)
+                for _ in range(100):
+                    if hub.status()["upstream"] == "closed":
+                        break
+                    await asyncio.sleep(0.01)
+                self.assertTrue(sockets[1].closed)
+                self.assertEqual(hub.status()["upstream"], "closed")
+
+        for error in (None, OSError("synthetic close failure")):
+            with self.subTest(close_error=type(error).__name__ if error else None):
+                async_to_sync(scenario)(error)
+
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
 class EventEndpoints(TransactionTestCase):

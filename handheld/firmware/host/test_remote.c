@@ -735,6 +735,58 @@ static void replays(void)
     tr_destroy(remote);
 }
 
+/* Partial multi-part assembly from a previous session is discarded on session renewal. */
+static void session_resets_assembly(void)
+{
+    tr_t *remote = connected();
+    static char old_part0[TL_PART_MAX];
+    memset(old_part0, 'x', sizeof old_part0);
+    const char *prefix = "{\"screen\":{\"id\":\"old\",\"pad\":\"";
+    memcpy(old_part0, prefix, strlen(prefix));
+
+    tl_header_t s1_p0 = { .type = TL_DATA, .message = 0, .index = 0, .count = 2,
+                          .session = bridge.session, .counter = ++bridge.sent };
+    uint8_t frame[TL_FRAME_MAX];
+    size_t len = tl_seal(key, TL_FROM_BRIDGE, &s1_p0, (const uint8_t *)old_part0, sizeof old_part0,
+                         frame, sizeof frame);
+    deliver(remote, frame, len);
+    CHECK(tr_screen(remote) == NULL && changes() == 0, "partial part 0 applied early");
+
+    /* Force session renewal via two silent sends of a key press. */
+    const char *ok[] = { "ok" };
+    tr_key(remote, ok, 1);
+    cJSON_Delete(take_data());
+    advance(remote, TR_RETRY_MS);
+    cJSON_Delete(take_data());
+    advance(remote, TR_RETRY_MS);
+    CHECK(answer_hello(remote), "no HELLO for renewal");
+    cJSON_Delete(take_data());
+    changes();
+
+    /* Send only part 1 of message 0 in the new session: it must not splice with session 1's part 0. */
+    const char *s2_p1_plain = "\"}}";
+    tl_header_t s2_p1 = { .type = TL_DATA, .message = 0, .index = 1, .count = 2,
+                          .session = bridge.session, .counter = ++bridge.sent };
+    len = tl_seal(key, TL_FROM_BRIDGE, &s2_p1, (const uint8_t *)s2_p1_plain, strlen(s2_p1_plain),
+                  frame, sizeof frame);
+    deliver(remote, frame, len);
+    CHECK(tr_screen(remote) == NULL && changes() == 0, "stale session 1 part 0 spliced into session 2 screen");
+
+    /* Delivering session 2's own part 0 completes the session 2 screen cleanly. */
+    static char new_part0[TL_PART_MAX];
+    memset(new_part0, 'y', sizeof new_part0);
+    const char *new_prefix = "{\"screen\":{\"id\":\"new\",\"pad\":\"";
+    memcpy(new_part0, new_prefix, strlen(new_prefix));
+    tl_header_t s2_p0 = { .type = TL_DATA, .message = 0, .index = 0, .count = 2,
+                          .session = bridge.session, .counter = ++bridge.sent };
+    len = tl_seal(key, TL_FROM_BRIDGE, &s2_p0, (const uint8_t *)new_part0, sizeof new_part0,
+                  frame, sizeof frame);
+    deliver(remote, frame, len);
+    CHECK(same(string(tr_screen(remote), "id"), "new") && (changes() & TR_CHANGED_SCREEN),
+          "session 2 screen did not apply cleanly");
+    tr_destroy(remote);
+}
+
 int main(void)
 {
     handshake();
@@ -746,6 +798,7 @@ int main(void)
     deep_sleep();
     pending_limit();
     replays();
+    session_resets_assembly();
     if (failures) {
         fprintf(stderr, "%d failure(s)\n", failures);
         return 1;

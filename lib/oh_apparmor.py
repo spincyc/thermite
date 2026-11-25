@@ -5,13 +5,20 @@ Verification can reload only the named policy using the selected system parser.
 It never changes global container configuration or starts/stops services.
 """
 
-from contextlib import ExitStack
-import json
 import os
 from pathlib import Path
+import sys
+
+if __name__ == "__main__":
+    # Release validation accepts installer-produced bytecode as inert.
+    # Never execute or write adjacent .pyc files when run directly as root.
+    sys.dont_write_bytecode = True
+    sys.pycache_prefix = str(Path(__file__).resolve().parent / (".uncached-" + os.urandom(16).hex()))
+
+from contextlib import ExitStack
+import json
 import stat
 import subprocess
-import sys
 
 PROFILE = "thermite-node-exporter"
 CONFIG = Path("/etc/thermite/node-exporter-containers.conf")

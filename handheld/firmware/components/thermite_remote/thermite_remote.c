@@ -232,6 +232,7 @@ static void send_op(tr_t *r, op_t *op)
     if (tl_remote_send(&r->persist->link, r->key, message, strlen(message), emit, r) < 0) {
         /* No session, or its counters ran out: a new one carries everything again. */
         tl_remote_reset(&r->persist->link);
+        tl_assembler_reset(&r->assembler);
         hold_all(r);
         connect(r);
         return;
@@ -263,6 +264,7 @@ static void give_up(tr_t *r)
     r->hello = false;
     r->want_session = false;
     tl_remote_reset(&r->persist->link);
+    tl_assembler_reset(&r->assembler);
     if (r->channel != r->persist->channel) {
         r->channel = r->persist->channel;
         r->platform.set_channel(r->platform.context, r->channel);

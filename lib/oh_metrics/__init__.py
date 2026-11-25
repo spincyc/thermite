@@ -40,7 +40,7 @@ import oh_units
 
 from . import alerts, dashboards
 from .exporter import EXPORTER_PORT, MAP_VERSION, THING_STATUSES
-from .yoke import scrape_job as yoke_scrape_job, targets as yoke_targets
+from .yoke import JOB as YOKE_JOB, scrape_job as yoke_scrape_job, targets as yoke_targets
 
 if TYPE_CHECKING:
     from oh_conf import House
@@ -1055,6 +1055,6 @@ def render(house: House, host: dict, versions: dict | None = None, *, conf=None)
 
 __all__ = [
     "BLACKBOX_PORT", "EXPORTER_PORT", "GRAFANA_PORT", "NODE_EXPORTER_PORT", "PROMETHEUS_PORT", "Probe", "Service",
-    "THING_STATUSES", "Volume", "exporter_map", "gateway_address", "ports", "probes", "render", "retention", "select_point", "services",
-    "yoke_targets",
+    "THING_STATUSES", "Volume", "YOKE_JOB", "exporter_map", "gateway_address", "ports", "probes", "render", "retention",
+    "select_point", "services", "yoke_targets",
 ]

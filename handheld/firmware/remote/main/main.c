@@ -133,6 +133,7 @@ static void enrolment_load(void)
 
 static bool enrolment_store(const cp_command_t *c)
 {
+    display_wait_idle();
     nvs_handle_t nvs;
     if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) return false;
     bool ok = nvs_set_blob(nvs, NVS_KEY, c->key, sizeof c->key) == ESP_OK &&
@@ -144,6 +145,7 @@ static bool enrolment_store(const cp_command_t *c)
 
 static bool enrolment_erase(void)
 {
+    display_wait_idle();
     nvs_handle_t nvs;
     if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) return false;
     bool ok = nvs_erase_all(nvs) == ESP_OK && nvs_commit(nvs) == ESP_OK;
@@ -338,6 +340,7 @@ static uint32_t poll_keys(void)
 static void sleep_now(void)
 {
     ESP_LOGI(TAG, "deep sleep");
+    display_wait_idle();
     board_sleep_prepare();
     radio_stop();
     clock_stop();

@@ -219,7 +219,7 @@ class SplitInstaller(unittest.TestCase):
         self.assertEqual(write.argv, (sys.executable, str(self.context.program / "lib/oh_install/writes.py"),
                                       "--config", str(self.site), "deploy", self.context.head, "install"))
         self.assertEqual((write.root, write.approved_argv, write.terminal), (False, None, False))
-        self.assertEqual(handoff.argv, ("/usr/bin/python3", str(self.context.program / "lib/oh_service.py"),
+        self.assertEqual(handoff.argv, ("/usr/bin/python3", "-I", "-B", str(self.context.program / "lib/oh_service.py"),
                                         str(self.runtime), "--uid", "9001", "--gid", "9001", "--deployment"))
         self.assertTrue(handoff.root)
         verification = steps.Verify(self.context).actions(self.system)[0]
@@ -343,7 +343,7 @@ class SplitInstaller(unittest.TestCase):
             self.assertTrue(helpers)
             self.assertTrue(all(part.startswith(str(program / "lib") + "/") for part in helpers))
             secret = steps._install_secret(self.context, Path("source"), Path("destination"))
-            self.assertEqual(secret.argv[1], str(program / "lib/oh_install/secrets.py"))
+            self.assertEqual(secret.argv[:4], ("python3", "-I", "-B", str(program / "lib/oh_install/secrets.py")))
 
     def test_explicit_restart_is_one_approved_action_then_normal_readiness(self):
         context = dataclasses.replace(self.context, restart_runtime=True)

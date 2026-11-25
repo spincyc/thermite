@@ -145,7 +145,7 @@ STAGES = ("receiver", "display")
 PLAYERS = ("streaming_amp", "audio_streamer")
 #: The room keys of what its other devices are sent on any source, and on
 #: Off. Not `on` and `off`: YAML reads those as true and false.
-ACTIONS = ("on_actions", "off_actions")
+ROOM_ACTIONS = ("on_actions", "off_actions")
 #: What a source's signal carries to a room (its `carries`): a picture
 #: alone, sound alone, or both, as for a source it leaves out.
 CARRIES = ("display", "audio", "both")
@@ -170,8 +170,8 @@ STAGE = {
 DISPLAY = {**STAGE, "passive": Key(TRUTH, "whether thermite leaves the display alone: true for one it sends nothing "
                                           "to and reads nothing from, which then has only its device here")}
 _ACTIONS = {name: Key(MAPPING, what, by="device id", each=Key(TEXT, "the name of one of the device's actions, in quotes"))
-            for name, what in zip(ACTIONS, ("what other devices are sent when the room turns to any source: a curtain "
-                                            "and lights, say", "what they are sent when it turns Off"), strict=True)}
+            for name, what in zip(ROOM_ACTIONS, ("what other devices are sent when the room turns to any source: a curtain "
+                                                 "and lights, say", "what they are sent when it turns Off"), strict=True)}
 ROOM = {
     "room": Key(TEXT, "the room it is in, for a routed room that is not a room of its own (a desk's screen in an office)"),
     "label": Key(TEXT, "its name on the remote, where that is not its room's"),
@@ -605,7 +605,7 @@ def validate(data: object) -> list[str]:
                 problems += _stage_problems(f"{where}.{key}", entry[key], offered, sources, devices, upstream,
                                             staged, room)
                 upstream = True
-        problems += [problem for key in ACTIONS if key in entry
+        problems += [problem for key in ROOM_ACTIONS if key in entry
                      for problem in _action_problems(f"{where}.{key}", entry[key], devices)]
         local = _local(entry)
         problems += [f"{where}.{at}: {source} is cabled to this room's {_local(entry, first=True)[source]} already"
@@ -1398,7 +1398,7 @@ def after(house: House, room: str, choice: str) -> list[list]:
     entry = house.data["routing"]["rooms"][room]
     out = ([[item, "OFF"] for source in entry.get("sleep_sources", []) for item, _ in wake(house, source)]
            + [[stage["power"], "OFF"] for _, stage in stages(house, room)]) if choice == OFF else []
-    actions = entry.get(ACTIONS[1] if choice == OFF else ACTIONS[0]) or {}
+    actions = entry.get(ROOM_ACTIONS[1] if choice == OFF else ROOM_ACTIONS[0]) or {}
     return out + [[action_item(devices, device_id), action] for device_id, action in actions.items()]
 
 
