@@ -19,12 +19,14 @@ from pathlib import Path
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
+import oh_host  # noqa: E402
 import oh_inventory  # noqa: E402
+import oh_types  # noqa: E402
 from oh_shape import LIST, MAPPING, NUMBER, TEXT, TRUTH, Key  # noqa: E402
 
 #: The mappings typed without their keys although the keys are declared,
-#: and why. A path here that is typed after all fails, so this only shrinks.
-OPEN = {"routing": "its keys are the routing feature's, to be typed when that feature's modules are checked"}
+#: and why. Every declared mapping is now typed, so this is empty.
+OPEN: dict[str, str] = {}
 KINDS = {str: TEXT, bool: TRUTH, int: NUMBER, float: NUMBER}
 
 
@@ -92,7 +94,12 @@ class Types(unittest.TestCase):
     def test_the_house_file_is_typed_as_it_is_declared(self):
         """The whole file: its top level, a room, a device with every
         integration's keys, and each mapping under them."""
+        self.assertEqual(OPEN, {})
         self.assertEqual(keys_differ(oh_inventory.HouseFile, oh_inventory.shape().keys), [])
+
+    def test_the_host_file_is_typed_as_it_is_declared(self):
+        assert oh_host.SHAPE.keys is not None
+        self.assertEqual(keys_differ(oh_types.HostFile, oh_host.SHAPE.keys), [])
 
     def test_a_device_and_a_room_are_the_house_files_own(self):
         _, device, _ = oh_inventory.declarations()

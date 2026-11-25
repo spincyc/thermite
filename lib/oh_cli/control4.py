@@ -162,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
                                      ("thermite control4 fetch --no-bindings", "without the IR ports"),
                                  ))
     fetch_parser.add_argument("--controller-ip", default=None, metavar="IP",
-                              help="Director address; defaults to control4_director or the single controller in the inventory")
+                              help="Director address; defaults to control4.director or the single controller in the inventory")
     fetch_parser.add_argument("--no-bindings", action="store_true",
                               help="skip the per-device GET of connections (IR ports)")
     summary_parser = oh_cli.action(commands, "summary", "rooms, classes and devices.yaml stubs", examples=(

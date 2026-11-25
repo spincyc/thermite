@@ -264,6 +264,7 @@ class ListenPage(unittest.TestCase):
         self.assertEqual(lights, {".home .thermite-room-state::before": "var(--th-faint)",
                                   '.home tr[data-state="reported"] .thermite-room-state::before': "var(--th-accent)",
                                   '.home tr[data-state="switching"] .thermite-room-state::before': "var(--th-busy)",
+                                  '.home tr[data-state="partial"] .thermite-room-state::before': "var(--th-busy)",
                                   '.home tr[data-state="unavailable"] .thermite-room-state::before': "var(--th-bad)"})
         # The room's cell keeps no strip for it.
         self.assertEqual([one for media, one, values in rules if "td:first-child" in one and ("::after" in one or "padding-right" in values)], [])
@@ -451,7 +452,7 @@ class ListenPage(unittest.TestCase):
         self.assertEqual(out["result"], [
             ["Fixture Patio joined Example East Mini.", None],
             ["Example East Amp Pro was asked to join; Music Assistant has not confirmed it yet.", None],
-            ["Fixture Den cannot join Example East Mini: Sonos and WiiM speakers group only over AirPlay, and one of them has none.",
+            ["Fixture Den cannot join Example East Mini: speakers from different providers cannot group without a shared protocol.",
              "listen-result__refused"]])
         self.assertEqual(out["members"], ["Example East MiniLeadsEnd", "Fixture PatioRemove", "Example East Amp ProRemove"])
         self.assertEqual(out["grouped"], ["With Fixture Patio, Example East Amp Pro", True, "Group · 41"])

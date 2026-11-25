@@ -2,7 +2,7 @@
   "version": 1,
   "mode": "mock",
   "inventory": "oh_public.demo()",
-  "inventory_sha256": "6fb6e87cde009fe3c54d8fcd671a5008e7d078bfabb96047f1f850b271ce1488",
+  "inventory_sha256": "5320edcade3709edb4864d5a83409910e58db5000fa633e962dce97cb3c91291",
   "capture": "site/capture-docs.py; Chromium web render and actual PTY output rendered by xterm.js",
   "files": {
     "web-remote.png": {

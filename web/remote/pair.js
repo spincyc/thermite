@@ -114,13 +114,18 @@
     }
   }
 
-  function registrationError(result) {
+  function registrationError(result, device) {
     const error = result && result.error;
     if (!error || typeof error !== "object") return null;
-    const why = error.code === 1 ? "Sony error 1 (Internal Server Error)"
-      : error.api === true ? "a Sony API error" : "no authentication cookie";
+    const detail = typeof error.message === "string"
+      ? (global.ThermiteDom ? global.ThermiteDom.cleanText(error.message, 80) : text(error.message).slice(0, 80))
+      : "";
+    const why = detail
+      || (Number.isInteger(error.code) ? "registration error " + error.code
+        : error.api === true ? "device API error" : "registration rejected");
     const http = Number.isInteger(error.http) && error.http >= 100 && error.http <= 599 ? ", HTTP " + error.http : "";
-    return "TV registration failed: " + why + http + ".";
+    const subject = (device && device.label) || "Device";
+    return subject + " registration failed: " + why + http + ".";
   }
 
   /**
@@ -678,7 +683,7 @@
     let note = local.error || local.note;
     let tone = local.error ? "bad" : local.tone;
     if (checking) {
-      note = local.requesting ? "Asking the TV to show a code\u2026" : MESSAGES.checking;
+      note = local.requesting ? "Asking " + (device.label || "the device") + " to show a code\u2026" : MESSAGES.checking;
       tone = "busy";
     } else if (!note && repairing) {
       note = MESSAGES.repairing;
@@ -849,6 +854,7 @@
   const STATUS_ICONS = { ok: "check", bad: "warn", muted: "info" };
 
   function element(tag, className, content) {
+    if (global.ThermiteDom) return global.ThermiteDom.el(tag, className ? { class: className } : null, content != null ? String(content) : null);
     const node = document.createElement(tag);
     if (className) node.className = className;
     if (content != null) node.textContent = content;
@@ -856,6 +862,7 @@
   }
 
   function icon(name) {
+    if (global.ThermiteDom) return global.ThermiteDom.svgIcon("icon", "i-" + name);
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("class", "icon");
     svg.setAttribute("aria-hidden", "true");

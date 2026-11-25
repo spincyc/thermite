@@ -73,7 +73,9 @@ from __future__ import annotations
 import json
 import re
 
-from oh_conf import Addon, House, YamlFile, options_text, point, retarget, uses, volume_js
+from oh_conf import Addon, House, YamlFile, config as device_config, point, retarget, uses, volume_js
+from oh_shape import TEXT, Key
+from .. import _items
 
 NAME = "wiim_http"
 PHASE = "observe"
@@ -94,6 +96,11 @@ ADDONS = (
     Addon("automation", "jsscripting", "JS(...) transformations for WiiM hex titles and commands"),
 )
 ASSETS = {"transform/hex-to-utf8.js": "hex-to-utf8.js"}
+MODEL_PROFILES = ("amp_pro", "mini", "generic")
+DEVICE_KEYS = {
+    "model_profile": Key(TEXT, "capability profile: amp_pro, mini or generic; overrides model detection",
+                         choices=MODEL_PROFILES),
+}
 REMOTE_LAYOUT = "wiim"
 DISCOVER_MDNS = ("_linkplay",)
 HEX_TEXT = "JS(hex-to-utf8.js)"
@@ -149,6 +156,14 @@ MODELS = {
              "lacks": frozenset({"sub", "sub_level", "sub_crossover", "sub_phase", "cpu_temperature",
                                  "board_temperature"})},
 }
+_PROFILES = {
+    "amp_pro": MODELS["Amp Pro"],
+    "mini": MODELS["Mini"],
+    "generic": {"inputs": (("bluetooth", "Bluetooth"), ("line-in", "Line in"), ("optical", "Optical")),
+                "lacks": frozenset({"sub", "sub_level", "sub_crossover", "sub_phase", "cpu_temperature",
+                                    "board_temperature"})},
+}
+_SUPPORTED_KINDS = frozenset({"streaming_amp", "audio_streamer"})
 #: getPlayerStatus mode -> the switchmode name of that input (60 is line in
 #: too in WiiM's own SDK). Every other mode is a network source (AirPlay,
 #: DLNA, Spotify, a multiroom follower...), so it reads as wifi.
@@ -188,57 +203,63 @@ def device_uid(device: dict) -> str:
     return f"http:url:device:{device['id']}"
 
 
+def _profile(device: dict) -> dict:
+    explicit = device_config(device, NAME).get("model_profile")
+    if explicit in _PROFILES:
+        return _PROFILES[explicit]
+    model = device.get("model")
+    if model in MODELS:
+        return MODELS[model]
+    return _PROFILES["generic"]
+
+
 def validate(device: dict) -> list[str]:
     if not (uses(device, PHASE, NAME) or uses(device, "control", NAME)):
         return []
-    ident, model = device.get("id") or "a device", device.get("model")
-    if model not in MODELS:
-        return [f"{ident}: wiim_http knows no model {model!r} (one of {', '.join(sorted(MODELS))})"]
-    if device.get("kind") != MODELS[model]["kind"]:
-        return [f"{ident}: a WiiM {model} is kind {MODELS[model]['kind']}, not {device.get('kind')!r}"]
-    return []
+    ident = device.get("id") or "a device"
+    problems = []
+    cfg = device_config(device, NAME)
+    if "model_profile" in cfg and cfg["model_profile"] not in _PROFILES:
+        problems.append(f"{ident}.config.{NAME}.model_profile: {cfg['model_profile']!r} "
+                        f"must be one of {', '.join(MODEL_PROFILES)}")
+    if device.get("kind") not in _SUPPORTED_KINDS:
+        problems.append(f"{ident}: {NAME} drives a streaming_amp or audio_streamer, not {device.get('kind')!r}")
+    return problems
 
 
 def inputs(device: dict) -> tuple:
     """(switchmode name, label) of every input the player has, the network
     first."""
-    return (NETWORK, *MODELS[device["model"]]["inputs"])
+    return (NETWORK, *_profile(device)["inputs"])
 
 
 def has(device: dict, suffix: str) -> bool:
-    """Whether the player's model has a request for this reading."""
-    return suffix not in MODELS[device["model"]]["lacks"]
-
-
-def _lookup_js(table: dict[str, str], otherwise: str = "null") -> str:
-    """An inline JS transformation: table[input] for a key of the table, else
-    `otherwise` (JS)."""
-    return (f"JS(|(function (table) {{ return Object.prototype.hasOwnProperty.call(table, input) ? table[input] : "
-            f"{otherwise}; }})({json.dumps(table, separators=(',', ':'))}))")
+    """Whether the player's capability profile has a request for this reading."""
+    return suffix not in _profile(device)["lacks"]
 
 
 def input_js(device: dict) -> str:
     """An inline JS transformation: an input command passed on only when it
     is one of the player's inputs()."""
-    return _lookup_js({value: value for value, _ in inputs(device)})
+    return _items.enum_guard_js([value for value, _ in inputs(device)], wrap=True)
 
 
 def mode_js() -> str:
     """An inline JS transformation: a getPlayerStatus mode -> the switchmode
     name of its input."""
-    return _lookup_js(MODES, json.dumps("wifi"))
+    return _items.enum_guard_js(MODES, otherwise=json.dumps("wifi"), wrap=True)
 
 
 def key_js() -> str:
     """An inline JS transformation: a remote button id -> its setPlayerCmd
     command; null for any other."""
-    return _lookup_js(KEYS)
+    return _items.enum_guard_js(KEYS, wrap=True)
 
 
 def play_mode_js() -> str:
     """An inline JS transformation: a play mode command passed on only when
     it is one of PLAY_MODES."""
-    return _lookup_js({value: value for value, _ in PLAY_MODES})
+    return _items.enum_guard_js([value for value, _ in PLAY_MODES], wrap=True)
 
 
 def eq_preset_js() -> str:
@@ -247,7 +268,7 @@ def eq_preset_js() -> str:
     java.net.URI, which quotes a space but not "&", and turns "%%" into "%"
     (openHAB http Util.uriFromString), so "R&B" goes as "R%%26B" to arrive
     as R%26B."""
-    return _lookup_js({name: name.replace("&", "%%26") for name in EQ_PRESETS})
+    return _items.enum_guard_js({name: name.replace("&", "%%26") for name in EQ_PRESETS}, wrap=True)
 
 
 #: State transformations that give "" for no value (module docstring).
@@ -382,26 +403,6 @@ def _channel(type_: str, label: str, request: str, steps: list[str], config: dic
     return {"type": type_, "label": label, "config": body}
 
 
-def _control(ident: str, type_: str, label: str, tags: list[str], channel: str, *, icon: str | None = None,
-             state: dict | None = None, options: tuple | None = None) -> dict:
-    """A commanded Item: options (read, sent) as (value, label) pairs; the
-    state description lists what it may read, the command description what
-    it may be sent."""
-    item: dict = {"type": type_, "label": label}
-    if icon:
-        item["icon"] = icon
-    item.update(groups=[ident], tags=tags, autoupdate=False, channel=channel)
-    metadata: dict = {}
-    if state or options:
-        metadata["stateDescription"] = {"config": {**(state or {}),
-                                                   **({"options": options_text(options[0])} if options else {})}}
-    if options:
-        metadata["commandDescription"] = {"config": {"options": options_text(options[1])}}
-    if metadata:
-        item["metadata"] = metadata
-    return item
-
-
 ICONS = {"volume": "soundvolume", "mute": "soundvolume_mute"}
 
 
@@ -426,9 +427,10 @@ def render(device: dict, house: House, out: YamlFile) -> None:
             # A commanded number is a Setpoint: oh_metrics keeps a Number
             # tagged Control as a matrix's routing.
             role = "Setpoint" if item_type == "Number" else "Control"
-            out.items[f"{ident}_{suffix}"] = _control(ident, item_type, label, [role, *tags[1:]],
-                                                      f"{uid}:{suffix}", icon=ICONS.get(suffix), state=state,
-                                                      options=options)
+            out.items[f"{ident}_{suffix}"] = _items.control_point(
+                ident, item_type, label, [role, *tags[1:]], f"{uid}:{suffix}", icon=ICONS.get(suffix),
+                state=state, options=options[0] if options else None,
+                command_options=options[1] if options else None)
         else:
             out.items[f"{ident}_{suffix}"] = point(ident, item_type, label, tags, f"{uid}:{suffix}",
                                                    icon=ICONS.get(suffix),
@@ -443,7 +445,8 @@ def render(device: dict, house: House, out: YamlFile) -> None:
             "stateExtension": f"command={STATUS}", "stateTransformation": [NOTHING],
             "commandExtension": "command=setPlayerCmd:%2$s", "commandTransformation": [key_js()],
             "refreshAfterCommand": True}}
-        out.items[f"{ident}_key"] = _control(ident, "String", "Remote Key", ["Control"], f"{thing_uid(device)}:key")
+        out.items[f"{ident}_key"] = _items.control_point(
+            ident, "String", "Remote Key", ["Control"], f"{thing_uid(device)}:key")
     for thing, uid, label, refresh in (("player", thing_uid(device), "HTTP API", REFRESH),
                                        ("device", device_uid(device), "Device", DEVICE_REFRESH)):
         out.things[uid] = {
@@ -559,6 +562,17 @@ def audio(device: dict) -> dict | None:
                      if has(device, suffix)],
         "facts": [entry(suffix, **({"quiet": True} if suffix in QUIET else {})) for suffix in FACTS
                   if has(device, suffix)],
+    }
+
+
+def remote_layouts(device: dict | None = None) -> dict[str, dict]:
+    """Button layout definition for WiiM streamers and streaming amplifiers."""
+    return {
+        "wiim": {
+            "label": "WiiM remote",
+            "top": ["input"],
+            "playback": ["previous", "play_pause", "next"],
+        },
     }
 
 

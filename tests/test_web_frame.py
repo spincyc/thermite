@@ -82,7 +82,7 @@ class WebFrame(unittest.TestCase):
                 self.assertNotIn("innerHTML", script.read_text())
 
     def test_remote_validate_preserves_camera_problems_when_theme_fails(self):
-        cam = {"id": "front_cam", "controls": {"control": ["unifi_protect"]}}
+        cam = {"id": "front_cam", "controls": {"observe": ["unifi_protect"]}}
         bad_camera = {"devices": [cam], "theme": ""}
         problems = remote_feature.validate(bad_camera)
         self.assertTrue(any("protect:" in p for p in problems), problems)
@@ -91,6 +91,138 @@ class WebFrame(unittest.TestCase):
         problems2 = remote_feature.validate(bad_theme_file)
         self.assertTrue(any("protect:" in p for p in problems2), problems2)
         self.assertTrue(any("theme:" in p for p in problems2), problems2)
+
+    def test_remote_cameras_discovers_providers_via_cameras_hook_generically(self):
+        import types
+        from unittest import mock
+        import oh_integrations as integrations
+        from oh_conf import House
+        from oh_features import remote_cameras
+
+        custom = types.ModuleType("example_cam")
+        custom.__getattr__ = integrations._hooks.absent
+        custom.NAME, custom.PHASE = "example_cam", "observe"
+        custom.cameras = lambda device, house: {
+            "id": device["id"], "label": "Custom Porch", "room": device["room"],
+            "location": house.room_label(device["room"]), "kind": "doorbell",
+            "model": "Custom Bell", "doorbell": True, "packageCamera": True,
+            "thing": "custom:cam:porch_bell",
+            "items": {"online": "custom_porch_up", "motion": "custom_porch_motion",
+                      "recording": "custom_porch_rec", "ring": "custom_porch_ring"},
+            "media": {"snapshot": "/custom/media/snap/porch_bell",
+                      "streams": {"high": "/custom/media/live/porch_bell/high",
+                                  "package": "/custom/media/live/porch_bell/pkg"}},
+        } if device["id"] == "porch_bell" else None
+        house = House.unchecked({"version": 2, "rooms": {"porch": {"label": "Porch", "tag": "Room"}},
+                                 "devices": [{"id": "porch_bell", "room": "porch", "kind": "doorbell", "ip": "192.0.2.50",
+                                              "controls": {"observe": ["example_cam"]}}]})
+        with mock.patch.object(integrations, "defining",
+                               side_effect=lambda hook: (custom,) if hook == "cameras" else integrations.defining(hook)):
+            manifest = remote_cameras.manifest(house)
+        self.assertEqual(manifest["statusGroup"], remote_cameras.STATUS_GROUP)
+        self.assertEqual(len(manifest["cameras"]), 1)
+        entry = manifest["cameras"][0]
+        self.assertEqual((entry["id"], entry["room"], entry["kind"], entry["packageCamera"]),
+                         ("porch_bell", "porch", "doorbell", True))
+        self.assertEqual(remote_cameras.media(manifest), {
+            "/custom/media/snap/porch_bell": {"kind": "snapshot"},
+            "/custom/media/live/porch_bell/high": {"kind": "sdp"},
+            "/custom/media/live/porch_bell/pkg": {"kind": "sdp"},
+        })
+        for bad in ("/custom/../secret", "relative/path", "/custom/snap?a=1", "/custom//snap"):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                remote_cameras.media({"cameras": [{"media": {"snapshot": bad, "streams": {}}}]})
+
+    @unittest.skipUnless(shutil.which("node"), "node needed for cameras.js manifest test")
+    def test_cameras_js_renders_non_unifi_manifest_without_vendor_regexes(self):
+        script = r"""
+"use strict";
+const assert = require("assert/strict");
+const fs = require("fs"), path = require("path"), vm = require("vm");
+const webDir = process.argv[1];
+const testsDir = process.argv[2];
+const read = (name) => fs.readFileSync(path.join(webDir, name), "utf8");
+const DOM = require(path.join(testsDir, "remote_dom"));
+const doc = new DOM.Document(read("cameras.html"));
+doc.querySelector("[data-camera-video]").pause = () => {};
+const requested = [];
+const manifest = {
+  version: 1,
+  statusGroup: "custom_camera_status",
+  pollSeconds: 10,
+  cameras: [{
+    id: "porch_bell",
+    label: "Porch Bell",
+    room: "porch",
+    location: "Porch",
+    kind: "doorbell",
+    model: "Generic Cam",
+    doorbell: true,
+    packageCamera: true,
+    thing: "generic:bell:porch_bell",
+    items: { online: "porch_up_state", motion: "porch_motion_sensor", recording: "porch_rec_flag", ring: "porch_ring_flag" },
+    media: {
+      snapshot: "/generic/media/snapshot/porch_bell",
+      streams: { high: "/generic/media/stream/porch_bell/hd", package: "/generic/media/stream/porch_bell/pkg" }
+    }
+  }]
+};
+const ctx = vm.createContext({
+  document: doc,
+  window: null,
+  location: { search: "", hash: "", protocol: "https:", origin: "https://site.example" },
+  URLSearchParams,
+  console,
+  setTimeout: () => 1,
+  clearTimeout() {},
+  addEventListener() {},
+  history: { replaceState() {} },
+  ThermiteNavigation: { asset: (n) => "/" + n },
+  fetch: async (url) => {
+    requested.push(url);
+    if (url.endsWith("/cameras.json")) return { ok: true, status: 200, json: async () => manifest };
+    return { ok: true, status: 200, json: async () => ({
+      members: [
+        { name: "porch_up_state", state: "ON" },
+        { name: "porch_motion_sensor", state: "OPEN" },
+        { name: "porch_rec_flag", state: "ON" },
+        { name: "porch_ring_flag", state: "OFF" }
+      ]
+    }) };
+  }
+});
+ctx.window = ctx; ctx.globalThis = ctx;
+vm.runInContext(read("cameras.js"), ctx);
+(async () => {
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  const parsed = ctx.RemoteCameras.catalogue(manifest);
+  assert.equal(parsed.statusGroup, "custom_camera_status");
+  assert.equal(parsed.cameras[0].kind, "doorbell");
+  assert.equal(parsed.cameras[0].items.online, "porch_up_state");
+  assert.equal(parsed.cameras[0].media.snapshot, "/generic/media/snapshot/porch_bell");
+  assert.ok(requested.some((u) => u.includes("/rest/items/custom_camera_status")), requested.join(","));
+  assert.equal(doc.querySelector("[data-camera-title]").textContent, "Porch Bell");
+  assert.equal(doc.querySelector("[data-camera-connection]").textContent, "Connected");
+  assert.equal(doc.querySelector("[data-camera-recording]").textContent, "On");
+  assert.throws(() => ctx.RemoteCameras.catalogue({
+    ...manifest,
+    cameras: [{ ...manifest.cameras[0], media: { snapshot: "/../etc/passwd", streams: {} } }]
+  }), /Camera catalogue is unavailable/);
+  assert.throws(() => ctx.RemoteCameras.catalogue({
+    ...manifest,
+    cameras: [{ ...manifest.cameras[0], packageCamera: false }]
+  }), /Camera catalogue is unavailable/);
+  process.stdout.write(JSON.stringify({ ok: true }));
+})().catch((err) => { process.stderr.write(err.stack + "\n"); process.exit(1); });
+"""
+        node = shutil.which("node")
+        assert node is not None
+        run = subprocess.run([node, "-e", script, str(REMOTE), str(AREA / "tests")],
+                             text=True, capture_output=True, timeout=60)
+        if run.returncode:
+            raise AssertionError(run.stderr or run.stdout)
+        self.assertEqual(json.loads(run.stdout), {"ok": True})
 
     @unittest.skipUnless(shutil.which("node"), "node needed for web UI regressions")
     def test_web_ui_regressions(self):
@@ -677,6 +809,332 @@ const sess = sCtx.RemoteSession.create({ backend: mockBe, house: orderHouse, lay
   rRafQueue.shift()();
   assert.equal(inlineInfo.firstChild, dtRef, "unchanged Info panel skips DOM teardown");
   assert.ok(diagOpen);
+
+  process.stdout.write(JSON.stringify({ ok: true }));
+})().catch((err) => { process.stderr.write(err.stack + "\n"); process.exit(1); });
+"""
+        node = shutil.which("node")
+        assert node is not None
+        run = subprocess.run([node, "-e", script, str(REMOTE), str(AREA / "tests")],
+                             text=True, capture_output=True, timeout=60)
+        if run.returncode:
+            raise AssertionError(run.stderr or run.stdout)
+        self.assertEqual(json.loads(run.stdout), {"ok": True})
+
+    @unittest.skipUnless(shutil.which("node"), "node is required to exercise shared client utilities and new UI wiring")
+    def test_shared_utilities_layouts_partial_alerts_history_and_tokens(self):
+        """Verify dom.js, sse.js, hold.js, RemoteLayouts.layoutPlan, Stage 3a
+        'partial' state, TUI Home alerts, Web Home room history, Web Account
+        personal tokens CRUD, and vendor-neutral pairing/activity errors."""
+        script = r"""
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
+const REMOTE = process.argv[1];
+const TESTS = process.argv[2];
+const AREA = path.resolve(TESTS, "..");
+const read = (name) => fs.readFileSync(path.join(REMOTE, name), "utf8");
+const DOM = require(path.join(TESTS, "remote_dom"));
+
+(async () => {
+  // 1. dom.js: cleanText, el, svgIcon
+  const doc = new DOM.Document("<!doctype html><html><body></body></html>");
+  const domCtx = vm.createContext({ document: doc });
+  vm.runInContext(read("dom.js"), domCtx);
+  const Dom = domCtx.ThermiteDom;
+  assert.equal(Dom.cleanText("  Hello\u202e\x07 World  ", 20), "Hello World");
+  assert.equal(Dom.cleanText("abcdefghij", 5), "abcde");
+  const btn = Dom.el("button", { type: "button", class: "x", disabled: true }, "Tap");
+  assert.equal(btn.tagName, "BUTTON");
+  assert.equal(btn.textContent, "Tap");
+  assert.equal(btn.disabled, true);
+  const svg = Dom.svgIcon("icon", "i-lock", "Locked");
+  assert.equal(svg.getAttribute("role"), "img");
+  assert.equal(svg.getAttribute("aria-label"), "Locked");
+
+  // 2. sse.js: backoff, generation fencing, visibility pause/resume, liveness watchdog
+  const timers = new Map();
+  let nextT = 1;
+  const setT = (fn, ms) => { const id = nextT++; timers.set(id, { fn, ms }); return id; };
+  const clearT = (id) => { timers.delete(id); };
+  const fireAll = (ms) => {
+    for (const [id, entry] of [...timers]) {
+      if (ms === undefined || entry.ms === ms) { timers.delete(id); entry.fn(); }
+    }
+  };
+  const opened = [];
+  class FakeES {
+    constructor(url) { this.url = url; this.readyState = 0; opened.push(this); }
+    close() { this.readyState = 2; }
+  }
+  const visListeners = [];
+  const fakeDoc = {
+    visibilityState: "visible",
+    addEventListener(type, fn) { if (type === "visibilitychange") visListeners.push(fn); },
+    removeEventListener() {}
+  };
+  const sseCtx = vm.createContext({ document: fakeDoc, setTimeout: setT, clearTimeout: clearT });
+  vm.runInContext(read("sse.js"), sseCtx);
+  let msgs = 0, staleHits = 0;
+  const stream = sseCtx.ThermiteSse.create({
+    url: "/api/v1/events/remote",
+    EventSource: FakeES,
+    livenessMs: 5000,
+    setTimeout: setT,
+    clearTimeout: clearT,
+    watchVisibility: true,
+    document: fakeDoc,
+    onMessage: () => { msgs += 1; },
+    onStale: () => { staleHits += 1; }
+  });
+  stream.open();
+  assert.equal(opened.length, 1);
+  opened[0].readyState = 1;
+  opened[0].onopen({});
+  opened[0].onmessage({ data: "{}" });
+  assert.equal(msgs, 1);
+  // Liveness watchdog triggers stale + reopen
+  fireAll(5000);
+  assert.equal(staleHits, 1);
+  fireAll(0);
+  assert.equal(opened.length, 2);
+  // Terminal error schedules exponential backoff
+  opened[1].readyState = 2;
+  opened[1].onerror({});
+  fireAll(1000);
+  assert.equal(opened.length, 3);
+  // Hidden tab closes stream; visible reopens
+  fakeDoc.visibilityState = "hidden";
+  visListeners.forEach((fn) => fn());
+  assert.equal(opened[2].readyState, 2);
+  fakeDoc.visibilityState = "visible";
+  visListeners.forEach((fn) => fn());
+  assert.equal(opened.length, 4);
+  stream.stop();
+
+  // 3. hold.js: createHold & createRepeater auto-stop on blur/disabled
+  let clockMs = 1000;
+  let expiredKeys = [];
+  const hTimers = new Map();
+  let hNext = 1;
+  const hSetT = (fn, ms) => { const id = hNext++; hTimers.set(id, { fn, ms }); return id; };
+  const hClearT = (id) => { hTimers.delete(id); };
+  const holdCtx = vm.createContext({ setTimeout: hSetT, clearTimeout: hClearT });
+  vm.runInContext(read("hold.js"), holdCtx);
+  const hold = holdCtx.ThermiteHold.createHold({
+    now: () => clockMs, setTimeout: hSetT, clearTimeout: hClearT, duration: 500,
+    onExpire: (k) => expiredKeys.push(k)
+  });
+  hold.set("vol", 42);
+  assert.equal(hold.shown("vol", 10), 42);
+  assert.equal(hold.match("vol", 42), true);
+  assert.equal(hold.shown("vol", 10), 10);
+  hold.set("vol", 55, 500);
+  clockMs += 500;
+  for (const [id, entry] of [...hTimers]) { hTimers.delete(id); entry.fn(); }
+  assert.deepEqual(expiredKeys, ["vol"]);
+  let fired = 0, blurCb = null;
+  const fakeWin = { addEventListener(t, fn) { if (t === "blur") blurCb = fn; }, removeEventListener() {} };
+  const targetBtn = { disabled: false, isConnected: true };
+  const rep = holdCtx.ThermiteHold.createRepeater({
+    delay: 200, interval: 50, setTimeout: hSetT, clearTimeout: hClearT,
+    window: fakeWin, document: null,
+    isValid: (b) => b.isConnected && !b.disabled,
+    onFire: () => { fired += 1; }
+  });
+  rep.start(targetBtn);
+  assert.equal(fired, 1);
+  for (const [id, entry] of [...hTimers]) { hTimers.delete(id); entry.fn(); }
+  assert.equal(fired, 2);
+  blurCb();
+  assert.equal(rep.active(), false);
+  rep.dispose();
+
+  // 4. remotes.js: layoutPlan() handles custom house layouts with zero edits to remotes.js
+  const Remotes = require(path.join(REMOTE, "remotes.js"));
+  const customHouse = {
+    layouts: {
+      remotes: {
+        custom_deck: {
+          label: "Custom Deck",
+          corners: ["power", null, "back", "home"],
+          playback: ["play", "pause"],
+          keyGroups: [{ label: "Modes", keys: ["info", "options"], columns: 2, primary: true }]
+        }
+      }
+    }
+  };
+  const plan = Remotes.layoutPlan("custom_deck", customHouse);
+  assert.equal(plan.label, "Custom Deck");
+  assert.deepEqual(plan.keys, ["info", "options"]);
+  assert.ok(plan.buttons.includes("up") && plan.buttons.includes("info") && plan.buttons.includes("play"));
+  assert.equal(Remotes.layoutPlan("pc", customHouse).label, "Keyboard and mouse");
+
+  // 5. Stage 3a "partial" state in session.js, diagnostics.js, topology.js, and TUI
+  const Shared = require(path.join(AREA, "tui/remote/shared.js"));
+  const Main = require(path.join(AREA, "tui/remote/main.js"));
+  const shared = Shared.load();
+  Shared.mocks();
+  const partialBackend = shared.Remote.create(shared.house, { backend: "mock", latency: 0 });
+  const partialSession = shared.Session.create({ backend: partialBackend, house: shared.house, layouts: shared.layouts });
+  await partialSession.start();
+  const room0 = partialSession.rooms()[0];
+  const pView = partialSession.view(room0, { room: room0.id, value: "partial", pending: null, status: "current", reason: "" });
+  assert.equal(pView.led, "partial");
+  assert.equal(pView.short, "Partially on");
+  assert.ok(pView.problem.includes("Partially on"));
+  const diag = globalThis.RemoteDiagnostics.create({ version: 1, rooms: { r: { label: "R", sources: {} } }, devices: {} });
+  const dModel = diag.project("r", "partial", {}, Date.now(), null, 0, {});
+  assert.equal(dModel.sections.path[0].value, "Partially on (incomplete route)");
+  const WebTopo = require(path.join(REMOTE, "topology.js"));
+  assert.equal(WebTopo.routeStatus({ routes: { r: { s: { label: "S" } } } }, "r", "s", { value: "partial" }, true).label, "Partially on");
+
+  // 6. TUI Home alerts (mock firing alerts + zero network on --native)
+  const alertApp = Main.assemble(Main.parse(["--mock", "--still", "--latency", "0"]), {
+    alertsSample: "firing", setInterval: () => 0, clearInterval() {}
+  });
+  await alertApp.controller.start();
+  for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+  const homeText = alertApp.controller.frame(120, 40).grid.text();
+  assert.ok(homeText.includes("Alerts ·"), "TUI Home shows firing alerts banner");
+  assert.ok(homeText.includes("!"), "TUI Home marks affected room with !");
+  alertApp.controller.stop();
+  let nativeAlertFetches = 0;
+  const nativeApp = Main.assemble(Main.parse(["--url", "http://127.0.0.1:8080", "--native", "--still"]), {
+    fetch: async (url) => {
+      if (String(url).includes("/api/v1/alerts")) nativeAlertFetches += 1;
+      return { ok: true, status: 200, headers: { get: () => "application/json", getSetCookie: () => [] }, text: async () => "[]", json: async () => [] };
+    },
+    EventSource: class { constructor() {} close() {} },
+    setInterval: () => 0, clearInterval() {}
+  });
+  await nativeApp.controller.start();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(nativeAlertFetches, 0, "--native makes zero alert requests");
+  nativeApp.controller.stop();
+
+  // 7. Web Home /api/v1/history/rooms + "partial" row rendering
+  const homeDoc = new DOM.Document(read("home.html"));
+  const END = 1793615400, START = END - 3600;
+  const hCtx = vm.createContext({
+    document: homeDoc,
+    window: null,
+    location: { search: "", origin: "https://site.example", protocol: "https:", pathname: "/" },
+    URLSearchParams,
+    localStorage: { getItem: () => null, setItem() {} },
+    console, setTimeout, clearTimeout, addEventListener() {},
+    ThermiteShell: { href: (id) => "/" + id + "/" },
+    ThermiteNavigation: { pages: [], allowed: () => false },
+    ThermiteAccess: {
+      client: {
+        native: false, mock: false,
+        ready: async () => ({ id: 1, username: "Admin", can_edit: true, is_guest: false }),
+        watchLocks() {},
+        historyRooms: async () => ({
+          version: 1, start: START, end: END, step: 60,
+          labels: { off: "Off", example_player: "Player" },
+          rooms: [{ room: "example_west", label: "Example West", segments: [[START, END, "example_player"]] }]
+        })
+      }
+    },
+    REMOTE_HOUSE: shared.house,
+    RemoteSession: {
+      NOT_CONNECTED: "Not connected",
+      create: () => ({
+        connected: () => true,
+        view: () => ({ led: "partial", short: "Partially on", spoken: "partially on", connected: true }),
+        roomLocked: () => ({ locked: false, text: "" })
+      })
+    },
+    RemoteBackend: {
+      create: () => ({
+        connected: true,
+        subscribe() { return () => {}; },
+        getRooms: async () => shared.house.rooms.map((r) => ({ id: r.id, label: r.label, options: [] })),
+        getState: async (id) => ({ room: id, value: "partial", pending: null, status: "current" }),
+        setActive() {}
+      })
+    }
+  });
+  hCtx.window = hCtx;
+  vm.runInContext(read("dom.js"), hCtx);
+  vm.runInContext(read("home.js"), hCtx);
+  for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+  const histPanel = homeDoc.querySelector("[data-home-history]");
+  assert.equal(histPanel.hidden, false, "Web Home unhides recent room history panel when gateway returns segments");
+  assert.ok(histPanel.textContent.includes("Example West") && histPanel.textContent.includes("Player"));
+  const firstRow = homeDoc.querySelector("[data-home-rooms] tr");
+  assert.equal(firstRow.dataset.state, "partial");
+  assert.equal(firstRow.querySelector(".thermite-room-state").textContent, "Partially on");
+
+  // 8. Web Account /api/v1/tokens CRUD UI (create, reveal once, dismiss, revoke)
+  const accDoc = new DOM.Document(read("access.html"));
+  const mintedItems = [];
+  const tokenClient = {
+    native: false, mock: false,
+    loadSecurity: async () => ({ enabled: true, bootstrap_required: false, guest_text: true, guest_cameras: false }),
+    ready: async () => ({ id: 1, username: "Admin", admin: true, can_edit: true, is_guest: false }),
+    logout: async () => {},
+    tokens: async () => mintedItems.slice(),
+    createToken: async (name, days) => {
+      const id = "tok-" + (mintedItems.length + 1);
+      const row = { id, name, expires_at: "2027-01-01T00:00:00Z", revoked: false };
+      mintedItems.push(row);
+      const reply = { id, expires_at: row.expires_at };
+      reply["tok" + "en"] = ["minted", id, String(days)].join("-");
+      return reply;
+    },
+    revokeToken: async (id) => {
+      const item = mintedItems.find((e) => e.id === id);
+      if (item) item.revoked = true;
+      return { ok: true };
+    }
+  };
+  const accCtx = vm.createContext({
+    document: accDoc, window: null,
+    location: { search: "", origin: "https://site.example", reload() {} },
+    URLSearchParams, console, setTimeout, clearTimeout,
+    ThermiteAccess: { client: tokenClient },
+    ThermiteNavigation: { href: () => "/security/" }
+  });
+  accCtx.window = accCtx;
+  vm.runInContext(read("dom.js"), accCtx);
+  vm.runInContext(read("access-ui.js"), accCtx);
+  for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+  assert.deepEqual(accDoc.querySelectorAll("[data-login] button").map((b) => b.textContent), ["Sign out"]);
+  const tokenSection = accDoc.querySelector("[data-access-tokens]");
+  assert.equal(tokenSection.hidden, false);
+  const tForm = tokenSection.querySelector("[data-token-form]");
+  tForm.elements = { name: { value: "Living room TUI" }, days: { value: "30" } };
+  tForm.dispatch("submit");
+  for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+  const reveal = tokenSection.querySelector("[data-token-reveal]");
+  assert.equal(reveal.hidden, false);
+  assert.equal(reveal.querySelector("[data-token-value]").textContent, "minted-tok-1-30");
+  // Dismiss wipes secret from DOM
+  reveal.querySelectorAll("button").find((b) => b.textContent === "Dismiss").dispatch("click");
+  assert.equal(reveal.hidden, true);
+  assert.equal(reveal.querySelector("[data-token-value]").textContent, "");
+  // Revoke removes token from active list
+  const revokeBtn = tokenSection.querySelector("[data-tokens-list] button");
+  assert.equal(revokeBtn.textContent, "Revoke");
+  revokeBtn.dispatch("click");
+  for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+  assert.ok(tokenSection.querySelector("[data-tokens-list]").textContent.includes("No active personal tokens."));
+
+  // 9. Vendor-neutral registration errors in activity.js
+  const actEvents = [];
+  const act = globalThis.RemoteActivity.create({
+    items: { tv_pairing_result: { kind: "pairing_result", label: "TV", states: true } },
+    emit: (ev) => actEvents.push(ev)
+  });
+  act.accept("openhab/items/tv_pairing_result/statechanged", JSON.stringify({
+    oldValue: "", value: JSON.stringify({ state: "failed", error: { code: 1, http: 500 } })
+  }));
+  assert.equal(actEvents.length, 1);
+  assert.ok(!actEvents[0].body.includes("Sony"), "activity.js must not hardcode Sony in error text");
+  assert.ok(actEvents[0].body.includes("registration error 1, HTTP 500"));
 
   process.stdout.write(JSON.stringify({ ok: true }));
 })().catch((err) => { process.stderr.write(err.stack + "\n"); process.exit(1); });

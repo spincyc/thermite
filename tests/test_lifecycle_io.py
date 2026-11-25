@@ -16,14 +16,15 @@ sys.path.insert(0,str(AREA/'lib'))
 from oh_conf import House, Conf, unfilled  # noqa: E402
 from oh_features.routing import lifecycle_io  # noqa: E402
 import oh_integrations as integrations  # noqa: E402
-from oh_integrations import ukm404_http, avpro_telnet, sony_adcp, sony_ip_control, pyatv_http, sony_rest, denonmarantz_http  # noqa: E402
+from oh_integrations import (ukm404_http, avpro_telnet, sony_adcp, sony_ip_control, pyatv_http, sony_rest,
+                             denonmarantz_http, androidtv_googletv)  # noqa: E402
 from oh_testing import routing as routing_check  # noqa: E402
 from tests import test_integration_scripts as scripts  # noqa: E402
 
 
 class Rendering(unittest.TestCase):
     def inventory(self):
-        return {"version":1,"rooms":{"desk":{"label":"Desk","tag":"Room"}},"devices":[
+        return {"version":2,"rooms":{"desk":{"label":"Desk","tag":"Room"}},"devices":[
             {"id":"desk_usb","room":"desk","kind":"usb_matrix","ip":"192.0.2.10",
              "controls":{"control":["ukm404_http"]}}]}
 
@@ -123,7 +124,8 @@ class Rendering(unittest.TestCase):
         # Each as a house file may list it: an Apple TV, and a Sony with the
         # integration that observes what this one controls.
         for module,kind,make,observe in ((pyatv_http,'streamer','Apple',[]),(sony_ip_control,'tv','Example',[sony_rest.NAME]),
-                                         (sony_adcp,'projector','Example',[sony_adcp.NAME]),(avpro_telnet,'hdmi_matrix','Example',[])):
+                                         (sony_adcp,'projector','Example',[sony_adcp.NAME]),(avpro_telnet,'hdmi_matrix','Example',[]),
+                                         (androidtv_googletv,'streamer','NVIDIA',[])):
             with self.subTest(module=module.NAME):
                 data=self.inventory();device=data['devices'][0]
                 device.update(id='desk_device',kind=kind,make=make,model='Test',
@@ -145,35 +147,42 @@ class Rendering(unittest.TestCase):
                 # The actor receives operational metadata, never another IP.
                 config_line=next(line for line in text.splitlines() if line.startswith('const ROUTING_EXECUTOR = '))
                 self.assertNotIn(device['ip'],config_line)
-                aimed=module.aim(conf.files,device,'127.0.0.1:40123')
-                self.assertNotEqual(aimed[path],text)
+                aimed=module.aim(conf.files if module is not androidtv_googletv else {**conf.files, module.FILE: out.text()},device,'127.0.0.1:40123')
+                if module is androidtv_googletv:
+                    self.assertIn('127.0.0.1', aimed[module.FILE])
+                    self.assertNotIn(device['ip'], aimed[module.FILE])
+                else:
+                    self.assertNotEqual(aimed[path],text)
                 self.assertEqual(next(line for line in aimed[path].splitlines() if line.startswith('const ROUTING_EXECUTOR = ')),config_line)
 
 
 #: The routing core, which reads only the integrations' declarations.
-GENERIC = ('lib/oh_features/routing/lifecycle_io.py', 'lib/oh_features/routing/lifecycle_io.js',
+GENERIC = ('lib/oh_features/routing/hops.py',
+           'lib/oh_features/routing/lifecycle_io.py', 'lib/oh_features/routing/lifecycle_io.js',
            'lib/oh_features/routing/lifecycle.py', 'lib/oh_features/routing/lifecycle.js',
            'lib/oh_features/routing/routing.js', 'lib/oh_room_policy/plan.py')
 
 
-def fictional(kind='http'):
+def fictional(kind='http', name='example_relay_http', suffix='relay'):
     """An integration no generic file knows: a relay whose one field is
     driven by the generic HTTP actor, or (any other kind) by its own rule."""
-    module = types.ModuleType('example_relay_http')
+    module = types.ModuleType(name)
     # As the registry does for its own: a hook it lacks reads as its default.
     module.__getattr__ = integrations._hooks.absent
-    module.NAME, module.PHASE, module.FILE = 'example_relay_http', 'control', 'yaml/example_relay.yaml'
+    module.NAME, module.PHASE, module.FILE = name, 'control', f'yaml/{name}.yaml'
     uid = lambda device: f"http:url:{device['id']}"
     def render(device, house, out):
-        out.things[uid(device)] = {'config': {'baseURL': f"http://{device['ip']}"}, 'channels': {'relay': {'config': {}}}}
-        out.items[f"{device['id']}_relay"] = {'type': 'Switch', 'tags': ['Control'], 'channel': f"{uid(device)}:relay"}
+        out.things[uid(device)] = {'config': {'baseURL': f"http://{device['ip']}"}, 'channels': {suffix: {'config': {}}}}
+        out.items[f"{device['id']}_{suffix}"] = {'type': 'Switch', 'tags': ['Control'], 'channel': f"{uid(device)}:{suffix}"}
     def fields(device):
-        declared = {'kind': kind, 'values': ['ON', 'OFF'], 'settle': {'ON': 5000}, 'manual': 4}
+        declared = {'kind': kind, 'values': ['ON', 'OFF'], 'settle': {'ON': 5000},
+                    'feedback': {'kind': 'poll', 'interval_s': 10}, 'power': 'absolute'}
         if kind == 'http':
-            declared = {'kind': kind, 'thing': uid(device), 'channel': 'relay', **declared, 'ack': 'result'}
-        return {f"{device['id']}_relay": declared}
+            declared = {'kind': kind, 'thing': uid(device), 'channel': suffix, **declared, 'ack': 'result'}
+        return {f"{device['id']}_{suffix}": declared}
     # validate: every integration has one, and a house that lists this one is checked with it.
     module.render, module.fields, module.validate = render, fields, lambda device: []
+    module.manual_items = lambda device: 4
     if kind != 'http':
         module.rule_path = lambda device: f"automation/js/example_relay_{device['id']}.js"
         module.files = lambda devices, house: {module.rule_path(d): "const SEND = true;\n" + unfilled(lifecycle_io.CUSTOM) + "\n" for d in devices}
@@ -182,7 +191,7 @@ def fictional(kind='http'):
 
 class Declarations(unittest.TestCase):
     def inventory(self):
-        return {"version":1,"rooms":{"desk":{"label":"Desk","tag":"Room"}},"devices":[
+        return {"version":2,"rooms":{"desk":{"label":"Desk","tag":"Room"}},"devices":[
             {"id":"desk_relay","room":"desk","kind":"power","ip":"192.0.2.20","controls":{"control":["example_relay_http"]}}]}
 
     def test_the_generic_routing_core_names_no_integration(self):
@@ -209,8 +218,9 @@ class Declarations(unittest.TestCase):
             caps = lifecycle_io.capabilities(data["devices"])
             self.assertEqual(caps, {'desk_relay_relay': {
                 'key': 'desk_relay', 'provider': 'example_relay_http', 'terminal': True, 'probe': True, 'manual': 4,
-                'field': {'kind': 'http', 'thing': 'http:url:desk_relay', 'channel': 'relay', 'allowed': ['ON', 'OFF'],
-                          'settle': {'ON': 5000}, 'ack': 'result'}}})
+                'field': {'kind': 'http', 'thing': 'http:url:desk_relay', 'channel': 'relay', 'values': ['ON', 'OFF'],
+                          'settle': {'ON': 5000}, 'feedback': {'kind': 'poll', 'interval_s': 10}, 'power': 'absolute',
+                          'ack': 'result'}}})
             house = House(data); conf = Conf(); out = conf.yaml_file(module.FILE, ())
             module.render(data['devices'][0], house, out)
             descriptor = {'resources': {'desk_relay_relay': {}}}
@@ -233,11 +243,53 @@ class Declarations(unittest.TestCase):
             lifecycle_io.configure(house, conf, {'resources': {'desk_relay_relay': {}}})
             text = conf.files['automation/js/example_relay_desk_relay.js']
             self.assertNotIn(unfilled(lifecycle_io.CUSTOM), text)
-            self.assertIn('"desk_relay_relay":{"kind":"relay","allowed":["ON","OFF"],"settle":{"ON":5000}}', text)
+            self.assertIn('"desk_relay_relay":{"kind":"relay","values":["ON","OFF"],"settle":{"ON":5000},"feedback":{"kind":"poll","interval_s":10},"power":"absolute"}', text)
             self.assertNotIn('automation/js/thermite_routing_io_desk_relay.js', conf.files)
             del module.rule_path
             with self.assertRaisesRegex(ValueError, 'routing executor adapter is absent'):
                 lifecycle_io.configure(house, Conf(), {'resources': {'desk_relay_relay': {}}})
+
+    def test_multiple_integrations_contribute_disjoint_fields_and_overlap_fails(self):
+        first = fictional('http', 'example_first_http', 'power')
+        second = fictional('http', 'example_second_http', 'input')
+        overlap = fictional('http', 'example_overlap_http', 'power')
+        data = self.inventory()
+        data['devices'][0]['controls']['control'] = ['example_first_http', 'example_second_http']
+        with mock.patch.object(integrations, 'REGISTRY', (*integrations.REGISTRY, first, second)):
+            caps = lifecycle_io.capabilities(data['devices'])
+        self.assertEqual(set(caps), {'desk_relay_power', 'desk_relay_input'})
+        self.assertEqual(caps['desk_relay_power']['provider'], 'example_first_http')
+        self.assertEqual(caps['desk_relay_input']['provider'], 'example_second_http')
+        data['devices'][0]['controls']['control'] = ['example_first_http', 'example_overlap_http']
+        with mock.patch.object(integrations, 'REGISTRY', (*integrations.REGISTRY, first, overlap)):
+            with self.assertRaisesRegex(ValueError, 'both declare field desk_relay_power'):
+                lifecycle_io.capabilities(data['devices'])
+
+    def test_stage_2c_contract_validates_feedback_reports_power_and_manual(self):
+        data = self.inventory()
+        for mutate, pattern in (
+            (lambda f: f.update(feedback={'kind': 'poll', 'interval_s': 0}), 'invalid feedback'),
+            (lambda f: f.update(feedback={'kind': 'push', 'interval_s': 5}), 'invalid feedback'),
+            (lambda f: f.update(feedback={'kind': 'magic'}), 'invalid feedback'),
+            (lambda f: f.update(reports={'raw': {'value': 'ON', 'transition': 'yes'}}), 'invalid reports'),
+            (lambda f: f.update(power='momentary'), 'invalid power'),
+            (lambda f: f.update(manual=3), 'declares per-field manual'),
+        ):
+            module = fictional()
+            base = module.fields
+            def patched(device, base=base, mutate=mutate):
+                out = base(device)
+                mutate(next(iter(out.values())))
+                return out
+            module.fields = patched
+            with self.subTest(pattern=pattern), mock.patch.object(integrations, 'REGISTRY', (*integrations.REGISTRY, module)):
+                with self.assertRaisesRegex(ValueError, pattern):
+                    lifecycle_io.capabilities(data['devices'])
+        module = fictional()
+        module.manual_items = lambda device: 0
+        with mock.patch.object(integrations, 'REGISTRY', (*integrations.REGISTRY, module)):
+            with self.assertRaisesRegex(ValueError, 'invalid manual_items'):
+                lifecycle_io.capabilities(data['devices'])
 
 
 class Denon(unittest.TestCase):
@@ -269,10 +321,16 @@ class Denon(unittest.TestCase):
         self.assertEqual({item: (field['zone'], field['point']) for item, field in config['fields'].items()},
                          {'example_avr_main_power': (1, 'power'), 'example_avr_main_input': (1, 'input'),
                           'example_avr_zone2_power': (2, 'power'), 'example_avr_zone2_input': (2, 'input')})
-        self.assertIn('SOURCE', config['fields']['example_avr_zone2_input']['allowed'])
-        self.assertNotIn('SOURCE', config['fields']['example_avr_main_input']['allowed'])
-        self.assertTrue(all(field == {'kind': 'denon', 'thing': 'denonmarantz:avr:example_avr', **{k: field[k] for k in ('zone', 'point', 'allowed')}}
-                            for field in config['fields'].values()))
+        self.assertIn('SOURCE', config['fields']['example_avr_zone2_input']['values'])
+        self.assertNotIn('SOURCE', config['fields']['example_avr_main_input']['values'])
+        for field in config['fields'].values():
+            expected = {'kind': 'denon', 'thing': 'denonmarantz:avr:example_avr', 'feedback': {'kind': 'poll', 'interval_s': 15},
+                        **{k: field[k] for k in ('zone', 'point', 'values')}}
+            if field['point'] == 'power':
+                expected['power'] = 'absolute'
+            else:
+                expected['reports'] = {'GAME': {'value': 'GAME1', 'transition': False}}
+            self.assertEqual(field, expected)
 
     @unittest.skipUnless(shutil.which('node'), 'node required')
     def test_its_provider_on_the_generic_executor(self):

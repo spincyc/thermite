@@ -351,7 +351,7 @@ test('after a reload the planner journal says who is synced, so the next leader 
 test('a synced follower turned off at its own devices is never turned back on by its leader', () => {
   const w = both(COMPUTER);
   w.apply('example_tv_power', 'OFF');
-  assert.equal(w.source(LOUNGE), 'off');
+  assert.equal(w.source(LOUNGE), 'partial');
   w.command(CINEMA, DISC);
   assert.deepEqual(w.requests(), [`request ${CINEMA} ${DISC} tx${w.tx}`]);
   assert.deepEqual(w.logs.filter(([level]) => level === 'warn'), []);
@@ -362,6 +362,8 @@ test('a synced follower turned off at its own devices is never turned back on by
   w.command(CINEMA, COMPUTER); w.settle();
   assert.deepEqual(w.asked(), [`request ${CINEMA} ${COMPUTER}`]);
   assert.equal(w.state('example_tv_power'), 'OFF');
+  w.apply('example_avr_zone2_power', 'OFF');
+  assert.equal(w.source(LOUNGE), 'off');
 });
 
 test('a follower turned off at its own devices is not synced either', () => {

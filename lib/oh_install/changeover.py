@@ -599,6 +599,7 @@ def preparation(context: steps.Context) -> list[Step]:
     return [*steps.configuration_steps(context), steps.ShareLogins(context), steps.Packages(context),
             NativeIngressPrerequisites(context),
             steps.AppArmorService(), steps.AddonFiles(context), steps.GatewayWheels(context),
+            *([steps.AtvWheels(context)] if context.needs_atv else []),
             steps.BootTest(context), steps.Account(context),
             steps.InstallationRoot(context)]
 
@@ -614,7 +615,9 @@ def switching(context: steps.Context, transaction: str | None, how: str = "upgra
             *([steps.MusicDirectories(context)] if playing else []),
             steps.Units(context), steps.ShareCredentials(context), steps.NodeConfinement(context),
             steps.NativePreparation(context), steps.AddonRepository(context),
-            NativeIngress(context), deployment, steps.Services(context, restart_runtime=context.restart_runtime),
+            NativeIngress(context), deployment,
+            *([steps.AtvEnvironment(context)] if context.needs_atv else []),
+            steps.Services(context, restart_runtime=context.restart_runtime),
             *([steps.MusicServices(context)] if playing else []), steps.Answers(context, native),
             steps.Token(context, native), *steps.gateway_steps(context, native, transaction=transaction),
             steps.MetricsToken(context), steps.GrafanaPassword(context), steps.MetricsServices(context),

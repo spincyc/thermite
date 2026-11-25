@@ -100,6 +100,11 @@ _TABLE = (
         dependency validation before rendering; it runs last, on a house
         whose every device and section (routing, say) has passed its own
         validation"""),
+    Hook("resolve", FUNCTION, """
+        resolve(device, data) -> dict | None: enrich one validated device
+        with derived house-context defaults (such as an IR emitter's ip/model
+        inherited from via, or CEC matrix/input derived from routing), returning
+        a new device dict when changed or None when unchanged"""),
     Hook("transport_addresses", FUNCTION, """
         transport_addresses(device) -> {exactThingUID: [IPv4, ...]}:
         validated endpoint authority for that integration's own Things
@@ -208,7 +213,9 @@ _TABLE = (
         chooses it (oh_features.routing), or None""", order=("androidtv_googletv", "pyatv_http")),
 
     # A module whose fields the routing lifecycle's ordered executor drives
-    # (oh_features.routing.lifecycle_io).
+    # (oh_features.routing.lifecycle_io). Multiple integrations on the same
+    # device may contribute non-overlapping fields; declaring the same Item
+    # twice is an explicit error.
     Hook("fields", FUNCTION, """
         fields(device) -> {Item: declaration}: each field of a device that
         lists the module under control, declared as a dict of
@@ -216,6 +223,16 @@ _TABLE = (
                     through its Thing's channel; any other kind: the
                     module's own rule drives it (rule_path())
           values    the values it can be commanded with
+          feedback  how readings arrive: {"kind": "poll", "interval_s": N},
+                    {"kind": "push"}, or {"kind": "none"}. Room policy
+                    freshness (oh_room_policy.plan) and script availability
+                    checks derive from it
+          reports   optional {raw: {"value": str, "transition": bool}}:
+                    raw device reports normalized once, with transition flag
+                    for warm-up/cooling/boot states; a reported value outside
+                    `values` is a definite mismatch, not unknown
+          power     optional "absolute" | "toggle" | "wake_only" on power
+                    fields; toggle and wake_only go through a read-first actor
           thing, channel
                     its Thing's UID and channel id (http)
           ack       what acknowledges a write (http): "result", an answer
@@ -229,12 +246,12 @@ _TABLE = (
                     field of the device (a matrix output a command names
                     alone): its unknown outcome quarantines it alone, until
                     a read of it answers; otherwise the whole device waits
-          manual    optional: how many Items the device's actor takes
-                    manual commands on, when more than its fields
-        and any other key its own rule reads (zone, point); every key but
-        manual reaches the actor, values as `allowed`""",
-         order=("sony_ip_control", "pyatv_http", "denonmarantz_http", "sony_adcp", "bk808_http", "ukm404_http",
-                "vrroom_telnet", "avpro_telnet")),
+        and any other key its own rule reads (zone, point); every key reaches
+        the actor unchanged"""),
+    Hook("manual_items", FUNCTION, """
+        manual_items(device) -> int: how many Items this integration's routing
+        actor takes manual commands on for `device`, when more than the number
+        of fields it declares in fields(device)"""),
     Hook("rule_path", FUNCTION, """
         rule_path(device) -> str: for a field of any kind but http, its
         rule's path under conf/, which its files() renders with the line
@@ -294,13 +311,25 @@ _TABLE = (
         or {"item", "field", "is", "maxAge"} for a field of a diagnostics
         snapshot, with "unreadIsIdle": True where a missing snapshot is a
         hang that the restart cures; "rooms": True (optional) for an HDMI
-        matrix that reports nothing of its use; "hung" (optional):
-        {"things": Things whose OFFLINE while it answers is a hang that a
-        restart cures, "seconds": how long they stay so first}, for
-        `reboot: when_hung`. oh_features.reboots adds, for a USB matrix,
-        that each room whose ports it switches is Off, and with "rooms",
-        that each room showing one of its outputs is Off}""",
+        matrix that reports nothing of its use}. oh_features.reboots adds,
+        for a USB matrix, that each room whose ports it switches is Off, and
+        with "rooms", that each room showing one of its outputs is Off""",
          order=("heos", "ukm404_http", "vrroom_telnet", "avpro_telnet")),
+    Hook("recovery", FUNCTION, """
+        recovery(device) -> {"things": Things whose OFFLINE while the device
+        otherwise answers indicates a hang that recovery cures, "seconds": how
+        long they must stay OFFLINE first, "item": the Item commanded to
+        recover, "action": the command value sent}, or None: declarative
+        hang/fault detection and recovery (oh_features.reboots `when_hung`)""",
+         order=("vrroom_telnet",)),
+
+    # A control module whose devices pair with openHAB via a code shown on
+    # screen, driven uniformly through oh_integrations._pairing Items.
+    Hook("pairing", FUNCTION, """
+        pairing(device) -> {"label", "length", "chars", "again", "hint",
+        "confirm" (optional), "result" (optional)} or None: how a controlled
+        device pairs through `_pairing` Items, for bin/thermite pair""",
+         order=("sony_ip_control", "androidtv_googletv", "pyatv_http")),
 
     # A module whose Items tell what its devices play, for what is playing
     # (oh_features.playing).
@@ -337,14 +366,21 @@ _TABLE = (
         remote(device) -> {"power", "mute": Switch Items, "volume":
         {"item", "min", "max", "step"} on the device's own scale, "input":
         {"item", "options": [[value, label], ...]}, "key": the String Item
-        a remote button id (KEYS, or keys(device)) is sent to; each
-        optional} or None""",
-         order=("sony_ip_control", "androidtv_googletv", "pyatv_http", "sonos", "denonmarantz_http", "wiim_http",
-                "sony_adcp", "ir", "bk808_cec")),
+        a remote button id (KEYS, or keys(device)) is sent to, "playback":
+        optional transport playback descriptor; each optional} or None.
+        Multiple integrations on the same device compose non-overlapping keys
+        in this priority order; the first matching integration provides the
+        primary layout""",
+         order=("sony_ip_control", "androidtv_googletv", "pyatv_http", "sonos", "denonmarantz_http", "heos",
+                "wiim_http", "sony_adcp", "ir", "bk808_cec")),
     Hook("REMOTE_LAYOUT", CONSTANT, """
-        the remote page's layout for its devices (remotes.js), unless it
+        the remote page's layout for its devices (house.js layouts), unless it
         provides remote_of(device)"""),
     Hook("remote_of", FUNCTION, "remote_of(device) -> the layout of this device's remote, where its devices' differ"),
+    Hook("remote_layouts", FUNCTION, """
+        remote_layouts(device=None) -> {layout_id: layout_def}: button layout
+        definitions owned by this integration's remotes, emitted into house.js
+        for devices that reference them"""),
     Hook("remote_availability", FUNCTION, """
         remote_availability(device) -> {"keyButtons": the buttons that
         work, "note": what the page says of the rest}, for a remote that
@@ -409,6 +445,22 @@ _TABLE = (
         it}, or None: the room policy verifies such a power only by a
         native reading (oh_room_policy.plan)"""),
 
+    # A read-only camera integration gives the remote Cameras page its public
+    # descriptor (oh_features.remote_cameras) without leaking vendor item
+    # prefixes or URL shapes into generic code.
+    Hook("cameras", FUNCTION, """
+        cameras(device, house) -> dict | None: public camera entry for the
+        remote Cameras page (id, label, room, location, kind, model,
+        doorbell, packageCamera, thing, items: {online, recording, motion,
+        lastMotion, ring, lastRing, ...}, media: {snapshot, streams}), or None""",
+         order=("unifi_protect",)),
+
+    # A conditional localhost helper daemon (e.g. thermite-atv.service) needed
+    # only when at least one device in the house uses this integration.
+    Hook("HELPER_SERVICE", CONSTANT, """
+        systemd unit name of a conditional localhost helper daemon needed only
+        when the house uses this integration (e.g. thermite-atv.service)""", default=None),
+
     # Facts about a vendor's devices live in its module, never in a generic
     # one, so no table outside this package names an integration.
     Hook("DEVICE_KEYS", KEYS, """
@@ -465,6 +517,14 @@ _TABLE = (
         False: its Things' status says nothing of the device (a ping Thing
         is ONLINE while nothing answers). Metrics leave them out of
         thermite_thing_online, and no check reads them""", default=True),
+    Hook("RUNTIME_THINGS", CONSTANT, """
+        True: its Things (thing_uid(), transport()) are provisioned in runtime
+        JSONDB rather than generated YAML, so metrics include them directly in
+        thermite_thing_online and signals()""", default=False),
+    Hook("MONITORED", CONSTANT, """
+        True: an observe integration whose device availability signals (Things,
+        online, recording) are always-on health checks (health_paths(),
+        unobserved()), honoring monitor: optional""", default=False),
     Hook("ROUTE_OPTIONAL", CONSTANT, "True: its Things and ports never gate a routed source's health", default=False),
 )
 HOOKS = {hook.name: hook for hook in _TABLE}

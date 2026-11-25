@@ -26,7 +26,7 @@ import oh_site_contract  # noqa: E402
 from oh_features import remote_diagnostics, routing, threadpools  # noqa: E402
 from oh_integrations import androidtv_googletv, unifi_protect  # noqa: E402
 
-EXAMPLE = json.loads((AREA / "instance/devices.yaml").read_text())
+EXAMPLE = oh_inventory.load(AREA / "instance/devices.yaml")
 #: Generic modules: none may name an integration. network_ping, the
 #: vendor-neutral reachability check, is the inventory cross-check's one
 #: exception (a device observing it needs its network Thing).
@@ -70,42 +70,53 @@ class Keys(unittest.TestCase):
 
     def test_device_and_house_keys_come_from_their_owners(self):
         top, device = oh_inventory.keys()
-        for module in (*integrations.REGISTRY, oh_control4):
-            self.assertLessEqual(set(integrations.declared("DEVICE_KEYS", (module,))), device)
+        _, device_shape, _ = oh_inventory.declarations()
+        config_shape = device_shape["config"].keys
+        assert config_shape is not None
+        for module in integrations.REGISTRY:
+            declared_dev = set(integrations.declared("DEVICE_KEYS", (module,)))
+            if declared_dev:
+                self.assertIn(module.NAME, config_shape)
+                self.assertEqual(declared_dev, set(config_shape[module.NAME].keys))
             self.assertLessEqual(set(integrations.declared("HOUSE_KEYS", (module,))), top)
-        self.assertLessEqual({"notes", "control4"}, device)
+        self.assertLessEqual(set(integrations.declared("DEVICE_KEYS", (oh_control4,))), device)
+        self.assertLessEqual(set(integrations.declared("HOUSE_KEYS", (oh_control4,))), top)
+        self.assertLessEqual({"notes", "control4", "config", "timing", "profile"}, device)
         # A key nobody declares is refused, with a hint from the declared ones.
-        self.assertIn("example_tv: unknown key 'sonos_ud'; did you mean sonos_udn?",
-                      self.problems(lambda d: d["devices"][0].update(sonos_ud="x")))
+        self.assertIn("example_tv: unknown key 'control4_ite'; did you mean control4_item?",
+                      self.problems(lambda d: d["devices"][0].update(control4_ite=1)))
         with mock.patch.object(integrations.sonos, "DEVICE_KEYS", ()):
-            self.assertIn("example_tv: unknown key 'sonos_udn'",
-                          " ".join(self.problems(lambda d: d["devices"][0].update(sonos_udn="x"))))
+            self.assertIn("example_tv.config: unknown key 'sonos'",
+                          " ".join(self.problems(lambda d: d["devices"][0].update(config={"sonos": {"udn": "x"}}))))
         with mock.patch.object(oh_control4, "HOUSE_KEYS", ()):
-            self.assertTrue(any("unknown top-level key 'control4_rooms'" in problem
-                                for problem in self.problems(lambda d: d.update(control4_rooms={}))))
+            self.assertTrue(any("unknown top-level key 'control4'" in problem
+                                for problem in self.problems(lambda d: d.update(control4={}))))
 
     def test_control4_keys_are_validated_as_strictly_by_their_owner(self):
         def change(data):
-            data["devices"][0]["c4_item"] = [12, 0, True]
-            data["devices"][1]["c4_item"] = 12
-            data.update(control4_stale=[13, 12, "x"], control4_rooms={"Den": "nowhere", "Hall": "example_west"},
-                        control4_director="example_tv")
+            data["devices"][0]["control4_item"] = [12, 0, True]
+            data["devices"][1]["control4_item"] = 12
+            data["control4"] = {"stale": [13, 12, "x"], "rooms": {"Den": "nowhere", "Hall": "example_west"},
+                                "director": "example_tv"}
         found = self.problems(change)
-        for expected in ("example_tv: c4_item 0 is not a Control4 item id",
-                         "example_tv: c4_item True is not a Control4 item id",
-                         "example_player: c4_item 12 already used by example_tv",
-                         "control4_stale: c4_item 12 already used by example_tv",
-                         "control4_stale: 'x' is not a Control4 item id",
-                         "control4_rooms: 'Den' maps to 'nowhere', which is not in rooms"):
+        for expected in ("example_tv: control4_item 0 is not a Control4 item id",
+                         "example_tv: control4_item True is not a Control4 item id",
+                         "example_player: control4_item 12 already used by example_tv",
+                         "control4.stale: control4_item 12 already used by example_tv",
+                         "control4.stale: 'x' is not a Control4 item id",
+                         "control4.rooms: 'Den' maps to 'nowhere', which is not in rooms"):
             self.assertIn(expected, found)
         self.assertEqual(len(found), 6, found)
-        self.assertEqual(self.problems(lambda d: d.update(control4_stale=5)),
-                         ["control4_stale must be a list of Control4 item ids"])
-        self.assertEqual(self.problems(lambda d: d.update(control4_rooms=["x"])), ["control4_rooms must be a mapping"])
+        self.assertEqual(self.problems(lambda d: d.update(control4={"stale": 5})),
+                         ["control4.stale must be a list of Control4 item ids"])
+        self.assertEqual(self.problems(lambda d: d.update(control4={"rooms": ["x"]})),
+                         ["control4.rooms must be a mapping"])
 
     def test_a_module_needing_a_mac_says_so(self):
+        # Sonos derives UDN from mac when config.sonos.udn is omitted, so no
+        # integration unconditionally requires a MAC address on every device.
         needing = {module.NAME for module in integrations.REGISTRY if module.NEEDS_MAC}
-        self.assertEqual(needing, {"sonos"})
+        self.assertEqual(needing, set())
 
 
 def android_house():
@@ -170,8 +181,8 @@ class Manifests(unittest.TestCase):
         data = copy.deepcopy(EXAMPLE)
         data["protect"] = {"host": "192.0.2.1"}
         data["devices"].append({"id": "fixture_camera", "room": "example_west", "kind": "camera", "ip": "192.0.2.211",
-                                "controls": {"control": [unifi_protect.NAME]},
-                                "protect": {"device_id": "0123456789abcdef01234567"}})
+                                "controls": {"observe": [unifi_protect.NAME]},
+                                "config": {unifi_protect.NAME: {"device_id": "0123456789abcdef01234567"}}})
         self.assertEqual(oh_render.validate(copy.deepcopy(data)), [])
         with mock.patch.object(remote_diagnostics, "_manifest", wraps=remote_diagnostics._manifest) as diagnostics, \
                 mock.patch.object(unifi_protect, "descriptor", wraps=unifi_protect.descriptor) as cameras:

@@ -159,7 +159,7 @@ class SandboxOnly(unittest.TestCase):
         # The example's own rules already ask: its list is left as generated.
         self.assertIn("jsscripting", asked(self.files)["automation"])
         self.assertEqual(oh_render.direct(self.files)[oh_render.ADDONS_CFG], self.files[oh_render.ADDONS_CFG])
-        bare = oh_render.render(House({"version": 1, "devices": []}))
+        bare = oh_render.render(House({"version": 2, "devices": []}))
         self.assertNotIn("automation", asked(bare))
         copied = oh_render.direct(bare)
         self.assertEqual(asked(copied), {**asked(bare), "automation": ["jsscripting"]})

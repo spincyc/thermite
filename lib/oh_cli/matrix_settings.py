@@ -12,12 +12,12 @@ from types import ModuleType
 
 import oh_integrations as integrations
 import oh_cli
-from oh_conf import House, uses
+from oh_conf import House, config as device_config, uses
 from oh_features import routing
 from oh_integrations import _instr as instr
 
 DESCRIPTION = """\
-Compare each matrix (or only DEVICE) with its `settings` in
+Compare each matrix (or only DEVICE) with its `config.<integration>` settings in
 instance/devices.yaml and print the differences. On the BK-808 these settings cover output scalers, HDR
 conversion, HDCP and fixed input EDIDs. When a room has hdmi_audio_scaler,
 routing sets the scaler on its audio output and this command skips it.
@@ -62,7 +62,8 @@ def targets(house: House, only: str | None = None) -> list[tuple[dict, ModuleTyp
     out = []
     for device in house.devices:
         module = settings_module(device)
-        if device.get("settings") and module and only in (None, device["id"]):
+        cfg = device_config(device, module.NAME) if module else {}
+        if any(k != "ports" for k in cfg) and module and only in (None, device["id"]):
             out.append((device, module))
     return out
 

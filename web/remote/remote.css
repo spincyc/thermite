@@ -213,6 +213,11 @@ button {
   animation: blink 0.8s ease-in-out infinite alternate;
 }
 
+[data-led="partial"] .led {
+  background: var(--led-busy);
+  box-shadow: none;
+}
+
 [data-led="bad"] .led {
   background: var(--led-bad);
   box-shadow: none;

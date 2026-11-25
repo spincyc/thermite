@@ -175,11 +175,12 @@ class Features(TestCase):
         self.assertEqual(project("read_text", "arbitrary", {"kind": "text"}), "UNDEF")
 
     def test_a_device_problem_reaches_a_client_as_its_code_and_the_gateway_puts_no_text_in_its_place(self):
+        import yaml
         import oh_render
         import oh_site_contract
         from oh_conf import House
         from oh_integrations import _commands
-        data = json.loads((Path(__file__).resolve().parents[3] / "instance/devices.yaml").read_text())
+        data = yaml.safe_load((Path(__file__).resolve().parents[3] / "instance/devices.yaml").read_text())
         states = oh_site_contract.compile(House(data), oh_render.build(House(data)))["states"]
         for name in ("example_tv_problem", "example_player_problem"):
             spec = states[name]

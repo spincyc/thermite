@@ -1434,7 +1434,7 @@ class HostFacts(unittest.TestCase):
             oh_host.validate(["root"])
         self.refused("unknown metrics setting retension", metrics={"retension": "30d"})
         # The installation root replaced state_root, which has no other meaning now.
-        self.refused(r"unknown setting state_root \(allowed: gateway, gid, guest_http, http_port, https_port, metrics, music, root, shares, timezone, uid\)",
+        self.refused(r"unknown setting state_root \(allowed: gateway, gid, guest_http, http_port, https_port, metrics, music, root, shares, timezone, uid, version\)",
                      state_root="/srv/thermite")
 
     def test_music_names_its_libraries_and_refuses_what_a_unit_cannot_hold(self):
@@ -1857,6 +1857,106 @@ class HelperVenv(unittest.TestCase):
             self.assertTrue(tool.ready())
             (venv / tool.STAMP).write_text("0" * 64 + "\n")
             self.assertFalse(tool.ready())
+
+    def test_setup_find_links_installs_offline_and_if_needed_skips_when_ready(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            venv = Path(tmp, "pyatv")
+            wheels = Path(tmp, "wheels")
+            wheels.mkdir()
+            with mock.patch.dict(os.environ, {"OPENHAB_ATV_VENV": str(venv)}):
+                tool = fresh("oh_cli.apple_tv")
+            ran = []
+
+            def fake_run(argv, check=False):
+                ran.append(list(argv))
+                if "-m" in argv and "venv" in argv:
+                    (venv / "bin").mkdir(parents=True, exist_ok=True)
+                    (venv / "bin/python").write_text("")
+                return mock.Mock(returncode=0)
+
+            with mock.patch.object(tool.subprocess, "run", side_effect=fake_run), \
+                    mock.patch.object(tool.oh_service, "normalize_owned_runtime"):
+                self.assertEqual(tool.setup(find_links=wheels, if_needed=True), 0)
+                pip_cmd = next(cmd for cmd in ran if "pip" in cmd)
+                self.assertIn("--no-index", pip_cmd)
+                self.assertIn("--find-links", pip_cmd)
+                self.assertEqual(pip_cmd[pip_cmd.index("--find-links") + 1], str(wheels))
+                self.assertIn("--require-hashes", pip_cmd)
+                self.assertTrue(tool.ready())
+                ran.clear()
+                self.assertEqual(tool.setup(find_links=wheels, if_needed=True), 0)
+                self.assertEqual(ran, [], "--if-needed skips rebuilding a matching venv")
+
+
+class ConditionalAppleTvHelper(unittest.TestCase):
+    @staticmethod
+    def _house(with_atv: bool):
+        from oh_conf import House
+        devices = [{"id": "den_tv", "room": "den", "kind": "tv", "ip": "192.0.2.10",
+                    "controls": {"observe": ["sony_rest"], "control": ["sony_ip_control"]}}]
+        if with_atv:
+            devices.append({"id": "den_atv", "room": "den", "kind": "streamer", "ip": "192.0.2.20",
+                            "controls": {"control": ["pyatv_http"]}})
+        return House({"version": 2, "rooms": {"den": {"label": "Den", "tag": "Room"}}, "devices": devices})
+
+    def test_helper_services_and_unit_gating_follow_house_devices(self):
+        from oh_integrations import pyatv_http
+        no_atv = self._house(False)
+        with_atv = self._house(True)
+        self.assertEqual(pyatv_http.HELPER_SERVICE, oh_units.ATV)
+        self.assertEqual(deploy.helper_services(no_atv), set())
+        self.assertEqual(deploy.helper_services(with_atv), {oh_units.ATV})
+        # 0-Apple-TV house omits thermite-atv.container, its drop-in, and service.
+        units_without = deploy.render_units(VERSIONS, HOST, no_atv)
+        self.assertFalse(set(units_without) & set(deploy.ATV_UNITS))
+        self.assertEqual(set(units_without), set(deploy.host_units(HOST, no_atv)))
+        self.assertNotIn(oh_units.ATV, deploy.services(HOST, no_atv))
+        # Apple-TV house and house=None both include them.
+        for house in (with_atv, None):
+            units_with = deploy.render_units(VERSIONS, HOST, house)
+            self.assertLessEqual(set(deploy.ATV_UNITS), set(units_with))
+            self.assertEqual(set(units_with), set(deploy.host_units(HOST, house)))
+            self.assertIn(oh_units.ATV, deploy.services(HOST, house))
+
+    def test_preconditions_gate_x86_64_on_apple_tv_helper_and_steps_follow_house(self):
+        from oh_install import changeover, ownership, steps
+        from oh_install.system import System, Unit
+        no_atv, with_atv = self._house(False), self._house(True)
+        arm = mock.Mock(spec=System)
+        arm.machine.return_value = "aarch64"
+        arm.overlayfs.return_value = True
+        arm.group.return_value = None
+        arm.user.return_value = None
+        arm.safe_directory.return_value = True
+        arm.stat.return_value = None
+        arm.lexists.return_value = False
+        arm.port_free.return_value = True
+        arm.unit.return_value = Unit("inactive", "disabled", None)
+
+        ctx_no_atv = steps.Context(AREA, VERSIONS, HOST, "a" * 40, "b" * 64, "armbox", "192.0.2.5", house=no_atv)
+        ctx_atv = steps.Context(AREA, VERSIONS, HOST, "a" * 40, "b" * 64, "armbox", "192.0.2.5", house=with_atv)
+        with mock.patch.object(ownership, "inspect", return_value=ownership.Owned()):
+            ok = steps.Preconditions(ctx_no_atv).check(arm)
+            self.assertTrue(ok.done, ok.problem)
+            self.assertIn("aarch64", ok.detail)
+            bad = steps.Preconditions(ctx_atv).check(arm)
+            self.assertFalse(bad.done)
+            self.assertIn("x86_64", bad.problem)
+        self.assertNotIn(oh_units.ATV, ctx_no_atv.ports())
+        self.assertIn(oh_units.ATV, ctx_atv.ports())
+        self.assertNotIn(oh_units.ATV, steps.Services(ctx_no_atv).plan(arm)[0])
+        self.assertIn(oh_units.ATV, steps.Services(ctx_atv).plan(arm)[0])
+        prep_no = [type(s) for s in changeover.preparation(ctx_no_atv)]
+        sw_no = [type(s) for s in changeover.switching(ctx_no_atv, None)]
+        self.assertNotIn(steps.AtvWheels, prep_no)
+        self.assertNotIn(steps.AtvEnvironment, sw_no)
+        prep_yes = [type(s) for s in changeover.preparation(ctx_atv)]
+        sw_yes = [type(s) for s in changeover.switching(ctx_atv, None)]
+        self.assertIn(steps.AtvWheels, prep_yes)
+        self.assertLess(prep_yes.index(steps.GatewayWheels), prep_yes.index(steps.AtvWheels))
+        self.assertIn(steps.AtvEnvironment, sw_yes)
+        self.assertLess(sw_yes.index(steps.Deploy), sw_yes.index(steps.AtvEnvironment))
+        self.assertLess(sw_yes.index(steps.AtvEnvironment), sw_yes.index(steps.Services))
 
 
 if __name__ == "__main__":

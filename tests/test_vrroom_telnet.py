@@ -35,7 +35,7 @@ DESK = "example_desk"
 SWITCH = {"id": "example_switch", "room": DESK, "kind": "hdmi_switch", "make": "HDFury", "model": "VRROOM",
           "ip": "192.0.2.40", "controls": {"observe": ["vrroom_http"], "control": ["vrroom_telnet"]}}
 HOUSE = {
-    "version": 1,
+    "version": 2,
     "rooms": {DESK: {"label": "Example Desk", "tag": "Room"}},
     "devices": [
         {"id": "example_matrix", "room": DESK, "kind": "hdmi_matrix", "make": "BZBGEAR", "model": "BK-808",
@@ -136,8 +136,13 @@ class Rendering(unittest.TestCase):
         conf.files.update(vrroom_telnet.files([SWITCH], built))
         capabilities = lifecycle_io.capabilities(data["devices"])
         self.assertEqual(capabilities["example_switch_input"]["field"],
-                         {"kind": "vrroom", "allowed": ["0", "1", "2", "3"]})
+                         {"kind": "vrroom", "values": ["0", "1", "2", "3"], "feedback": {"kind": "push"},
+                          "reports": {"4": {"value": "COPY", "transition": False}}})
         self.assertEqual(capabilities["example_switch_input"]["manual"], 2)
+        self.assertEqual(vrroom_telnet.manual_items(SWITCH), 2)
+        self.assertEqual(vrroom_telnet.recovery(SWITCH),
+                         {"things": ["http:url:example_switch"], "seconds": 300,
+                          "item": "example_switch_reboot", "action": "reboot"})
         lifecycle_io.configure(built, conf, {"resources": {"example_switch_input": {}}})
         text = conf.files[vrroom_telnet.rule_path(SWITCH)]
         self.assertNotIn(unfilled(lifecycle_io.CUSTOM), text)

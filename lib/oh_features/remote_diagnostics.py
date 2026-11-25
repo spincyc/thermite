@@ -13,6 +13,7 @@ import oh_integrations as integrations
 from oh_conf import Conf, House, uses
 
 from . import routing
+from .routing import hops
 
 
 def providers(house: House) -> dict:
@@ -37,65 +38,111 @@ def providers(house: House) -> dict:
     return out
 
 
-def _path(house: House, room: dict, source_id: str) -> dict:
-    """One configured route variant; control selectors are not connector IDs."""
+def _path_from_hop(house: House, room_path: hops.RoomPath, *, synced: bool = False) -> dict:
+    """Render one RoomPath (or its synced variant) into the diagnostics path shape."""
     config = house.data.get("routing") or {}
     devices = house.by_id
     sources = config.get("sources") or {}
-    nodes = []
+    source_id = room_path.choice
+    sync = room_path.sync if synced else None
 
-    def node(ident, role, **ports):
-        nodes.append({"device": ident, "label": house.label(devices[ident]), "role": role, **ports})
+    def make_node(ident: str, role: str, **ports) -> dict:
+        return {"device": ident, "label": house.label(devices[ident]), "role": role, **ports}
 
-    node(source_id, "source")
-    local_display = source_id in (room.get("display", {}).get("sources") or {})
-    local_receiver = source_id in (room.get("receiver", {}).get("sources") or {})
-    switch = room.get("hdmi_switch") or {}
-    local_switch = source_id in (switch.get("inputs") or {})
-    if not (local_display or local_receiver or local_switch) and "hdmi_output" in room:
-        source_port = sources[source_id].get("hdmi_input")
-        if source_port is not None:
-            node(config["hdmi_matrix"], "matrix", input=source_port, inputKind="port", output=room["hdmi_output"])
-    if switch and not (local_display or local_receiver):
-        port = switch.get("inputs", {}).get(source_id, switch.get("matrix_input"))
-        if port is not None:
-            node(switch["device"], "switch", input=port, inputKind="port", output=switch.get("output", 0))
-    for role in ("receiver", "display"):
-        stage = room.get(role)
-        if not stage or (role == "receiver" and local_display):
-            continue
-        if stage.get("passive") is True:
-            node(stage["device"], role)
-            continue
-        port = (stage.get("sources") or {}).get(source_id,
-                (stage.get("input_by_source") or {}).get(source_id, stage.get("input")))
-        node(stage["device"], role, input=port, inputKind="selector", zone=stage.get("zone") or "main")
-    path = {"label": sources[source_id]["label"], "nodes": nodes, "carries": routing.carried(room, source_id)}
-    if room.get("hdmi_audio_output") is not None and not (local_display or local_receiver or local_switch):
-        path["audioNodes"] = [copy.deepcopy(nodes[0]),
-                              {**copy.deepcopy(nodes[1]), "output": room["hdmi_audio_output"]},
-                              *[copy.deepcopy(node) for node in nodes if node["role"] == "receiver"]]
-        path["nodes"] = [node for node in nodes if node["role"] != "receiver"]
-    audio = room.get("audio")
-    if audio and path["carries"] != "display" and not any(node["device"] == audio for node in path_nodes(path)):
-        endpoint = {"device": audio, "label": house.label(devices[audio]), "role": "audio"}
-        if room.get("audio_input") is not None:
-            endpoint.update(input=room["audio_input"], inputKind="selector")
-        link = room.get("audio_link") or {}
+    nodes: list[dict] = [make_node(source_id, "source")]
+    audio_matrix_hop = next((h for h in room_path.matrix_hops() if h.role == "audio" and h.active), None)
+    video_matrix_hop = next((h for h in room_path.matrix_hops() if h.role == "video" and h.active), None)
+    split_audio = audio_matrix_hop is not None and sync is None
+
+    if sync is not None:
+        # Synced variant routes via the leader's matrix output and drops follower switches.
+        if video_matrix_hop is not None:
+            nodes.append(make_node(
+                video_matrix_hop.device, "matrix",
+                input=sync.source_hdmi_input, inputKind="port", output=sync.leader_hdmi_output,
+            ))
+    else:
+        if video_matrix_hop is not None:
+            nodes.append(make_node(
+                video_matrix_hop.device, "matrix",
+                input=video_matrix_hop.input_value, inputKind="port", output=video_matrix_hop.output,
+            ))
+        for shop in room_path.switch_hops():
+            if shop.active and shop.input_value is not None:
+                nodes.append(make_node(
+                    shop.device, "switch",
+                    input=shop.input_value, inputKind="port",
+                    output=shop.output if shop.output is not None else 0,
+                ))
+
+    receiver_nodes: list[dict] = []
+    active_displays: list[dict] = []
+    for stage in room_path.active_stage_hops():
+        if stage.passive:
+            stage_node = make_node(stage.device, stage.role)
+        else:
+            sel = sync.leader_input_value if (sync is not None and stage.role == "receiver") else stage.input_value
+            stage_node = make_node(stage.device, stage.role, input=sel, inputKind="selector", zone=stage.zone or "main")
+        if stage.role == "receiver":
+            if split_audio:
+                receiver_nodes.append(stage_node)
+            else:
+                nodes.append(stage_node)
+        elif stage.role == "soundbar":
+            nodes.append(stage_node)
+        else:
+            active_displays.append(stage_node)
+
+    display_branches: list[list[dict]] = []
+    if active_displays:
+        prefix = copy.deepcopy(nodes)
+        nodes.append(active_displays[0])
+        for extra_display in active_displays[1:]:
+            display_branches.append([*copy.deepcopy(prefix), extra_display])
+
+    path: dict = {"label": sources[source_id]["label"], "nodes": nodes, "carries": room_path.carries}
+    if display_branches:
+        path["displayBranches"] = display_branches
+    if split_audio and audio_matrix_hop is not None and video_matrix_hop is not None:
+        matrix_audio_node = make_node(
+            audio_matrix_hop.device, "matrix",
+            input=audio_matrix_hop.input_value, inputKind="port", output=audio_matrix_hop.output,
+        )
+        path["audioNodes"] = [copy.deepcopy(nodes[0]), matrix_audio_node, *receiver_nodes]
+
+    for branch_hop in room_path.audio_branch_hops():
+        endpoint: dict = {"device": branch_hop.device, "label": house.label(devices[branch_hop.device]), "role": "audio"}
+        if branch_hop.input_value is not None:
+            endpoint.update(input=branch_hop.input_value, inputKind="selector")
         attached = False
-        for chain in (path.get("audioNodes", []), path["nodes"]):
-            for index, current in enumerate(chain):
-                if current["device"] == (link.get("from") or {}).get("device"):
-                    branch = copy.deepcopy(chain[:index + 1])
-                    branch[-1].update(output=link["from"]["port"], outputTransport=link["transport"])
-                    path["audioNodes"] = [*branch, {**endpoint, "inputTransport": link["transport"]}]
-                    attached = True
+        if branch_hop.from_device is not None:
+            chains = [path.get("audioNodes", []), path["nodes"], *path.get("displayBranches", [])]
+            for chain in chains:
+                for index, current in enumerate(chain):
+                    if current["device"] == branch_hop.from_device:
+                        branch = copy.deepcopy(chain[:index + 1])
+                        branch[-1].update(output=branch_hop.from_port, outputTransport=branch_hop.transport)
+                        path["audioNodes"] = [*branch, {**endpoint, "inputTransport": branch_hop.transport}]
+                        attached = True
+                        break
+                if attached:
                     break
-            if attached:
-                break
         if not attached:
             path["audioEndpoints"] = [{**endpoint, "wiring": "unknown"}]
     return path
+
+
+def _path(house: House, room: dict, source_id: str) -> dict:
+    """One configured route variant; control selectors are not connector IDs."""
+    config = house.data.get("routing") or {}
+    rooms = config.get("rooms") or {}
+    room_id = next((ident for ident, spec in rooms.items() if spec is room), None)
+    if room_id is not None:
+        room_path = hops.compile_room_path(house, room_id, source_id)
+        return _path_from_hop(house, room_path)
+    scratch = {**house.data, "routing": {**config, "rooms": {**rooms, "_tmp": room}}}
+    room_path = hops.compile_room_path_data(scratch, "_tmp", source_id, devices=house.by_id)
+    return _path_from_hop(house, room_path)
 
 
 def variants(path: dict) -> list[dict]:
@@ -104,23 +151,24 @@ def variants(path: dict) -> list[dict]:
 
 
 def path_nodes(path: dict) -> list[dict]:
-    return path["nodes"] + path.get("audioNodes", []) + path.get("audioEndpoints", [])
+    extra = [node for branch in path.get("displayBranches", []) for node in branch]
+    return path["nodes"] + extra + path.get("audioNodes", []) + path.get("audioEndpoints", [])
 
 
 def _usb(house: House, room_id: str, source_id: str) -> list[dict]:
     """The room's DEVICE ports assigned to this source's HOST on each matrix."""
-    config = house.data["routing"]
-    room = config["rooms"][room_id]
-    source = config["sources"][source_id]
-    only = (room.get("usb_only") or {}).get(source_id)
-    assignments = []
-    for matrix, ports in sorted((room.get("usb") or {}).items()):
-        moved = ports if only is None else only.get(matrix, [])
-        host = routing.usb_host(source, matrix, config["usb_off_host"])
-        if moved and host != config["usb_off_host"]:
-            assignments.append({"device": matrix, "label": house.label(house.by_id[matrix]),
-                                "host": host, "ports": sorted(moved)})
-    return assignments
+    room_path = hops.compile_room_path(house, room_id, source_id)
+    by_matrix: dict[str, tuple[int, list[int]]] = {}
+    for uhop in room_path.usb_hops():
+        if not uhop.active:
+            continue
+        if uhop.device not in by_matrix:
+            by_matrix[uhop.device] = (uhop.host_value, [])
+        by_matrix[uhop.device][1].append(uhop.port)
+    return [
+        {"device": matrix, "label": house.label(house.by_id[matrix]), "host": host, "ports": sorted(ports)}
+        for matrix, (host, ports) in sorted(by_matrix.items())
+    ]
 
 
 def _rooms(house: House) -> dict:
@@ -130,20 +178,18 @@ def _rooms(house: House) -> dict:
     sources = config.get("sources") or {}
     for room_id, room in (config.get("rooms") or {}).items():
         paths = {}
-        synced = routing.sync_sources(house, room_id)
+        has_synced = False
         for source_id in room.get("sources") or sources:
             if source_id not in sources:
                 continue
-            path = _path(house, room, source_id)
-            if source_id in synced:
-                leader = config["rooms"][room["receiver"]["sync_with"]]
-                alternate = {k: v for k, v in room.items() if k != "hdmi_switch"}
-                alternate.update(hdmi_output=leader["hdmi_output"],
-                                 receiver={**room["receiver"], "input": synced[source_id], "input_by_source": {}})
-                path["variants"] = {"synced": _path(house, alternate, source_id)}
+            room_path = hops.compile_room_path(house, room_id, source_id)
+            path = _path_from_hop(house, room_path)
+            if room_path.sync is not None:
+                has_synced = True
+                path["variants"] = {"synced": _path_from_hop(house, room_path, synced=True)}
             paths[source_id] = path
         rooms[room_id] = {"label": routing.room_label(house, room_id), "sources": paths}
-        if synced:
+        if has_synced:
             rooms[room_id]["routeStateItem"] = f"loc_{room_id}_source_lifecycle"
     return rooms
 
@@ -180,7 +226,8 @@ def validate(data: dict) -> list[str]:
     try:
         rooms = _rooms(house)
         paths = [variant for room in rooms.values() for path in room["sources"].values() for variant in variants(path)]
-        edges = [(a, b) for path in paths for chain in (path["nodes"], path.get("audioNodes", []))
+        edges = [(a, b) for path in paths
+                 for chain in (path["nodes"], *path.get("displayBranches", ()), path.get("audioNodes", ()))
                  for a, b in zip(chain, chain[1:], strict=False)]
         routed = {node["device"] for path in paths for node in path_nodes(path)}
         described = providers(house)
@@ -252,10 +299,8 @@ def _manifest(house: House, conf: Conf) -> dict:
             if usb := _usb(house, room_id, source_id):
                 path["usb"] = usb
             for variant in variants(path):
-                for key in ("nodes", "audioNodes"):
-                    if key not in variant:
-                        continue
-                    nodes, observed = variant[key], []
+                def insert_observers(nodes: list[dict]) -> list[dict]:
+                    observed = []
                     for index, current in enumerate(nodes):
                         observed.append(current)
                         if index + 1 < len(nodes):
@@ -266,5 +311,11 @@ def _manifest(house: House, conf: Conf) -> dict:
                                     if current.get("outputTransport"):
                                         inserted["outputTransport"] = current["outputTransport"]
                                     observed.append(inserted)
-                    variant[key] = observed
+                    return observed
+
+                for key in ("nodes", "audioNodes"):
+                    if key in variant:
+                        variant[key] = insert_observers(variant[key])
+                if "displayBranches" in variant:
+                    variant["displayBranches"] = [insert_observers(branch) for branch in variant["displayBranches"]]
     return {"version": 1, "devices": descriptions, "rooms": rooms}

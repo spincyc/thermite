@@ -42,6 +42,7 @@ TIMEOUT = 2000
 COMHEADS = frozenset({
     "get video status", "video switch", "get input status", "get output status",
     "set edid", "set video scaler", "set hdr conversion", "tx hdcp",
+    "cec command",
     "get_matrix_status", "host_switch",
     # The UKM-404 System page's Reboot button.
     "set_system_reboot",

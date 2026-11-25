@@ -4,6 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const { wrap, fit, length } = require("./grid");
+const SharedTopology = require("../../web/remote/topology");
 
 const plain = (value) => String(value == null ? "" : value).replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
 
@@ -14,9 +15,8 @@ function create(options = {}) {
   let controller = null;
   const fetcher = options.fetch || globalThis.fetch;
   function valid(value) {
-    if (!value || value.version !== 1 || !Array.isArray(value.nodes) || !Array.isArray(value.rooms)
-        || !value.routes || typeof value.routes !== "object") throw new Error("Invalid topology catalogue");
-    return value;
+    if (!value || typeof value !== "object") throw new Error("Invalid topology catalogue");
+    return SharedTopology.catalogue(Object.assign({ edges: [] }, value));
   }
   async function open() {
     const current = ++generation;
@@ -57,54 +57,31 @@ function url(base, room, source, mock, native = false) {
 }
 
 function sourceGroups(manifest, roomId) {
-  const uses = new Map();
-  Object.entries(manifest.routes).forEach(([room, routes]) => Object.keys(routes).forEach((id) => {
-    if (!uses.has(id)) uses.set(id, new Set());
-    uses.get(id).add(room);
-  }));
-  const groups = { shared: [], local: [] };
-  Object.entries(manifest.routes[roomId] || {}).forEach(([id, route]) => {
-    groups[uses.get(id).size > 1 ? "shared" : "local"].push({ id, label: route.label });
-  });
-  return groups;
+  return SharedTopology.sourceGroups(manifest, roomId);
 }
 
 const FIELDS = ["source", "matrix", "switch", "receiver", "observer", "display", "status"];
 const TITLES = { source: "Source", matrix: "Matrix", switch: "Switch", receiver: "Receiver", observer: "Observer", display: "Display", status: "Status", chain: "Chain" };
-const STATUS_ORDER = ["Reported", "Route unconfirmed", "Switching", "Configured", "Room off", "Unknown", "Live unavailable"];
+const STATUS_ORDER = ["Reported", "Route unconfirmed", "Switching", "Partially on", "Configured", "Room off", "Unknown", "Live unavailable"];
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 
-function status(routes, source, reading = {}, connected) {
-  if (connected === false) return "Live unavailable";
-  if (reading.pending === source && own(routes, reading.pending)) return "Switching";
-  if (reading.value === source && own(routes, reading.value)) return "Reported";
-  if (reading.value === "off") return "Room off";
-  return own(routes, reading.value) ? "Configured" : "Unknown";
+function status(manifest, roomId, source, reading = {}, connected) {
+  return SharedTopology.routeStatus(manifest, roomId, source, reading, connected).label;
 }
 
 function ports(node) {
-  const out = [];
-  if (node.input != null) out.push((node.inputKind === "selector" ? "input selector " : "in ") + plain(node.input));
-  if (node.output != null) out.push("out " + plain(node.output));
-  if (node.wiring === "unknown") out.push("wiring unknown");
-  if (node.zone != null) out.push("zone " + plain(node.zone));
-  return out;
+  const summary = SharedTopology.nativePorts(node);
+  return summary ? summary.split(" · ") : [];
 }
 
 function shortLabel(node, manifest) {
-  let label = plain(node.label || node.device);
-  const device = manifest.nodes.find(entry => entry.id === node.device);
-  if (device && device.model) {
-    const model = plain(device.model), make = plain(device.make);
-    const suffix = " (" + (!make || model.toLowerCase().startsWith(make.toLowerCase()) ? model : make + " " + model) + ")";
-    if (label.endsWith(suffix)) label = label.slice(0, -suffix.length);
-  }
-  return label;
+  return plain(SharedTopology.compactLabel(manifest, node));
 }
 
 // A path that carries a picture or sound alone says so (routing's carries).
 function carried(route) {
-  return route.carries === "display" ? " (display only)" : route.carries === "audio" ? " (audio only)" : "";
+  const label = SharedTopology.carriesLabel(route);
+  return label ? " (" + label.toLowerCase() + ")" : "";
 }
 
 function routeRows(manifest, roomId, reading, connected) {
@@ -112,7 +89,7 @@ function routeRows(manifest, roomId, reading, connected) {
   return Object.entries(routes).map(([id, route]) => {
     const stages = {};
     FIELDS.slice(1, -1).forEach(role => { stages[role] = route.nodes.filter(node => node.role === role); });
-    const reported = status(routes, id, reading, connected);
+    const reported = status(manifest, roomId, id, reading, connected);
     return { id, room: roomId, label: plain(route.label || id) + carried(route), route, stages,
       status: route.variants?.synced && reported === "Reported" ? "Route unconfirmed" : reported };
   });
@@ -177,7 +154,8 @@ function content(g, width, ctx) {
   const connected = ctx.session.connected();
   const rows = orderedRows(routeRows(manifest, room.id, reading, connected), state.sortField, state.sortDescending);
   const preview = rows.find(row => row.id === state.source) || rows[0];
-  const source = own(routes, reading.value) ? plain(routes[reading.value].label) : reading.value === "off" ? "Room off" : "Unknown";
+  const source = own(routes, reading.value) ? plain(routes[reading.value].label)
+    : reading.value === "off" ? "Room off" : reading.value === "partial" ? "Partially on" : "Unknown";
   const report = connected ? source : "Live unavailable · last report: " + source;
   line(room.label + " · " + manifest.nodes.length + " devices", "strong");
   line(!rows.length ? "No room source selector" : "Room source: " + report + (own(routes, reading.pending) ? " · Switching to " + plain(routes[reading.pending].label) : ""));

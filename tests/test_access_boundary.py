@@ -13,13 +13,15 @@ from urllib.parse import urlsplit
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 from oh_conf import House
+import oh_host
 import oh_ports
 import oh_render
 from oh_access import native_boundary as boundary
 from oh_cli import generate, sandbox as sandbox_cli
 
 # Explicitly generated locally administered fixture identity, never a device MAC.
-DEVICE = {"ip": "192.0.2.20", "mac": bytes((2, 0, 0, 0, 0, 20)).hex(":"), "sonos_udn": "RINCON_02000000001401400"}
+UDN = "RINCON_02000000001401400"
+DEVICE = {"ip": "192.0.2.20", "mac": bytes((2, 0, 0, 0, 0, 20)).hex(":"), "config": {"sonos": {"udn": UDN}}}
 ORIGIN = "http://127.0.0.1:13602"
 
 
@@ -29,7 +31,7 @@ def service(name, namespace="upnp-org"):
 
 
 def descriptor(root_service="DeviceProperties", embedded=True):
-    udn = DEVICE["sonos_udn"]
+    udn = UDN
     child = (f"<deviceList><device><UDN>uuid:{udn}_MR</UDN><serviceList>"
              + service("AVTransport") + "</serviceList></device></deviceList>") if embedded else ""
     return (f'<root xmlns="{boundary.DEVICE_NAMESPACE}"><device><UDN>uuid:{udn}</UDN>'
@@ -99,7 +101,7 @@ class Native:
 class Descriptors(unittest.TestCase):
     def test_only_actual_device_service_pairs_are_admitted(self):
         routes = boundary.descriptor_routes(descriptor(), DEVICE)
-        root = DEVICE["sonos_udn"]
+        root = UDN
         self.assertEqual(routes, {
             f"/upnpcallback/dev/{root}/svc/sonos-com/DeviceProperties/event/cb": DEVICE["ip"],
             f"/upnpcallback/dev/{root}_MR/svc/upnp-org/AVTransport/event/cb": DEVICE["ip"]})
@@ -112,7 +114,7 @@ class Descriptors(unittest.TestCase):
 
     def test_rejects_other_identity_duplicate_udn_wrong_mac_or_foreign_namespace(self):
         source = descriptor()
-        cases = [source.replace(DEVICE["sonos_udn"].encode(), b"RINCON_02000000009901400"),
+        cases = [source.replace(UDN.encode(), b"RINCON_02000000009901400"),
                  source.replace(b"01400_MR", b"01400"),
                  source.replace(b"urn:upnp-org:serviceId:AVTransport", b"urn:evil:serviceId:AVTransport"),
                  source.replace(b"<eventSubURL>/MediaRenderer/", b"<eventSubURL>http://198.51.100.4:1400/"),
@@ -362,10 +364,10 @@ def nft_snapshot():
 def house(controls, udn=True):
     """A house whose one device is DEVICE, listing `controls`."""
     device = {"id": "example_arc", "room": "example_lounge", "kind": "soundbar", "make": "Sonos", "model": "Arc",
-              **DEVICE, "controls": controls}
+              **copy.deepcopy(DEVICE), "controls": controls}
     if not udn:
-        del device["sonos_udn"]
-    return {"version": 1, "rooms": {"example_lounge": {"label": "Example Lounge", "tag": "Room"}}, "devices": [device]}
+        del device["config"]
+    return {"version": 2, "rooms": {"example_lounge": {"label": "Example Lounge", "tag": "Room"}}, "devices": [device]}
 
 
 class RenderedProxyPort(unittest.TestCase):
@@ -414,7 +416,7 @@ class RenderedProxyPort(unittest.TestCase):
                     contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 generate.main(["--house", str(root / "instance/devices.yaml"), "--conf", str(output / "conf"),
                                "--root", str(output)])
-            self.assertEqual(build.call_args.kwargs["host"], json.loads((AREA / "instance/host.yaml").read_text()))
+            self.assertEqual(build.call_args.kwargs["host"], oh_host.load(AREA / "instance/host.yaml"))
             self.assertEqual((output / "conf" / oh_render.UPNP_CFG).read_text().splitlines()[-1],
                              f"org.jupnp:httpProxyPort={oh_ports.CALLBACK_PORT}")
 

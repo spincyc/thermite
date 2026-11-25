@@ -13,7 +13,7 @@ class Matrix(BK808):
         self.before = copy.deepcopy(self.status)
 
     def handlers(self):
-        return {"get video status": super().handlers()["get video status"], "cec command": self.cec}
+        return {**super().handlers(), "cec command": self.cec}
 
     def cec(self, request: dict) -> dict:
         ports = [int(i == self.input - 1) for i in range(8)]

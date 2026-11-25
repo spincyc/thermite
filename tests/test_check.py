@@ -25,6 +25,7 @@ sys.path.insert(0, str(AREA))
 sys.path.insert(0, str(AREA / "lib"))
 
 import oh_cli  # noqa: E402
+import oh_host  # noqa: E402
 import oh_inventory as inventory  # noqa: E402
 import oh_paths  # noqa: E402
 import oh_render as render  # noqa: E402
@@ -33,7 +34,7 @@ from oh_conf import Conf, House  # noqa: E402
 from oh_integrations import sony_ip_control as sony  # noqa: E402
 from tests import test_generated_output  # noqa: E402
 
-EXAMPLE = json.loads((AREA / "instance/devices.yaml").read_text(encoding="utf-8"))
+EXAMPLE = inventory.load(AREA / "instance/devices.yaml")
 STRANGER = "http:url:stranger"
 
 
@@ -390,7 +391,7 @@ class Site(unittest.TestCase):
         self.assertEqual(self.files(), before)
 
     def test_a_host_file_it_cannot_use_stops_the_build_and_the_lint_still_runs(self):
-        host = json.loads((self.site / "instance/host.yaml").read_text(encoding="utf-8"))
+        host = oh_host.load(self.site / "instance/host.yaml")
         (self.site / "instance/host.yaml").write_text(json.dumps({**host, "state_root": "/mnt/example"}), encoding="utf-8")
         before = self.files()
         done = self.thermite("check")

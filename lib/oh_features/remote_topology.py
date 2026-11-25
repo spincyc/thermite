@@ -73,7 +73,7 @@ def manifest(house: House, conf: Conf) -> dict:
 
     def route_path(path):
         result = {"label": path["label"], "nodes": copy.deepcopy(path["nodes"]), "carries": path["carries"]}
-        for key in ("audioNodes", "audioEndpoints", "usb"):
+        for key in ("displayBranches", "audioNodes", "audioEndpoints", "usb"):
             if path.get(key):
                 result[key] = copy.deepcopy(path[key])
         if path.get("variants"):
@@ -85,7 +85,10 @@ def manifest(house: House, conf: Conf) -> dict:
         for source_id, path in sorted(room["sources"].items()):
             route = route_path(path)
             for variant in remote_diagnostics.variants(path):
-                for kind, chain in (("video", variant["nodes"]), ("audio", variant.get("audioNodes", []))):
+                chains = [("video", variant["nodes"]),
+                          *(("video", branch) for branch in variant.get("displayBranches", ())),
+                          ("audio", variant.get("audioNodes", ()))]
+                for kind, chain in chains:
                     for before, after in zip(chain, chain[1:], strict=False):
                         ports = {}
                         if before.get("output") is not None:

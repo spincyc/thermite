@@ -32,15 +32,16 @@ from tests.test_zone_sync import HOUSE as ROUTED  # noqa: E402
 SWITCH = {"id": "example_switch", "room": "example_desk", "kind": "hdmi_switch", "make": "HDFury", "model": "VRROOM",
           "ip": "192.0.2.40", "controls": {"observe": ["vrroom_http"], "control": ["vrroom_telnet"]}, "reboot": "nightly"}
 RECEIVER = {"id": "example_receiver", "room": "example_lounge", "kind": "avr", "make": "Marantz", "model": "CINEMA 60",
-            "ip": "192.0.2.50", "heos_pid": 101, "reboot": "nightly",
+            "ip": "192.0.2.50", "config": {"heos": {"pid": 101}}, "reboot": "nightly",
             "controls": {"observe": ["denonmarantz_http"], "control": ["denonmarantz_http", "heos"]}}
 SMALL = {"id": "example_small_receiver", "room": "example_lounge", "kind": "avr", "make": "Marantz",
-         "model": "CINEMA 30", "ip": "192.0.2.51", "heos_pid": 102, "zones": 1,
+         "model": "CINEMA 30", "ip": "192.0.2.51",
+         "config": {"heos": {"pid": 102}, "denonmarantz_http": {"zones": 1}},
          "controls": {"observe": ["denonmarantz_http"], "control": ["denonmarantz_http", "heos"]}}
 TV = {"id": "example_tv", "room": "example_lounge", "kind": "tv", "make": "Sony", "model": "XR-65A80L",
       "ip": "192.0.2.60", "controls": {"observe": ["network_ping"]}}
 HOUSE = {
-    "version": 1,
+    "version": 2,
     "rooms": {"example_desk": {"label": "Example Desk", "tag": "Room"},
               "example_lounge": {"label": "Example Lounge", "tag": "Room"}},
     "devices": [SWITCH, TV, RECEIVER, SMALL],
@@ -124,7 +125,7 @@ def den():
     """A fictional room shown by output 4 of its own AVPro matrix
     (example_avpro), which restarts nightly."""
     return {
-        "version": 1,
+        "version": 2,
         "rooms": {"example_den": {"label": "Example Den", "tag": "Room"}},
         "devices": [
             {"id": "example_avpro", "room": "example_den", "kind": "hdmi_matrix", "make": "AVPro Edge",

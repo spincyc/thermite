@@ -386,7 +386,7 @@ class Allowlist(SimpleTestCase):
         # /static/remote/<name>?v=<hash of its bytes>. The query never reaches
         # the allowlist: the route's bare name does, and the listener admits it.
         import oh_render
-        files = oh_render.render(House({"version": 1, "rooms": {}, "devices": []}),
+        files = oh_render.render(House({"version": 2, "rooms": {}, "devices": []}),
                                  versions={"openhab": {"version": "0.0.0"}})
 
         def content(name):

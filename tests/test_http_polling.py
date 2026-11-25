@@ -36,7 +36,7 @@ def device(ident, room, kind, number, **extra):
 
 
 HOUSE = {
-    "version": 1,
+    "version": 2,
     "rooms": {CINEMA: {"label": "Example Cinema", "tag": "Room"}, LOUNGE: {"label": "Example Lounge", "tag": "Room"}},
     "devices": [
         device("example_matrix", CINEMA, "hdmi_matrix", 20, make="BZBGEAR", model="BK-808",

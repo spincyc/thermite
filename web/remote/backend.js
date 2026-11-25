@@ -125,16 +125,21 @@
   "use strict";
 
   const OFF = "off";
+  const PARTIAL = "partial";
   const UNDEF = "UNDEF";
   const NULL_STATE = "NULL";
 
   // On every remote, and always the room's audio device.
   const AUDIO = { volume_up: true, volume_down: true, mute: true };
 
-  // How long a choice waits to be read back: routing.js's RECENT_MS (the
-  // model's holdMs, 15 s unless a receiver reports later), and a second.
-  function confirmMs(house) {
-    return (house.holdMs || 15000) + 1000;
+  // How long a choice waits to be read back: routing.js's per-room holdMs
+  // (falling back to house.holdMs, or 15 s), plus a second.
+  function confirmMs(house, roomId) {
+    const room = roomId && house && Array.isArray(house.rooms)
+      ? house.rooms.find((candidate) => candidate.id === roomId)
+      : null;
+    const hold = (room && room.holdMs) || (house && house.holdMs) || 15000;
+    return hold + 1000;
   }
   // How long a value sent is stepped or toggled from instead of the one read
   // back: a held volume key repeats faster than a device reports, and a
@@ -205,6 +210,15 @@
     return global.REMOTE_LAYOUTS;
   }
 
+  function resolveLayout(remoteId, house) {
+    if (global.RemoteLayouts && typeof global.RemoteLayouts.layoutPlan === "function") {
+      return global.RemoteLayouts.layoutPlan(remoteId, house || global.REMOTE_HOUSE || global.REMOTE_LAYOUTS);
+    }
+    const houseMap = house && house.layouts && house.layouts.remotes;
+    const remote = (houseMap && houseMap[remoteId]) || (layouts().remotes && layouts().remotes[remoteId]);
+    return remote || null;
+  }
+
   // A commissioned IR profile offers only its individually verified keys.
   // Absence of this descriptor preserves the established native remotes.
   function buttonAvailable(house, deviceId, button) {
@@ -215,9 +229,10 @@
   }
 
   // Every button a remote has, Volume and Mute aside.
-  function buttonsOf(remoteId) {
-    const remote = layouts().remotes[remoteId];
+  function buttonsOf(remoteId, house) {
+    const remote = resolveLayout(remoteId, house);
     if (!remote) throw new Error("unknown remote: " + remoteId);
+    if (Array.isArray(remote.buttons)) return remote.buttons.slice();
     return [].concat(
       remote.corners || [],
       remote.corners ? ["up", "down", "left", "right", "ok"] : [],
@@ -294,9 +309,10 @@
       throw new Error(deviceId ? device(house, deviceId).label + " is not on the " + room.label + " screen now"
         : "Nothing is on in the " + room.label + ": choose a source first");
     }
-    const remote = layouts().remotes[target.remote];
+    const remote = resolveLayout(target.remote, house);
+    if (!remote) throw new Error("unknown remote: " + target.remote);
     if (remote.note) throw new Error(remote.note.replace("{device}", target.label));
-    if (buttonsOf(target.remote).indexOf(button) < 0) throw new Error("The " + remote.label + " has no " + spec.label);
+    if (buttonsOf(target.remote, house).indexOf(button) < 0) throw new Error("The " + remote.label + " has no " + spec.label);
     if (!buttonAvailable(house, target.id, button)) throw new Error((target.availability || {}).note || "This key is not configured");
     result.device = target;
     return result;
@@ -742,7 +758,9 @@
     this.base = config.base || "";
     this.fetch = config.fetch || ((url, init) => global.fetch(url, init));
     this.EventSource = config.EventSource || global.EventSource;
-    this.timeout = config.timeout != null ? config.timeout : confirmMs(house);
+    this._defaultTimeout = confirmMs(house);
+    this.timeout = config.timeout != null ? config.timeout : this._defaultTimeout;
+    this.sse = null;
     this.view = config.view === "home" ? "home" : "remote";
     // The state verb a room's Source arrives as in this view.
     this.sourceVerb = this.view === "home" ? "statechanged" : "stateupdated";
@@ -1144,7 +1162,12 @@
 
   // The view's one event stream, open while the page is shown.
   OpenHabBackend.prototype.listen = function () {
-    if (this.source) this.source.close();
+    if (this.sse) {
+      this.sse.close();
+      this.sse = null;
+    } else if (this.source) {
+      this.source.close();
+    }
     this.source = null;
     const generation = ++this.streamGeneration;
     this.synced = false;
@@ -1152,6 +1175,29 @@
     this.cancelReads("snapshot");
     if (!this.EventSource || !this.active || this.stopped) {
       this.release();
+      return;
+    }
+    if (global.ThermiteSse && typeof global.ThermiteSse.create === "function") {
+      this.sse = global.ThermiteSse.create({
+        url: () => this.eventsUrl(),
+        EventSource: this.EventSource,
+        backoff: REOPEN_MS,
+        active: this.active,
+        onSource: (source) => { if (generation === this.streamGeneration && !this.stopped) this.source = source; },
+        onOpen: () => {
+          if (generation !== this.streamGeneration || this.stopped) return;
+          this.reopenAttempt = 0;
+          if (this.native()) { this.reconnected(); this.readStates(generation); }
+        },
+        onMessage: (message) => {
+          if (generation === this.streamGeneration && !this.stopped) this.onMessage(message.data);
+        },
+        onError: () => {
+          if (generation !== this.streamGeneration || this.stopped) return;
+          this.disconnected();
+        }
+      });
+      this.source = this.sse.open();
       return;
     }
     const source = this.source = new this.EventSource(this.eventsUrl());
@@ -1206,7 +1252,8 @@
     this.cancelDiagnostics();
     this.cancelReads();
     this.streamGeneration += 1;
-    if (this.source) this.source.close();
+    if (this.sse) { this.sse.stop(); this.sse = null; }
+    else if (this.source) this.source.close();
     this.source = null;
     this.release();
     Object.values(this.timers).forEach((timer) => clearTimeout(timer));
@@ -1309,7 +1356,7 @@
       item.unconfirmed = sourceId;
       this.settle(roomId);
       this.emitState(roomId);
-    }, this.timeout);
+    }, this.timeout !== this._defaultTimeout ? this.timeout : confirmMs(this.house, roomId));
   };
 
   OpenHabBackend.prototype.choiceFailed = function (roomId, sourceId) {
@@ -1401,9 +1448,11 @@
 
   global.RemoteBackend = {
     OFF: OFF,
+    PARTIAL: PARTIAL,
     UNDEF: UNDEF,
     AUDIO: AUDIO,
     AIM_MS: AIM_MS,
+    confirmMs: confirmMs,
     heldMs: heldMs,
     ALL_OFF: ALL_OFF,
     get MockBackend() { return mockBackend(); },

@@ -134,12 +134,18 @@
     const Remote = global.RemoteBackend;
     const backend = config.backend;
     const house = config.house || global.REMOTE_HOUSE;
-    const layouts = config.layouts || global.REMOTE_LAYOUTS;
+    const layouts = config.layouts || (global.RemoteLayouts ? global.RemoteLayouts.forHouse(house) : global.REMOTE_LAYOUTS);
     const store = config.store || memoryStore();
     const listen = config.listen || null;
     const now = config.now || (() => Date.now());
     const later = config.setTimeout || ((callback, ms) => global.setTimeout(callback, ms));
     const cancel = config.clearTimeout || ((handle) => global.clearTimeout(handle));
+    const hold = global.ThermiteHold
+      ? global.ThermiteHold.createHold({
+          now: now, setTimeout: later, clearTimeout: cancel, duration: SLIDE_HOLD,
+          onExpire: () => emit({ type: "audio" })
+        })
+      : null;
     // Only the mock can simulate the matrix; the views show its Item names and demo controls.
     const demo = Boolean(backend.simulateExternalSwitch);
 
@@ -440,6 +446,7 @@
       unsubscribe = null;
       closeDiagnostics();
       if (fader.timer) { cancel(fader.timer); sendVolume(); }
+      if (hold) hold.stop();
       [fader.timer, fader.release, muteRelease, allOffArmed.timer].forEach(cancel);
       fader.timer = fader.release = muteRelease = allOffArmed.timer = allOffArmed.at = 0;
     }
@@ -451,6 +458,7 @@
         if (event.unauthorized) {
           closeDiagnostics();
           for (const cache of [signalViews, signalConfirmed, signalSince]) Object.keys(cache).forEach((id) => delete cache[id]);
+          if (hold) hold.clear();
           cancel(fader.timer); cancel(fader.release); cancel(muteRelease); cancel(allOffArmed.timer);
           Object.assign(fader, { room: null, device: null, value: null, at: 0, dragging: false, sent: null, sentTo: null, timer: 0, release: 0 });
           muteRelease = 0; inputsOf = null; offArmed = null; allOffArmed.at = 0; allOffArmed.timer = 0;
@@ -490,7 +498,10 @@
         devices[event.device] = event.state;
         // The slider stops showing what it sent once the device reports it, and
         // sends that value again once the device has moved off it (its own knob).
-        if (fader.device === event.device && event.state.level === fader.value && !fader.dragging) fader.at = 0;
+        if (fader.device === event.device && event.state.level === fader.value && !fader.dragging) {
+          fader.at = 0;
+          if (hold) hold.clear("volume:" + event.device);
+        }
         if (fader.sentTo === event.device && event.state.level !== fader.sent) fader.sent = null;
         emit({ type: "device", device: event.device });
         if ((Remote.controlOf(house, event.device) || {}).playback
@@ -589,6 +600,14 @@
         return { led: "bad", short: "Unknown", spoken: "source unknown. " + reason, problem: "Source unknown: " + reason };
       }
       if (state.status === "unknown") return { led: "off", short: "…", spoken: "reading" };
+      if (state.value === (Remote.PARTIAL || "partial")) {
+        return {
+          led: "partial",
+          short: "Partially on",
+          spoken: "partially on. Some devices are on without a complete route",
+          problem: "Partially on: some devices are on without a complete route. Choose a source or turn Off."
+        };
+      }
       const source = option(room, state.value);
       if (!source) {
         const problem = "Source unknown: the matrix shows an input " + room.label + " does not offer";
@@ -723,7 +742,7 @@
       if (current && mode() === "listen") return listen.key(candidates);
       if (refused()) return null;
       const target = activeTarget(controls());
-      const offered = target ? Remote.buttonsOf(target.remote) : [];
+      const offered = target ? Remote.buttonsOf(target.remote, house) : [];
       const button = candidates.find((id) => Remote.AUDIO[id] || offered.indexOf(id) >= 0) || candidates[0];
       press(button);
       return button;
@@ -732,8 +751,13 @@
     // Mute lights for a press at once, as the slider holds a volume just set,
     // and shows what the device reports once it does or the hold ends.
     function holdMute(deviceId) {
-      cancel(muteRelease);
-      muteRelease = later(() => emit({ type: "audio" }), Remote.heldMs(Remote.controlOf(house, deviceId), Remote.AIM_MS.mute) + 50);
+      const wait = Remote.heldMs(Remote.controlOf(house, deviceId), Remote.AIM_MS.mute) + 50;
+      if (hold) {
+        hold.set("mute:" + deviceId, true, wait);
+      } else {
+        cancel(muteRelease);
+        muteRelease = later(() => emit({ type: "audio" }), wait);
+      }
       emit({ type: "audio" });
     }
 
@@ -818,10 +842,15 @@
     // Hold the slider at a volume just set, until the device reports it.
     function held(deviceId, value) {
       Object.assign(fader, { room: current.id, device: deviceId, value: value, at: now() });
+      const wait = Remote.heldMs(Remote.controlOf(house, deviceId), SLIDE_HOLD) + 50;
       // A device that ignored the volume (in standby) reports nothing, so the
       // slider goes back to what it last reported when the hold ends.
-      cancel(fader.release);
-      fader.release = later(() => emit({ type: "audio" }), Remote.heldMs(Remote.controlOf(house, deviceId), SLIDE_HOLD) + 50);
+      if (hold) {
+        hold.set("volume:" + deviceId, value, wait);
+      } else {
+        cancel(fader.release);
+        fader.release = later(() => emit({ type: "audio" }), wait);
+      }
       emit({ type: "audio" });
     }
 
@@ -998,7 +1027,13 @@
     }
 
     function remoteOf(target) {
-      return target ? layouts.remotes[target.remote] : null;
+      if (!target || !target.remote) return null;
+      if (global.RemoteLayouts && typeof global.RemoteLayouts.layoutPlan === "function") {
+        return global.RemoteLayouts.layoutPlan(target.remote, layouts) || global.RemoteLayouts.layoutPlan(target.remote, house);
+      }
+      return (layouts && layouts.remotes && layouts.remotes[target.remote])
+        || (house && house.layouts && house.layouts.remotes && house.layouts.remotes[target.remote])
+        || null;
     }
 
     function spec(button) {

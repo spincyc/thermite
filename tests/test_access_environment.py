@@ -106,10 +106,12 @@ class Commands(unittest.TestCase):
         self.assertEqual(environment.pins(REQUIREMENTS), len([line for line in text.splitlines() if "==" in line]))
         self.assertGreater(environment.pins(REQUIREMENTS), 20)
         pinned = {line.split("==")[0].lower().replace("-", "_") for line in text.splitlines() if "==" in line}
-        self.assertLessEqual({"argon2_cffi", "django", "h2", "httpx", "hypercorn", "prometheus_client", "uvicorn",
+        self.assertLessEqual({"argon2_cffi", "django", "h2", "httpx", "hypercorn", "prometheus_client",
                               "pyyaml"}, pinned)
+        self.assertNotIn("uvicorn", pinned)
+        self.assertNotIn("click", pinned)
         self.assertEqual(environment.IMPORTS, ("argon2", "django", "h2", "httpx", "hypercorn", "prometheus_client",
-                                               "uvicorn", "yaml"))
+                                               "yaml"))
 
 
 class Host:
@@ -177,7 +179,7 @@ class Wheels(unittest.TestCase):
         self.assertEqual(staging.wheels(self.site, IMAGE, self.site), (self.wheels, REQUIREMENTS))
         check = self.step.check(Host())
         self.assertEqual((check.done, check.problem), (False, None))
-        self.assertEqual(check.detail, f"the 24 pinned wheels of the gateway's services, in {self.wheels}, "
+        self.assertEqual(check.detail, f"the 22 pinned wheels of the gateway's services, in {self.wheels}, "
                                        "checked by the pinned image's pip without a network")
         self.assertTrue(self.step.always)
 
@@ -228,6 +230,27 @@ class Wheels(unittest.TestCase):
         system.run = lambda argv, cwd: 1
         self.assertEqual(self.step.fetch(system), 1)
         self.assertFalse(self.wheels.exists())
+
+    def test_atv_wheels_prefetch_and_atv_environment_builds_offline(self):
+        pyatv_reqs = (AREA / "lib/requirements-pyatv.txt").read_bytes()
+        (self.site / "lib/requirements-pyatv.txt").write_bytes(pyatv_reqs)
+        atv_step = steps.AtvWheels(self.context)
+        atv_wheels = environment.wheelhouse(self.site, IMAGE, pyatv_reqs)
+        self.assertEqual(atv_step.wanted(), (IMAGE, atv_wheels, pyatv_reqs))
+        system = Host()
+        system.wheels = atv_wheels
+        self.assertEqual(atv_step.fetch(system), 0)
+        self.assertEqual(system.ran, [
+            ("sudo", "-v"),
+            ("sudo", *environment.fetch_command(IMAGE, atv_wheels, steps.PYATV_REQUIREMENTS_FILE)),
+            ("sudo", *environment.verify_command(IMAGE, atv_wheels, steps.PYATV_REQUIREMENTS_FILE)),
+        ])
+        self.assertEqual((atv_wheels / steps.PYATV_REQUIREMENTS_FILE).read_bytes(), pyatv_reqs)
+        env_step = steps.AtvEnvironment(self.context)
+        argv = env_step.command()
+        self.assertIn("--network=none", argv)
+        self.assertIn(f"{atv_wheels}:/wheels:ro,z", argv)
+        self.assertEqual(argv[-5:], ("apple-tv", "setup", "--find-links", "/wheels", "--if-needed"))
 
 
 class Staged(unittest.TestCase):

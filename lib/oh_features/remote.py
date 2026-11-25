@@ -39,7 +39,7 @@ NAME = "remote"
 SOURCE = LIB.parent / "web/remote"
 TARGET = "html/remote"
 #: Every file the page loads; README.md stays behind.
-FILES = ("index.html", "theme.css", "remote.css", "house.js", "remotes.js", "activity.js", "activity.json", "diagnostics.js", "diagnostics.json", "backend.js", "session.js", "log.js", "remote.js",
+FILES = ("index.html", "theme.css", "remote.css", "house.js", "dom.js", "sse.js", "hold.js", "remotes.js", "activity.js", "activity.json", "diagnostics.js", "diagnostics.json", "backend.js", "session.js", "log.js", "remote.js",
          "appearance.js", "navigation.js", "shell.js", "shell.css", "home.html", "home.css", "home.js", "alerts.js", "security.html",
          "system.html", "system.js", "system.json",
          "access-config.js", "access.js", "access-ui.js", "access.css", "access.html", "users.html", "settings.html",

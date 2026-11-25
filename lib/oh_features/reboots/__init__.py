@@ -39,9 +39,10 @@ Nothing cuts a device's power; a device that does not answer again is left
 to the health checks' alerts.
 
 A device `when_hung` restarts by itself once part of it has hung while the
-rest still answers: its reboot() spec names `hung`, the Things that go
-OFFLINE then and for how long they must stay so (a VRROOM's web API, five
-missed polls, while telnet still answers). The rule looks each minute.
+rest still answers: its integration's recovery() hook names the Things that go
+OFFLINE then, for how long they must stay so, and the recovery item and action
+(a VRROOM's web API, five missed polls, while telnet still answers). The rule
+looks each minute.
 Only while each room that shows it (routing `hdmi_switch`) or whose ports
 it switches (`usb`) is Off, so a restart never blanks a room in use; one
 no room lists cannot opt in. A device restarted within HUNG_GAP_MS for any
@@ -60,6 +61,7 @@ from oh_shape import MAPPING, TEXT, Key
 from oh_integrations import _io
 
 from .. import routing
+from ..routing import hops
 
 NAME = "reboots"
 ITEM = "house_reboot"
@@ -94,6 +96,17 @@ HEADER = (
 def provider(device: dict):
     """The integration under control that can restart the device, or None."""
     return next((module for module in integrations.defining("reboot") if uses(device, "control", module.NAME)), None)
+
+
+def recovery_provider(device: dict):
+    """The integration under control that declares hang detection and recovery, or None."""
+    return next((module for module in integrations.defining("recovery") if uses(device, "control", module.NAME)), None)
+
+
+def recovery_spec(device: dict) -> dict | None:
+    """The device's declarative recovery() descriptor when one applies, else None."""
+    module = recovery_provider(device)
+    return module.recovery(device) if module else None
 
 
 def nightly(device: dict) -> bool:
@@ -132,7 +145,7 @@ def validate(data: dict) -> list[str]:
                             f"these can: {', '.join(able)}")
         elif not device.get("id"):
             continue
-        elif when_hung(device) and "hung" not in (spec := provider(device).reboot(device)):
+        elif when_hung(device) and recovery_spec(device) is None:
             problems.append(f"{where}.reboot: {provider(device).NAME} cannot tell when it hangs, "
                             f"so it can only be {NIGHTLY}")
         elif when_hung(device) and not rooms_off(data, device, HUNG_ROOMS):
@@ -154,32 +167,23 @@ def rank(device: dict) -> int:
 
 
 def rooms_off(data: dict, device: dict, spec: dict | None = None) -> list[dict]:
-    """Idle readings for a matrix with none of its own: each room whose
+    """Idle readings derived from the routing hop graph: each room whose
     device ports it switches (routing `usb`) is Off, and, when its reboot()
-    `spec` says `rooms`, each room that shows one of its outputs (routing
-    `hdmi_switch` or `routing.hdmi_matrix`). Ports and outputs no room lists
-    are not read."""
-    routed = data.get("routing")
-    rooms = routed.get("rooms") if isinstance(routed, dict) else None
+    `spec` says `rooms`, each room that shows one of its outputs or stages
+    (routing `hdmi_switch`, `hdmi_switches`, `routing.hdmi_matrix`, or stage).
+    Ports and outputs no room lists are not read."""
     shown = bool(spec and spec.get("rooms"))
-    hdmi_matrix = shown and isinstance(routed, dict) and device["id"] == routed.get("hdmi_matrix")
-
-    def serves(room: dict) -> bool:
-        usb, switch = room.get("usb"), room.get("hdmi_switch")
-        return (isinstance(usb, dict) and device["id"] in usb) or \
-            (shown and isinstance(switch, dict) and switch.get("device") == device["id"]) or \
-            (hdmi_matrix and ("hdmi_output" in room or "hdmi_audio_output" in room))
-    return [{"item": routing.item_name(room), "is": routing.OFF}
-            for room, entry in (rooms if isinstance(rooms, dict) else {}).items()
-            if isinstance(entry, dict) and serves(entry)]
+    rooms = hops.device_rooms(data, device["id"], include_video=shown, include_stages=shown)
+    return [{"item": routing.item_name(room), "is": routing.OFF} for room in rooms]
 
 
 def entry(house: House, device: dict) -> dict:
     spec = provider(device).reboot(device)
     unread_rooms = (rooms_off(house.data, device, HUNG_ROOMS)
                     if any(check.get("unreadIsIdle") for check in spec["idle"]) else [])
-    hung = {"hung": {"things": list(spec["hung"]["things"]), "seconds": spec["hung"]["seconds"],
-                     "idle": rooms_off(house.data, device, HUNG_ROOMS)}} if when_hung(device) and "hung" in spec else {}
+    rec = recovery_spec(device) if when_hung(device) else None
+    hung = {"hung": {"things": list(rec["things"]), "seconds": rec["seconds"],
+                     "idle": rooms_off(house.data, device, HUNG_ROOMS)}} if rec else {}
     return {"id": device["id"], "nightly": nightly(device),
             "item": spec["item"], "answers": list(spec["answers"]), "things": list(spec.get("things", ())),
             "signs": list(spec.get("signs", ())),

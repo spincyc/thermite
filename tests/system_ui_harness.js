@@ -33,11 +33,14 @@ function response(value = manifest) {
     assert.throws(() => System.catalogue({ ...manifest, tools: [{ ...manifest.tools[0], url }] }, "https://site.example:15600"),
       error => error.message === "System information is unavailable.");
   }
-  for (const tool of [{ ...manifest.tools[0], id: "unknown" }, { ...manifest.tools[0], port: 0 },
-    { ...manifest.tools[0], path: "//outside.example/" }, { ...manifest.tools[0], label: {} },
+  const custom = System.catalogue({ ...manifest, tools: [...manifest.tools, { ...manifest.tools[0], id: "custom_tool-1", label: "Custom" }] }, "https://site.example:15600");
+  assert.equal(custom.tools.at(-1).id, "custom_tool-1");
+  for (const tool of [{ ...manifest.tools[0], id: "../bad" }, { ...manifest.tools[0], id: "UPPER" }, { ...manifest.tools[0], id: "" },
+    { ...manifest.tools[0], port: 0 }, { ...manifest.tools[0], path: "//outside.example/" }, { ...manifest.tools[0], label: {} },
     { ...manifest.tools[0], description: ["private-fixture"] }, { ...manifest.tools[0], label: "private\u202efixture" }]) {
     assert.throws(() => System.catalogue({ ...manifest, tools: [tool] }, "https://site.example:15600"));
   }
+  assert.throws(() => System.catalogue({ ...manifest, tools: Array.from({ length: 33 }, (_, i) => ({ ...manifest.tools[0], id: "tool_" + i })) }, "https://site.example:15600"));
   let calls = 0, expire;
   const native = access(true); native.subscribe = fn => { expire = fn; };
   const client = System.create({ access: native, base: "https://site.example:15600", fetch: async (url, init) => {

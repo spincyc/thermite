@@ -29,12 +29,12 @@ sets the scaler and restores the configured default on every other choice.
 
 from __future__ import annotations
 
-from oh_conf import House, YamlFile, options_text, uses
-from oh_shape import MAPPING, TEXT, Key
+from oh_conf import House, YamlFile, config as device_config, options_text, uses
+from oh_shape import LIST, MAPPING, NUMBER, TEXT, Key
 
 from . import _instr as instr
 from . import _diagnostics as diag
-from . import _hotplug
+from . import _hotplug, _items
 
 NAME = "bk808_http"
 PHASE = "control"
@@ -56,7 +56,7 @@ KINDS = {"hdmi_matrix"}
 #: All that the Thing ever sends: it reads and sets routing, input EDIDs and
 #: output scalers.
 COMHEADS = frozenset({"get video status", "video switch", "get input status", "get output status", "set edid",
-                      "set video scaler"})
+                      "set video scaler", "cec command"})
 thing_uid = instr.thing_uid
 url = instr.url
 
@@ -78,16 +78,23 @@ OUTPUT_SETTINGS = {
     "hdr": (HDR, "allhdr", "set hdr conversion", "hdr"),
     "hdcp": (HDCP, "allhdcp", "tx hdcp", "hdcp"),
 }
-DEVICE_KEYS = {"settings": Key(MAPPING, "the matrix's fixed settings, which thermite matrix-settings applies once", keys={
+DEVICE_KEYS = {
     "edid": Key(MAPPING, "the EDID each input presents", by="input number, or default", each=Key(TEXT, "an EDID name")),
     "scaler": Key(TEXT, "the default scaler for every output, including the value restored after a "
                         "source-specific hdmi_audio_scaler", choices=tuple(SCALER)),
     "hdr": Key(TEXT, "the outputs' HDR conversion", choices=tuple(HDR)),
-    "hdcp": Key(TEXT, "the HDCP version the outputs ask for, in quotes", choices=tuple(HDCP))})}
+    "hdcp": Key(TEXT, "the HDCP version the outputs ask for, in quotes", choices=tuple(HDCP)),
+    "ports": Key(LIST, "number of [inputs, outputs] when different from 8x8",
+                 each=Key(NUMBER, "positive port count")),
+}
 
 
 def ports(device: dict) -> tuple[int, int]:
     """(inputs, outputs)."""
+    custom = device_config(device, NAME).get("ports")
+    if (isinstance(custom, list) and len(custom) == 2
+            and all(type(n) is int and 1 <= n <= 32 for n in custom)):
+        return custom[0], custom[1]
     return INPUTS, OUTPUTS
 
 
@@ -122,29 +129,34 @@ def fields(device: dict) -> dict[str, dict]:
     Thing's own channel; the matrix acknowledges a write with {"result": 1}. Each is
     independent: a request names its one port, so a lost answer leaves the
     other ports as they were."""
+    inputs, outputs = ports(device)
     uid = thing_uid(device)
+    feedback = {"kind": "poll", "interval_s": POLL_S}
     out = {switch_item(device, output): {"kind": "http", "thing": uid, "channel": f"output{output}_input",
-                                         "values": [str(n) for n in range(1, INPUTS + 1)], "ack": "result",
-                                         "independent": True}
-           for output in range(1, OUTPUTS + 1)}
+                                         "values": [str(n) for n in range(1, inputs + 1)], "ack": "result",
+                                         "independent": True, "feedback": feedback}
+           for output in range(1, outputs + 1)}
     codes = [str(code) for code in sorted(EDID.values())]
     out.update({edid_item(device, input_): {"kind": "http", "thing": uid, "channel": f"input{input_}_edid",
-                                            "values": codes, "ack": "result", "independent": True}
-                for input_ in range(1, INPUTS + 1)})
+                                            "values": codes, "ack": "result", "independent": True,
+                                            "feedback": feedback}
+                for input_ in range(1, inputs + 1)})
     scalers = [str(code) for code in sorted(SCALER.values())]
     out.update({scaler_item(device, output): {"kind": "http", "thing": uid, "channel": f"output{output}_scaler",
-                                              "values": scalers, "ack": "result", "independent": True}
-                for output in range(1, OUTPUTS + 1)})
+                                              "values": scalers, "ack": "result", "independent": True,
+                                              "feedback": feedback}
+                for output in range(1, outputs + 1)})
     return out
 
 
 def diagnostics(device: dict) -> dict:
     """Read-back EDIDs and output settings; these are not negotiated video."""
+    inputs, outputs = ports(device)
     input_item, output_item = f"{device['id']}_input_signal", f"{device['id']}_output_signal"
     readings = [{"category": "edid", "kind": "capability", "label": f"Input {port} presented EDID", "item": input_item,
                  "path": ["values", "edid", str(port)], "port": {"direction": "input", "number": port}}
-                for port in range(1, INPUTS + 1)]
-    for port in range(1, OUTPUTS + 1):
+                for port in range(1, inputs + 1)]
+    for port in range(1, outputs + 1):
         for key, label in (("connected", "sink connection"), ("scaler", "scaler setting"),
                            ("hdr", "HDR processing setting"), ("hdcp", "HDCP setting")):
             readings.append({"category": "processing", "label": f"Output {port} {label}", "item": output_item,
@@ -170,10 +182,10 @@ def files(devices: list[dict], house: House) -> dict[str, str]:
             for direction in ("input", "output")}
 
 
-def _edid_port(key: object) -> int | None:
-    if isinstance(key, int) and not isinstance(key, bool) and 1 <= key <= INPUTS:
+def _edid_port(key: object, limit: int = INPUTS) -> int | None:
+    if isinstance(key, int) and not isinstance(key, bool) and 1 <= key <= limit:
         return key
-    if isinstance(key, str) and key in {str(n) for n in range(1, INPUTS + 1)}:
+    if isinstance(key, str) and key in {str(n) for n in range(1, limit + 1)}:
         return int(key)
     return None
 
@@ -185,67 +197,68 @@ def validate(device: dict) -> list[str]:
     problems = []
     if device.get("kind") not in KINDS:
         problems.append(f"{where}: {NAME} drives an hdmi_matrix, not a {device.get('kind')}")
-    settings = device.get("settings")
-    if settings is None:
+    raw_cfg = (device.get("config") or {}).get(NAME) if isinstance(device.get("config"), dict) else None
+    if raw_cfg is None:
         return problems
-    if not isinstance(settings, dict):
-        return problems + [f"{where}.settings: must be a mapping"]
+    if not isinstance(raw_cfg, dict):
+        return problems + [f"{where}.config.{NAME}: must be a mapping"]
+    settings = raw_cfg
+    if "ports" in settings:
+        custom = settings["ports"]
+        if (not isinstance(custom, list) or len(custom) != 2
+                or any(type(n) is not int or not 1 <= n <= 32 for n in custom)):
+            problems.append(f"{where}.config.{NAME}.ports: must be [inputs, outputs] of integers 1-32")
+    inputs, _ = ports(device)
     edid = settings.get("edid") or {}
     if not isinstance(edid, dict):
-        problems.append(f"{where}.settings.edid: must map inputs (or default) to EDID names")
+        problems.append(f"{where}.config.{NAME}.edid: must map inputs (or default) to EDID names")
         edid = {}
     seen_ports: dict[int, object] = {}
     for key, name in edid.items():
-        port = None if key == "default" else _edid_port(key)
+        port = None if key == "default" else _edid_port(key, inputs)
         if key != "default" and port is None:
-            problems.append(f"{where}.settings.edid: {key!r} is neither default nor an input 1-{INPUTS}")
+            problems.append(f"{where}.config.{NAME}.edid: {key!r} is neither default nor an input 1-{inputs}")
         elif port is not None:
             if port in seen_ports:
-                problems.append(f"{where}.settings.edid: input {port} is set more than once")
+                problems.append(f"{where}.config.{NAME}.edid: input {port} is set more than once")
             else:
                 seen_ports[port] = key
         if name not in EDID:
-            problems.append(f"{where}.settings.edid.{key}: {name!r} is not an EDID name "
+            problems.append(f"{where}.config.{NAME}.edid.{key}: {name!r} is not an EDID name "
                             f"(such as 4k60-444-hdr-2ch or copy-output-1)")
     for setting, (codes, *_) in OUTPUT_SETTINGS.items():
         if setting in settings and not (isinstance(settings[setting], str) and settings[setting] in codes):
-            problems.append(f"{where}.settings.{setting}: {settings[setting]!r} is not one of "
+            problems.append(f"{where}.config.{NAME}.{setting}: {settings[setting]!r} is not one of "
                             f"{', '.join(codes)}")
-    for key in sorted(set(settings) - {"edid", *OUTPUT_SETTINGS}):
-        problems.append(f"{where}.settings: unknown key '{key}'")
+    for key in sorted(set(settings) - {"edid", "ports", *OUTPUT_SETTINGS}):
+        problems.append(f"{where}.config.{NAME}: unknown key '{key}'")
     return problems
 
 
-def _point(device: dict, label: str, channel: str, icon: str) -> dict:
-    return {
-        "type": "Number",
-        "label": label,
-        "icon": icon,
-        "groups": [device["id"]],
-        "tags": ["Control"],
-        "autoupdate": False,
-        "channel": f"{thing_uid(device)}:{channel}",
-    }
+def _point(device: dict, label: str, channel: str, icon: str, *, state_options: str | None = None) -> dict:
+    return _items.control_point(
+        device["id"], "Number", label, ["Control"], f"{thing_uid(device)}:{channel}",
+        icon=icon, options=state_options, command_options="")
 
 
 def render(device: dict, house: House, out: YamlFile) -> None:
+    inputs, outputs = ports(device)
     thing = instr.thing(device, house)
-    for output in range(1, OUTPUTS + 1):
+    for output in range(1, outputs + 1):
         channel = f"output{output}_input"
         command = f"JSON.stringify({{comhead:'video switch',language:0,source:[{output},parseInt(input)]}})"
         thing["channels"][channel] = instr.number_channel(f"Output {output} input", "get video status",
                                                           "allsource", output, command)
         out.items[switch_item(device, output)] = _point(device, f"Output {output} input", channel, "video")
     scalers = options_text((code, name) for name, code in SCALER.items())
-    for output in range(1, OUTPUTS + 1):
+    for output in range(1, outputs + 1):
         channel = f"output{output}_scaler"
         command = f"JSON.stringify({{comhead:'set video scaler',language:0,scaler:[{output},parseInt(input)]}})"
         thing["channels"][channel] = instr.number_channel(f"Output {output} scaler", "get output status",
                                                           "allscaler", output, command)
-        item = _point(device, f"Output {output} scaler", channel, "screen")
-        item["metadata"] = {"stateDescription": {"config": {"options": scalers}}}
-        out.items[scaler_item(device, output)] = item
-    for output in range(1, OUTPUTS + 1):
+        out.items[scaler_item(device, output)] = _point(device, f"Output {output} scaler", channel, "screen",
+                                                        state_options=scalers)
+    for output in range(1, outputs + 1):
         channel = f"output{output}_hotplug"
         # The same request as the scaler's: the binding polls it once for both.
         thing["channels"][channel] = {"type": "switch", "label": f"Output {output} hot-plug", "config": {
@@ -253,14 +266,19 @@ def render(device: dict, house: House, out: YamlFile) -> None:
             "stateTransformation": [f"JSONPATH($.allconnect[{output - 1}])"], "onValue": "1", "offValue": "0"}}
         out.items[hotplug_item(device, output)] = _hotplug.point(device, output, f"{thing_uid(device)}:{channel}")
     names = options_text((code, name) for name, code in EDID.items())
-    for input_ in range(1, INPUTS + 1):
+    for input_ in range(1, inputs + 1):
         channel = f"input{input_}_edid"
         command = f"JSON.stringify({{comhead:'set edid',language:0,edid:[{input_},parseInt(input)]}})"
         thing["channels"][channel] = instr.number_channel(f"Input {input_} EDID", "get input status",
                                                           "edid", input_, command)
-        item = _point(device, f"Input {input_} EDID", channel, "screen")
-        item["metadata"] = {"stateDescription": {"config": {"options": names}}}
-        out.items[edid_item(device, input_)] = item
+        out.items[edid_item(device, input_)] = _point(device, f"Input {input_} EDID", channel, "screen",
+                                                      state_options=names)
+    # Write-only source CEC channel sharing the matrix Thing's HTTP queue:
+    # its stateContent reuses the video-status poll and keeps nothing of the
+    # reply so oh_render.read_only() turning it READONLY adds zero extra polls.
+    thing["channels"]["cec"] = {"type": "string", "label": "Source CEC", "config": {
+        "mode": "WRITEONLY", "stateContent": instr.body("get video status", language=0),
+        "stateTransformation": ["JS(|null)"]}}
     out.things[thing_uid(device)] = thing
     for direction in ("input", "output"):
         channel = f"{direction}_signal"
@@ -278,10 +296,11 @@ STATUS = ("get input status", "get output status")
 
 def desired(device: dict) -> dict:
     """The settings devices.yaml asks for, as device codes."""
-    settings = device.get("settings") or {}
+    inputs, _ = ports(device)
+    settings = device_config(device, NAME)
     edid = settings.get("edid") or {}
     out: dict = {"edid": {}}
-    for port in range(1, INPUTS + 1):
+    for port in range(1, inputs + 1):
         name = edid.get(port, edid.get(str(port), edid.get("default")))
         if name is not None:
             out["edid"][port] = EDID[name]
@@ -298,6 +317,7 @@ def _name(codes: dict, code: object) -> str:
 def plan(device: dict, status: dict[str, dict], routed_scalers: frozenset[int] = frozenset()) -> list[tuple[str, str]]:
     """(what changes, request body) for each differing fixed setting.
     Routing owns the scaler on each output in `routed_scalers`."""
+    _, outputs_count = ports(device)
     want = desired(device)
     changes = []
     edids = status["get input status"]["edid"]
@@ -309,7 +329,7 @@ def plan(device: dict, status: dict[str, dict], routed_scalers: frozenset[int] =
     for setting, (codes, field, comhead, key) in OUTPUT_SETTINGS.items():
         if setting not in want:
             continue
-        for port in range(1, OUTPUTS + 1):
+        for port in range(1, outputs_count + 1):
             if setting == "scaler" and port in routed_scalers:
                 continue
             current = outputs[field][port - 1]

@@ -513,13 +513,19 @@ Path(report).write_text(json.dumps({"code": code, "host": host}))
         # The owner's edits before this upgrade: the installed release wrote
         # state_root, which this release rejects; the default root replaces it.
         # Its native ports were 13601 and 13602; the HTTPS application has
-        # 13601 now, and every other listener moved up one.
+        # 13601 now, and every other listener moved up one. Schema v2 also
+        # bumps devices.yaml from version 1 to version 2.
         host_file = site / "instance/host.yaml"
         host = yaml.safe_load(host_file.read_text())
         self.assertEqual(host.pop("state_root"), "/srv/thermite")
         self.assertEqual((host["http_port"], host["https_port"]), (13601, 13602))
         host.update(http_port=13602, https_port=13603)
         host_file.write_text(json.dumps(host, indent=2) + "\n")
+        house_file = site / "instance/devices.yaml"
+        house_data = yaml.safe_load(house_file.read_text())
+        if house_data.get("version") == 1:
+            house_data["version"] = 2
+            house_file.write_text(json.dumps(house_data, indent=2) + "\n")
         if schema != 2:
             pin = site / "thermite-site.json"
             pin.write_text(json.dumps({**json.loads(pin.read_text()), "version": schema}))

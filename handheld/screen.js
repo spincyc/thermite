@@ -12,6 +12,7 @@
 "use strict";
 
 const crypto = require("crypto");
+const RemoteLayouts = require("../web/remote/remotes");
 
 // Every remote has the volume keys and Mute; they drive the room's audio.
 const ALWAYS = ["volume_up", "volume_down", "mute"];
@@ -24,7 +25,7 @@ const BESIDE = 3;
 // A button's spec with only the fields it has: an absent icon or text is none
 // and an absent repeat is false, which keeps a screen to fewer radio frames.
 function spec(layouts, id) {
-  const button = layouts.buttons[id] || {};
+  const button = ((layouts && layouts.buttons) || RemoteLayouts.buttons)[id] || {};
   const out = { label: button.label || id };
   if (button.icon) out.icon = button.icon;
   if (button.text) out.text = button.text;
@@ -36,27 +37,32 @@ function row(label, keys, columns) {
   return { label: label || "", keys: keys.slice(), columns: columns || 0 };
 }
 
+function planOf(remote, layouts) {
+  return remote ? RemoteLayouts.layoutPlan(remote, layouts) : null;
+}
+
 // The rows in order: top; playback when it is long or there is no D-pad;
 // then the key groups (primary ones first, as the terminal draws them) or
 // one unlabelled row of keys.
-function rowsOf(remote) {
+function rowsOf(remote, layouts) {
+  const plan = planOf(remote, layouts);
+  if (!plan) return [];
   const rows = [];
-  if (remote.top && remote.top.length) rows.push(row("", remote.top, 0));
-  const playback = remote.playback || [];
-  if (playback.length && (!remote.corners || playback.length > BESIDE)) rows.push(row("", playback, 0));
-  if (remote.keyGroups) {
-    const groups = remote.keyGroups.filter((group) => group.keys && group.keys.length);
-    groups.filter((group) => group.primary).concat(groups.filter((group) => !group.primary))
+  if (plan.top.length) rows.push(row("", plan.top, 0));
+  if (plan.playback.length && (!plan.corners || plan.playback.length > BESIDE)) rows.push(row("", plan.playback, 0));
+  if (plan.keyGroups.length) {
+    plan.keyGroups.filter((group) => group.primary).concat(plan.keyGroups.filter((group) => !group.primary))
       .forEach((group) => rows.push(row(group.label, group.keys, group.columns)));
-  } else if (remote.keys && remote.keys.length) {
-    rows.push(row("", remote.keys, 0));
+  } else if (plan.keys.length) {
+    rows.push(row("", plan.keys, 0));
   }
   return rows;
 }
 
-function besideOf(remote) {
-  const playback = remote.playback || [];
-  return remote.corners && playback.length <= BESIDE ? playback.slice() : [];
+function besideOf(remote, layouts) {
+  const plan = planOf(remote, layouts);
+  if (!plan) return [];
+  return plan.corners && plan.playback.length <= BESIDE ? plan.playback.slice() : [];
 }
 
 /* The screen's fields but its id, for the session's current room. */
@@ -93,11 +99,11 @@ function screen(session, layouts) {
   const shown = session.view(current, state);
   const target = session.activeTarget(list);
   const hidden = session.remoteHidden(list);
-  const remote = hidden || !target ? null : session.remoteOf(target) || null;
+  const remote = hidden || !target ? null : planOf(session.remoteOf(target) || target.remote, layouts);
   const keys = remote && !remote.note;
-  const pad = keys && remote.corners ? { corners: [0, 1, 2, 3].map((at) => remote.corners[at] || null) } : null;
-  const rows = keys ? rowsOf(remote) : [];
-  const beside = keys ? besideOf(remote) : [];
+  const pad = keys && remote.corners ? { corners: remote.corners.slice() } : null;
+  const rows = keys ? rowsOf(remote, layouts) : [];
+  const beside = keys ? besideOf(remote, layouts) : [];
   const channel = Boolean(keys && remote.channel);
   const ids = [];
   if (pad) ids.push(...pad.corners.filter(Boolean), ...PAD);

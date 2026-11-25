@@ -27,7 +27,7 @@ from oh_integrations import _hooks  # noqa: E402
 from oh_shape import LIST, MAPPING, NUMBER, TEXT, Key  # noqa: E402
 from tests import test_generated_output, test_vrroom_telnet, test_zone_sync  # noqa: E402
 
-EXAMPLE = json.loads((AREA / "instance/devices.yaml").read_text(encoding="utf-8"))
+EXAMPLE = oh_inventory.load(AREA / "instance/devices.yaml")
 UNDECLARED = "zzz_undeclared"
 
 
@@ -69,9 +69,10 @@ class Declaration(unittest.TestCase):
         self.assertFalse(check(("zones",)))
         self.assertFalse(check({"zones": "how many"}))
         top, device, readers = oh_inventory.declarations()
-        self.assertEqual(readers["DEVICE_KEYS", "sonos_udn"], "sonos")
+        self.assertEqual(readers["CONFIG_KEYS", "sonos"], "sonos")
         self.assertEqual(readers["HOUSE_KEYS", "routing"], "routing")
-        self.assertEqual(readers["HOUSE_KEYS", "control4_rooms"], "control4")
+        self.assertEqual(readers["HOUSE_KEYS", "control4"], "control4")
+        self.assertEqual(readers["DEVICE_KEYS", "control4_item"], "control4")
         self.assertEqual(oh_inventory.keys(), (frozenset(top), frozenset(device)))
 
     def test_two_modules_cannot_declare_one_key(self):
@@ -119,7 +120,7 @@ class Sentences(unittest.TestCase):
         west = next(iter(EXAMPLE["routing"]["rooms"]))
         source = next(iter(EXAMPLE["routing"]["sources"]))
         cases = (
-            (lambda d: d.update(version=2), "devices.yaml: version must be 1"),
+            (lambda d: d.update(version=1), "devices.yaml: version must be 2"),
             (lambda d: d.update(romos={}), "unknown top-level key 'romos'; did you mean rooms?"),
             (lambda d: d.update(rooms=[]), "rooms must be a mapping of room ids"),
             (lambda d: d.update(devices={}), "devices must be a list of devices"),
@@ -147,7 +148,7 @@ class Sentences(unittest.TestCase):
                 self.assertIn(sentence, self.problems(change))
 
     def test_true_is_not_a_version(self):
-        self.assertEqual(self.problems(lambda d: d.update(version=True)), ["devices.yaml: version must be 1"])
+        self.assertEqual(self.problems(lambda d: d.update(version=True)), ["devices.yaml: version must be 2"])
 
 
 class Reference(unittest.TestCase):
@@ -164,14 +165,21 @@ class Reference(unittest.TestCase):
         self.assertNotIn("receiver.passive", page)
         self.assertNotIn("display.zone", page)
         self.assertNotIn("display.sync_with", page)
-        self.assertIn("| `sonos_udn` | text |", page)
+        self.assertIn("| `config.sonos.udn` | text |", page)
         self.assertIn("| sonos |", page)
-        built = oh_site.build()["house-file.html"].decode()
-        self.assertIn("<code>routing.rooms.&lt;room id&gt;.hdmi_output</code>", built)
-        self.assertNotIn("{{house_keys}}", built)
-        self.assertIn('href="house-file.html"', oh_site.build()["start.html"].decode())
+        built = oh_site.build()
+        house_html = built["house-file.html"].decode()
+        self.assertIn("<code>routing.rooms.&lt;room id&gt;.hdmi_output</code>", house_html)
+        self.assertNotIn("{{house_keys}}", house_html)
+        self.assertIn('href="house-file.html"', built["start.html"].decode())
+        self.assertIn('href="host-file.html"', built["start.html"].decode())
+        host_html = built["host-file.html"].decode()
+        self.assertNotIn("{{host_keys}}", host_html)
+        self.assertIn("<code>timezone</code>", host_html)
+        self.assertIn("<code>shares.&lt;share name&gt;.where</code>", host_html)
 
     def test_the_schema_holds_the_same_keys_and_is_published(self):
+        import oh_host
         schema = oh_site.house_schema()
         top, device, _ = oh_inventory.declarations()
         self.assertEqual(set(schema["properties"]), set(top))
@@ -183,8 +191,13 @@ class Reference(unittest.TestCase):
         rooms = schema["properties"]["routing"]["properties"]["rooms"]["additionalProperties"]["properties"]
         self.assertEqual(rooms["usb_unused"]["enum"], ["preserve", "park"])
         self.assertEqual(rooms["carries"]["additionalProperties"]["enum"], ["display", "audio", "both"])
-        self.assertEqual(json.loads(oh_site.build()["house.schema.json"]), schema)
+        built = oh_site.build()
+        self.assertEqual(json.loads(built["house.schema.json"]), schema)
         self.assertTrue(oh_site.BUILT.fullmatch("docs/house.schema.json"))
+        host_doc = oh_site.host_schema()
+        self.assertEqual(set(host_doc["properties"]), set(oh_host.KEYS))
+        self.assertEqual(json.loads(built["host.schema.json"]), host_doc)
+        self.assertTrue(oh_site.BUILT.fullmatch("docs/host.schema.json"))
 
 
 if __name__ == "__main__":

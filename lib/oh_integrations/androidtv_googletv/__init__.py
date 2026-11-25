@@ -64,16 +64,16 @@ commands nothing.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from oh_conf import Addon, House, YamlFile, point, retarget, uses
+from oh_conf import Addon, House, YamlFile, config as device_config, point, retarget, uses
+from oh_shape import TEXT, Key
 
 if TYPE_CHECKING:
     from oh_inventory import Device
 
-from .. import _commands, _pairing, _script
+from .. import _commands, _items, _pairing, _script
 
 NAME = "androidtv_googletv"
 PHASE = "control"
@@ -118,6 +118,11 @@ TV = "android_tv"
 SHIELD = "nvidia_shield"
 #: The remote layout (web/remote/remotes.js) each kind of device is drawn with.
 REMOTES = (TV, SHIELD)
+DEVICE_KEYS = {
+    "remote_layout": Key(TEXT, "remote layout: android_tv or nvidia_shield; inferred from make when omitted",
+                         choices=REMOTES),
+}
+_SUPPORTED_KINDS = frozenset({"tv", "streamer", "console", "game_console", "media_player"})
 #: Remote button id -> Android key code (KeyEvent), per remote. power is an
 #: Item of its own, never a key. The volume rule presses VOLUME_UP and
 #: VOLUME_DOWN itself. TV_INPUT (178), GUIDE (172) and SETTINGS (176) are
@@ -201,8 +206,6 @@ IDLE_APPS = ("com.android.tv.settings", "com.android.vending", "com.google.andro
 RAW = "GOOGLETV_RAW_"
 #: RemoteMessage field 90, RemoteAppLinkLaunchRequest, as its protobuf key.
 APP_LINK_FIELD = "d205"
-#: The code a device shows while it pairs: six hexadecimal digits.
-CODE = re.compile(r"[0-9A-Fa-f]{6}")
 #: The Pairing page's description of a device (oh_integrations._pairing),
 #: but its label (pairing_label()) and what it asks before pairing a paired
 #: one again (CONFIRM).
@@ -223,16 +226,12 @@ def thing_uid(device: dict) -> str:
     return f"androidtv:googletv:{device['id']}"
 
 
-def pair_command(device: dict, code: str | None = None) -> str:
-    """The openHAB console command that asks the device to show a pairing
-    code (no code) or sends it the code it shows."""
-    if code is not None and not CODE.fullmatch(code):
-        raise ValueError(f"{code!r} is not the six letters and digits (0-9, A-F) a TV shows")
-    return f"openhab:androidtv {thing_uid(device)} pincode {code.upper() if code else 'REQUEST'}"
-
-
 def remote_of(device: dict) -> str:
-    """The remote a device is drawn with: a SHIELD's, else a TV's."""
+    """The remote a device is drawn with: explicit config.androidtv_googletv.remote_layout,
+    else a SHIELD's for NVIDIA devices, else a TV's."""
+    explicit = device_config(device, NAME).get("remote_layout")
+    if explicit in REMOTES:
+        return explicit
     return SHIELD if device.get("make") == "NVIDIA" else TV
 
 
@@ -256,10 +255,14 @@ def pairing_label(device: dict) -> str:
 def validate(device: dict) -> list[str]:
     if not uses(device, PHASE, NAME):
         return []
+    where = device.get("id") or "a device"
     problems = []
-    if device.get("kind") != "tv" and device.get("make") != "NVIDIA":
-        problems.append(f"{device.get('id')}: {NAME} drives a TV or an NVIDIA SHIELD, not a "
-                        f"{device.get('make')} {device.get('kind')}")
+    if device.get("kind") not in _SUPPORTED_KINDS:
+        problems.append(f"{where}: {NAME} drives a TV or streamer, not a {device.get('kind')}")
+    cfg = device_config(device, NAME)
+    if "remote_layout" in cfg and cfg["remote_layout"] not in REMOTES:
+        problems.append(f"{where}.config.{NAME}.remote_layout: {cfg['remote_layout']!r} "
+                        f"must be {' or '.join(REMOTES)}")
     return problems
 
 
@@ -284,40 +287,61 @@ def presses(remote: str) -> dict[str, list[str]]:
     return table
 
 
-def _control(ident: str, type_: str, label: str, tags: list[str], channel: str, *,
-             icon: str | None = None, state: dict | None = None) -> dict:
-    item: dict = {"type": type_, "label": label}
-    if icon:
-        item["icon"] = icon
-    item.update(groups=[ident], tags=tags, autoupdate=False, channel=channel)
-    if state:
-        item["metadata"] = {"stateDescription": {"config": state}}
-    return item
-
-
 def render(device: dict, house: House, out: YamlFile) -> None:
     ident = device["id"]
     uid = thing_uid(device)
+    port = (device.get("timing") or {}).get("port", PORT)
     out.things[uid] = {
         "label": f"{house.label(cast('Device', device))} Android TV remote",
         "location": house.room_label(device["room"]),
-        "config": {"ipAddress": device["ip"], "googletvPort": PORT},
+        "config": {"ipAddress": device["ip"], "googletvPort": port},
     }
     items = out.items
-    items[f"{ident}_android_power"] = _control(ident, "Switch", "Power (Android TV)", ["Control", "Power"],
-                                               f"{uid}:power", icon="television")
+    items[f"{ident}_android_power"] = _items.control_point(
+        ident, "Switch", "Power (Android TV)", ["Control", "Power"], f"{uid}:power", icon="television")
     if is_tv(device):
-        items[f"{ident}_android_mute"] = _control(ident, "Switch", "Mute", ["Control", "SoundVolume"],
-                                                  f"{uid}:mute", icon="soundvolume_mute")
-        items[f"{ident}_android_volume"] = _control(ident, "Dimmer", "Volume", ["Control", "SoundVolume"],
-                                                    f"{uid}:volume", icon="soundvolume",
-                                                    state={key: VOLUME[key] for key in ("min", "max", "step")})
+        items[f"{ident}_android_mute"] = _items.control_point(
+            ident, "Switch", "Mute", ["Control", "SoundVolume"], f"{uid}:mute", icon="soundvolume_mute")
+        items[f"{ident}_android_volume"] = _items.control_point(
+            ident, "Dimmer", "Volume", ["Control", "SoundVolume"], f"{uid}:volume", icon="soundvolume",
+            state={key: VOLUME[key] for key in ("min", "max", "step")})
     items[f"{ident}_android_app"] = point(ident, "String", "App", ["Status", "Info"], f"{uid}:app", guarded=True)
-    items[f"{ident}_key"] = {"type": "String", "label": "Remote Key", "groups": [ident], "tags": ["Control"],
-                             "autoupdate": False}
+    items[f"{ident}_key"] = _items.control_point(ident, "String", "Remote Key", ["Control"])
     label = pairing_label(device)
     _pairing.render(device, house, out, NAME, label=label, confirm=CONFIRM.format(label=label), **PAIRING)
     _commands.render(device, out, NAME)
+
+
+def pairing(device: dict) -> dict | None:
+    """Pairing contract (oh_integrations._pairing) when controlled, else None."""
+    if not uses(device, PHASE, NAME):
+        return None
+    label = pairing_label(device)
+    return {
+        **PAIRING,
+        "integration": NAME,
+        "label": label,
+        "confirm": CONFIRM.format(label=label),
+        "item": _pairing.item(device),
+        "status": _pairing.status_item(device),
+        "problem": problem(device),
+    }
+
+
+def manual_items(device: dict) -> int:
+    """Number of manual command Items handled by the device's actor."""
+    return 4 if is_tv(device) else 3
+
+
+def fields(device: dict) -> dict[str, dict]:
+    """The routing executor's field (oh_integrations): power, driven by this
+    integration's own rule with read-before-toggle safety."""
+    return {f"{device['id']}_android_power": {
+        "kind": "androidtv",
+        "values": ["ON", "OFF"],
+        "power": "toggle",
+        "feedback": {"kind": "push"},
+    }}
 
 
 def problem(device: dict) -> str | None:
@@ -374,6 +398,25 @@ def remote(device: dict) -> dict | None:
         offered["mute"] = f"{ident}_android_mute"
         offered["volume"] = {"item": f"{ident}_android_volume", **VOLUME}
     return offered
+
+
+def remote_layouts(device: dict | None = None) -> dict[str, dict]:
+    """Button layout definitions for Android TV and NVIDIA SHIELD devices."""
+    return {
+        "nvidia_shield": {
+            "label": "SHIELD remote",
+            "corners": ["power", "menu", "back", "home"],
+            "playback": ["rewind", "play_pause", "fast_forward"],
+            "keys": ["netflix"],
+        },
+        "android_tv": {
+            "label": "Android TV remote",
+            "corners": ["power", None, "back", "home"],
+            "playback": ["rewind", "play", "pause", "fast_forward"],
+            "channel": True,
+            "keys": ["netflix", "youtube"],
+        },
+    }
 
 
 def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:

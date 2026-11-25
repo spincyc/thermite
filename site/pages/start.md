@@ -41,11 +41,14 @@ The application stays in its Python environment. `init` creates a separate priva
 
 ## Describe your house
 
-Edit `instance/devices.yaml` and `instance/host.yaml` in the private site. Replace the example inventory with your own rooms and devices, using fixed network addresses. [The house file](house-file.html) lists every key `devices.yaml` may have. A TV entry looks like this:
+Edit `instance/devices.yaml` and `instance/host.yaml` in the private site. Replace the example inventory with your own rooms and devices, using fixed network addresses. [The house file](house-file.html) lists every key `devices.yaml` may have, and [The host file](host-file.html) lists every key `host.yaml` may have. A TV entry looks like this:
 
 ```yaml
+version: 2
+
 rooms:
-  living_room: {label: Living Room}
+  living_room:
+    label: Living Room
 
 devices:
   - id: living_room_tv
@@ -60,7 +63,7 @@ devices:
       control: [sony_ip_control]
 ```
 
-`observe` lists interfaces thermite may read. `control` lists interfaces it may command. The sample address above is reserved for documentation; use the TV's actual address in your private site. `mac` is optional except for Sonos devices, and `notes` and `control4` are accepted for your own documentation. `monitor: optional` keeps a device you know is broken out of control health and alerts; see [dashboards](dashboards.html). Unknown keys are refused with a "did you mean" hint; an invalid or missing file exits with status 2 and names the file, line and column. The file is YAML (JSON is YAML too), and thermite takes only what means one thing in it: unquoted text that the versions of YAML read differently (`on`, `no`, `010`, `12:30`, a hardware address made of digits only, a date) and a key written twice in one mapping are refused the same way, with the line and what to write, which is usually the same text in quotes. `instance/host.yaml` is read the same way.
+`observe` lists interfaces thermite may read. `control` lists interfaces it may command. The sample address above is reserved for documentation; use the TV's actual address in your private site. `mac` is optional (Sonos derives its UDN from `mac` when `config.sonos.udn` is omitted), and `notes` and `control4` are accepted for your own documentation. `monitor: optional` keeps a device you know is broken out of control health and alerts; see [dashboards](dashboards.html). Unknown keys are refused with a "did you mean" hint; an invalid or missing file exits with status 2 and names the file, line and column. The file is YAML (JSON is YAML too), and thermite takes only what means one thing in it: unquoted text that the versions of YAML read differently (`on`, `no`, `010`, `12:30`, a hardware address made of digits only, a date) and a key written twice in one mapping are refused the same way, with the line and what to write, which is usually the same text in quotes. `instance/host.yaml` is read the same way.
 
 Create a private Git repository for that site. Commit real inventory, host settings, native version pins and `thermite-site.json`. Generated `conf/`, `metrics/` and `deploy/`, credentials and runtime state stay outside Git. The public application repository should contain only fictional examples.
 

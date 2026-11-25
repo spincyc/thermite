@@ -98,21 +98,22 @@ class Consumers(unittest.TestCase):
         matrix = {
             "id": "example_matrix", "room": "example_west", "kind": "hdmi_matrix", "ip": "192.0.2.20",
             "controls": {"control": ["bk808_http"]},
-            "settings": {"edid": {"1": "4k60-444-hdr-2ch", "8": "copy-output-1"}},
+            "config": {"bk808_http": {"edid": {"1": "4k60-444-hdr-2ch", "8": "copy-output-1"}}},
         }
         self.assertEqual(bk808_http.validate(matrix), [])
         desired = bk808_http.desired(matrix)["edid"]
         self.assertEqual(desired[1], bk808_http.EDID["4k60-444-hdr-2ch"])
         self.assertEqual(desired[8], bk808_http.EDID["copy-output-1"])
-        dup = {**matrix, "settings": {"edid": {1: "4k60-444-hdr-2ch", "1": "copy-output-1"}}}
+        dup = {**matrix, "config": {"bk808_http": {"edid": {1: "4k60-444-hdr-2ch", "1": "copy-output-1"}}}}
         self.assertTrue(any("more than once" in problem for problem in bk808_http.validate(dup)))
         for bad in ("01", "0", "9", "abc"):
-            wrong = {**matrix, "settings": {"edid": {bad: "4k60-444-hdr-2ch"}}}
+            wrong = {**matrix, "config": {"bk808_http": {"edid": {bad: "4k60-444-hdr-2ch"}}}}
             self.assertTrue(bk808_http.validate(wrong), bad)
         data = house()
-        next(d for d in data["devices"] if d["id"] == "example_matrix")["settings"] = {"edid": {"1": "4k60-444-hdr-2ch"}}
+        next(d for d in data["devices"] if d["id"] == "example_matrix")["config"] = {
+            "bk808_http": {"edid": {"1": "4k60-444-hdr-2ch"}}}
         problems = oh_render.validate(data)
-        self.assertTrue(any("settings.edid.1" in problem and "routing.edid sets the EDID" in problem
+        self.assertTrue(any("config.bk808_http.edid.1" in problem and "routing.edid sets the EDID" in problem
                             for problem in problems), problems)
 
 

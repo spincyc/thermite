@@ -62,7 +62,7 @@ def demo() -> dict:
     def device(ident, room, kind, number, **extra):
         return {"id": ident, "room": room, "kind": kind, "name": ident.replace("_", " ").title(),
                 "ip": f"192.0.2.{number}", "mac": "02:00:00:00:00:" + format(number, "02x"), **extra}
-    return {"version": 1, "rooms": {"example_west": {"label": "Example West", "tag": "Room"},
+    return {"version": 2, "rooms": {"example_west": {"label": "Example West", "tag": "Room"},
                                      "example_east": {"label": "Example East", "tag": "Room"}},
             "devices": [
                 device("example_tv", "example_west", "tv", 10, make="Sony", model="Example TV",
@@ -85,7 +85,7 @@ def demo() -> dict:
 
 def demo_host() -> dict:
     from oh_ports import HTTP_PORT, HTTPS_PORT
-    return {"timezone": "Etc/UTC", "http_port": HTTP_PORT, "https_port": HTTPS_PORT,
+    return {"version": 1, "timezone": "Etc/UTC", "http_port": HTTP_PORT, "https_port": HTTPS_PORT,
             "uid": 9001, "gid": 9001, "metrics": {"units": []}}
 
 
@@ -194,6 +194,32 @@ def guard(files: dict[str, bytes], area: Path = oh_cli.AREA, *, facts: set[str] 
     layout_ids = {match.group(1) for match in declarations}
     body_offset = len(layouts_source) - len(layout_body)
     layout_spans = [(body_offset + match.start(1), body_offset + match.end(1)) for match in declarations]
+    integration_layout_spans: dict[str, list[tuple[int, int]]] = {}
+    for fname, fbytes in files.items():
+        if not (fname.startswith("lib/oh_integrations/") and fname.endswith(".py")):
+            continue
+        try:
+            ftext = fbytes.decode("utf-8")
+            tree = ast.parse(ftext)
+        except (UnicodeDecodeError, SyntaxError):
+            continue
+        foffsets = [0]
+        for row in ftext.splitlines(keepends=True):
+            foffsets.append(foffsets[-1] + len(row))
+        spans: list[tuple[int, int]] = []
+        for fn in tree.body:
+            if not isinstance(fn, ast.FunctionDef) or fn.name != "remote_layouts":
+                continue
+            for stmt in fn.body:
+                if isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Dict):
+                    for key in stmt.value.keys:
+                        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                            layout_ids.add(key.value)
+                            assert key.end_lineno is not None and key.end_col_offset is not None
+                            spans.append((foffsets[key.lineno - 1] + key.col_offset,
+                                          foffsets[key.end_lineno - 1] + key.end_col_offset))
+        if spans:
+            integration_layout_spans[fname] = spans
     problems = []
     try:
         screenshots = _screenshots(files)
@@ -247,6 +273,8 @@ def guard(files: dict[str, bytes], area: Path = oh_cli.AREA, *, facts: set[str] 
             line = text[text.rfind("\n", 0, match.start()) + 1:text.find("\n", match.end()) if "\n" in text[match.end():] else len(text)]
             return ((name == "web/remote/remotes.js"
                      and any(start <= match.start() and match.end() <= end for start, end in layout_spans))
+                    or any(start <= match.start() and match.end() <= end
+                           for start, end in integration_layout_spans.get(name, ()))
                     or (name == "tui/remote/view.js" and token in layout_ids
                         and (".includes(target.remote)" in line or "remote.id ===" in line))
                     or (name == "lib/oh_features/remote_model.py" and token in layout_ids

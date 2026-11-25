@@ -11,8 +11,8 @@ import json
 from pathlib import Path
 import re
 
-from oh_conf import Addon, House, YamlFile, instance, point, retarget, uses
-from oh_shape import MAPPING, NUMBER, TEXT, Key
+from oh_conf import Addon, House, YamlFile, config as device_config, instance, point, retarget, uses
+from oh_shape import NUMBER, TEXT, Key
 from . import _commands, _script
 
 NAME = "ir"
@@ -24,11 +24,13 @@ HEADER = ("Verified IR keys only; no device power or playback state is inferred.
 ADDONS = (Addon("binding", "globalcache"), Addon("transformation", "map"),
           Addon("automation", "jsscripting", "finite verified IR dispatch"))
 ASSETS: dict[str, str] = {}
-DEVICE_KEYS = {"ir": Key(MAPPING, "the IR emitter that drives the device", keys={
-    "model": Key(TEXT, "the emitter's model", required=True),
-    "ip": Key(TEXT, "the emitter's IPv4 address", required=True),
-    "connector": Key(NUMBER, "which of the emitter's connectors points at the device: 1, 2 or 3", required=True),
-    "profile": Key(TEXT, "the file of verified IR commands, as ir/<name>.json under instance/", required=True)})}
+DEVICE_KEYS = {
+    "via": Key(TEXT, "the device id of a Global Caché emitter device to inherit ip and model from"),
+    "connector": Key(NUMBER, "which of the emitter's connectors points at the device: 1, 2 or 3"),
+    "profile": Key(TEXT, "the file of verified IR commands, as ir/<name>.json under instance/"),
+    "model": Key(TEXT, "the emitter's model when not inherited from via"),
+    "ip": Key(TEXT, "the emitter's IPv4 address when not inherited from via"),
+}
 #: The iTach's TCP API.
 DISCOVER_PORTS = (4998,)
 RULE = "automation/js/globalcache_ir.js"
@@ -37,8 +39,9 @@ KEYS = frozenset({"power", "eject", "back", "home", "up", "down", "left", "right
                   "popup_menu", "options", "display", "audio", "subtitle", "previous", "rewind", "play",
                   "pause", "stop", "fast_forward", "next", "netflix", "favorite", "bluetooth",
                   "red", "green", "yellow", "blue"})
-MODEL = "UBP-X800M2"
 HARDWARE = "iTach IP2IR"
+_SUPPORTED_KINDS = frozenset({"disc_player", "tv", "avr", "streamer", "tuner", "projector", "soundbar"})
+_CONFIG_KEYS = frozenset(DEVICE_KEYS)
 
 
 class ProfileError(ValueError):
@@ -71,7 +74,7 @@ def _object(pairs):
     return result
 
 
-def load_profile(path: Path, model: str = MODEL) -> dict:
+def load_profile(path: Path, model: str | None = None, make: str | None = None) -> dict:
     try:
         with path.open("rb") as stream:
             raw = stream.read(65537)
@@ -82,8 +85,16 @@ def load_profile(path: Path, model: str = MODEL) -> dict:
         raise ProfileError("IR profile is not readable UTF-8 JSON") from error
     if not isinstance(data, dict) or set(data) != {"version", "make", "model", "source", "commands"}:
         raise ProfileError("IR profile needs exactly version, make, model, source and commands")
-    if type(data["version"]) is not int or data["version"] != 1 or data["make"] != "Sony" or data["model"] != model or model != MODEL:
-        raise ProfileError("IR profile must be version 1 for Sony UBP-X800M2")
+    if type(data["version"]) is not int or data["version"] != 1:
+        raise ProfileError("IR profile must be version 1")
+    prof_make, prof_model = data["make"], data["model"]
+    if (not isinstance(prof_make, str) or not prof_make.strip() or len(prof_make) > 100
+            or not isinstance(prof_model, str) or not prof_model.strip() or len(prof_model) > 100):
+        raise ProfileError("IR profile needs non-empty make and model strings")
+    if make is not None and prof_make != make:
+        raise ProfileError(f"IR profile make {prof_make!r} does not match device make {make!r}")
+    if model is not None and prof_model != model:
+        raise ProfileError(f"IR profile model {prof_model!r} does not match device model {model!r}")
     source = data["source"]
     if not isinstance(source, str) or not source.strip() or len(source) > 300 or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in source):
         raise ProfileError("IR profile needs a bounded plain-text learning or verified-code provenance")
@@ -99,28 +110,61 @@ def load_profile(path: Path, model: str = MODEL) -> dict:
             verified[key] = normalized
         else:
             pending.append(key)
-    return {"model": model, "commands": verified, "pending": sorted(pending), "missing": sorted(KEYS - verified.keys())}
+    return {"make": prof_make, "model": prof_model, "commands": verified,
+            "pending": sorted(pending), "missing": sorted(KEYS - verified.keys())}
 
 
-def commissioned(device: dict) -> dict | None:
-    config = device.get("ir")
-    if config is None:
+def _raw_ir_config(device: dict) -> object:
+    section = device.get("config")
+    return section.get(NAME) if isinstance(section, dict) else None
+
+
+def _emitter_ref(device: dict, cfg: dict) -> str | None:
+    via = cfg.get("via")
+    if isinstance(via, str) and via:
+        return via
+    dev_via = device.get("via")
+    return dev_via if isinstance(dev_via, str) and dev_via else None
+
+
+def _resolved_cfg(device: dict, devices: dict[str, dict] | None = None) -> dict | None:
+    raw = _raw_ir_config(device)
+    if raw is None:
         return None
-    if not isinstance(config, dict) or set(config) != {"model", "ip", "connector", "profile"}:
-        raise ProfileError("ir needs exactly model, ip, connector and profile")
-    if config["model"] != HARDWARE or device.get("kind") != "disc_player" or device.get("model") != MODEL:
-        raise ProfileError("this IR integration supports a Sony UBP-X800M2 through an iTach IP2IR")
-    if not isinstance(config["ip"], str):
-        raise ProfileError("IR emitter needs an explicit IPv4 address")
-    try:
-        address = ipaddress.IPv4Address(config["ip"])
-    except (ipaddress.AddressValueError, TypeError) as error:
-        raise ProfileError("IR emitter needs an explicit IPv4 address") from error
-    if address.is_unspecified or address.is_multicast or str(address) == "255.255.255.255":
-        raise ProfileError("IR emitter must be a unicast address")
-    if type(config["connector"]) is not int or config["connector"] not in (1, 2, 3):
+    if not isinstance(raw, dict):
+        raise ProfileError("config.ir must be a mapping")
+    unknown_keys = sorted(set(raw) - _CONFIG_KEYS)
+    if unknown_keys:
+        raise ProfileError(f"config.ir has unknown key(s): {', '.join(unknown_keys)}")
+    cfg = dict(raw)
+    if "via" in cfg and (not isinstance(cfg["via"], str) or not cfg["via"]):
+        raise ProfileError("config.ir.via must name an emitter device id")
+    if devices is not None:
+        via = _emitter_ref(device, cfg)
+        if via is not None and ("ip" not in cfg or "model" not in cfg or "via" in cfg):
+            if via == device.get("id"):
+                raise ProfileError("config.ir.via cannot refer to the device itself")
+            emitter = devices.get(via)
+            if emitter is None:
+                raise ProfileError(f"config.ir.via {via!r} is not a device id")
+            if "ip" not in cfg and emitter.get("ip"):
+                cfg["ip"] = emitter["ip"]
+            if "model" not in cfg and emitter.get("model"):
+                cfg["model"] = emitter["model"]
+    return cfg
+
+
+def commissioned(device: dict, *, devices: dict[str, dict] | None = None, require_emitter: bool = True) -> dict | None:
+    cfg = _resolved_cfg(device, devices=devices)
+    if cfg is None:
+        return None
+    if device.get("kind") not in _SUPPORTED_KINDS:
+        raise ProfileError(f"this IR integration does not support kind {device.get('kind')!r}")
+    if "connector" not in cfg or "profile" not in cfg:
+        raise ProfileError("config.ir needs connector and profile")
+    if type(cfg["connector"]) is not int or cfg["connector"] not in (1, 2, 3):
         raise ProfileError("iTach IP2IR connector must be 1, 2 or 3")
-    name = config["profile"]
+    name = cfg["profile"]
     if not isinstance(name, str) or not re.fullmatch(r"ir/[A-Za-z0-9_-]+\.json", name):
         raise ProfileError("IR profile must name an ir/<profile>.json file under instance/")
     files = instance()
@@ -130,20 +174,71 @@ def commissioned(device: dict) -> dict | None:
     path = (root / name).resolve()
     if not path.is_relative_to(root):
         raise ProfileError("IR profile must remain under instance/")
-    profile = load_profile(path, device["model"])
+    profile = load_profile(path, model=device.get("model"), make=device.get("make"))
     if not profile["commands"]:
         raise ProfileError("IR profile has no verified commands; leave the emitter unconfigured")
-    return {"ip": str(address), "connector": config["connector"], **profile}
+    ip_value = cfg.get("ip")
+    model_value = cfg.get("model")
+    if not require_emitter and (ip_value is None or model_value is None) and _emitter_ref(device, cfg) is not None:
+        # Emitter ip/model will be resolved from `via` in validate_house() / resolve().
+        if model_value is not None and model_value != HARDWARE:
+            raise ProfileError(f"this IR integration supports an {HARDWARE} emitter")
+        if ip_value is not None:
+            _validate_ip(ip_value)
+        return {"ip": ip_value or "", "connector": cfg["connector"], **profile}
+    if model_value != HARDWARE:
+        raise ProfileError(f"this IR integration supports an {HARDWARE} emitter")
+    address = _validate_ip(ip_value)
+    return {"ip": address, "connector": cfg["connector"], **profile}
+
+
+def _validate_ip(value: object) -> str:
+    if not isinstance(value, str):
+        raise ProfileError("IR emitter needs an explicit IPv4 address")
+    try:
+        address = ipaddress.IPv4Address(value)
+    except (ipaddress.AddressValueError, TypeError) as error:
+        raise ProfileError("IR emitter needs an explicit IPv4 address") from error
+    if address.is_unspecified or address.is_multicast or str(address) == "255.255.255.255":
+        raise ProfileError("IR emitter must be a unicast address")
+    return str(address)
 
 
 def validate(device: dict) -> list[str]:
     if not uses(device, PHASE, NAME):
         return []
     try:
-        commissioned(device)
+        commissioned(device, require_emitter=False)
         return []
     except ProfileError as error:
         return [f"{device.get('id', 'device')}: {error}"]
+
+
+def validate_house(data: dict) -> list[str]:
+    devices = {d["id"]: d for d in data.get("devices") or [] if isinstance(d, dict) and d.get("id")}
+    problems: list[str] = []
+    for device in devices.values():
+        if not uses(device, PHASE, NAME):
+            continue
+        try:
+            commissioned(device, devices=devices, require_emitter=True)
+        except ProfileError as error:
+            problems.append(f"{device.get('id', 'device')}: {error}")
+    return problems
+
+
+def resolve(device: dict, data: dict) -> dict | None:
+    """Inherit omitted emitter ip/model from `config.ir.via` or `device.via`."""
+    if not uses(device, PHASE, NAME):
+        return None
+    cfg = device_config(device, NAME)
+    if not cfg or ("ip" in cfg and "model" in cfg):
+        return None
+    devices = {d["id"]: d for d in data.get("devices") or [] if isinstance(d, dict) and d.get("id")}
+    resolved = _resolved_cfg(device, devices=devices)
+    if resolved is None or resolved == cfg:
+        return None
+    return {**device, "config": {**(device.get("config") or {}), NAME: resolved}}
 
 
 def thing_uid(device: dict) -> str:
@@ -203,6 +298,25 @@ def remote_of(device: dict) -> str:
     return "sony_bluray"
 
 
+def remote_layouts(device: dict | None = None) -> dict[str, dict]:
+    """Button layout definition for IR-controlled Blu-ray players."""
+    return {
+        "sony_bluray": {
+            "label": "Blu-ray remote",
+            "wide": True,
+            "corners": ["power", "eject", "back", "home"],
+            "playback": ["previous", "rewind", "play", "pause", "stop", "fast_forward", "next"],
+            "keyGroups": [
+                {"label": "Apps", "keys": ["netflix", "favorite"], "columns": 2, "primary": True},
+                {"label": "Disc menus", "keys": ["top_menu", "popup_menu", "options", "display"], "columns": 2},
+                {"label": "Audio", "keys": ["audio", "subtitle"], "columns": 2},
+                {"label": "Wireless audio", "keys": ["bluetooth"], "columns": 1},
+                {"label": "Color keys", "keys": ["red", "green", "yellow", "blue"], "columns": 4},
+            ],
+        },
+    }
+
+
 def keys(device: dict) -> dict[str, str]:
     profile = commissioned(device)
     return profile["commands"] if profile else {}
@@ -218,7 +332,7 @@ def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:
 
 
 def remote_availability(device: dict) -> dict | None:
-    if not uses(device, PHASE, NAME) or device.get("model") != MODEL:
+    if not uses(device, PHASE, NAME):
         return None
     profile = commissioned(device)
     return {"keyButtons": sorted(profile["commands"]) if profile else [],

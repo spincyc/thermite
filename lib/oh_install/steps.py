@@ -10,6 +10,7 @@ import stat
 import sys
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import oh_addons
 import oh_deploy as deploy
@@ -26,6 +27,9 @@ from oh_install import manifest, ownership, progress
 from oh_install.access import Gateway
 from oh_install.model import Action, Check, Command, ReadinessStep, Step, Task
 from oh_install.system import System
+
+if TYPE_CHECKING:
+    from oh_conf import House
 
 #: Podman runs openHAB through runc; Git and make carry the deploys; Python with PyYAML
 #: runs this area's tools; Node.js and npm support the terminal remote; util-linux
@@ -179,6 +183,12 @@ class Context:
     restart_runtime: bool = False
     #: The operator's --native-timeout, in seconds; None selects WAIT.
     native_timeout: int | None = None
+    #: The committed house inventory, used to gate conditional helper services.
+    house: House | None = None
+
+    @property
+    def needs_atv(self) -> bool:
+        return deploy.needs_atv(self.house)
 
     @property
     def var(self) -> Path:
@@ -204,8 +214,8 @@ class Context:
         return files
 
     def unit(self, name: str) -> bytes | None:
-        """A unit's bytes; None for one this host does not have (music)."""
-        if name not in deploy.host_units(self.host):
+        """A unit's bytes; None for one this host does not have (music, unused helpers)."""
+        if name not in deploy.host_units(self.host, self.house):
             return None
         return self.prepared[name].data if self.prepared is not None else (self.area / name).read_bytes()
 
@@ -254,9 +264,32 @@ class Context:
         ports = oh_ports.effective(self.host)
         return {"thermite-openhab.service": [self.host["http_port"], self.host["https_port"], deploy.KARAF_PORT,
                                     deploy.LSP_PORT, oh_ports.SHUTDOWN_PORT],
-                "thermite-atv.service": [deploy.HELPER_PORT],
+                **({oh_units.ATV: [deploy.HELPER_PORT]} if self.needs_atv else {}),
                 **{service.unit: [int(service.listen.rsplit(":", 1)[1])] for service in metrics.services(self.host)},
                 **({oh_units.MUSIC: [ports["music"], ports["music_stream"]]} if music.enabled(self.host) else {})}
+
+
+def _committed_house(area: Path, files: dict[str, deploy.Blob] | None) -> dict | None:
+    """Load the committed house mapping for helper-service gating, or None when unavailable."""
+    import yaml
+    import oh_inventory
+
+    try:
+        if files is not None:
+            blob = files.get("instance/devices.yaml")
+            raw = yaml.safe_load(blob.data.decode("utf-8")) if blob is not None else None
+        else:
+            path = area / "instance/devices.yaml"
+            raw = yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else None
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        return None
+    if not isinstance(raw, dict) or not isinstance(raw.get("devices"), list):
+        return None
+    try:
+        resolved = oh_inventory.resolve_profiles(raw)
+    except (oh_inventory.ConfigError, ValueError, TypeError, KeyError):
+        return None
+    return resolved if isinstance(resolved, dict) else None
 
 
 def committed_context(area: Path, system: System, runtime_token_file: Path | None = None, *,
@@ -291,8 +324,9 @@ def committed_context(area: Path, system: System, runtime_token_file: Path | Non
         versions, host = deploy.load(area)
         conf = deploy.read_tree(area / "conf")
     deploy.check_pins(versions, host)
+    house = _committed_house(area, files)
     return Context(area, versions, host, head, deploy.tree_digest(conf), system.hostname(), system.address(),
-                   runtime_token_file, files, application_)
+                   runtime_token_file, files, application_, house=house)
 
 
 class DerivedConfiguration(Step):
@@ -440,8 +474,9 @@ class Preconditions(Step):
             oh_service.validate_identity(host["uid"], host["gid"])
         except oh_service.ServiceError as exc:
             problems.append(str(exc))
-        if system.machine() != MACHINE:
-            problems.append(f"this is {system.machine()}; the Apple TV helper's pins need {MACHINE}")
+        machine = system.machine()
+        if self.context.needs_atv and machine != MACHINE:
+            problems.append(f"this is {machine}; the Apple TV helper's pins need {MACHINE}")
         if not system.overlayfs():
             problems.append(f"the running kernel, {system.kernel()}, has no overlayfs and no modules to load it "
                             "from (it was upgraded since the last boot), and Podman needs it: reboot first")
@@ -471,7 +506,7 @@ class Preconditions(Step):
             problems.append(f"port {', '.join(map(str, busy))} in use (ss -ltnp shows by what)")
         if problems:
             return Check(False, "", "; ".join(problems))
-        return Check(True, f"{self.context.hostname}, {MACHINE}, ids {host['uid']}:{host['gid']} and ports free or "
+        return Check(True, f"{self.context.hostname}, {machine}, ids {host['uid']}:{host['gid']} and ports free or "
                            "openHAB's")
 
 
@@ -1061,7 +1096,7 @@ class Units(Step):
         stale = self.stale(system)
         if stale:
             return Check(False, "to install: " + ", ".join(stale))
-        return Check(True, f"the {len(deploy.host_units(self.context.host))} installed unit files match deploy/")
+        return Check(True, f"the {len(deploy.host_units(self.context.host, self.context.house))} installed unit files match deploy/")
 
     def actions(self, system: System) -> list[Action]:
         by_directory: dict[Path, list[str]] = {}
@@ -1087,7 +1122,7 @@ class Units(Step):
 
     def desired(self, system: System) -> list[manifest.Item]:
         items = []
-        for source, target in sorted(deploy.host_units(self.context.host).items()):
+        for source, target in sorted(deploy.host_units(self.context.host, self.context.house).items()):
             items.append(manifest.unit(target))
             # Quadlets are enabled by their generator, and drop-ins not at all.
             if target.parent == manifest.UNITS:
@@ -1104,11 +1139,16 @@ class Services(Step):
         self.force_runtime = restart_runtime
         self.runtime_restarted = False
 
+    def active_restarts(self) -> dict[str, str]:
+        if self.context.needs_atv:
+            return self.restarts
+        return {name: unit for name, unit in self.restarts.items() if unit != oh_units.ATV}
+
     def plan(self, system: System) -> tuple[list[str], list[str]]:
         """Units to start, and units to restart (their file changed after
         they started)."""
         start, restart = [], []
-        for name, unit in self.restarts.items():
+        for name, unit in self.active_restarts().items():
             state = system.unit(unit)
             if state.active != "active":
                 start.append(unit)
@@ -1500,6 +1540,116 @@ class GatewayWheels(Step):
                    "   (with that machine's path in place of this one), copy it back and run the command again: "
                    "every wheel is checked against the pinned hashes wherever it came from.")
         return 1
+
+
+PYATV_REQUIREMENTS = "lib/requirements-pyatv.txt"
+PYATV_REQUIREMENTS_FILE = "requirements-pyatv.txt"
+
+
+def atv_requirements(context: Context) -> bytes:
+    """The pinned pyatv requirements for `context`, from its frozen release or checkout."""
+    from oh_install.access import source
+    if context.prepared is not None and PYATV_REQUIREMENTS in context.prepared:
+        return context.prepared[PYATV_REQUIREMENTS].data
+    return (source(context.area) / PYATV_REQUIREMENTS).read_bytes()
+
+
+class AtvWheels(Step):
+    """The pinned pyatv wheels (lib/requirements-pyatv.txt), prefetched into the
+    operator's wheelhouse and verified offline by the pinned Python image while
+    Thermite still runs, so AtvEnvironment builds the venv without hitting PyPI
+    at service boot. Only run for houses that use the Apple TV helper."""
+    title = "Apple TV helper wheels"
+    always = True
+
+    def __init__(self, context: Context):
+        self.context = context
+        #: What this run pulled, for the transaction's record.
+        self.pulled: list[str] = []
+
+    def wanted(self) -> tuple[str, Path, bytes]:
+        from oh_access import environment
+        from oh_install.access import python_image
+        image = python_image(self.context)
+        requirements = atv_requirements(self.context)
+        return image, environment.wheelhouse(self.context.area, image, requirements), requirements
+
+    def check(self, system: System) -> Check:
+        from oh_access import environment
+        try:
+            _, directory, requirements = self.wanted()
+        except (OSError, ValueError, KeyError) as exc:
+            return Check(False, "", f"the Apple TV helper's pinned wheels cannot be named: {exc}")
+        return Check(False, f"the {environment.pins(requirements)} pinned wheels of the Apple TV helper, "
+                            f"in {directory}, checked by the pinned image's pip without a network")
+
+    def actions(self, system: System) -> list[Action]:
+        return [Task("fetch what is missing of the Apple TV helper's pinned wheels, and verify every one", self.fetch)]
+
+    def fetch(self, system: System) -> int:
+        from oh_access import AccessError, environment
+        from oh_install.runner import perform
+        image, directory, requirements = self.wanted()
+        code, pulled = pull_missing(self.context, system, [image])
+        self.pulled += pulled
+        if code is None or code:
+            return code or 1
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / PYATV_REQUIREMENTS_FILE).write_bytes(requirements)
+            verify = environment.verify_command(image, directory, PYATV_REQUIREMENTS_FILE)
+            fetch = environment.fetch_command(image, directory, PYATV_REQUIREMENTS_FILE)
+        except (OSError, AccessError) as exc:
+            system.say(f"   {exc}")
+            return 1
+
+        def run(argv: list[str]) -> bool:
+            return perform(Command(tuple(argv), root=True), system, self.context.area) == 0
+        complete = any(directory.glob("*.whl")) and system.capture(("sudo", "-n", *verify))[0] == 0
+        if complete or run(fetch) and run(verify):
+            return 0
+        system.say(f"   The Apple TV helper's pinned wheels in {directory} are incomplete, or not the pinned ones, "
+                   "and could not be fetched and verified. Nothing was changed. With no network here, copy that "
+                   "directory to an x86-64 machine that has one and podman, fill it there with\n"
+                   f"     podman run --rm --volume {directory}:/wheels {image} python -m pip download "
+                   f"--require-hashes --only-binary :all: --dest /wheels -r /wheels/{PYATV_REQUIREMENTS_FILE}\n"
+                   "   (with that machine's path in place of this one), copy it back and run the command again: "
+                   "every wheel is checked against the pinned hashes wherever it came from.")
+        return 1
+
+
+class AtvEnvironment(Step):
+    """Build the Apple TV helper's venv offline during installation from the
+    prefetched wheelhouse (AtvWheels), inside the pinned Python image, so
+    thermite-atv.service starts without touching PyPI."""
+    title = "Apple TV helper environment"
+    always = True
+
+    def __init__(self, context: Context):
+        self.context = context
+
+    def command(self) -> tuple[str, ...]:
+        from oh_access import environment
+        image, wheels, _ = AtvWheels(self.context).wanted()
+        host, layout = self.context.host, self.context.layout
+        return (
+            "podman", "run", "--rm", "--runtime=runc", "--network=none", "--read-only",
+            "--user", f"{host['uid']}:{host['gid']}", "--umask=0077", "--cap-drop=all",
+            "--security-opt=no-new-privileges",
+            "--env", f"OPENHAB_ATV_VENV={deploy.ATV_VENV}",
+            "--env", "HOME=/tmp",
+            "--env", "PYTHONDONTWRITEBYTECODE=1",
+            "--volume", f"{environment.plain(layout.atv_app)}:/app:ro,Z",
+            "--volume", f"{environment.plain(layout.atv_venv)}:/venv:Z",
+            "--volume", f"{environment.plain(wheels)}:/wheels:ro,z",
+            image, "python3", "/app/bin/thermite", "apple-tv", "setup", "--find-links", "/wheels", "--if-needed",
+        )
+
+    def check(self, system: System) -> Check:
+        return Check(False, f"prepare {self.context.layout.atv_venv} offline from the verified pyatv wheels")
+
+    def actions(self, system: System) -> list[Action]:
+        return [Command(self.command(), root=True)]
 
 
 class AddonRepository(Step):

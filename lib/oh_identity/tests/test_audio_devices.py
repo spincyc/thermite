@@ -4,7 +4,6 @@ that owns the device locks it there too, a room that only shows it as a
 source refuses only what would disturb its route. Like a room's commands,
 it needs no account. Fictional devices and documentation addresses only."""
 import copy
-import json
 from pathlib import Path
 
 from django.conf import settings
@@ -27,15 +26,16 @@ ESTATE = "example_estate"
 def house():
     """The example house with a WiiM as the East room's sound and a Sonos Amp
     in a kitchen no routed room covers."""
+    import yaml
     from oh_integrations import sonos
-    data = json.loads((Path(__file__).resolve().parents[3] / "instance/devices.yaml").read_text())
+    data = yaml.safe_load((Path(__file__).resolve().parents[3] / "instance/devices.yaml").read_text())
     data["rooms"][KITCHEN] = {"label": "Example Kitchen", "tag": "Kitchen"}
     mac = bytes((2, 0, 0, 0, 0, 21)).hex(":")
     data["devices"] += [
         {"id": WIIM, "room": EAST, "kind": "streaming_amp", "make": "WiiM", "model": "Amp Pro", "ip": "192.0.2.32",
          "controls": {"observe": ["wiim_http"], "control": ["wiim_http"]}},
         {"id": AMP, "room": KITCHEN, "kind": "amp", "make": "Sonos", "model": "Amp", "ip": "192.0.2.21", "mac": mac,
-         "sonos_udn": sonos.udn(mac), "controls": {"observe": ["sonos"], "control": ["sonos"]}}]
+         "config": {"sonos": {"udn": sonos.udn(mac)}}, "controls": {"observe": ["sonos"], "control": ["sonos"]}}]
     data["routing"]["rooms"][EAST]["audio"] = WIIM
     return data
 

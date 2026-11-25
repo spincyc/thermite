@@ -1513,7 +1513,7 @@ examples:
                                 [--house FILE] [--json]
                                 [DEVICE]
 
-Compare each matrix (or only DEVICE) with its `settings` in
+Compare each matrix (or only DEVICE) with its `config.&lt;integration&gt;` settings in
 instance/devices.yaml and print the differences. On the BK-808 these settings cover output scalers, HDR
 conversion, HDCP and fixed input EDIDs. When a room has hdmi_audio_scaler,
 routing sets the scaler on its audio output and this command skips it.
@@ -1605,7 +1605,7 @@ GET requests only; the password and tokens are never written.
 
 options:
   -h, --help          show this help message and exit
-  --controller-ip IP  Director address; defaults to control4_director or the single
+  --controller-ip IP  Director address; defaults to control4.director or the single
                       controller in the inventory
   --no-bindings       skip the per-device GET of connections (IR ports)
 
@@ -1686,37 +1686,23 @@ examples:
                      --sandbox] [--house FILE] [--timeout SECONDS]
                      [DEVICE] [CODE]
 
-Pair a device with thermite, as its integration in the house file
-(instance/devices.yaml) needs:
+Pair a device with thermite through its pairing Items (the same _pairing
+Item contract the Pairing page drives), for every integration in the house
+file (instance/devices.yaml) that defines a pairing() hook (Sony TVs,
+Android TVs / NVIDIA SHIELDs, and Apple TVs):
 
-  - a Sony TV under sony_ip_control control: thermite commands it over
-    Sony&#x27;s IP control once the TV has registered thermite, with a PIN it
-    shows. On the TV: Settings, Network (and Internet), Home network, IP
-    control: Authentication &quot;Normal&quot;, and Remote Start on so that it
-    answers, and turns on, from standby (the menu path varies by model).
-    Stand at the TV: this asks thermite (production, or with --sandbox the
-    sandbox) to have the TV show four digits, through the TV&#x27;s Pairing
-    Items, as the Pairing page does, then asks for the digits and sends
-    them back. thermite keeps the TV&#x27;s registration in its own userdata;
-    the PIN is never shown, logged or put in Git. With CODE it sends four
-    digits the TV shows already. Without DEVICE it reads each Sony TV&#x27;s
-    pairing instead, and DEVICE --status that TV&#x27;s alone.
-  - an Android TV or Google TV under androidtv_googletv control, with
-    --sandbox: the binding reaches a TV only once the TV trusts its
-    certificate, kept in the sandbox&#x27;s userdata/androidtv/. Stand at the
-    TV: without CODE it asks the TV to show six letters and digits, once
-    the TV&#x27;s pairing port (the Thing&#x27;s port + 1) connects; with CODE it
-    sends them (the Karaf console&#x27;s openhab:androidtv &lt;Thing UID&gt; pincode
-    REQUEST|CODE) and waits for the Thing to come ONLINE.
-    Production pairs it from the remote&#x27;s Pairing screen (thermite remote
-    --pair) or the Pairing page.
-  - an Apple TV: it pairs from the remote&#x27;s Pairing screen or the Pairing
-    page, through the Apple TV helper (thermite apple-tv).
+  - Without DEVICE: reads every pairable device&#x27;s pairing status from
+    production thermite (or with --sandbox, the running sandbox).
+  - With DEVICE --status: reads that device&#x27;s pairing status alone.
+  - With DEVICE: asks thermite to make the device show a pairing code on
+    its screen, asks you to type that code, and sends it back through the
+    device&#x27;s pairing Item. When a paired device requires confirmation to
+    pair again, asks before replacing its pairing.
+  - With DEVICE CODE: sends the code the device is already showing.
 
 positional arguments:
   DEVICE             the device&#x27;s id in the house file
-  CODE               the code the device shows: a Sony TV&#x27;s four digits, an Android TV&#x27;s
-                     six letters and digits (omit to ask the device for them)
+  CODE               the pairing code the device shows (omit to ask the device for one)
 
 options:
   -h, --help         show this help message and exit
@@ -1726,14 +1712,13 @@ options:
                      names one), SITE being the site&#x27;s path there, below /~/ for one in
                      its home
   --status           read DEVICE&#x27;s pairing instead of pairing it (without DEVICE: every
-                     Sony TV&#x27;s)
+                     pairable device&#x27;s)
   --json             print the report as JSON
   --production       production thermite on this host, with the API token bin/thermite
                      install saved (default)
-  --sandbox          the sandbox, and its Android TV pairings
+  --sandbox          the running sandbox
   --house FILE       the house file (default: instance/devices.yaml)
-  --timeout SECONDS  seconds to wait for an Android TV to come ONLINE after its code
-                     (default: 30)
+  --timeout SECONDS  seconds to wait for a pairing command to settle (default: 35)
 
 switches every verb takes:
   -q, --quiet        print only errors
@@ -1741,31 +1726,28 @@ switches every verb takes:
   --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
-  0  done: the TV is paired, every TV checked is paired, or the TV was
-     asked for a code
-  1  a TV showed no PIN, refused the PIN, did not answer, is not paired,
-     its pairing port does not connect, or it is not ONLINE after its code
-  2  the house file is invalid, no such device, thermite could not be
-     reached or has no such Items, the sandbox is not running, or the
-     device pairs elsewhere
+  0  done: the device is paired, every device checked is paired, or
+     re-pairing was declined
+  1  a device showed no code, refused the code, did not answer, its pairing
+     port was closed, or a checked device is not paired
+  2  the house file is invalid, no such pairable device, invalid code
+     format, thermite could not be reached or has no such Items, or the
+     sandbox is not running
 
 --json:
   Without DEVICE, or with --status, one object: target (production or
-  sandbox), paired (whether every TV read is), and tvs, one entry for each
-  Sony TV: id, label, paired, and its state and problem as thermite reports
-  them, or error where its Items could not be read.
+  sandbox), paired (whether every device read is), and tvs, one entry for
+  each pairable device: id, label, paired, and its state and problem as
+  thermite reports them, or error where its Items could not be read.
 
 examples:
-  thermite pair DEVICE              have that Sony TV show a PIN, then type it to pair it with production
+  thermite pair DEVICE              have DEVICE show a pairing code, then type it to pair with production
   thermite pair DEVICE --sandbox    the same with the sandbox
-  thermite pair DEVICE 1234         send the PIN the TV shows already
-  thermite pair DEVICE --sandbox    ask an Android TV to show a pairing code
-  thermite pair DEVICE A1B2C3 --sandbox
-                                    send the code it shows; wait for it to come ONLINE
-  thermite pair                     whether every Sony TV is paired with production
+  thermite pair DEVICE 1234         send the code DEVICE shows already
+  thermite pair                     whether every pairable device is paired with production
   thermite pair DEVICE --status --sandbox
-                                    whether that Sony TV is paired with the sandbox
-  thermite pair --json              every Sony TV&#x27;s pairing as JSON
+                                    whether DEVICE is paired with the sandbox
+  thermite pair --json              every pairable device&#x27;s pairing status as JSON
 </pre>
 </section>
 <section class="verb" id="device"><h3><code>thermite device</code></h3><p>Everything about one device: what it is, what watches it, what holds now.</p><pre class="help">usage: thermite device [-h] [--config DIR] [--url URL] [--house FILE]
@@ -2089,7 +2071,7 @@ examples:
   thermite apple-tv serve           serve on 127.0.0.1:13606
   thermite apple-tv serve --setup   build the venv first if it is missing or stale, as production does
 </pre>
-<details id="apple-tv-setup"><summary><code>thermite apple-tv setup</code></summary><pre class="help">usage: thermite apple-tv setup [-h]
+<details id="apple-tv-setup"><summary><code>thermite apple-tv setup</code></summary><pre class="help">usage: thermite apple-tv setup [-h] [--find-links DIR] [--if-needed]
 
 Create build/pyatv-venv (or $OPENHAB_ATV_VENV) with the pinned pyatv.
 
@@ -2099,12 +2081,16 @@ lib/requirements-pyatv.txt, pinned and hashed (--require-hashes, wheels
 only); a venv built from other pins or another Python is rebuilt.
 
 options:
-  -h, --help     show this help message and exit
+  -h, --help        show this help message and exit
+  --find-links DIR  install offline from pre-fetched hash-verified wheels in DIR (--no-
+                    index)
+  --if-needed       skip rebuilding when the venv already matches the current pins and
+                    Python
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet       print only errors
+  -v, --verbose     also print, on stderr, the commands and HTTP requests it runs
+  --no-color        no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite apple-tv setup           build build/pyatv-venv, or rebuild it after a pin change

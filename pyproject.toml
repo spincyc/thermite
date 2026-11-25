@@ -98,6 +98,7 @@ files = [
     "lib/oh_features/remote_system.py",
     "lib/oh_heos_patch/__init__.py",
     "lib/oh_heos_patch/__main__.py",
+    "lib/oh_host.py",
     "lib/oh_identity/__init__.py",
     "lib/oh_identity/addresses.py",
     "lib/oh_identity/hardening.py",
@@ -129,6 +130,7 @@ files = [
     "lib/oh_logging.py",
     "lib/oh_logs.py",
     "lib/oh_metrics/alerts.py",
+    "lib/oh_metrics/builders.py",
     "lib/oh_metrics/yoke.py",
     "lib/oh_package.py",
     "lib/oh_paths.py",
@@ -142,5 +144,6 @@ files = [
     "lib/oh_source_upgrade.py",
     "lib/oh_testing/__init__.py",
     "lib/oh_trace.py",
+    "lib/oh_types.py",
     "lib/oh_units.py",
 ]

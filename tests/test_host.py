@@ -86,5 +86,122 @@ class Reported(unittest.TestCase):
         self.assertTrue(err.getvalue().startswith(f"error: {self.problem}"), err.getvalue())
 
 
+class ShapeAndValidation(unittest.TestCase):
+    """oh_host.SHAPE, schema(), HostFile TypedDict parity, optional defaults,
+    version: 1, and multi-error collection."""
+
+    def test_shape_covers_every_declared_top_level_and_nested_key(self):
+        import oh_music
+        import oh_ports
+        import oh_shape
+        import oh_shares
+        from oh_access import guest
+
+        top = oh_host.SHAPE.keys
+        self.assertIsNotNone(top)
+        self.assertEqual(frozenset(top), oh_host.KEYS)
+        self.assertEqual(set(top), {"version", "timezone", "root", "http_port", "https_port", "uid", "gid",
+                                    "gateway", "metrics", "guest_http", "music", "shares"})
+        self.assertEqual(oh_host.REQUIRED, ("timezone",))
+        self.assertEqual(set(top["gateway"].keys), set(oh_ports.GATEWAY_FIELDS))
+        self.assertEqual(frozenset(top["metrics"].keys), oh_host.METRICS_KEYS)
+        self.assertEqual(set(top["guest_http"].keys), set(guest.FIELDS))
+        self.assertEqual(frozenset(top["music"].keys), oh_music.KEYS)
+        self.assertEqual(frozenset(top["shares"].each.keys), oh_shares.KEYS)
+        # oh_shape.rows() walks every top-level and nested key cleanly.
+        paths = {path for path, _ in oh_shape.rows(top)}
+        self.assertLessEqual({"version", "timezone", "gateway.port", "metrics.retention",
+                              "guest_http.clients", "music.libraries",
+                              "shares.<share name>.where"}, paths)
+
+    def test_host_file_typed_dict_matches_shape_exactly(self):
+        import oh_types
+        from tests.test_house_types import keys_differ
+
+        self.assertIs(oh_host.HostFile, oh_types.HostFile)
+        self.assertEqual(keys_differ(oh_types.HostFile, oh_host.SHAPE.keys), [])
+
+    def test_schema_generates_draft_2020_12_json_schema(self):
+        doc = oh_host.schema(schema_id="https://example.test/host.schema.json")
+        self.assertEqual(doc["$schema"], "https://json-schema.org/draft/2020-12/schema")
+        self.assertEqual(doc["$id"], "https://example.test/host.schema.json")
+        self.assertEqual(doc["title"], "thermite host file")
+        self.assertEqual(doc["type"], "object")
+        self.assertEqual(doc["required"], ["timezone"])
+        self.assertFalse(doc["additionalProperties"])
+        self.assertEqual(set(doc["properties"]), set(oh_host.KEYS))
+        self.assertEqual(doc["properties"]["version"]["enum"], [1])
+        self.assertEqual(doc["properties"]["shares"]["additionalProperties"]["required"],
+                         ["type", "server", "where"])
+        self.assertNotIn("$id", oh_host.schema())
+
+    def test_version_and_optional_defaults_are_validated(self):
+        minimal = {"timezone": "Etc/UTC"}
+        self.assertEqual(oh_host.problems(minimal), [])
+        resolved = oh_host.validate(minimal)
+        self.assertEqual(resolved, {"timezone": "Etc/UTC", **oh_host.DEFAULTS})
+        self.assertEqual(minimal, {"timezone": "Etc/UTC"})
+
+        versioned = {"version": 1, "timezone": "Etc/UTC"}
+        self.assertEqual(oh_host.validate(versioned)["version"], 1)
+        self.assertEqual(oh_host.load(b"version: 1\ntimezone: Etc/UTC\n"), {**oh_host.DEFAULTS, **versioned})
+
+        for bad_version in (0, 2, "1", True, 1.0, None):
+            with self.subTest(version=bad_version):
+                found = oh_host.problems({"version": bad_version, "timezone": "Etc/UTC"})
+                self.assertEqual(found, ["version must be 1"])
+                with self.assertRaises(oh_host.HostError) as caught:
+                    oh_host.validate({"version": bad_version, "timezone": "Etc/UTC"})
+                self.assertEqual(caught.exception.problems, found)
+
+        # Collisions against defaulted ports and node_exporter_uid are still caught.
+        self.assertTrue(any("collides" in p for p in oh_host.problems(
+            {"timezone": "Etc/UTC", "metrics": {"grafana_port": oh_host.DEFAULTS["http_port"]}})))
+        self.assertTrue(any("node_exporter_uid" in p for p in oh_host.problems(
+            {"timezone": "Etc/UTC", "gid": oh_host.DEFAULTS["uid"] - 1})))
+
+    def test_multi_error_collection_reports_every_problem_in_one_pass(self):
+        broken = {
+            "version": 2,
+            "timezone": "Mars/Olympus_Mons",
+            "root": "relative/path",
+            "uid": 0,
+            "gid": 9001,
+            "http_port": 80,
+            "unknown_key": True,
+            "gateway": {"port": 99999, "listen": []},
+            "metrics": {"retention": "forever", "units": ["bad\nunit"], "extra": 1},
+            "guest_http": {"listen": [], "clients": []},
+            "music": {"libraries": {"BadName": "relative"}},
+            "shares": {"music": {"type": "smbfs", "server": "nas.example", "where": "/mnt/music"}},
+        }
+        found = oh_host.problems(broken)
+        self.assertGreaterEqual(len(found), 10, found)
+        for expected in (
+            "unknown setting unknown_key",
+            "version must be 1",
+            "not a known IANA time zone",
+            "root must be",
+            "uid and gid",
+            "unknown metrics setting extra",
+            "metrics.units",
+            "metrics.retention",
+            "guest_http.listen",
+            "music.libraries",
+            "shares.music.type",
+            "gateway.port: listener port",
+            "gateway.listen must be a non-empty list",
+            "http: listener port",
+        ):
+            with self.subTest(expected=expected):
+                self.assertTrue(any(expected in item for item in found), (expected, found))
+
+        with self.assertRaises(oh_host.HostError) as caught:
+            oh_host.validate(broken)
+        self.assertEqual(caught.exception.problems, found)
+        for item in found:
+            self.assertIn(item, str(caught.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

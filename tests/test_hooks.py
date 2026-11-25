@@ -35,10 +35,6 @@ BY_NAME = {
     "lib/oh_access/native_boundary.py": ({"sonos"}, "the callback relay takes Sonos's UPnP events"),
     "lib/oh_cli/cameras.py": ({"unifi_protect"}, "thermite cameras provisions the Protect bridges"),
     "lib/oh_cli/ir_profile.py": ({"globalcache_ir"}, "thermite ir-profile checks a Global Caché profile"),
-    "lib/oh_cli/pair.py": ({"androidtv_googletv", "pyatv_http", "sony_ip_control"},
-                           "thermite pair runs each of these integrations' own pairing"),
-    "lib/oh_features/remote_cameras.py": ({"unifi_protect"}, "the camera catalogue is Protect's"),
-    "lib/oh_testing/routing.py": ({"vrroom_telnet"}, "the routing check waits out the VRROOM rule's poll"),
 }
 
 #: hasattr() and getattr() of these names are asked of something that is no
@@ -302,8 +298,9 @@ class Readers(unittest.TestCase):
                 with self.subTest(path=path, hook=name):
                     self.assertIsNotNone(HOOKS[name].order, "give the hook an order: the registry's decides nothing")
         # The readers this test must be seeing.
-        self.assertLessEqual({"remote", "stage", "fields", "problem"}, taken)
+        self.assertLessEqual({"remote", "stage", "problem", "recovery", "pairing"}, taken)
         self.assertNotIn("diagnostics", taken, "signal observations combine every enabled provider")
+        self.assertNotIn("fields", taken, "device fields combine every enabled provider")
 
     def test_no_generic_module_imports_an_integration(self):
         for path, nodes in generic().items():

@@ -46,12 +46,12 @@ class CanonicalPackage(unittest.TestCase):
 
 class PrivateControllerEndpoint(unittest.TestCase):
     def test_selected_controller_and_explicit_override(self):
-        data = {'control4_director': 'second', 'devices': [
+        data = {'control4': {'director': 'second'}, 'devices': [
             {'id': 'first', 'kind': 'control4_controller', 'ip': '192.0.2.10'},
             {'id': 'second', 'kind': 'control4_controller', 'ip': '192.0.2.11'}]}
         self.assertEqual(oh_control4.director_ip(data), '192.0.2.11')
         self.assertEqual(oh_control4.director_ip(data, '192.0.2.12'), '192.0.2.12')
-        data.pop('control4_director')
+        data.pop('control4')
         with self.assertRaisesRegex(ValueError, 'select a controller'):
             oh_control4.director_ip(data)
         data['devices'].pop()

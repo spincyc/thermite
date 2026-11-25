@@ -75,7 +75,7 @@ def device(ident, room, kind, number, **extra):
 #: (usb_unused: park); an HDMI switch before the Den's display, whose sound
 #: is a streaming amplifier; an idle EDID; and a room of a speaker alone.
 ROUTED = {
-    "version": 1,
+    "version": 2,
     "rooms": {CINEMA: {"label": "Example Cinema", "tag": "Room"}, LOUNGE: {"label": "Example Lounge", "tag": "Room"},
               DEN: {"label": "Example Den", "tag": "Room"}, PORCH: {"label": "Example Porch", "tag": "Room"}},
     "devices": [
@@ -83,7 +83,8 @@ ROUTED = {
                controls={"control": ["bk808_http"]}),
         device("example_usb", CINEMA, "usb_matrix", 21, model="UKM-404", controls={"control": ["ukm404_http"]},
                reboot="nightly"),
-        device("example_avr", CINEMA, "avr", 22, make="Marantz", model="CINEMA 30", zones=2,
+        device("example_avr", CINEMA, "avr", 22, make="Marantz", model="CINEMA 30",
+               config={"denonmarantz_http": {"zones": 2}},
                controls={"observe": ["denonmarantz_http"], "control": ["denonmarantz_http"]}),
         device("example_screen", CINEMA, "tv", 23, **TV),
         device("example_tv", LOUNGE, "tv", 24, **TV),

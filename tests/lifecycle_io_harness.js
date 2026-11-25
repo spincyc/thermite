@@ -50,7 +50,7 @@ function httpRig({status=200,body='',thing=true,ack='readback',fail=null,observe
   thermiteIO:{http(url){if(fail)throw fail;return {getStatus:()=>status,getContentAsString:()=>url.includes('/cmd')?body:JSON.stringify({portseltx0:observed})};},
    unreached:error=>!!error&&error.unreached===true}});
  vm.runInContext(source,context);const module=context.module.exports,bridge=module.create(f.descriptor,f.env);
- const actor=module.httpActor({key:'switch',io:f.descriptor.io,fields:{D1:{kind:'http',thing:'native',channel:'input',ack,allowed:['1','2','3','4']}}},
+ const actor=module.httpActor({key:'switch',io:f.descriptor.io,fields:{D1:{kind:'http',thing:'native',channel:'input',ack,values:['1','2','3','4']}}},
   {...f.env,noRules:!rules,journal:{load:()=>null,save(){}},...(record?{record}:{})});
  const write=(value='3',labels={})=>{bridge.dispatch({token:String('w')+value,key:'switch',resource:'D1',value,phase:'acquire',...labels},()=>{});actor.drain();bridge.events();};
  const read=()=>{bridge.probe({token:String('read'),key:'switch',resource:'D1'},()=>{});actor.drain();bridge.events();};
@@ -253,7 +253,7 @@ test('VRROOM requires owned matching readback without inventing an ACK response 
   const context=vm.createContext({module:{exports:{}},require(name){assert.equal(name,'openhab');return openhab;},
    thermiteIO:{http(url){requests.push(url);return {getStatus:()=>200,getContentAsString:()=>url.includes('/cmd')?writeBody:JSON.stringify({portseltx0:observed})};}}});
   vm.runInContext(source,context);const module=context.module.exports,bridge=module.create(f.descriptor,f.env);
-  const actor=module.httpActor({key:'switch',io:f.descriptor.io,fields:{D1:{kind:'http',thing:'native',channel:'input',ack,allowed:['1','2','3','4']}}},{...f.env,journal:{load:()=>null,save(){}}});
+  const actor=module.httpActor({key:'switch',io:f.descriptor.io,fields:{D1:{kind:'http',thing:'native',channel:'input',ack,values:['1','2','3','4']}}},{...f.env,journal:{load:()=>null,save(){}}});
   bridge.dispatch({token:String('video'),key:'switch',resource:'D1',value:'3',phase:'acquire'},e=>reports.push(e));actor.drain();bridge.events();
   return {reports,requests};
  }
@@ -808,7 +808,7 @@ test('manualPending slot isolates manual commands from pending planner writes an
 });
 test('limitActive scales dynamically with house actor count and httpActor pre-compiles transforms once',()=>{
  const actors={};
- for(let i=0;i<14;i++)actors[`dev${i}`]={wake:`w${i}`,resources:[`R${i}`],fields:{[`R${i}`]:{allowed:['1','2'],independent:true}}};
+ for(let i=0;i<14;i++)actors[`dev${i}`]={wake:`w${i}`,resources:[`R${i}`],fields:{[`R${i}`]:{values:['1','2'],independent:true}}};
  const f=setup();
  const bigDesc={io:{epoch:'config-1',wake:'events',actors}};
  const wakes=[];
@@ -823,7 +823,7 @@ test('limitActive scales dynamically with house actor count and httpActor pre-co
  f.broker.active.n=0;
  // Direct controller command queues unmanaged field in FIFO order ahead of planner write.
  const edidDesc={io:{epoch:'config-1',wake:'events',actors:{matrix:{wake:'mw',resources:['out1'],
-   fields:{out1:{allowed:['1','2'],independent:true},edid1:{allowed:['40','41'],independent:true}}}}}};
+   fields:{out1:{values:['1','2'],independent:true},edid1:{values:['40','41'],independent:true}}}}}};
  const eBridge=f.module.create(edidDesc,f.env);
  const order=[];
  const eProv={has:()=>true,execute:(r,v)=>{order.push(`${r}=${v}`);return {outcome:'applied',sample:{value:v,fresh:true}};},probe:()=>({value:'1',fresh:true})};
@@ -846,7 +846,7 @@ test('limitActive scales dynamically with house actor count and httpActor pre-co
  vm.runInContext(source,ctx);
  const hm=ctx.module.exports,hf=setup();
  const hBridge=hm.create(hf.descriptor,hf.env);
- const hActor=hm.httpActor({key:'switch',io:hf.descriptor.io,fields:{D1:{kind:'http',thing:'t',channel:'c',ack:'result',allowed:['1','2','3']}}},{...hf.env,journal:{load:()=>null,save(){}}});
+ const hActor=hm.httpActor({key:'switch',io:hf.descriptor.io,fields:{D1:{kind:'http',thing:'t',channel:'c',ack:'result',values:['1','2','3']}}},{...hf.env,journal:{load:()=>null,save(){}}});
  assert.equal(compiles,1,'transform compiled once at actor init');
  for(let n=0;n<5;n++){hBridge.dispatch({token:`t${n}`,key:'switch',resource:'D1',value:'3',phase:'acquire'},()=>{});hActor.drain();hBridge.events();}
  assert.equal(compiles,1,'zero additional Function compilations across 5 commands');

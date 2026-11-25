@@ -7,11 +7,16 @@ import json
 import re
 
 import oh_integrations as integrations
-from oh_conf import House
+from oh_conf import House, uses
 from oh_features import routing
 
 from .model import PolicyError
 from .schedule import utc
+
+#: Default freshness window for a field whose integration declares no feedback.
+DEFAULT_MAX_AGE = 30.0
+#: Freshness window for a push-driven field (updates on change and reconnect).
+PUSH_MAX_AGE = 300.0
 
 
 @dataclass(frozen=True)
@@ -25,7 +30,7 @@ class Field:
     value: str
     resource: str
     native_power: bool = False
-    max_age: float = 30.0
+    max_age: float = DEFAULT_MAX_AGE
     alternatives: tuple[tuple[str, str, str], ...] = ()
 
 
@@ -79,6 +84,39 @@ def native_power_observations(devices) -> dict[str, str]:
     return out
 
 
+def _max_age(feedback: object) -> float:
+    """Derive Field.max_age from a Stage 2c fields(device) feedback contract."""
+    if not isinstance(feedback, dict):
+        return DEFAULT_MAX_AGE
+    kind = feedback.get("kind")
+    if kind == "poll":
+        interval = feedback.get("interval_s")
+        if type(interval) in (int, float) and interval > 0:
+            return float(2 * interval + 10)
+    elif kind == "push":
+        return PUSH_MAX_AGE
+    elif kind == "none":
+        return 0.0
+    return DEFAULT_MAX_AGE
+
+
+def _field_max_ages(devices) -> dict[str, float]:
+    """{Item: Field.max_age} derived generically from fields(device) feedback
+    with per-device `device.timing` overrides applied."""
+    from oh_features.routing import lifecycle_io
+
+    out: dict[str, float] = {}
+    for device in devices:
+        for module in integrations.defining("fields"):
+            if not uses(device, "control", module.NAME):
+                continue
+            declared = module.fields(device) or {}
+            for item, field in declared.items():
+                effective = lifecycle_io.apply_timing(device, field) if isinstance(field, dict) else None
+                out[item] = _max_age(effective.get("feedback") if isinstance(effective, dict) else None)
+    return out
+
+
 def _as_house(house) -> House:
     """Wrap a validated contract's plain mapping without re-validating it."""
     return house if hasattr(house, "data") else House.unchecked(house)
@@ -98,7 +136,7 @@ def compile_plans(house, rooms) -> dict[str, dict[str, Plan]]:
 
 
 def expected_plan(house, room: str, choice: str, *, table: dict | None = None) -> Plan:
-    """Use routing's command generators; never duplicate physical wiring.
+    """Compile policy verification and boundary effects from the hop graph.
 
     Only the chosen physical path is verified. Parking an unused matrix
     for a local source does not add that matrix's health as a dependency.
@@ -107,6 +145,8 @@ def expected_plan(house, room: str, choice: str, *, table: dict | None = None) -
     leader's input while the leader's matrix output shows the source, and
     its source's EDID is an unsynced effect (Plan).
     """
+    from oh_features.routing import hops
+
     data = house.data if hasattr(house, "data") else house
     if not isinstance(data, dict) or "routing" not in data or "devices" not in data:
         raise PolicyError("physical_contract_required")
@@ -123,75 +163,61 @@ def expected_plan(house, room: str, choice: str, *, table: dict | None = None) -
             raise PolicyError("unsafe_shared_source_sleep")
     if table is None:
         table = routing.table(house)
-    raw = table["rooms"][room]
-    stage_list = list(routing.stages(house, room))
-    inputs = routing.inputs(house, room, choice)
-    input_items = {name for name, _ in inputs}
-    relevant_power = {stage["power"] for _, stage in stage_list if choice == "off" or stage["input"] in input_items}
+    room_path = hops.compile_room_path(house, room, choice)
     native_items = set(native_power_observations(devices.values()))
-    # The room's controlled Items: its stages, the sources it wakes and every
-    # port any of its choices commands. Only their after-steps are verified.
-    controlled = {item for _, stage in stage_list for item in (stage["power"], stage["input"])}
-    for source in [choice, *entry.get("sleep_sources", [])]:
-        controlled.update(item for item, _ in routing.wake(house, source))
-    for target in ["off", *entry["sources"]]:
-        controlled.update(item for item, _ in routing.commands(house, room, target))
+    max_ages = _field_max_ages(devices.values())
 
-    def owner(item):
+    def owner(item: str) -> str | None:
         return next((ident for ident in sorted(devices, key=len, reverse=True) if item.startswith(ident + "_")), None)
 
-    # Policy verification and lifecycle ownership share one active path.
-    # Boundary-scoped parking and imperative actions remain effects below.
-    from oh_features.routing.lifecycle import active_requirements
-    active = active_requirements(house, room, choice) if choice != "off" else None
-    sync = raw.get("sync")
-    synced = sync["choices"].get(choice) if sync else None
-    leader_input = str(config["sources"][choice]["hdmi_input"]) if synced else None
-    steps = (routing.power(house, room, choice) + routing.commands(house, room, choice) + inputs
-             + [step for step in routing.after(house, room, choice)
-                if step[0] in relevant_power or step[0] in controlled])
-    fields = []
-    for item, value in steps:
-        ident = owner(item)
+    sync = room_path.sync
+    leader_input = str(sync.source_hdmi_input) if sync else None
+    fields: list[Field] = []
+    for item, value, hop_device in room_path.policy_verified_steps():
+        ident = hop_device if hop_device in devices else owner(item)
         if ident is None:
             raise PolicyError("unknown_controller_field")
-        if active is not None and item not in active:
-            continue
-        alternatives = ((synced["value"], sync["hdmi"], leader_input),) if synced and item == sync["input"] else ()
-        fields.append(Field(item, str(value), "device:" + ident, item in native_items, alternatives=alternatives))
+        alternatives = (
+            ((sync.leader_input_value, sync.leader_hdmi_item, leader_input),)
+            if sync and leader_input is not None and item == sync.follower_input_item
+            else ()
+        )
+        fields.append(Field(
+            item, str(value), "device:" + ident, item in native_items,
+            max_age=max_ages.get(item, DEFAULT_MAX_AGE), alternatives=alternatives,
+        ))
     # Keep command order, but a field occurring twice has one final target.
     by_item = {field.item: field for field in fields}
     fields = list(by_item.values())
-    effects = raw["power"][choice] + raw["choices"][choice] + raw["inputs"][choice] + raw["after"][choice]
-    edid = table["edid"]
-    local_stage = any(choice in (entry.get(key, {}).get("sources") or {}) for key in ("receiver", "display"))
-    local_switch = choice in (entry.get("hdmi_switch", {}).get("inputs") or {})
-    source = config["sources"].get(choice, {})
-    claim = []
-    if choice != "off" and not local_stage and not local_switch and edid and source.get("hdmi_input") is not None:
-        number = str(source["hdmi_input"])
-        name = edid["inputs"].get(number)
-        if name and raw["hdmi"] in edid["outputs"]:
-            output = raw["hdmi"]
-            preset = edid.get("overrides", {}).get(number, {}).get(output, edid["outputs"][output])
-            claim = [[name, preset]]
-    # A synced route claims no EDID: the follower shows its leader's output.
-    unsynced = claim if synced else []
-    effects = effects + ([] if synced else claim)
+
+    effects = (
+        room_path.power_steps()
+        + room_path.command_steps()
+        + room_path.input_steps()
+        + room_path.after_steps()
+    )
+    claim = [[room_path.edid.source_edid_item, room_path.edid.preset_code]] if room_path.edid else []
+    unsynced = claim if (room_path.edid and room_path.edid.unsynced) else []
+    effects = effects + ([] if unsynced else claim)
+
     resources = {field.resource for field in fields}
     for item, _ in effects + unsynced:
         if ident := owner(item):
             resources.add("device:" + ident)
-    limits = ["passive_endpoint:" + entry[key]["device"] for key in ("receiver", "display")
-              if entry.get(key, {}).get("passive") is True]
-    conditions = ()
-    if synced:
-        conditions = (Field(sync["hdmi"], leader_input, "device:" + config["hdmi_matrix"]),)
+    limits = ["passive_endpoint:" + dev for dev in room_path.passive_devices]
+    conditions: tuple[Field, ...] = ()
+    if sync and leader_input is not None:
+        conditions = (Field(
+            sync.leader_hdmi_item, leader_input, "device:" + sync.leader_hdmi_device,
+            max_age=max_ages.get(sync.leader_hdmi_item, DEFAULT_MAX_AGE),
+        ),)
     lifecycle_item = f"loc_{room}_source_lifecycle" if "lifecycle" in table else None
-    return Plan(room, choice, raw["item"], tuple(fields), tuple(sorted(resources)),
-                tuple((item, str(value)) for item, value in effects), tuple(limits), conditions,
-                sync["leader"] if synced else None, tuple((item, str(value)) for item, value in unsynced),
-                lifecycle_item)
+    return Plan(
+        room, choice, room_path.source_item, tuple(fields), tuple(sorted(resources)),
+        tuple((item, str(value)) for item, value in effects), tuple(limits), conditions,
+        sync.leader if sync else None, tuple((item, str(value)) for item, value in unsynced),
+        lifecycle_item,
+    )
 
 
 #: A decimal number as a Number Item reports it: "3", "3.0", "-0.50".

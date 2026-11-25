@@ -52,6 +52,20 @@ function content(g, width, ctx, height) {
     const key = "home:" + screen;
     g.put(accessX, y, label, ctx.ui.focusVisible && ctx.ui.focus === key ? "row.focus" : "link", { kind: "screen", screen, key, focus: true, label }); accessX += label.length + 3;
   }); if (accessLinks.length) y += 2;
+  const alertView = ctx.alerts && typeof ctx.alerts.view === "function" ? ctx.alerts.view() : null;
+  const alertMarks = alertView && alertView.marks ? alertView.marks : {};
+  if (alertView && alertView.state && !["reading", "clear"].includes(alertView.state)) {
+    const bannerStyle = alertView.tone === "critical" ? "alert" : alertView.tone === "warning" ? "tone.busy+bold" : "dim";
+    line("\u26a0 Alerts · " + (alertView.summary || ""), bannerStyle);
+    (alertView.lines || []).slice(0, 3).forEach(entry => {
+      const sev = entry.severity === "critical" ? "CRITICAL" : "WARNING";
+      const where = entry.where ? " (" + entry.where + ")" : "";
+      const since = entry.since ? " · " + entry.since : "";
+      line("  [" + sev + "] " + entry.title + where + since, entry.severity === "critical" ? "tone.bad" : "tone.busy");
+    });
+    if (alertView.moreText) line("  " + alertView.moreText, "dim");
+    y += 1;
+  }
   const caption = "Rooms · " + (ctx.ui.ready && ctx.session.mode() === "listen" ? "what plays" : "reported sources");
   g.put(2, y, fit(caption, width - 4), "section");
   if (ctx.ui.ready && ctx.session.kinds().length > 1) {
@@ -67,20 +81,24 @@ function content(g, width, ctx, height) {
   const nameWidth = Math.min(25, Math.max(10, Math.floor((width - 5) * .4)));
   ctx.session.listed().forEach(room => {
     const state = ctx.session.state(room.id), shown = ctx.session.view(room, state), lock = ctx.session.roomLocked(room.id);
+    const severity = alertMarks[room.id] || "";
     const key = "home-room:" + room.id, active = ctx.ui.focusVisible && ctx.ui.focus === key;
     const style = active ? "row.focus" : "row";
     g.fill(1, y, width - 2, 1, style);
     g.put(2, y, fit(room.label, nameWidth), active ? style : "base");
-    // A locked room's padlock in its own column, between the room and its source.
+    // A locked room's padlock, or an active alert mark (!), in the marker column.
     if (lock.locked) g.put(nameWidth + 3, y, LOCK, active ? style : "base");
+    else if (severity) g.put(nameWidth + 3, y, "!", active ? style : (severity === "critical" ? "led.bad" : "tone.busy+bold"));
     // The source, then what it plays where the row has room: "Shield · Disney+ · DuckTales".
     const sourceWidth = Math.max(1, width - nameWidth - 7);
     const source = fit(heard ? shown.short : "Unknown", sourceWidth).trimEnd();
-    g.put(nameWidth + 5, y, source, active ? style : "dim");
+    const sourceStyle = active ? style : (heard && shown.led === "partial" ? "tone.busy" : "dim");
+    g.put(nameWidth + 5, y, source, sourceStyle);
     const rest = sourceWidth - length(source) - 3;
     if (heard && shown.playing && rest >= 8) g.put(nameWidth + 5 + length(source), y, " \u00b7 " + fit(shown.playing, rest).trimEnd(), active ? style : "dim");
     g.hit(1, y++, width - 2, 1, { kind: "home-room", room: room.id, key, focus: true,
       label: room.label + ", " + (heard ? shown.spoken + (shown.playing ? ", playing " + shown.playing : "") : "not connected to thermite")
+        + (severity ? ". " + (severity === "critical" ? "Critical" : "Warning") + " alert" : "")
         + (lock.locked ? ". " + lock.text : "") + ". Open Remotes" });
   });
   y += 1;

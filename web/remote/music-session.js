@@ -71,14 +71,33 @@
   const SEEK_STEP = 10;
   const TABS = ["search", "browse", "queue"];
   const KINDS = [["", "All"], ["track", "Tracks"], ["album", "Albums"], ["artist", "Artists"], ["playlist", "Playlists"]];
-  const SOURCES = [["", "Everywhere"], ["library", "Library"], ["tidal", "TIDAL"]];
+  const DEFAULT_SOURCES = [["", "Everywhere"], ["library", "Library"]];
   const OPTIONS = { replace: "Play now", next: "Play next", add: "Add to queue" };
   const REPEAT = { off: "all", all: "one", one: "off" };
   const REPEAT_LABEL = { off: "Repeat off", all: "Repeat all", one: "Repeat one" };
-  const PROVIDERS = { sonos: "Sonos", wiim: "WiiM" };
   const KIND_LABEL = { track: "Track", album: "Album", artist: "Artist", playlist: "Playlist", folder: "Folder" };
   const ABSENT = ["music_not_configured", "access_not_configured"];
   const BLIND = "Sign in to thermite to search, browse and see the queue.";
+
+  function providerLabel(speaker) {
+    if (!speaker) return "";
+    if (speaker.provider_label) return String(speaker.provider_label);
+    const raw = String(speaker.provider || "");
+    return raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : "";
+  }
+
+  function sourceLabel(id, labels) {
+    if (!id) return "Everywhere";
+    if (labels && Object.prototype.hasOwnProperty.call(labels, id) && labels[id]) return String(labels[id]);
+    if (id === "library") return "Library";
+    const key = String(id);
+    return key.length <= 6 && /^[a-z0-9]+$/.test(key) ? key.toUpperCase() : key.charAt(0).toUpperCase() + key.slice(1);
+  }
+
+  function streamingHost(url) {
+    if (!url || typeof url !== "string") return "";
+    return url.replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
+  }
 
   function memoryStore() {
     const memory = {};
@@ -121,7 +140,7 @@
     const named = (item.artists || []).filter((artist) => artist && artist.name);
     const artists = named.map((artist) => artist.name).join(", ");
     const album = item.album && item.album.name || null;
-    const source = item.source === "tidal" ? "TIDAL" : item.library || (item.source === "library" ? "Library" : null);
+    const source = item.source_label || item.library || (item.source ? sourceLabel(item.source) : null);
     const type = item.kind === "album" && item.type !== "album" ? ALBUM_TYPE[item.type] : null;
     const line = item.kind === "track" ? [artists, album].filter(Boolean).join(" · ")
       : item.kind === "album" ? [artists, type, item.year].filter(Boolean).join(" · ")
@@ -154,6 +173,12 @@
     // Speaker id + " " + action -> {value, at}: what a command sent, shown
     // until the speaker reads it back.
     const held = {};
+    const holdStore = global.ThermiteHold
+      ? global.ThermiteHold.createHold({
+          now: now, setTimeout: later, clearTimeout: cancel, duration: HOLD_MS,
+          onExpire: () => changed()
+        })
+      : null;
     // The same key -> the timer that draws again once its hold ends: one each.
     const ends = {};
     let music = null;
@@ -225,13 +250,22 @@
       return speaker.group && speaker.group.members.length ? speaker.group.members.slice() : [speaker.id];
     }
 
+    function readHold(key) {
+      return holdStore ? holdStore.get(key) : (held[key] || null);
+    }
+
+    function clearHold(key) {
+      if (holdStore) holdStore.clear(key);
+      delete held[key];
+    }
+
     // What the page shows for an action: the value sent while it is not
     // read back and HOLD_MS have not passed, else what was read.
     function shown(id, action, read) {
-      const key = id + " " + action, sent = held[key];
+      const key = id + " " + action, sent = readHold(key);
       if (!sent) return { value: read, pending: false };
       if ((read !== null && read !== undefined && read === sent.value) || now() - sent.at >= HOLD_MS) {
-        delete held[key];
+        clearHold(key);
         return { value: read, pending: false };
       }
       return { value: sent.value, pending: true };
@@ -239,6 +273,10 @@
 
     function hold(id, action, value) {
       const key = id + " " + action;
+      if (holdStore) {
+        holdStore.set(key, value, HOLD_MS + 50);
+        return;
+      }
       held[key] = { value: value, at: now() };
       // A speaker that ignored it reports nothing: draw what it read once the hold ends.
       cancel(ends[key]);
@@ -269,9 +307,9 @@
       shown(owner, "shuffle", speaker.shuffle);
       shown(owner, "repeat", speaker.repeat);
       if (speaker.group) shown(owner, "group_volume", speaker.group.volume);
-      const seek = held[owner + " seek"], playing = speaker.now_playing;
+      const seek = readHold(owner + " seek"), playing = speaker.now_playing;
       // A position Music Assistant measured after the seek was sent is the speaker's.
-      if (seek && playing && Number.isFinite(playing.at) && playing.at * 1000 + (clockOffsetMs || 0) >= seek.at - 1000) delete held[owner + " seek"];
+      if (seek && playing && Number.isFinite(playing.at) && playing.at * 1000 + (clockOffsetMs || 0) >= seek.at - 1000) clearHold(owner + " seek");
     }
 
     // The rooms that hold a speaker when locked, as [id, label]: the routed
@@ -326,7 +364,7 @@
         if (text !== null) announce(name + ": " + title + (text ? " " + text : ""));
         return result;
       }).catch((error) => {
-        (holds || []).forEach((key) => { delete held[key]; });
+        (holds || []).forEach(clearHold);
         changed();
         toast(name + ": " + title, refusedWith(error, ids), "bad");
         return null;
@@ -393,12 +431,13 @@
       const owner = ownerOf(speaker), reported = speaker.available && speaker.state === "playing";
       const pressed = shown(owner, "playing", speaker.available ? reported : null);
       // Until when it moved: now, or when a Pause was pressed; null, not at all.
-      const until = !reported ? null : pressed.pending && pressed.value === false ? held[owner + " playing"].at : now();
-      const seek = held[owner + " seek"];
+      const playHold = readHold(owner + " playing");
+      const until = !reported ? null : pressed.pending && pressed.value === false && playHold ? playHold.at : now();
+      const seek = readHold(owner + " seek");
       let elapsed;
       if (seek && now() - seek.at < HOLD_MS) elapsed = seek.value + (until !== null ? Math.max(0, until - seek.at) / 1000 : 0);
       else {
-        if (seek) delete held[owner + " seek"];
+        if (seek) clearHold(owner + " seek");
         const serverAtMs = Number.isFinite(playing.at) ? playing.at * 1000 + (clockOffsetMs || 0) : null;
         elapsed = playing.elapsed + (until !== null && serverAtMs !== null ? Math.max(0, (until - serverAtMs) / 1000) : 0);
       }
@@ -434,7 +473,7 @@
         volume: level(owner, "group_volume", speaker.group.volume)
       } : null;
       return {
-        speaker: { id: id, name: nameOf(id), label: speaker.label, room: speaker.room_label, provider: PROVIDERS[speaker.provider] || speaker.provider || "" },
+        speaker: { id: id, name: nameOf(id), label: speaker.label, room: speaker.room_label, provider: providerLabel(speaker) },
         available: speaker.available,
         connected: connected,
         locked: locked.length ? { rooms: locked, text: "Locked by " + locked.join(", ") } : null,
@@ -628,7 +667,7 @@
       const speaker = find(id);
       if (!speaker || !speaker.available) return nameOf(id) + " is not available.";
       if (lead && speaker.provider !== lead.provider) {
-        return nameOf(id) + " cannot join " + nameOf(lead.id) + ": Sonos and WiiM speakers group only over AirPlay, and one of them has none.";
+        return nameOf(id) + " cannot join " + nameOf(lead.id) + ": speakers from different providers cannot group without a shared protocol.";
       }
       return "Music Assistant left " + nameOf(id) + " out. Try again in a moment.";
     }
@@ -777,8 +816,23 @@
       runNow();
     }
 
+    function availableSources() {
+      const labels = music && music.source_labels || null;
+      const out = DEFAULT_SOURCES.slice();
+      const extra = music && music.sources ? Object.keys(music.sources) : [];
+      extra.forEach((key) => {
+        if (key === "" || key === "library" || typeof music.sources[key] !== "boolean") return;
+        if (music.sources[key] || search.source === key) out.push([key, sourceLabel(key, labels)]);
+      });
+      if (search.source && !out.some((entry) => entry[0] === search.source)) {
+        out.push([search.source, sourceLabel(search.source, labels)]);
+      }
+      return out;
+    }
+
     function setSource(source) {
-      if (!SOURCES.some((option) => option[0] === source) || source === search.source) return;
+      const valid = availableSources().some((option) => option[0] === source) || (music && music.sources && Object.prototype.hasOwnProperty.call(music.sources, source));
+      if (!valid || source === search.source) return;
       search.source = source;
       runNow();
     }
@@ -821,14 +875,13 @@
             items: shownItems.map((item) => entry(item)) });
         });
       }
-      const tidalSource = Boolean(music && music.sources && music.sources.tidal);
+      const sources = availableSources();
       const text = search.state === "searching" ? "Searching…" : search.state === "failed" ? search.error
         : search.state === "done" && !sections.length ? "Nothing found for “" + search.query.trim() + "”." : "";
       return {
         query: search.query, kind: search.kind, source: search.source, state: search.state, text: text, sections: sections,
         kinds: KINDS.map(([value, label]) => ({ value: value, label: label, current: value === search.kind })),
-        sources: SOURCES.filter(([value]) => value !== "tidal" || tidalSource || search.source === "tidal")
-          .map(([value, label]) => ({ value: value, label: label, current: value === search.source }))
+        sources: sources.map(([value, label]) => ({ value: value, label: label, current: value === search.source }))
       };
     }
 
@@ -1120,7 +1173,12 @@
       });
     }
 
-    // ---- TIDAL ------------------------------------------------------------------
+    // ---- Streaming provider sign-in ---------------------------------------------
+
+    function providerTitle(flow) {
+      const labels = music && music.source_labels || null;
+      return (flow && flow.provider_label) || sourceLabel("tidal", labels);
+    }
 
     function editor() {
       return access ? access.canEdit() : backend.admin === true;
@@ -1130,10 +1188,12 @@
       if (!editor() || !music || !music.available || !music.sources) return null;
       const flow = tidal.flow;
       if (music.sources.tidal && !flow) return null;
+      const title = providerTitle(flow);
+      const host = streamingHost(flow && flow.url);
       return { signedIn: music.sources.tidal === true, state: flow ? flow.state : "idle", code: flow && flow.code || null,
         url: flow && flow.url || null, expires: flow && Number.isFinite(flow.expires_at) ? flow.expires_at : null, pending: tidal.pending,
-        text: !flow ? (music.sources.tidal === false ? "TIDAL is not signed in." : "")
-          : flow.state === "waiting" ? "Approve this code at link.tidal.com on any device."
+        text: !flow ? (music.sources.tidal === false ? title + " is not signed in." : "")
+          : flow.state === "waiting" ? (flow.instructions || (host ? "Approve this code at " + host + " on any device." : "Approve this code on any device."))
             : flow.state === "failed" ? "The sign-in did not finish." : flow.state === "done" ? "Signed in." : "" };
     }
 
@@ -1162,7 +1222,7 @@
         if (started !== life) return;
         tidal.pending = false;
         tidal.flow = answer.sign_in || null;
-        if (tidal.flow && tidal.flow.code) announce("TIDAL code " + tidal.flow.code.split("").join(" "));
+        if (tidal.flow && tidal.flow.code) announce(providerTitle(tidal.flow) + " code " + tidal.flow.code.split("").join(" "));
         cancel(tidal.timer);
         tidal.timer = later(tidalCheck, TIDAL_POLL_MS);
         changed();
@@ -1170,7 +1230,7 @@
         if (started !== life) return;
         tidal.pending = false;
         changed();
-        toast("TIDAL", said(error), "bad");
+        toast(providerTitle(tidal.flow), said(error), "bad");
       });
     }
 
@@ -1178,10 +1238,11 @@
     // sends a fresh snapshot too, as Music Assistant's providers change), by
     // this session only while it runs.
     function tidalDone() {
+      const title = providerTitle(tidal.flow);
       cancel(tidal.timer);
       tidal.timer = 0;
       tidal.flow = null;
-      toast("TIDAL", "Signed in. TIDAL is in Search and Browse.");
+      toast(title, "Signed in. " + title + " is in Search and Browse.");
       changed();
       const started = life;
       return Promise.resolve(backend.tidalFinish()).catch(() => {})
@@ -1322,6 +1383,7 @@
       if (polls) access.watchLocks(false);
       backend.close();
       [pending, search.timer, queue.timer, tidal.timer].forEach(cancel);
+      if (holdStore) holdStore.stop();
       Object.keys(ends).forEach((key) => { cancel(ends[key]); delete ends[key]; });
       // A session started again hears nothing of the time between: it draws,
       // holds and sends afresh.

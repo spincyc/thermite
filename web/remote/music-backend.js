@@ -78,6 +78,7 @@
     this.active = config.active !== false;
     this.wanted = false;
     this.source = null;
+    this.sse = null;
     this.generation = 0;
     this.attempt = 0;
     this.timer = 0;
@@ -134,17 +135,18 @@
   // The music stream, open while wanted and the page is shown; its first
   // frame is the snapshot, so a stream opened again reads everything afresh.
   GatewayMusic.prototype.listen = function () {
-    if (this.source) this.source.close();
+    if (this.sse) {
+      this.sse.close();
+      this.sse = null;
+    } else if (this.source) {
+      this.source.close();
+    }
     this.source = null;
     this.cancel(this.timer);
     this.timer = 0;
     const generation = ++this.generation;
     if (!this.wanted || !this.active || !this.EventSource) return;
-    const source = this.source = new this.EventSource(this.base + "/api/v1/events/music");
-    const current = () => generation === this.generation;
-    source.onopen = () => { if (current()) this.attempt = 0; };
-    source.onmessage = (message) => {
-      if (!current()) return;
+    const onMessage = (message) => {
       let frame;
       try { frame = JSON.parse(message.data); } catch (_) { return; }
       if (!frame || typeof frame !== "object") return;
@@ -155,6 +157,26 @@
         this.emit({ type: "speaker", speaker: frame.speaker });
       } else if (frame.type === "unavailable") this.emit({ type: "unavailable" });
     };
+    if (global.ThermiteSse && typeof global.ThermiteSse.create === "function") {
+      this.sse = global.ThermiteSse.create({
+        url: () => this.base + "/api/v1/events/music",
+        EventSource: this.EventSource,
+        backoff: REOPEN_MS,
+        setTimeout: this.later,
+        clearTimeout: this.cancel,
+        active: this.active,
+        onSource: (source) => { if (generation === this.generation) this.source = source; },
+        onOpen: () => { if (generation === this.generation) this.attempt = 0; },
+        onMessage: (message) => { if (generation === this.generation) onMessage(message); },
+        onError: () => { if (generation === this.generation) this.emit({ type: "connection", connected: false }); }
+      });
+      this.source = this.sse.open();
+      return;
+    }
+    const source = this.source = new this.EventSource(this.base + "/api/v1/events/music");
+    const current = () => generation === this.generation;
+    source.onopen = () => { if (current()) this.attempt = 0; };
+    source.onmessage = (message) => { if (current()) onMessage(message); };
     source.onerror = () => {
       if (!current()) return;
       this.emit({ type: "connection", connected: false });

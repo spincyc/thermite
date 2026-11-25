@@ -13,14 +13,14 @@ No power switch is invented.
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
+import re
 
 import yaml
 
-from oh_conf import GUARD_PROFILE, Addon, House, YamlFile, options_text, point, uses, volume_js
+from oh_conf import Addon, House, YamlFile, config as device_config, options_text, point, uses, volume_js
 from oh_shape import TEXT, Key
-from . import _commands, _script
+from . import _commands, _items, _script
 
 NAME = "sonos"
 PHASE = "observe"
@@ -33,10 +33,17 @@ HEADER = (
 )
 ADDONS = (Addon("binding", "sonos"), Addon("automation", "jsscripting", "Sonos remote keys"))
 ASSETS: dict[str, str] = {}
-#: The binding derives a player's UDN from its MAC, so a device needs one.
-NEEDS_MAC = True
-DEVICE_KEYS = {"sonos_udn": Key(TEXT, "the player's UDN, by which its events are told from another's: RINCON_, its "
-                                       "mac in capitals without the colons, then 01400")}
+#: Either device.mac or explicit config.sonos.udn supplies the player's UDN.
+NEEDS_MAC = False
+MODEL_PROFILES = ("soundbar", "amp")
+SOUNDBAR_MODELS = frozenset({"Arc", "Arc Ultra", "Beam", "Playbar", "Playbase", "Ray"})
+_UDN = re.compile(r"^RINCON_[0-9A-F]{12}01400$")
+DEVICE_KEYS = {
+    "udn": Key(TEXT, "the player's UDN, by which its events are told from another's: RINCON_, its "
+                     "mac in capitals without the colons, then 01400; derived from mac when omitted"),
+    "model_profile": Key(TEXT, "capability profile: soundbar (TV input, subwoofer/surround settings) or amp; "
+                               "inferred from model when omitted", choices=MODEL_PROFILES),
+}
 #: The binding talks UPnP to the player's HTTP port.
 PROBE_PORTS = (1400,)
 DISCOVER_PORTS = (1400,)
@@ -44,8 +51,8 @@ DISCOVER_MDNS = ("_sonos",)
 #: The binding subscribes to each player's UPnP events, which the sandbox
 #: leaves to the runtime.
 SESSIONS = True
-#: Inventory model -> the binding's Thing type.
-THING_TYPES = {"Arc": "Arc", "Amp": "Amp"}
+#: Capability profile -> the binding's Thing type.
+THING_TYPES = {"soundbar": "Arc", "amp": "Amp"}
 #: A zone player's master volume as the binding's volume channel reports and
 #: takes it: the player's own 0-100 in whole steps (UPnP RenderingControl
 #: DesiredVolume). openHAB sonos 5.2.3: ZonePlayerHandler.setVolume() sends
@@ -98,23 +105,48 @@ READ_BACK = 60
 SETTINGS_REFRESH = 30
 
 
+def _model_profile(device: dict) -> str:
+    """Capability profile: 'soundbar' or 'amp'."""
+    explicit = device_config(device, NAME).get("model_profile")
+    if explicit in MODEL_PROFILES:
+        return explicit
+    return "soundbar" if device.get("model") in SOUNDBAR_MODELS else "amp"
+
+
+def _is_soundbar(device: dict) -> bool:
+    return _model_profile(device) == "soundbar"
+
+
+def _thing_type(device: dict) -> str:
+    return THING_TYPES[_model_profile(device)]
+
+
 def settings(device: dict) -> dict:
-    """Its model's commanded settings (SETTINGS, and ARC_SETTINGS on an Arc)."""
-    return {**SETTINGS, **(ARC_SETTINGS if device.get("model") == "Arc" else {})}
+    """Its model profile's commanded settings (SETTINGS, and ARC_SETTINGS on a soundbar)."""
+    return {**SETTINGS, **(ARC_SETTINGS if _is_soundbar(device) else {})}
 
 
 def remote_of(device: dict) -> str:
-    """An Arc's remote has its TV key; an Amp's has none (keys())."""
-    return "sonos" if device.get("model") == "Arc" else "sonos_amp"
+    """A soundbar's remote has its TV key; an amp's has none (keys())."""
+    return "sonos" if _is_soundbar(device) else "sonos_amp"
 
 
 def keys(device: dict) -> dict:
-    return ARC_KEYS if device.get("model") == "Arc" else KEYS
+    return ARC_KEYS if _is_soundbar(device) else KEYS
 
 
-def udn(mac: str) -> str:
-    """The UDN a Sonos player derives from its MAC address."""
-    return "RINCON_" + mac.replace(":", "").upper() + "01400"
+def udn(target: str | dict) -> str:
+    """The player's UDN: from a MAC string, or for a device dict from explicit
+    config.sonos.udn else derived from device['mac']."""
+    if isinstance(target, dict):
+        explicit = device_config(target, NAME).get("udn")
+        if isinstance(explicit, str) and explicit:
+            return explicit
+        mac = target.get("mac")
+        if isinstance(mac, str) and mac:
+            return "RINCON_" + mac.replace(":", "").upper() + "01400"
+        return ""
+    return "RINCON_" + target.replace(":", "").upper() + "01400"
 
 
 def relayed(device: dict) -> bool:
@@ -122,29 +154,38 @@ def relayed(device: dict) -> bool:
     lists sonos in any phase. oh_access.native_boundary.discover_callbacks
     maps these devices' event paths; oh_render points jUPnP at the relay
     when the house has any."""
-    return bool(device.get("sonos_udn")) or any(NAME in (names or []) for names in (device.get("controls") or {}).values())
+    return bool(device_config(device, NAME).get("udn")) or any(
+        NAME in (names or []) for names in (device.get("controls") or {}).values())
 
 
 def validate(device: dict) -> list[str]:
     where = device.get("id") or "a device"
     problems = []
+    cfg = device_config(device, NAME)
+    if "model_profile" in cfg and cfg["model_profile"] not in MODEL_PROFILES:
+        problems.append(f"{where}.config.sonos.model_profile: {cfg['model_profile']!r} must be soundbar or amp")
     if relayed(device):
-        expected = udn(device.get("mac") or "")
-        if device.get("sonos_udn") != expected:
-            problems.append(f"{where}: sonos_udn should be {expected} for its mac")
-    if uses(device, PHASE, NAME) and device.get("model") not in THING_TYPES:
-        problems.append(f"{where}: sonos knows no Thing type for model {device.get('model')!r} "
-                        f"(one of {', '.join(sorted(THING_TYPES))})")
+        explicit = cfg.get("udn")
+        mac = device.get("mac")
+        if explicit is not None:
+            if not isinstance(explicit, str) or not _UDN.fullmatch(explicit):
+                problems.append(f"{where}.config.sonos.udn: {explicit!r} must match RINCON_<12-UPPER-HEX>01400")
+            elif isinstance(mac, str) and mac and explicit != udn(mac):
+                problems.append(f"{where}: config.sonos.udn should be {udn(mac)} for its mac")
+        elif not mac:
+            problems.append(f"{where}: sonos requires either config.sonos.udn or the device's mac")
     return problems
 
 
 def render(device: dict, house: House, out: YamlFile) -> None:
     ident = device["id"]
-    uid = f"sonos:{THING_TYPES[device['model']]}:{ident}"
+    player_udn = udn(device)
+    soundbar = _is_soundbar(device)
+    uid = f"sonos:{_thing_type(device)}:{ident}"
     out.things[uid] = {
         "label": house.label(device),
         "location": house.room_label(device["room"]),
-        "config": {"udn": device["sonos_udn"], "refresh": 60},
+        "config": {"udn": player_udn, "refresh": 60},
     }
     items = out.items
     controlled = uses(device, "control", NAME)
@@ -153,34 +194,28 @@ def render(device: dict, house: House, out: YamlFile) -> None:
     items[f"{ident}_title"] = point(ident, "String", "Title", ["Status", "Info"], f"{uid}:currenttitle")
     items[f"{ident}_artist"] = point(ident, "String", "Artist", ["Status", "Info"], f"{uid}:currentartist")
     items[f"{ident}_album"] = point(ident, "String", "Album", ["Status", "Info"], f"{uid}:currentalbum")
-    volume_tag = "Control" if controlled else "Status"
-    items[f"{ident}_volume"] = point(ident, "Dimmer", "Volume", [volume_tag, "SoundVolume"], f"{uid}:volume",
-                                     guarded=not controlled, icon="soundvolume")
-    items[f"{ident}_mute"] = point(ident, "Switch", "Mute", [volume_tag, "SoundVolume"], f"{uid}:mute",
-                                   guarded=not controlled, icon="soundvolume_mute")
     if controlled:
-        volume = items[f"{ident}_volume"]
-        del volume["channel"]
-        volume["channels"] = {f"{uid}:volume": {"profile": GUARD_PROFILE, "toItemScript": "|input",
-                                                   "commandFromItemScript": volume_js(VOLUME)}}
-        volume["autoupdate"] = False
-        volume["metadata"] = {"stateDescription": {"config": dict(VOLUME)}}
-        items[f"{ident}_mute"]["autoupdate"] = False
-        items[f"{ident}_player"] = point(ident, "Player", "Playback", ["Control", "MediaControl"], f"{uid}:control")
-        items[f"{ident}_player"]["autoupdate"] = False
+        items[f"{ident}_volume"] = _items.control_point(
+            ident, "Dimmer", "Volume", ["Control", "SoundVolume"], f"{uid}:volume", icon="soundvolume",
+            link={"toItemScript": "|input", "commandFromItemScript": volume_js(VOLUME)}, state=dict(VOLUME))
+        items[f"{ident}_mute"] = _items.control_point(
+            ident, "Switch", "Mute", ["Control", "SoundVolume"], f"{uid}:mute", icon="soundvolume_mute")
+        items[f"{ident}_player"] = _items.control_point(
+            ident, "Player", "Playback", ["Control", "MediaControl"], f"{uid}:control")
         for suffix, (channel, kind, label, _, values) in settings(device).items():
             items[f"{ident}_{suffix}"] = setting(ident, suffix, kind, label, f"{uid}:{channel}", values)
-        if device["model"] == "Arc":
-            items[f"{ident}_tv"] = point(ident, "String", "TV Audio", ["Control"], f"{uid}:playlinein")
-            del items[f"{ident}_tv"]["channel"]
-            expected = json.dumps(device["sonos_udn"])
-            items[f"{ident}_tv"]["channels"] = {f"{uid}:playlinein": {"profile": GUARD_PROFILE,
-                "commandFromItemScript": f"|input === {expected} ? input : null"}}
-            items[f"{ident}_tv"]["autoupdate"] = False
-        items[f"{ident}_key"] = {"type": "String", "label": "Remote Key", "groups": [ident],
-                                 "tags": ["Control"], "autoupdate": False}
+        if soundbar:
+            items[f"{ident}_tv"] = _items.control_point(
+                ident, "String", "TV Audio", ["Control"], f"{uid}:playlinein",
+                link={"commandFromItemScript": _items.enum_guard_js([player_udn])})
+        items[f"{ident}_key"] = _items.control_point(ident, "String", "Remote Key", ["Control"])
         _commands.render(device, out, NAME)
-    if device["model"] == "Arc":
+    else:
+        items[f"{ident}_volume"] = point(ident, "Dimmer", "Volume", ["Status", "SoundVolume"], f"{uid}:volume",
+                                         guarded=True, icon="soundvolume")
+        items[f"{ident}_mute"] = point(ident, "Switch", "Mute", ["Status", "SoundVolume"], f"{uid}:mute",
+                                       guarded=True, icon="soundvolume_mute")
+    if soundbar:
         items[f"{ident}_codec"] = point(ident, "String", "TV Audio Format", ["Status", "Info"], f"{uid}:codec")
         items[f"{ident}_line_in"] = point(ident, "Switch", "TV Audio Connected", ["Status"], f"{uid}:linein")
 
@@ -198,24 +233,20 @@ def setting(ident: str, suffix: str, kind: str, label: str, channel: str, values
     Number tagged Control as a matrix's routing."""
     tags = {"Switch": ["Control", "MediaControl" if suffix in ("night", "speech") else "Enabled"],
             "String": ["Control", "Mode"], "Number": ["Setpoint", "Level"]}[kind]
-    item = point(ident, kind, label, tags, channel)
-    item["autoupdate"] = False
     if kind == "Switch":
-        return item
+        return _items.control_point(ident, kind, label, tags, channel)
     if kind == "Number":
-        script = volume_js(values)
-        item["metadata"] = {"stateDescription": {"config": dict(values)}}
-    else:
-        script = f"|{json.dumps([value for value, _ in values])}.indexOf(input) >= 0 ? input : null"
-        item["metadata"] = {"stateDescription": {"config": {"options": options_text(values)}},
-                            "commandDescription": {"config": {"options": options_text(values)}}}
-    del item["channel"]
-    item["channels"] = {channel: {"profile": GUARD_PROFILE, "toItemScript": "|input", "commandFromItemScript": script}}
-    return item
+        return _items.control_point(
+            ident, kind, label, tags, channel,
+            link={"toItemScript": "|input", "commandFromItemScript": volume_js(values)}, state=dict(values))
+    return _items.control_point(
+        ident, kind, label, tags, channel,
+        link={"toItemScript": "|input", "commandFromItemScript": _items.enum_guard_js([value for value, _ in values])},
+        options=options_text(values))
 
 
 def files(devices: list[dict], house: House) -> dict[str, str]:
-    controlled = [{"id": d["id"], "model": d["model"], "udn": d["sonos_udn"]} for d in devices
+    controlled = [{"id": d["id"], "model": _thing_type(d), "udn": udn(d)} for d in devices
                   if uses(d, "control", NAME)]
     if not controlled:
         return {}
@@ -235,18 +266,34 @@ def music(device: dict) -> dict | None:
     controlled. Music Assistant's sonos provider names a player by its UDN."""
     if not uses(device, "control", NAME):
         return None
-    return {"provider": "sonos", "udn": device["sonos_udn"]}
+    return {"provider": "sonos", "udn": udn(device)}
 
 
 def remote(device: dict) -> dict | None:
     """What the remote page drives (av-contract): None unless controlled. An
     Amp is never a room's endpoint (oh_site_contract targets soundbars), so
     its remote reaches no room unless a room names it its `audio`."""
-    if not uses(device, "control", NAME) or device.get("model") not in THING_TYPES:
+    if not uses(device, "control", NAME):
         return None
     ident = device["id"]
     return {"key": f"{ident}_key", "mute": f"{ident}_mute",
             "volume": {"item": f"{ident}_volume", **VOLUME}}
+
+
+def remote_layouts(device: dict | None = None) -> dict[str, dict]:
+    """Button layout definitions for Sonos soundbars and standalone Amps."""
+    return {
+        "sonos": {
+            "label": "Audio controls",
+            "playback": ["previous", "play_pause", "next"],
+            "keyGroups": [{"label": "Audio", "keys": ["tv", "night", "speech"], "columns": 3, "primary": True}],
+        },
+        "sonos_amp": {
+            "label": "Audio controls",
+            "playback": ["previous", "play_pause", "next"],
+            "keyGroups": [{"label": "Audio", "keys": ["night", "speech"], "columns": 2, "primary": True}],
+        },
+    }
 
 
 def diagnostics(device: dict) -> dict | None:
@@ -255,7 +302,7 @@ def diagnostics(device: dict) -> dict | None:
     The binding exposes scalar Items. Reading them does not establish when
     the speaker measured them; silence and a missing signal are distinct.
     """
-    if not (uses(device, PHASE, NAME) or uses(device, "control", NAME)) or device.get("model") != "Arc":
+    if not (uses(device, PHASE, NAME) or uses(device, "control", NAME)) or not _is_soundbar(device):
         return None
     ident = device["id"]
     return {"kind": NAME, "items": [f"{ident}_codec", f"{ident}_line_in"], "readings": [
@@ -268,23 +315,24 @@ def diagnostics(device: dict) -> dict | None:
 
 def audio(device: dict) -> dict | None:
     """Its audio page beside its remote() (oh_integrations audio()): None
-    unless controlled. An Arc whose TV audio format is TV_SILENT plays
+    unless controlled. A soundbar whose TV audio format is TV_SILENT plays
     nothing unless it names a track."""
     if remote(device) is None:
         return None
     ident = device["id"]
+    soundbar = _is_soundbar(device)
 
     def shape(kind: str, values) -> dict:
         if kind == "Number":
             return {"kind": "number", **values}
         return {"kind": "enum", "options": [list(pair) for pair in values]} if kind == "String" else {"kind": "switch"}
-    page = {"transport": [*TRANSPORT, *(["tv"] if device["model"] == "Arc" else [])],
+    page = {"transport": [*TRANSPORT, *(["tv"] if soundbar else [])],
             "state": {"item": f"{ident}_state", "playing": ["PLAYING"],
-                      **({"silent": {"item": f"{ident}_codec", "is": list(TV_SILENT)}} if device["model"] == "Arc" else {})},
+                      **({"silent": {"item": f"{ident}_codec", "is": list(TV_SILENT)}} if soundbar else {})},
             "track": {field: f"{ident}_{field}" for field in ("title", "artist", "album")},
             "settings": [{"item": f"{ident}_{suffix}", "label": label, "section": section, **shape(kind, values)}
                          for suffix, (_, kind, label, section, values) in settings(device).items()]}
-    if device["model"] == "Arc":
+    if soundbar:
         page["facts"] = [{"item": f"{ident}_line_in", "label": "TV Audio Connected"},
                          {"item": f"{ident}_codec", "label": "TV Audio Format"}]
     return page
@@ -302,7 +350,7 @@ def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:
     Production render() keeps the real native Sonos channels unchanged.
     """
     ident = device["id"]
-    old = f"sonos:{THING_TYPES[device['model']]}:{ident}"
+    old = f"sonos:{_thing_type(device)}:{ident}"
     uid, settings_uid = f"http:url:{ident}", f"http:url:settings:{ident}"
     document = yaml.safe_load(files[FILE])
     thing = document["things"].pop(old)
@@ -368,5 +416,6 @@ def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:
         lines.append(line)
     if lines:
         out[addon_path] = "\n".join(lines) + "\n"
-    return {path: text.replace(device["sonos_udn"], simulation_udn(device)) if isinstance(text, str) else text
+    player_udn = udn(device)
+    return {path: text.replace(player_udn, simulation_udn(device)) if isinstance(text, str) else text
             for path, text in out.items()}

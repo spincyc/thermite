@@ -81,8 +81,9 @@ PORT = 2222
 PROBED = False
 #: The rule's own read of the input says whether the switch answers.
 READS = True
-#: The input numbers TX0 can show (RX0-RX3).
+#: The input numbers TX0 can show (RX0-RX3), and 4 for copying the other output.
 INPUTS = range(0, 4)
+COPY = 4
 READBACK_INPUTS = tuple(str(number) for number in INPUTS)
 #: Seconds between polls (vrroom_telnet.js POLL); a change notice is read
 #: within a second.
@@ -148,19 +149,35 @@ def reboot(device: dict) -> dict:
     input reads, and is idle while the input TX0 shows has no signal, as
     its web page (vrroom_http) reports it. A web page that does not answer
     while telnet does is the VRROOM's hang that a restart cures, so its
-    missing report does not hold the restart back, and its Thing OFFLINE
-    for HUNG_POLLS polls while telnet answers is that hang (`hung`)."""
+    missing report does not hold the restart back (hang detection is declared
+    by recovery())."""
     return {"item": reboot_item(device), "answers": [input_item(device)],
             "idle": [{"item": vrroom_http.signal_item(device), "field": "RX0", "is": "no signal",
-                      "maxAge": vrroom_http.MAX_AGE, "unreadIsIdle": True}],
-            "hung": {"things": [vrroom_http.thing_uid(device)], "seconds": HUNG_POLLS * vrroom_http.REFRESH}}
+                      "maxAge": vrroom_http.MAX_AGE, "unreadIsIdle": True}]}
+
+
+def recovery(device: dict) -> dict:
+    """Hang detection and recovery (oh_features.reboots): when the switch's
+    web API Thing stays OFFLINE for HUNG_POLLS polls while telnet answers,
+    command its reboot Item."""
+    return {"things": [vrroom_http.thing_uid(device)], "seconds": HUNG_POLLS * vrroom_http.REFRESH,
+            "item": reboot_item(device), "action": REBOOT}
+
+
+def manual_items(device: dict) -> int:
+    """Number of manual command Items handled by the switch's actor (input, reboot)."""
+    return 2
 
 
 def fields(device: dict) -> dict[str, dict]:
     """The routing executor's field (oh_integrations): TX0's input, driven by
-    this integration's own rule. Its actor also takes the reboot Item's
-    commands."""
-    return {input_item(device): {"kind": "vrroom", "values": [str(n) for n in INPUTS], "manual": 2}}
+    this integration's own rule with ipinterrupt push notices. Its actor also
+    takes the reboot Item's commands."""
+    return {input_item(device): {
+        "kind": "vrroom", "values": [str(n) for n in INPUTS],
+        "feedback": {"kind": "push"},
+        "reports": {str(COPY): {"value": "COPY", "transition": False}},
+    }}
 
 
 def validate(device: dict) -> list[str]:

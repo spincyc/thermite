@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 
 from oh_conf import House, GUARD_PROFILE, RULE_SENDS, Addon, fill, uses
@@ -26,42 +27,145 @@ STATUS_ITEM = "house_routing_io_status"
 CUSTOM = "ROUTING_EXECUTOR"
 #: The longest settle a field may declare (lifecycle.js SETTLE_MAX_MS).
 SETTLE_MAX_MS = 300000
+#: Allowed values for a field's `power` contract term.
+POWER_KINDS = frozenset({"absolute", "toggle", "wake_only"})
+#: Allowed `feedback.kind` values.
+FEEDBACK_KINDS = frozenset({"poll", "push", "none"})
 
 
-def _provider(device):
-    """The integration whose fields() the executor drives for a device: one
-    the device lists under control."""
-    return next((module for module in integrations.defining("fields") if uses(device, "control", module.NAME)), None)
+def _providers(device) -> list:
+    """Every integration whose fields() the executor drives for a device:
+    each the device lists under control."""
+    return [module for module in integrations.defining("fields") if uses(device, "control", module.NAME)]
 
 
-def _settle(module, item: str, settle: dict, allowed: list) -> dict:
+def _settle(module, item: str, settle: dict, values: list) -> dict:
     """A field's declared settle, {value: ms}: how long an accepted write of
     each value may take to show in a read, and a transition toward it may
     last (lifecycle.js, Settle)."""
+    if not isinstance(settle, dict):
+        raise ValueError(f"{module.NAME} declares an invalid settle for {item}: {settle!r}")
     for value, ms in settle.items():
-        if value not in allowed or type(ms) is not int or not 0 < ms <= SETTLE_MAX_MS:
+        if value not in values or type(ms) is not int or not 0 < ms <= SETTLE_MAX_MS:
             raise ValueError(f"{module.NAME} declares an invalid settle for {item}: {value}={ms!r}")
     return dict(settle)
 
 
+def _feedback(module, item: str, feedback: object) -> dict:
+    """Validate a field's `feedback` declaration:
+    {"kind": "poll", "interval_s": N} | {"kind": "push"} | {"kind": "none"}."""
+    if not isinstance(feedback, dict) or feedback.get("kind") not in FEEDBACK_KINDS:
+        raise ValueError(f"{module.NAME} declares an invalid feedback for {item}: {feedback!r}")
+    kind = feedback["kind"]
+    if kind == "poll":
+        interval = feedback.get("interval_s")
+        if (set(feedback) != {"kind", "interval_s"} or type(interval) not in (int, float)
+                or not math.isfinite(interval) or interval <= 0):
+            raise ValueError(f"{module.NAME} declares an invalid feedback for {item}: {feedback!r}")
+        return {"kind": "poll", "interval_s": interval}
+    if set(feedback) != {"kind"}:
+        raise ValueError(f"{module.NAME} declares an invalid feedback for {item}: {feedback!r}")
+    return {"kind": kind}
+
+
+def apply_timing(device: dict, field: dict) -> dict:
+    """Return a copy of `field` with per-device `device.timing` overrides merged in.
+
+    `timing.settle` overrides matching values in `field["values"]` (leaving other
+    values and other fields untouched); `timing.poll_s` overrides `interval_s`
+    when `field["feedback"]["kind"] == "poll"`.
+    """
+    timing = device.get("timing")
+    if not isinstance(timing, dict):
+        return dict(field)
+    out = dict(field)
+    values = out.get("values")
+    settle_override = timing.get("settle")
+    if isinstance(settle_override, dict) and isinstance(values, (list, tuple)):
+        matched = {val: ms for val, ms in settle_override.items() if val in values}
+        if matched:
+            base_settle = out.get("settle") if isinstance(out.get("settle"), dict) else {}
+            out["settle"] = {**base_settle, **matched}
+    poll_s = timing.get("poll_s")
+    feedback = out.get("feedback")
+    if (type(poll_s) in (int, float) and math.isfinite(poll_s) and poll_s > 0
+            and isinstance(feedback, dict) and feedback.get("kind") == "poll"):
+        out["feedback"] = {"kind": "poll", "interval_s": poll_s}
+    return out
+
+
+def _reports(module, item: str, reports: object) -> dict:
+    """Validate a field's `reports` mapping: {raw: {"value": str, "transition": bool}}."""
+    if not isinstance(reports, dict):
+        raise ValueError(f"{module.NAME} declares an invalid reports for {item}: {reports!r}")
+    out = {}
+    for raw, entry in reports.items():
+        if (not isinstance(raw, str) or not isinstance(entry, dict)
+                or set(entry) != {"value", "transition"}
+                or not isinstance(entry["value"], str)
+                or type(entry["transition"]) is not bool):
+            raise ValueError(f"{module.NAME} declares an invalid reports for {item}: {raw!r}={entry!r}")
+        out[raw] = {"value": entry["value"], "transition": entry["transition"]}
+    return out
+
+
+def _power(module, item: str, power: object) -> str:
+    """Validate a field's `power` kind: absolute | toggle | wake_only."""
+    if not isinstance(power, str) or power not in POWER_KINDS:
+        raise ValueError(f"{module.NAME} declares an invalid power for {item}: {power!r}")
+    return power
+
+
+def _manual_count(device, providers: list, field_count: int) -> int:
+    """How many manual command slots a device's actor needs, from its
+    providers' device-level manual_items(device) hooks."""
+    total = 0
+    for module in providers:
+        if module.manual_items:
+            count = module.manual_items(device)
+            if type(count) is not int or count < 1:
+                raise ValueError(f"{module.NAME} declares an invalid manual_items for {device['id']}: {count!r}")
+            total += count
+    return max(field_count, total)
+
+
 def capabilities(devices) -> dict:
-    """Each executor field of `devices`, by Item, from its integration's fields(). The
-    field the actor receives is the declaration with its `values` as
-    `allowed`; `manual` stays here (configure())."""
+    """Each executor field of `devices`, by Item, from every integration's
+    fields() listed under control. Two integrations declaring the same Item
+    is an explicit error."""
     result = {}
     for device in devices:
-        module = _provider(device)
-        if module is None:
-            continue
-        for item, declared in module.fields(device).items():
-            field = {"allowed" if key == "values" else key: value for key, value in declared.items() if key != "manual"}
-            field["allowed"] = list(field["allowed"])
-            if "settle" in field:
-                field["settle"] = _settle(module, item, field["settle"], field["allowed"])
-            if "independent" in field and type(field["independent"]) is not bool:
-                raise ValueError(f"{module.NAME} declares an invalid independent for {item}: {field['independent']!r}")
-            result[item] = {"key": device["id"], "provider": module.NAME, "terminal": True, "probe": True,
-                            "field": field, **({"manual": declared["manual"]} if "manual" in declared else {})}
+        for module in _providers(device):
+            manual = None
+            if module.manual_items:
+                manual = module.manual_items(device)
+                if type(manual) is not int or manual < 1:
+                    raise ValueError(f"{module.NAME} declares an invalid manual_items for {device['id']}: {manual!r}")
+            for item, declared in module.fields(device).items():
+                if item in result:
+                    other = result[item]["provider"]
+                    raise ValueError(f"{module.NAME} and {other} both declare field {item}")
+                if "manual" in declared:
+                    raise ValueError(f"{module.NAME} declares per-field manual for {item}; "
+                                     "declare manual_items(device) on the integration instead")
+                field = apply_timing(device, declared)
+                if "values" not in field or not isinstance(field["values"], (list, tuple)) or not field["values"] \
+                        or any(not isinstance(v, str) for v in field["values"]):
+                    raise ValueError(f"{module.NAME} declares an invalid values for {item}: {field.get('values')!r}")
+                field["values"] = list(field["values"])
+                if "feedback" not in field:
+                    raise ValueError(f"{module.NAME} declares no feedback for {item}")
+                field["feedback"] = _feedback(module, item, field["feedback"])
+                if "reports" in field:
+                    field["reports"] = _reports(module, item, field["reports"])
+                if "power" in field:
+                    field["power"] = _power(module, item, field["power"])
+                if "settle" in field:
+                    field["settle"] = _settle(module, item, field["settle"], field["values"])
+                if "independent" in field and type(field["independent"]) is not bool:
+                    raise ValueError(f"{module.NAME} declares an invalid independent for {item}: {field['independent']!r}")
+                result[item] = {"key": device["id"], "provider": module.NAME, "terminal": True, "probe": True,
+                                **({"manual": manual} if manual is not None else {}), "field": field}
     return result
 
 
@@ -102,10 +206,15 @@ def configure(house: House, conf, descriptor: dict) -> dict:
         # volume, menu keys or a separate transport protocol) do not move a
         # route's power or input and keep their own command paths.
     # Each device has finite per-property pending manual proposals plus one
-    # flight: one per field, or the `manual` Items its actor takes commands
-    # on. Stable manual effect pins are separate from temporary holds.
-    manual_fields = sum(max([len(row["fields"]), *(caps[item].get("manual", 0) for item in row["fields"])])
-                        for row in actors.values())
+    # flight: one per field, or the device-level `manual_items(device)` count
+    # across its providers. Stable manual effect pins are separate from
+    # temporary holds.
+    actor_providers = {
+        key: [m for m in _providers(devices[key]) if m.NAME in {caps[item]["provider"] for item in row["fields"]}]
+        for key, row in actors.items()
+    }
+    manual_fields = sum(_manual_count(devices[key], actor_providers[key], len(row["fields"]))
+                        for key, row in actors.items())
     descriptor["maxHolds"] = max(descriptor.get("maxHolds", 0), manual_fields + 2 * len(resources) + 17 * len(actors))
     epoch = hashlib.sha256(json.dumps(descriptor, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     io = {"version": 1, "epoch": epoch, "wake": EVENT_ITEM, "status": STATUS_ITEM, "actors": actors}
@@ -120,7 +229,7 @@ def configure(house: House, conf, descriptor: dict) -> dict:
     conf.files[MODULE] = _io.embed(SOURCE.read_text(encoding="utf-8"))
     for key, actor in actors.items():
         device = devices[key]
-        provider = _provider(device)
+        providers = actor_providers[key]
         conf.executor_controls.update(actor["fields"])
         kinds = {field["kind"] for field in actor["fields"].values()}
         config = {"key": key, "io": io, "fields": actor["fields"]}
@@ -132,9 +241,12 @@ def configure(house: House, conf, descriptor: dict) -> dict:
                 "// Generated by bin/thermite generate; private ordered device actor.\n"
                 + RULE_SENDS + "\n" + _io.DEVICE_MARK + "\nconst CONFIG = " + encoded + ";\n"
                 "require('thermite-routing-io').httpActor(CONFIG, {readonly: !SEND, "
-                "record: thermiteDevice.recorder(CONFIG.key)});\n", provider.NAME)
+                "record: thermiteDevice.recorder(CONFIG.key)});\n", providers[0].NAME)
         else:
-            path = provider.rule_path(device) if "http" not in kinds and provider.rule_path else key
+            custom_providers = [p for p in providers if any(
+                actor["fields"][item]["kind"] != "http" for item in actor["fields"] if caps[item]["provider"] == p.NAME)]
+            path = (custom_providers[0].rule_path(device)
+                    if len(custom_providers) == 1 and "http" not in kinds and custom_providers[0].rule_path else key)
             try:
                 # The rule has its header already: its integration rendered it.
                 conf.files[path] = fill(conf.files.get(path, ""), {CUSTOM: config}, path, header=False)
@@ -144,9 +256,10 @@ def configure(house: House, conf, descriptor: dict) -> dict:
         # record (lifecycle_io.js, env.record): the device's problem Item and
         # the script's tally, rendered here for a device whose integration
         # has none, since without an actor its commands go to its binding.
-        for name, item in _commands.items(device, provider.NAME).items():
-            if conf.item(name) is None:
-                out.items[name] = item
+        for provider in providers:
+            for name, item in _commands.items(device, provider.NAME).items():
+                if conf.item(name) is None:
+                    out.items[name] = item
         for item, field in actor["fields"].items():
             native = conf.item(item)
             if native is None:

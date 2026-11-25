@@ -820,7 +820,7 @@ class Lifecycle(GatewayFixture):
         (frozen / "instance/ir/disc.json").write_text(json.dumps(profile))
         (dirty / "instance/ir/disc.json").write_text("invalid dirty provider")
         device = {"kind": "disc_player", "model": "UBP-X800M2",
-                  "ir": {"model": "iTach IP2IR", "ip": "192.0.2.25", "connector": 1, "profile": "ir/disc.json"}}
+                  "config": {"ir": {"model": "iTach IP2IR", "ip": "192.0.2.25", "connector": 1, "profile": "ir/disc.json"}}}
         with oh_conf.instance_at(dirty / "instance"):
             before = oh_paths.SITE
             with site_inputs(frozen):

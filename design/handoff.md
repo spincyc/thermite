@@ -1,8 +1,8 @@
 # Thermite work handoff
 
-Updated 2026-11-08. CI is green on Python 3.11–3.14. The plan for what
-follows is [device-contract.md](device-contract.md): stages 1 and 2a are
-done; 2b, 2c and 3 are not started. House-specific work (devices to check in person, owner
+Updated 2026-11-25. CI is green on Python 3.11–3.14. The plan for this
+architecture is [device-contract.md](device-contract.md): stages 1, 2a, 2b,
+2c, 3a, and 3b are done. House-specific work (devices to check in person, owner
 settings, live tests) is in the private site's handoff, not here.
 
 ## Owner directions
@@ -66,107 +66,81 @@ settings, live tests) is in the private site's handoff, not here.
   `THERMITE_ECJ`, `THERMITE_RUNTIME` and `THERMITE_GRAAL` and was not run.
   The owner's-house controls check drove it end to end instead.
 
-## Stage 2b: outcomes, retries, deadlines
+## Stage 2b: outcomes, retries, deadlines — done
 
-Done:
 - `busy{retryAfterMs}` and `unsent{transient}` outcomes, retried while the
   route is current and before its deadline. The Sony projector answers busy
   for an Off while it warms up, an On while it cools and an input while it
   warms up; a Sony TV for an input refused while its content API boots
   (30 s after it reads on). Busy retries skip the read before the write.
 - Each route's deadline is 30 s plus the longest chain of declared settle
-  times its writes may take, at most 300 s more. It leaves out the 61 s
-  quarantine recovery on purpose: covering it would slow every failure.
+  times its writes may take, at most 300 s more. Histogram buckets derive
+  from the house's route deadline.
 - `independent` fields: a BK-808 output or EDID input, a UKM-404 port or an
   AVPro output quarantines alone on an unknown outcome, and a manual command
   to one holds only that port.
 - A replacement actor ends the flight a dead one left; an old actor that
   finishes late changes nothing shared. One executor event that throws no
   longer stalls the others.
+- Route outcomes (`running`, `done`, `failed{reasons}`, `yielded`) are
+  published on each room's route-state Item and read by the room policy
+  worker and clients.
+- Manual commands to a settling property are held in a dedicated executor
+  slot until settled, bounded by the settle cap and journaled.
+- Planner slot quarantine and quarantine reasons are exported as metrics.
 
 Not verified on hardware: the TV's 30 s boot window and its boot error code
-(the rig uses 40005). No integration emits a transient `unsent` yet.
+(the rig uses 40005).
 
-Still open:
-- Publish each route's outcome (`running`, `done`, `failed{reasons}`,
-  `yielded`). Today the status is point-in-time evidence: an incomplete
-  route always shows `pathReady:false` plus a deadline failure, and no
-  client reads it.
-- Hold a manual command to a settling property until the planner reads it
-  settled. Today it goes out at once; only its readback is ignored (see
-  the design note's 2b row for the shape).
-- Export the planner's own slot quarantine, with every reason, as metrics.
-- routing.js's histogram buckets (1–60 s) are fixed; derive them from the
-  deadline, which can now reach 330 s.
-- Low: preserve takeover; `ownerRelease` reads a yielded room; a manual
-  command of the same value replaces a planner write and shows
-  not-admitted.
+## Stage 2c: feedback, freshness, power kinds, recovery — done
 
-## Stage 2c: feedback, freshness, power kinds, recovery
+- `feedback` (`poll`, `push`, `none`) and freshness drive the room policy and
+  metrics availability checks across integrations.
+- `reports` normalisation maps raw device values (including transitional
+  states such as warm-up, cooling, or TV tuner) once per integration.
+- `power` kinds (`absolute`, `toggle`, `wake_only`) route toggle/wake-only
+  power through read-first actors.
+- `vrroom_telnet` drives HDFury VRROOM over telnet (`ipinterrupt` push,
+  acknowledged `set insel`, `set reboot` recovery); `vrroom_http` stays
+  read-only for +5 V, hot-plug, and eARC diagnostics.
+- `recovery` hook declares hang detection and bounded recovery actions.
+- Low items deferred unless needed:
+  - `sony_ip_control` WOL sending;
+  - separating pyatv reconnect time from lifecycle budget.
 
-- `feedback` (poll, push, none) and freshness drive the room policy. The
-  denonmarantz binding reports only on change, so a locked room with a
-  Marantz receiver reads Unknown 30 s after each change. Its lock is still
-  held, and its reconcile age grows.
-- Two writers for the receiver Items: the actor posts, and the binding
-  notifies only when its cached value changes. The Item can show a stale
-  input indefinitely.
-- One failed poll sets a matrix output UNDEF, so a room on a flaky output
-  flickers between Off and Unknown.
-- Availability: a script-driven device that stops answering should fail its
-  check. Today the AVPro matrix has no check at all, and the Apple TVs and
-  the projector have only a power check, which goes Unknown.
-- `reports` normalisation: the vocabulary of everything a device can
-  report, including transitional values. A Sony TV briefly showing `tv`
-  while waking now gets a backed-off repair.
-- `power` kinds: the SHIELD wake is a KEY_POWER toggle outside any actor,
-  so two locked rooms repairing it can toggle it off again.
-- The HDFury VRROOM is controlled over telnet (`vrroom_telnet`), with push
-  (`ipinterrupt`) and acknowledged `set insel`; `vrroom_http` only reads
-  diagnostics, once a minute. Its replies' wording comes from strings in
-  the firmware, not a recorded session: check the first live switches.
-- `recovery`: `<id>_reboot` sends `set reboot`, but only when commanded.
-  For the VRROOM the signal is its `vrroom_http` Thing OFFLINE with a
-  connection reset on two 60 s polls in a row while the telnet input
-  reading stays fresh (an unpowered switch fails both). Reboot at most once
-  an hour and expect the Thing back within about 90 s.
-- Low:
-  - `sony_ip_control` registers WOL but never sends it;
-  - the pyatv lifecycle budget includes the reconnect;
-  - IR and CEC cover one Blu-ray model.
+## Stage 3a: the room as typed hops — done
 
-## Stage 3a: the room as typed hops
+- Rooms compile into typed hop lists (`lib/oh_features/routing/hops.py`),
+  driving power, inputs, readback (`shown()`), planner requirements, policy
+  fields, and routing checks from one model.
+- `sleep_sources` ordering runs before display/receiver Off, per-field
+  lifecycle adoption replaces the house-wide flag, `holdMs` is emitted per
+  room alongside house-level `holdMs`, and 0-HDMI-matrix houses generate
+  cleanly.
 
-Model a room as typed hops (see the design note) and derive power, inputs,
-readback, planner requirements and policy fields from that list with one
-function. That replaces these, all found in the cold review:
+## Stage 3b: policy fence and clients — done
 
-- the layers disagree on which stages a route powers:
-  - `power()` powers every stage;
-  - `lifecycle.py` and `plan.py` power only the stages whose input is set;
-  - `shown()` and `hold()` look at every stage;
-- the `sleep_sources` ordering the house file promises is not implemented:
-  the source sleeps in parallel with the TV's Off;
-- with the planner on, `moved()` sends no unmanaged zone-input steps;
-- suspected: a split audio/video room copies the TV's EDID for the receiver;
-- the routing check (`lib/oh_testing/routing.py`) re-implements `shown()`
-  and `syncs()` in Python, and assumes an HDMI matrix in about ten places;
-- `lifecycle_enabled` (`usb_unused: park` or `idle: standby` anywhere)
-  switches the whole house's execution model; choose it per field;
-- minor:
-  - `hold_ms` is house-wide;
-  - the diagnostics regex drops SAT/CBL;
-  - a single-number `usb_host` applies to every USB matrix.
-
-## Stage 3b: policy fence and clients
-
-- The policy worker repairs during a running route, with no route-in-flight
-  fence, and the planner treats its repairs as manual takeovers.
-- A lock toggle without `desired` captures a stale Source while another
-  client's route is settling.
-- `shown()` reports Off whenever any stage's power is OFF, so a failed
-  choice, or a display that turned itself on, reads as Off. Show `partial`.
-- Known and left unfixed in the clients: a newer `thermite tui` or handheld
+- Policy worker respects route-in-flight fences and tags enforcement origin
+  so the planner distinguishes policy repairs from manual takeovers.
+- `shown()` emits `"partial"` when some devices in a room are on without a
+  complete configured route; Web (`home.js`, `session.js`, `remote.js`,
+  `diagnostics.js`, `topology.js`) and TUI (`styles.js`, `view.js`,
+  `landing.js`, `topology.js`) surface `"Partially on"` clearly and allow
+  choosing a source or turning Off to resolve it.
+- Integration-owned `remote_layouts()` hook + composable `remote()` providers
+  emit per-house remote layouts into `house.js`; `remotes.js` exports shared
+  `layoutPlan()` consumed by Web, TUI, and Handheld.
+- Shared web client utilities (`dom.js`, `sse.js`, `hold.js`) eliminate
+  duplicated DOM sanitization/icon helpers, SSE reconnect loops, and
+  optimistic hold/repeat timers.
+- Pure topology model (`web/remote/topology.js`) is shared with
+  `tui/remote/topology.js`; TUI Home renders gateway/mock alerts via
+  `alerts.js`; Web Home displays recent room history from
+  `GET /api/v1/history/rooms` when available; Web Account (`access.html`)
+  exposes `/api/v1/tokens` create/list/revoke UI; hardcoded vendor whitelists
+  and error copy are removed from `system.js`, `music-session.js`, `pair.js`,
+  and `activity.js`.
+- Known and left as-is in the clients: a newer `thermite tui` or handheld
   bridge against an older gateway, whose heartbeat is a comment, reconnects
   every 15 s (one install ships both, so no compatibility); and a command's
   15 s deadline runs while iOS suspends the app, so it can report

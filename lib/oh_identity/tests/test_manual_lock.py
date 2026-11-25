@@ -262,10 +262,10 @@ class SharedDevices(TestCase):
         cls.owner = bootstrap("owner", PASSPHRASE)
 
     def setUp(self):
-        import oh_render, oh_site_contract
+        import yaml, oh_render, oh_site_contract
         from oh_conf import House
         from oh_identity.runtime import RuntimeAdapter, RuntimeContract
-        data = json.loads((Path(__file__).resolve().parents[3] / "instance/devices.yaml").read_text())
+        data = yaml.safe_load((Path(__file__).resolve().parents[3] / "instance/devices.yaml").read_text())
         # East shows the player through the matrix; west keeps its own cable to it.
         data["routing"]["sources"]["example_player"]["hdmi_input"] = 2
         data["routing"]["rooms"]["example_east"]["sources"].append("example_player")

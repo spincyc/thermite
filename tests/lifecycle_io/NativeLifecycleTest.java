@@ -143,7 +143,7 @@ public class NativeLifecycleTest {
             root.eval("js","const bridge=module.exports.create(descriptor); function report(e){reports.push(e);}");
             for(var entry:Map.of("slow",slow,"fast",fast).entrySet()) {
                 String key=entry.getKey();
-                entry.getValue().eval("js","const executor=module.exports.httpActor({key:'"+key+"',io:descriptor.io,fields:{"+key+"_D1:{kind:'http',thing:'owned',channel:'device1_host',allowed:['1','2','3','4']}}},{noRules:true});");
+                entry.getValue().eval("js","const executor=module.exports.httpActor({key:'"+key+"',io:descriptor.io,fields:{"+key+"_D1:{kind:'http',thing:'owned',channel:'device1_host',values:['1','2','3','4']}}},{noRules:true});");
             }
             root.eval("js","bridge.dispatch("+operation("slow-write","slow","slow_D1","3")+",report);");
             Future<?> pending=workers.submit(()->slow.eval("js","executor.drain();"));
@@ -182,7 +182,7 @@ public class NativeLifecycleTest {
         try(Context root=context(shared,common,new Thing(url+"/unused"),source,descriptor);
             Context actor=context(shared,common,new Thing(url+"/lost"),source,descriptor)) {
             root.eval("js","const bridge=module.exports.create(descriptor);function report(e){reports.push(e);}bridge.dispatch("+operation("lost-write","slow","slow_D1","3")+",report);");
-            actor.eval("js","const executor=module.exports.httpActor({key:'slow',io:descriptor.io,fields:{slow_D1:{kind:'http',thing:'owned',channel:'device1_host',allowed:['1','3']}}},{noRules:true});executor.drain();");
+            actor.eval("js","const executor=module.exports.httpActor({key:'slow',io:descriptor.io,fields:{slow_D1:{kind:'http',thing:'owned',channel:'device1_host',values:['1','3']}}},{noRules:true});executor.drain();");
             root.eval("js","bridge.events();if(!reports.some(e=>e.token==='lost-write'&&e.type==='uncertain'))throw Error('timeout not quarantined'); bridge.dispatch("+operation("must-not-replay","slow","slow_D1","3")+",report);");
             actor.eval("js","executor.drain();hooks.forEach(h=>h());");
             check(lost.get()==1,"unknown operation replayed");
@@ -202,7 +202,7 @@ public class NativeLifecycleTest {
         try(Context root=context(shared,common,new Thing(url),source,descriptor);
             Context receiver=context(shared,common,new Thing(url),source,descriptor)) {
             root.eval("js","const bridge=module.exports.create(descriptor);function report(e){reports.push(e);}");
-            receiver.eval("js",denon("{receiver_power:{kind:'denon',thing:'owned',zone:1,point:'power',allowed:['ON','OFF']},receiver_input:{kind:'denon',thing:'owned',zone:1,point:'input',allowed:['SAT/CBL','MPLAY']}}"));
+            receiver.eval("js",denon("{receiver_power:{kind:'denon',thing:'owned',zone:1,point:'power',values:['ON','OFF']},receiver_input:{kind:'denon',thing:'owned',zone:1,point:'input',values:['SAT/CBL','MPLAY']}}"));
             root.eval("js","bridge.probe({token:String('receiver-input'),key:'receiver',resource:'receiver_input'},report);");
             receiver.eval("js","executor.drain();");
             root.eval("js","bridge.events();if(!reports.some(e=>e.token==='receiver-input'&&e.type==='sample'&&e.value==='SAT/CBL'&&e.fresh&&e.retired))throw Error('main input not read with accepted wire format');");
@@ -223,7 +223,7 @@ public class NativeLifecycleTest {
         try(Context root=context(shared,common,new Thing(url),source,descriptor);
             Context receiver=context(shared,common,new Thing(url),source,descriptor)) {
             root.eval("js","const bridge=module.exports.create(descriptor);function report(e){reports.push(e);}");
-            receiver.eval("js",denon("{receiver_power:{kind:'denon',thing:'owned',zone:1,point:'power',allowed:['ON','OFF']}}"));
+            receiver.eval("js",denon("{receiver_power:{kind:'denon',thing:'owned',zone:1,point:'power',values:['ON','OFF']}}"));
             root.eval("js","bridge.probe({token:String('entity-xml'),key:'receiver',resource:'receiver_power'},report);");
             receiver.eval("js","executor.drain();");
             root.eval("js","bridge.events();if(!reports.some(e=>e.token==='entity-xml'&&e.type==='terminal'&&e.reason==='owned_probe_failed'))throw Error('entity XML accepted');");

@@ -37,7 +37,7 @@ STORE = Path("build/sandbox/downloads/wheels")
 #: What the services import that carries compiled code or is their server:
 #: loaded once in the image when the environment is built, so a wheel that
 #: installs but cannot run there fails the stage, not a service's start.
-IMPORTS = ("argon2", "django", "h2", "httpx", "hypercorn", "prometheus_client", "uvicorn", "yaml")
+IMPORTS = ("argon2", "django", "h2", "httpx", "hypercorn", "prometheus_client", "yaml")
 
 _PLAIN = re.compile(r"/[A-Za-z0-9_@+=,./-]+")
 _PIN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*==", re.MULTILINE)
@@ -76,21 +76,21 @@ def _run(image: str, network: str, volumes: list[str], script: str, *arguments: 
             image, "-euc", script, "thermite-environment", *arguments]
 
 
-def fetch_command(image: str, wheels) -> list[str]:
-    """Download into `wheels` what its requirements-site.txt pins and it
-    does not hold yet. The one command here that uses a network."""
+def fetch_command(image: str, wheels, requirements: str = "requirements-site.txt") -> list[str]:
+    """Download into `wheels` what `requirements` pins and it does not hold yet.
+    The one command here that uses a network."""
     return _run(image, "host", [f"{plain(wheels)}:/wheels:z"],
                 f"exec python {_PIP} download --require-hashes --only-binary :all: --dest /wheels "
-                "-r /wheels/requirements-site.txt")
+                f"-r /wheels/{requirements}")
 
 
-def verify_command(image: str, wheels) -> list[str]:
+def verify_command(image: str, wheels, requirements: str = "requirements-site.txt") -> list[str]:
     """Resolve the pins from `wheels` alone, as a stage will, installing
     nothing: pip checks each wheel it would use against the pinned hashes
     and that it suits this image's Python."""
     return _run(image, "none", [f"{plain(wheels)}:/wheels:ro,z"],
                 f"exec python {_PIP} install --dry-run --ignore-installed --target /tmp/unused {_OFFLINE} "
-                "-r /wheels/requirements-site.txt")
+                f"-r /wheels/{requirements}")
 
 
 def build_command(image: str, release, wheels) -> list[str]:

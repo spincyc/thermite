@@ -2,50 +2,80 @@
 (function (global) {
   "use strict";
 
-  const STATUS_GROUP = "house_camera_status";
-  const ITEM_SUFFIX = { online: "online", motion: "motion", recording: "recording",
-    lastMotion: "last_motion", ring: "ring", lastRing: "last_ring" };
+  const ITEM_KEYS = ["online", "motion", "recording", "lastMotion", "ring", "lastRing", "snapshot", "stream"];
   const ID = /^[a-z][a-z0-9_]{0,79}$/;
+  const ITEM_NAME = /^[A-Za-z][A-Za-z0-9_]{0,119}$/;
+  const QUALITY_NAME = /^[a-z][a-z0-9_-]{0,31}$/;
+  const THING_UID = /^[A-Za-z0-9:_-]{1,200}$/;
+  const MEDIA_PATH = /^\/[A-Za-z0-9_:@./-]+$/;
+  const QUALITY_LABELS = { high: "High", medium: "Balanced", low: "Low bandwidth", package: "Package camera" };
   const KEEP = 64;
   const text = (value, maximum = 120) => typeof value === "string"
     ? value.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").slice(0, maximum) : "";
+  const validMediaPath = (value) => typeof value === "string" && value.length > 1 && value.length <= 256
+    && MEDIA_PATH.test(value) && !value.includes("//") && !value.endsWith("/")
+    && !value.split("/").includes("..");
   const httpError = (what, response) => what + " is unavailable" +
     (Number.isInteger(response && response.status) ? " (HTTP " + response.status + ")." : ".");
 
   function catalogue(raw) {
-    if (!raw || raw.version !== 1 || raw.statusGroup !== STATUS_GROUP || !Array.isArray(raw.cameras)
-        || raw.cameras.length > KEEP) throw new Error("Camera catalogue is unavailable.");
+    if (!raw || raw.version !== 1 || typeof raw.statusGroup !== "string" || !ID.test(raw.statusGroup)
+        || !Array.isArray(raw.cameras) || raw.cameras.length > KEEP) {
+      throw new Error("Camera catalogue is unavailable.");
+    }
+    const statusGroup = raw.statusGroup;
+    const pollSeconds = Number.isInteger(raw.pollSeconds) && raw.pollSeconds >= 1 && raw.pollSeconds <= 60
+      ? raw.pollSeconds : 5;
     const seen = new Set();
     const cameras = raw.cameras.map((entry) => {
-      if (!entry || typeof entry.id !== "string" || !ID.test(entry.id) || seen.has(entry.id)) throw new Error("Camera catalogue is unavailable.");
+      if (!entry || typeof entry.id !== "string" || !ID.test(entry.id) || seen.has(entry.id)) {
+        throw new Error("Camera catalogue is unavailable.");
+      }
       seen.add(entry.id);
-      const ident = entry.id, thing = entry.thing;
-      if (typeof thing !== "string" || thing.length > 200 || !new RegExp("^unifi:camera:[a-z][a-z0-9_]*:" + ident + "$").test(thing)) {
+      const ident = entry.id;
+      const thing = entry.thing === undefined || entry.thing === null ? "" : entry.thing;
+      if (thing !== "" && (typeof thing !== "string" || !THING_UID.test(thing))) {
         throw new Error("Camera catalogue is unavailable.");
       }
       const items = {};
-      for (const [key, suffix] of Object.entries(ITEM_SUFFIX)) {
-        const value = entry.items && entry.items[key];
-        if (value === undefined) continue;
-        if (value !== ident + "_" + suffix) throw new Error("Camera catalogue is unavailable.");
+      if (!entry.items || typeof entry.items !== "object") throw new Error("Camera catalogue is unavailable.");
+      for (const key of ITEM_KEYS) {
+        const value = entry.items[key];
+        if (value === undefined || value === null) continue;
+        if (typeof value !== "string" || !ITEM_NAME.test(value)) throw new Error("Camera catalogue is unavailable.");
         items[key] = value;
       }
-      if (!items.online || !items.motion || !items.recording) throw new Error("Camera catalogue is unavailable.");
-      const snapshot = "/unifi/media/image/" + thing, streams = {};
-      if (!entry.media || entry.media.snapshot !== snapshot) throw new Error("Camera catalogue is unavailable.");
-      for (const quality of ["high", "medium", "low", "package"]) {
-        if (!entry.media.streams || entry.media.streams[quality] === undefined) continue;
-        const endpoint = "/unifi/media/play/" + thing + ":" + quality;
-        if (entry.media.streams[quality] !== endpoint || (quality === "package" && !entry.packageCamera)) {
+      if (!items.online) throw new Error("Camera catalogue is unavailable.");
+      const rawKind = entry.kind;
+      if (rawKind !== undefined && rawKind !== "camera" && rawKind !== "doorbell") {
+        throw new Error("Camera catalogue is unavailable.");
+      }
+      const doorbell = rawKind === "doorbell" || entry.doorbell === true;
+      const kind = doorbell ? "doorbell" : "camera";
+      const packageCamera = entry.packageCamera === true;
+      const rawMedia = entry.media && typeof entry.media === "object" ? entry.media : {};
+      let snapshot = null;
+      if (rawMedia.snapshot !== undefined && rawMedia.snapshot !== null) {
+        if (!validMediaPath(rawMedia.snapshot)) throw new Error("Camera catalogue is unavailable.");
+        snapshot = rawMedia.snapshot;
+      }
+      const streams = {};
+      if (rawMedia.streams !== undefined && rawMedia.streams !== null) {
+        if (typeof rawMedia.streams !== "object" || Array.isArray(rawMedia.streams)) {
           throw new Error("Camera catalogue is unavailable.");
         }
-        streams[quality] = endpoint;
+        for (const [quality, endpoint] of Object.entries(rawMedia.streams)) {
+          if (!QUALITY_NAME.test(quality) || !validMediaPath(endpoint) || (quality === "package" && !packageCamera)) {
+            throw new Error("Camera catalogue is unavailable.");
+          }
+          streams[quality] = endpoint;
+        }
       }
-      return { id: ident, label: text(entry.label) || ident, location: text(entry.location), model: text(entry.model),
-        doorbell: entry.doorbell === true, packageCamera: entry.packageCamera === true, thing, items,
-        media: { snapshot, streams } };
+      const room = typeof entry.room === "string" && ID.test(entry.room) ? entry.room : "";
+      return { id: ident, label: text(entry.label) || ident, room, location: text(entry.location), kind,
+        model: text(entry.model), doorbell, packageCamera, thing, items, media: { snapshot, streams } };
     });
-    return { version: 1, statusGroup: STATUS_GROUP, pollSeconds: 5, cameras };
+    return { version: 1, statusGroup, pollSeconds, cameras };
   }
 
   function timestamp(value) {
@@ -107,11 +137,13 @@
             members = manifest.cameras.flatMap((camera) => Object.entries(camera.items).map(([key, name]) => ({ name,
               state: key === "online" || key === "recording" ? "ON" : key === "motion" ? "CLOSED" : "NULL" })));
           } else {
-            const response = await request(base + "/rest/items/" + STATUS_GROUP + "?fields=members(name,state)", init);
+            const response = await request(base + "/rest/items/" + manifest.statusGroup + "?fields=members(name,state)", init);
             if (!visible || turn !== generation) return;
             if (!response.ok) throw new Error(httpError("Camera status", response));
             const body = await response.json();
-            if (!body || !Array.isArray(body.members) || body.members.length > KEEP * 6) throw new Error("Camera status is unavailable.");
+            if (!body || !Array.isArray(body.members) || body.members.length > KEEP * ITEM_KEYS.length) {
+              throw new Error("Camera status is unavailable.");
+            }
             members = body.members;
           }
           if (!visible || turn !== generation) return;
@@ -135,7 +167,9 @@
         } finally {
           if (deadline !== null) cancel(deadline);
           if (active === controller) active = null;
-          if (visible && turn === generation && (!manifest || manifest.cameras.length)) timer = later(() => refresh(turn), 5000);
+          if (visible && turn === generation && (!manifest || manifest.cameras.length)) {
+            timer = later(() => refresh(turn), (manifest ? manifest.pollSeconds : 5) * 1000);
+          }
         }
       })();
       work = run;
@@ -215,6 +249,7 @@
       stop();
       const turn = generation;
       if (options.mock) { notify({ kind: "idle", message: "Preview does not access camera media." }); return; }
+      if (!camera.media || !camera.media.snapshot) { notify({ kind: "error", message: "Snapshot is unavailable." }); return; }
       controller = new Abort();
       deadline = later(() => stop("Snapshot timed out. Choose Snapshot to try again.", "error"), 15000);
       notify({ kind: "loading", message: "Reading snapshot…" });
@@ -443,14 +478,14 @@
       if (quality.dataset.signature !== signature) {
         quality.textContent = "";
         for (const value of Object.keys(camera.media.streams)) {
-          const option = element("option", "", { high: "High", medium: "Balanced", low: "Low bandwidth", package: "Package camera" }[value]);
+          const option = element("option", "", QUALITY_LABELS[value] || value);
           option.value = value; quality.appendChild(option);
         }
         quality.value = camera.media.streams.medium ? "medium" : Object.keys(camera.media.streams)[0] || "";
         quality.dataset.signature = signature;
       }
       const signIn = mediaNeedsAccount();
-      find("[data-camera-snapshot]").disabled = signIn || camera.online === false;
+      find("[data-camera-snapshot]").disabled = signIn || camera.online === false || !camera.media.snapshot;
       find("[data-camera-live]").disabled = signIn || camera.online === false || !quality.value;
       if (signIn && mediaKind === "idle") find("[data-media-message]").textContent = accountNote(access);
     }

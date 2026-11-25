@@ -43,6 +43,7 @@ function client(options = {}) {
   const context = vm.createContext({ console: { info() {}, warn() {}, error() {} }, AbortController,
     setTimeout(fn, ms) { timers.set(++timerId, { fn, ms }); return timerId; },
     clearTimeout(id) { timers.delete(id); } });
+  vm.runInContext(read("web/remote/sse.js"), context);
   vm.runInContext(read("web/remote/backend.js"), context);
   vm.runInContext(read("web/remote/diagnostics.js"), context);
   if (options.activity) vm.runInContext(read("web/remote/activity.js"), context);

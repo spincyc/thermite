@@ -32,14 +32,20 @@ METRICS_ADDON = Addon("misc", "metrics", "openHAB's own metrics at /rest/metrics
 UPNP_CFG = "services/upnp.cfg"
 
 
-def validate(data: object) -> list[str]:
+def validate(data: object, *, instance_dir: Path | None = None) -> list[str]:
     """Every problem that stops a render: inventory, integrations, features."""
+    if instance_dir is not None and isinstance(data, dict) and "include" in data:
+        try:
+            data = inventory.expand_includes(data, instance_dir)
+        except inventory.ConfigError as error:
+            return list(error.problems) or [error.message]
     problems = inventory.validate(data, check_extensions=False)
     if problems:
         # The per-module checks below assume a well-formed inventory.
         return problems
     assert isinstance(data, dict)
-    for device in data.get("devices") or []:
+    resolved = inventory.resolve_profiles(data)
+    for device in resolved.get("devices") or []:
         for module in integrations.REGISTRY:
             if uses(device, module.PHASE, module.NAME) and module.NEEDS_IP and not device.get("ip"):
                 problems.append(f"{device['id']}: {module.NAME} needs the device's own ip")
@@ -52,16 +58,16 @@ def validate(data: object) -> list[str]:
         # remote's inputs, say), which assumes each device is one they know.
         return problems
     for feature in features.REGISTRY:
-        problems += feature.validate(data)
+        problems += feature.validate(resolved)
     if problems:
         # An integration's house-wide check reads the sections the features
         # own (routing, say), which assumes each has the shape its feature
         # checked.
         return problems
     for module in integrations.defining("validate_house"):
-        problems += module.validate_house(data)
+        problems += module.validate_house(resolved)
     if not problems:
-        problems += inventory.extension_mismatches(data)
+        problems += inventory.extension_mismatches(resolved)
     return problems
 
 

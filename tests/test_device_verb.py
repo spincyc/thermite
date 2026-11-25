@@ -307,7 +307,7 @@ class Now(Guarded):
         self.assertIn("    http://192.0.2.50:%d/d/thermite-devices?var-room=example_west&var-device=example_tv\n"
                       % oh_metrics.ports(HOST)["grafana"], out)
         self.assertIn("    http://192.0.2.50:%d/settings/things/http:url:example_tv\n" % HOST["http_port"], out)
-        self.assertNotIn("routing ticket", out, "this house has no routing executor to log one")
+        self.assertIn("    journalctl -u thermite-openhab.service -g 'routing ticket .*resource=example_tv_'\n", out)
         # Two questions (what exists now, and when each sample was taken), each
         # a GET the stand-in checked; a third only while it holds a problem.
         self.assertEqual(len(held.asked), 2)
@@ -464,10 +464,10 @@ class Now(Guarded):
         self.assertIn("    journalctl -u thermite-openhab.service -g 'routing ticket .*resource=example_avr_'\n", out)
         found = facts(routed, "example_avr", held)["now"]
         self.assertEqual((found["routing_failures"], found["quarantined"]), ({"refused": 3, "probe_failed": 1}, True))
-        # Nothing of routing is said of a device it does not command.
+        # Nothing of routing is said of a device the executor does not command (example_player uses idle: preserve).
         held = installation(houses()["example"])
-        self.assertNotIn("outing", run("device", TV, reader=held.get, installed=True)[1])
-        self.assertIsNone(facts(houses()["example"], TV, held)["now"]["routing_failures"])
+        self.assertNotIn("routing ticket", run("device", "example_player", reader=held.get, installed=True)[1])
+        self.assertIsNone(facts(houses()["example"], "example_player", held)["now"]["routing_failures"])
 
     def test_routing_infrastructure_is_needed_always_and_a_speaker_while_it_plays(self):
         held = installation(houses()["speakers"])
@@ -477,10 +477,10 @@ class Now(Guarded):
         # A source commanded through the matrix's Thing has its reading, though none is named after it.
         cec = houses()["cec"]
         _, out, _ = run_house(cec, "den_device", installation(cec))
-        self.assertIn("Things generated for it (0)\n  Its commands go through http:url:den_device_cec:den_matrix, "
+        self.assertIn("Things generated for it (0)\n  Its commands go through http:url:den_matrix, "
                       "a Thing named after another device.\n", out)
-        self.assertRegex(out, r"Thing http:url:den_device_cec:den_matrix +ONLINE +10 s ago\n")
-        self.assertIn("/settings/things/http:url:den_device_cec:den_matrix\n", out)
+        self.assertRegex(out, r"Thing http:url:den_matrix +ONLINE +10 s ago\n")
+        self.assertIn("/settings/things/http:url:den_matrix\n", out)
         _, out, _ = run_house(houses()["speakers"], "example_speaker", held)
         self.assertIn("      needed while it plays, or did in the last %s\n" % alerts.IN_USE, out)
         self.assertIn("  none: no room's source passes through it\n", out)

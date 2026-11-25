@@ -17,6 +17,9 @@
   const KINDS = new Set(["switch", "enum", "volume", "key", "text", "problem", "pairing_status", "pairing_result"]);
   const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
   function clean(value, limit) {
+    if (global.ThermiteDom && typeof global.ThermiteDom.cleanText === "function") {
+      return typeof value === "string" ? global.ThermiteDom.cleanText(value, limit) : "";
+    }
     return typeof value === "string"
       ? value.replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, " ").slice(0, limit) : "";
   }
@@ -86,7 +89,10 @@
       if (answer.state === "failed") {
         const error = answer.error;
         if (error && typeof error === "object") {
-          body += error.code === 1 ? ": Sony error 1 (Internal Server Error)" : ": registration rejected";
+          const message = typeof error.message === "string" ? clean(error.message, 80) : "";
+          body += message ? ": " + message
+            : Number.isInteger(error.code) ? ": registration error " + error.code
+              : error.api === true ? ": device API error" : ": registration rejected";
           if (Number.isInteger(error.http) && error.http >= 100 && error.http <= 599) body += ", HTTP " + error.http;
         }
       }

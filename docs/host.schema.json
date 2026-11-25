@@ -1,0 +1,246 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spincyc.github.io/thermite/host.schema.json",
+  "title": "thermite host file",
+  "description": "the host file",
+  "type": "object",
+  "properties": {
+    "version": {
+      "description": "the format of the file: 1",
+      "type": "number",
+      "enum": [
+        1
+      ]
+    },
+    "timezone": {
+      "description": "the host's IANA time zone name such as Etc/UTC",
+      "type": "string"
+    },
+    "root": {
+      "description": "the root-owned installation directory (default /srv/thermite)",
+      "type": "string"
+    },
+    "http_port": {
+      "description": "the native openHAB HTTP listener port on loopback (default 13602)",
+      "type": "number"
+    },
+    "https_port": {
+      "description": "the native openHAB HTTPS listener port on loopback (default 13603)",
+      "type": "number"
+    },
+    "uid": {
+      "description": "the positive non-root numeric user id of the thermite service account (default 9001)",
+      "type": "number"
+    },
+    "gid": {
+      "description": "the positive non-root numeric group id of the thermite service account (default 9001)",
+      "type": "number"
+    },
+    "gateway": {
+      "description": "HTTPS gateway listener port and bind addresses",
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "port": {
+          "description": "the HTTPS gateway listener port (default 13601)",
+          "type": "number"
+        },
+        "listen": {
+          "description": "this host's own IP addresses the HTTPS gateway binds besides loopback",
+          "type": "array",
+          "items": {
+            "description": "an IPv4 or IPv6 address of this host",
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "metrics": {
+      "description": "Prometheus, Grafana and node_exporter host overrides",
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "units": {
+          "description": "additional systemd unit names for node_exporter to report on",
+          "type": "array",
+          "items": {
+            "description": "a systemd unit name",
+            "type": "string"
+          }
+        },
+        "retention": {
+          "description": "how long Prometheus keeps samples, a duration such as 395d",
+          "type": "string"
+        },
+        "retention_size": {
+          "description": "maximum disk Prometheus uses, a size such as 12GB",
+          "type": "string"
+        },
+        "yoke_targets": {
+          "description": "optional external Yoke observer host:port endpoints for Prometheus to scrape",
+          "type": "array",
+          "items": {
+            "description": "a host:port endpoint",
+            "type": "string"
+          }
+        },
+        "node_exporter_uid": {
+          "description": "positive numeric uid and gid for node_exporter's own account, distinct from uid and gid",
+          "type": "number"
+        },
+        "prometheus_port": {
+          "description": "Prometheus loopback listener port (default 13607)",
+          "type": "number"
+        },
+        "node_exporter_port": {
+          "description": "node_exporter loopback listener port (default 13608)",
+          "type": "number"
+        },
+        "blackbox_port": {
+          "description": "blackbox_exporter loopback listener port (default 13609)",
+          "type": "number"
+        },
+        "exporter_port": {
+          "description": "thermite metrics exporter loopback listener port (default 13610)",
+          "type": "number"
+        },
+        "grafana_port": {
+          "description": "Grafana LAN listener port (default 13611)",
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "guest_http": {
+      "description": "opt-in plain-HTTP Guest listener restricted to listed client networks",
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "port": {
+          "description": "the plain-HTTP Guest listener port (default 13600)",
+          "type": "number"
+        },
+        "listen": {
+          "description": "this host's own IP addresses the Guest listener binds",
+          "type": "array",
+          "items": {
+            "description": "an IPv4 or IPv6 address of this host",
+            "type": "string"
+          }
+        },
+        "clients": {
+          "description": "client CIDR networks admitted by the Guest listener",
+          "type": "array",
+          "items": {
+            "description": "an IPv4 or IPv6 CIDR network",
+            "type": "string"
+          }
+        },
+        "names": {
+          "description": "lowercase DNS hostnames guests may type to reach the Guest listener",
+          "type": "array",
+          "items": {
+            "description": "a lowercase DNS hostname",
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "listen",
+        "clients"
+      ]
+    },
+    "music": {
+      "description": "opt-in Music Assistant libraries and listener ports",
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "libraries": {
+          "description": "music libraries mounted read-only into Music Assistant",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "description": "an absolute host directory path",
+            "type": "string"
+          }
+        },
+        "port": {
+          "description": "Music Assistant loopback API listener port (default 13627)",
+          "type": "number"
+        },
+        "stream_port": {
+          "description": "Music Assistant LAN audio stream listener port (default 13628)",
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "shares": {
+      "description": "network shares mounted by Thermite",
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": {
+        "description": "a network share",
+        "type": "object",
+        "properties": {
+          "type": {
+            "description": "the network filesystem type",
+            "type": "string",
+            "enum": [
+              "cifs",
+              "nfs"
+            ]
+          },
+          "server": {
+            "description": "the server hostname or IPv4 address",
+            "type": "string"
+          },
+          "share": {
+            "description": "the SMB share name (and optional subdirectory), for cifs shares",
+            "type": "string"
+          },
+          "export": {
+            "description": "the exported absolute directory path, for nfs shares",
+            "type": "string"
+          },
+          "where": {
+            "description": "the local mount point below /mnt or /media",
+            "type": "string"
+          },
+          "writable": {
+            "description": "whether the share is mounted read-write instead of read-only",
+            "type": "boolean"
+          },
+          "version": {
+            "description": "optional quoted SMB or NFS protocol version such as 3.1.1 or 4.2",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "server",
+          "where"
+        ]
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "timezone"
+  ]
+}

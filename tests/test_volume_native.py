@@ -61,7 +61,7 @@ TEXTS = {
 def fixture():
     """The public example plus an AVR, an Android TV, a Sonos Arc and an
     office desk shaped like the site's: a passive monitor and a WiiM."""
-    data = json.loads((AREA / "instance/devices.yaml").read_text())
+    data = oh_inventory.load(AREA / "instance/devices.yaml")
     data["rooms"]["example_office"] = {"label": "Example Office"}
 
     def add(ident, kind, model, room, controls, index, **extra):
@@ -71,7 +71,7 @@ def fixture():
         {"observe": ["denonmarantz_http"], "control": ["denonmarantz_http"]}, 200)
     add("fixture_android", "tv", "Example Android TV", "example_west", {"control": ["androidtv_googletv"]}, 201)
     add("fixture_arc", "soundbar", "Arc", "example_east", {"observe": ["sonos"], "control": ["sonos"]}, 202,
-        sonos_udn=sonos.udn(f"02:00:00:00:01:{0xca:02x}"))
+        config={"sonos": {"udn": sonos.udn(f"02:00:00:00:01:{0xca:02x}")}})
     add("fixture_wiim", "streaming_amp", "Amp Pro", "example_office",
         {"observe": ["wiim_http"], "control": ["wiim_http"]}, 203)
     add("fixture_monitor", "monitor", "Example Monitor", "example_office", {}, 204)
@@ -104,15 +104,17 @@ def profiles(conf):
     arc = item(conf, sonos, "fixture_arc_volume")
     wiim = conf.yaml[wiim_http.FILE].things["http:url:fixture_wiim"]["channels"]["volume"]["config"]
     rule = (AREA / "lib/oh_integrations/sony_ip_control/sony_ip_control.js").read_text()
-    number = re.search(r"^const NUMBER = .*;$", rule, re.M).group()
-    on_scale = re.search(r"^function onScale\(scale, command\) \{\n.*?^\}$", rule, re.M | re.S).group()
+    assert "thermiteDevice.onScale(" in rule, "sony_ip_control.js must use shared thermiteDevice.onScale"
+    shared_device = (AREA / "lib/oh_integrations/_device.js").read_text()
+    number = re.search(r"^\s*const NUMBER = .*;$", shared_device, re.M).group().strip()
+    on_scale = re.search(r"^\s*function onScale\(raw, scale\) \{\n.*?^\s*\}$", shared_device, re.M | re.S).group()
     return {
         "fixture_avr": next(iter(avr["channels"].values()))["commandFromItemScript"][1:],
         "fixture_arc": next(iter(arc["channels"].values()))["commandFromItemScript"][1:],
         "fixture_wiim": re.fullmatch(r"JS\(\|(.*)\)", wiim["commandTransformation"][0], re.S).group(1),
         # The Sony rule sends setAudioVolume only for a command onScale() passes.
-        "example_tv": ("(function () { " + number + "\n" + on_scale + "\nreturn onScale("
-                       + json.dumps(NATIVE["example_tv"][2]) + ", input) ? input : null; })()"),
+        "example_tv": ("(function () { " + number + "\n" + on_scale + "\nreturn onScale(input, "
+                       + json.dumps(NATIVE["example_tv"][2]) + ") ? input : null; })()"),
     }
 
 

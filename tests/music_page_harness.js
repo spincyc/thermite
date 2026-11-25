@@ -8,7 +8,7 @@
 const fs = require('fs'), path = require('path'), vm = require('vm');
 const WEB = path.join(__dirname, '..', 'web', 'remote');
 console.info = console.warn = () => {};
-for (const name of ['navigation.js', 'access.js', 'music-backend.js', 'music-backend-mock.js', 'music-session.js']) {
+for (const name of ['navigation.js', 'dom.js', 'sse.js', 'hold.js', 'access.js', 'music-backend.js', 'music-backend-mock.js', 'music-session.js']) {
   vm.runInThisContext(fs.readFileSync(path.join(WEB, name), 'utf8'), {filename: name});
 }
 const {MusicBackend, RemoteMusic, ThermiteAccess} = globalThis;

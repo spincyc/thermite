@@ -636,6 +636,42 @@ class Configuration(Site):
         steady_fetches = [cmd for cmd, _ in self.sim.calls[start:] if cmd == "config/providers"]
         self.assertEqual(len(steady_fetches), 1)
 
+    def test_player_providers_derive_dynamically_from_music_integrations(self):
+        import types
+        import oh_integrations
+        from oh_integrations import _hooks
+
+        self.assertEqual(provision.PLAYERS, provision.player_providers())
+        self.assertEqual(provision.PLAYERS, ("sonos", "wiim", "airplay"))
+        self.assertEqual(provision.speaker_providers(), ("sonos", "wiim"))
+
+        # Adding a new integration defining music() registers its provider for
+        # setup, discovery, and prevents unwanted() from removing it even if
+        # that domain was previously listed in UNWANTED.
+        extra = types.ModuleType("oh_integrations.heos_music_fixture")
+        extra.__getattr__ = _hooks.absent
+        extra.NAME = "heos_music_fixture"
+        extra.DEVICE_KEYS = {}
+        extra.music = lambda device: {"provider": "heos", "ip": device["ip"]}
+
+        with patch.object(oh_integrations, "defining", return_value=(*oh_integrations.defining("music"), extra)):
+            self.assertEqual(provision.speaker_providers(), ("sonos", "wiim", "heos"))
+            self.assertEqual(provision.player_providers(), ("sonos", "wiim", "heos", "airplay"))
+            custom_spec = spec(self.port)
+            custom_spec["speakers"]["example_heos"] = {
+                "id": "example_heos", "label": "HEOS Speaker", "room": "example_den",
+                "room_label": "Example Den", "provider": "heos", "ip": "192.0.2.55", "rooms": {}}
+            provisioner = provision.Provisioner(self.state, custom_spec)
+            self.assertEqual(provisioner.step(), "ready")
+            self.assertEqual(self.domains(), ["airplay", "filesystem_local", "heos", "sonos", "wiim"])
+            self.assertEqual(self.sim.providers["heos"]["values"],
+                             {"manual_discovery_ip_addresses": ["192.0.2.55"]})
+
+        # A single speaker family alone does not require AirPlay cross-family grouping.
+        only_one = oh_integrations.defining("music")[:1]
+        with patch.object(oh_integrations, "defining", return_value=only_one):
+            self.assertEqual(provision.player_providers(), ("sonos",))
+
 
 class Errors(unittest.TestCase):
     """What Music Assistant answers becomes one of three exceptions, none

@@ -9,18 +9,19 @@ an API key on the console.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 from typing import TYPE_CHECKING, cast
 
-from oh_conf import Addon, House, YamlFile, point, uses
+from oh_conf import Addon, House, YamlFile, config as device_config, point, uses
 from oh_shape import MAPPING, NUMBER, TEXT, TRUTH, Key
 
 if TYPE_CHECKING:
     from oh_inventory import Device
 
 NAME = "unifi_protect"
-PHASE = "control"  # authentication is required; this integration sends no control commands
+PHASE = "observe"  # read-only authenticated observer; sends no control commands
 FILE = "yaml/cameras.yaml"
 HEADER = (
     "UniFi Protect cameras: read-only connection, recording, motion and doorbell status.",
@@ -35,9 +36,10 @@ CONTROLLER_UID = "unifi:controller:protect_console"
 NVR_UID = "unifi:nvr:protect"
 STATUS_GROUP = "house_camera_status"
 RULE = "automation/js/unifi_protect.js"
-DEVICE_KEYS = {"protect": Key(MAPPING, "which of the Protect console's cameras this is", keys={
-    "device_id": Key(TEXT, "the camera's 24-character Protect id", required=True),
-    "package_camera": Key(TRUTH, "whether a doorbell has a second camera, for packages")})}
+DEVICE_KEYS = {
+    "device_id": Key(TEXT, "the camera's 24-character Protect id"),
+    "package_camera": Key(TRUTH, "whether a doorbell has a second camera, for packages"),
+}
 #: The console's host and port (oh_features.remote_cameras validates them).
 HOUSE_KEYS = {"protect": Key(MAPPING, "the UniFi Protect console the cameras are on; its credentials are not kept here", keys={
     "host": Key(TEXT, "the console's IPv4 address", required=True),
@@ -45,10 +47,11 @@ HOUSE_KEYS = {"protect": Key(MAPPING, "the UniFi Protect console the cameras are
 HOUSE_ITEMS = (STATUS_GROUP,)
 #: The motion-timestamp rule only updates Items.
 ITEM_ONLY_RULES = (RULE,)
+#: The NVR bridge and camera Things live in runtime JSONDB, not generated YAML.
+RUNTIME_THINGS = True
+#: Cameras and their NVR bridge are always-on monitored health checks.
+MONITORED = True
 DEVICE_ID = re.compile(r"[a-f0-9]{24}")
-#: The native media paths descriptor() names, which the runtime serves.
-SNAPSHOT_PATH = re.compile(r"/unifi/media/image/[A-Za-z0-9:_-]+")
-STREAM_PATH = re.compile(r"/unifi/media/play/[A-Za-z0-9:_-]+")
 CHANNELS = {
     "online": ("Switch", "Connected", None),
     "recording": ("Switch", "Recording", "is-recording"),
@@ -66,23 +69,51 @@ def validate(device: dict) -> list[str]:
     if not uses(device, PHASE, NAME):
         return []
     where = device.get("id")
-    config = device.get("protect")
+    config = device_config(device, NAME)
     if device.get("kind") not in {"camera", "doorbell"}:
         return [f"{where}: {NAME} requires kind camera or doorbell"]
-    if not isinstance(config, dict) or not DEVICE_ID.fullmatch(str(config.get("device_id", ""))):
-        return [f"{where}: protect.device_id must be the camera's 24-character Protect id"]
+    if not config or not DEVICE_ID.fullmatch(str(config.get("device_id", ""))):
+        return [f"{where}: config.unifi_protect.device_id must be the camera's 24-character Protect id"]
     problems = []
     for name in set(config) - {"device_id", "package_camera"}:
-        problems.append(f"{where}: unknown protect field {name!r}")
+        problems.append(f"{where}: unknown config.unifi_protect field {name!r}")
     if "package_camera" in config and type(config["package_camera"]) is not bool:
-        problems.append(f"{where}: protect.package_camera must be true or false")
+        problems.append(f"{where}: config.unifi_protect.package_camera must be true or false")
     if config.get("package_camera") and device.get("kind") != "doorbell":
         problems.append(f"{where}: only a doorbell may have a package camera")
     return problems
 
 
+def validate_house(data: dict) -> list[str]:
+    cameras_found = [d for d in data.get("devices", []) if uses(d, PHASE, NAME)]
+    if not cameras_found:
+        return []
+    config = data.get("protect")
+    if not isinstance(config, dict):
+        return ["protect: cameras need the console's host and optional port"]
+    problems = []
+    try:
+        ipaddress.IPv4Address(config.get("host"))
+    except (ValueError, TypeError):
+        problems.append("protect.host must be the console's IPv4 address")
+    if type(config.get("port", 443)) is not int or not 1 <= config.get("port", 443) <= 65535:
+        problems.append("protect.port must be an integer from 1 to 65535")
+    if set(config) - {"host", "port"}:
+        problems.append("protect accepts only host and port; credentials belong to runtime JSONDB")
+    ids = [device_config(d, NAME).get("device_id") for d in cameras_found
+           if device_config(d, NAME).get("device_id") is not None]
+    if len(ids) != len(set(ids)):
+        problems.append("config.unifi_protect.device_id must identify one camera only")
+    return problems
+
+
 def thing_uid(device: dict) -> str:
     return f"unifi:camera:protect:{device['id']}"
+
+
+def transport(device: dict) -> str | None:
+    """Shared Protect NVR bridge Thing through which cameras report status."""
+    return NVR_UID if uses(device, PHASE, NAME) else None
 
 
 def item_names(device: dict) -> dict[str, str]:
@@ -112,9 +143,10 @@ def render(device: dict, house: House, out: YamlFile) -> None:
 
 def native_thing(device: dict, house: House, *, webrtc: bool = False) -> dict:
     """Editable native Thing DTO; no credentials, no writable channel Items."""
+    cfg = device_config(device, NAME)
     return {"UID": thing_uid(device), "thingTypeUID": "unifi:camera", "bridgeUID": NVR_UID,
             "label": device.get("name") or house.label(cast("Device", device)), "location": house.room_label(device["room"]),
-            "configuration": {"deviceId": device["protect"]["device_id"], "enableWebRTC": webrtc}}
+            "configuration": {"deviceId": cfg["device_id"], "enableWebRTC": webrtc}}
 
 
 def files(devices: list[dict], house: House) -> dict[str, str]:
@@ -158,13 +190,21 @@ for (const camera of CAMERAS) {
 def descriptor(device: dict, house: House) -> dict:
     uid = thing_uid(device)
     qualities = ["high", "medium", "low"]
-    if device["protect"].get("package_camera"):
+    if device_config(device, NAME).get("package_camera"):
         qualities.append("package")
     return {
         "id": device["id"], "label": device.get("name") or house.label(cast("Device", device)),
-        "location": house.room_label(device["room"]), "model": device.get("model") or "UniFi camera",
+        "room": device["room"], "location": house.room_label(device["room"]),
+        "kind": device["kind"], "model": device.get("model") or "UniFi camera",
         "doorbell": device["kind"] == "doorbell", "packageCamera": "package" in qualities,
         "thing": uid, "items": item_names(device),
         "media": {"snapshot": f"/unifi/media/image/{uid}",
                   "streams": {quality: f"/unifi/media/play/{uid}:{quality}" for quality in qualities}},
     }
+
+
+def cameras(device: dict, house: House) -> dict | None:
+    """Public camera descriptor for the remote Cameras page, or None."""
+    if not uses(device, PHASE, NAME):
+        return None
+    return descriptor(device, house)

@@ -1,6 +1,8 @@
 # The house file
 
-`instance/devices.yaml` in your private site says what the house is: its rooms, its devices, which integration reads and commands each device, and which source each room can show. thermite generates everything else from it. [Get started](start.html) shows a first one.
+`instance/devices.yaml` in your private site says what the house is: its rooms, its devices, which integration reads and commands each device, and which source each room can show. thermite generates everything else from it. [Get started](start.html) shows a first one; [The host file](host-file.html) lists every key of `instance/host.yaml`.
+
+The file format is `version: 2`. Large houses can split sections across sibling YAML files under `instance/` with top-level `include:`, share repeated device defaults through `profiles:` and `device.profile`, namespace integration-specific keys under `device.config.<integration>`, override per-device settle and poll timings under `device.timing`, and group optional Control4 settings under top-level `control4:`.
 
 This page lists every key the file may have. It is made from the declaration `thermite check house` checks the file against, so it names every key the file takes and none it refuses. A key that is not here is refused, with the nearest name that is.
 

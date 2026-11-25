@@ -20,9 +20,12 @@ underscore are helpers shared by integrations, not integrations.
 
 from __future__ import annotations
 
-from typing import Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, cast as _cast, overload
 
 from oh_shape import Key
+
+if TYPE_CHECKING:
+    from oh_conf import House
 
 from . import _hooks
 from . import (androidtv_googletv, avpro_telnet, bk808_cec, bk808_http, cast, denonmarantz_http, drhdmi_http, globalcache_ir, heos, network_ping, pyatv_http, sonos,
@@ -88,6 +91,19 @@ def defining(hook: str) -> tuple:
     if order is not None:
         modules.sort(key=lambda module: order.index(module.NAME) if module.NAME in order else len(order))
     return tuple(modules)
+
+
+def helper_services(house: House | dict) -> set[str]:
+    """Systemd unit names of conditional localhost helper daemons needed by `house`."""
+    from oh_conf import uses
+
+    devices = house.devices if hasattr(house, "devices") else (house.get("devices") or ())
+    return {
+        module.HELPER_SERVICE
+        for module in defining("HELPER_SERVICE")
+        if module.HELPER_SERVICE
+        and any(uses(_cast(dict, device), module.PHASE, module.NAME) for device in devices if isinstance(device, dict))
+    }
 
 
 def powered(device: dict, items: dict[str, dict]) -> dict[str, str]:

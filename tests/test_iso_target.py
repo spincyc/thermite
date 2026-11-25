@@ -320,7 +320,7 @@ class FirstBoot(Scratch):
 set -eu
 case "$1" in
 init) mkdir -p "$3/instance"; echo '{{}}' > "$3/thermite-site.json"
-      printf '{{\\n  "timezone": "Etc/UTC",\\n  "uid": 9001\\n}}\\n' > "$3/instance/host.yaml" ;;
+      printf 'version: 1\\ntimezone: Etc/UTC\\nuid: 9001\\n' > "$3/instance/host.yaml" ;;
 status) if [ -f "$HOME/open" ]; then printf '{{"open_transaction": "%s"}}\\n' "$(cat "$HOME/open")"
         else echo '{{"open_transaction": null}}'; fi ;;
 install) [ "$2" = --yes ] && [ "$3" = --config ] || exit 7
@@ -347,8 +347,9 @@ esac
         status, journal = self.run_first_boot("echo installed")
         self.assertEqual(status, 0)
         site = self.home / first_boot.SITE
-        self.assertEqual(json.loads((site / "instance/host.yaml").read_text()),
-                         {"timezone": "Europe/Berlin", "uid": 9001})
+        import yaml
+        self.assertEqual(yaml.safe_load((site / "instance/host.yaml").read_text()),
+                         {"version": 1, "timezone": "Europe/Berlin", "uid": 9001})
         git = subprocess.run(["git", "-C", str(site), "log", "--format=%an <%ae> %s"], capture_output=True,
                              text=True).stdout
         self.assertEqual(git.strip(), "casey <casey@thermite.local> Thermite site from the installer")

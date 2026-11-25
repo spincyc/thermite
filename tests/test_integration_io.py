@@ -13,6 +13,7 @@ from pathlib import Path
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 from oh_conf import House, RULE_SENDS, fill, indented, unfilled  # noqa: E402
+import oh_inventory  # noqa: E402
 import oh_render  # noqa: E402
 from oh_cli import generate  # noqa: E402
 from oh_features.routing import lifecycle_io  # noqa: E402
@@ -39,7 +40,7 @@ def inventory(module):
         sony_ip_control: ("tv", "Sony", "XR-TEST"),
     }[module]
     observe = ["sony_rest"] if module is sony_ip_control else [module.NAME] if module is sony_adcp else []
-    return {"version": 1, "rooms": {"den": {"label": "Den", "tag": "Room"},
+    return {"version": 2, "rooms": {"den": {"label": "Den", "tag": "Room"},
                                      "attic": {"label": "Attic", "tag": "Room"}},
             "devices": [{"id": "den_device", "room": "den", "kind": kind, "make": make, "model": model,
                          "ip": "192.0.2.10",
@@ -123,7 +124,7 @@ class Filling(unittest.TestCase):
 
     def test_no_rendered_script_of_the_example_keeps_an_unfilled_constant(self):
         unfilled_line = re.compile(r"^\s*const ([A-Z_]+) = null;$", re.MULTILINE)
-        for path, text in oh_render.build(House(json.loads((AREA / "instance/devices.yaml").read_text()))).render().items():
+        for path, text in oh_render.build(House(oh_inventory.load(AREA / "instance/devices.yaml"))).render().items():
             if path.endswith(".js") and isinstance(text, str):
                 # A device the routing gives no actor keeps this one: its rule runs without.
                 self.assertLessEqual(set(unfilled_line.findall(text)), {lifecycle_io.CUSTOM}, path)
@@ -135,7 +136,7 @@ class Filling(unittest.TestCase):
         rules = {module.RULE.removesuffix(".js") for module in oh_integrations.REGISTRY if module.RULE}
         seen = set()
         for name, house in test_generated_output.houses().items():
-            data = json.loads(house.read_text(encoding="utf-8")) if isinstance(house, Path) else copy.deepcopy(house)
+            data = oh_inventory.load(house) if isinstance(house, Path) else copy.deepcopy(house)
             for path, text in oh_render.build(House(data)).render().items():
                 rule = next((rule for rule in rules if path.startswith(rule) and path.endswith(".js")), None)
                 if rule:
@@ -204,14 +205,14 @@ class DeviceContexts(unittest.TestCase):
 
     def test_heos_and_androidtv_render_one_isolated_script_per_device_with_bounded_io(self):
         heos_house = {
-            "version": 1,
+            "version": 2,
             "rooms": {"den": {"label": "Den", "tag": "Room"}, "attic": {"label": "Attic", "tag": "Room"}},
             "devices": [
                 {"id": "den_avr", "room": "den", "kind": "avr", "make": "Marantz", "model": "Example AVR",
-                 "ip": "192.0.2.10", "heos_pid": 101,
+                 "ip": "192.0.2.10", "config": {"heos": {"pid": 101}},
                  "controls": {"observe": ["denonmarantz_http"], "control": ["denonmarantz_http", "heos"]}},
                 {"id": "attic_avr", "room": "attic", "kind": "avr", "make": "Marantz", "model": "Example AVR",
-                 "ip": "192.0.2.11", "heos_pid": 202,
+                 "ip": "192.0.2.11", "config": {"heos": {"pid": 202}},
                  "controls": {"observe": ["denonmarantz_http"], "control": ["denonmarantz_http", "heos"]}},
             ],
         }
@@ -229,7 +230,7 @@ class DeviceContexts(unittest.TestCase):
             self.assertEqual([d["id"] for d in json.loads(line[len("const DEVICES = "):-1])], [device["id"]])
 
         atv_house = {
-            "version": 1,
+            "version": 2,
             "rooms": {"den": {"label": "Den", "tag": "Room"}, "attic": {"label": "Attic", "tag": "Room"}},
             "devices": [
                 {"id": "den_tv", "room": "den", "kind": "tv", "make": "Sony", "model": "XR-TEST",
@@ -254,12 +255,12 @@ class DeviceContexts(unittest.TestCase):
     @unittest.skipUnless(shutil.which("node"), "node is required to execute generated scripts")
     def test_unifi_protect_only_posts_online_when_value_changes(self):
         house_data = {
-            "version": 1,
+            "version": 2,
             "protect": {"host": "192.0.2.1"},
             "rooms": {"den": {"label": "Den", "tag": "Room"}},
             "devices": [{"id": "front_cam", "room": "den", "kind": "camera", "make": "Ubiquiti", "model": "G4 Bullet",
-                         "ip": "192.0.2.30", "protect": {"device_id": "0123456789abcdef01234567"},
-                         "controls": {"control": ["unifi_protect"]}}],
+                         "ip": "192.0.2.30", "config": {"unifi_protect": {"device_id": "0123456789abcdef01234567"}},
+                         "controls": {"observe": ["unifi_protect"]}}],
         }
         script = unifi_protect.files(house_data["devices"], House(house_data))[unifi_protect.RULE]
         self.assertNotIn("ItemStateUpdateTrigger", script)

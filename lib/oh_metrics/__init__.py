@@ -484,26 +484,45 @@ def signals(device: dict, conf, found: list[Probe]) -> list[Signal]:
     listed = _integrations(device)
     needed = set((device.get("controls") or {}).get("control") or []) - {
         module.NAME for module in oh_integrations.REGISTRY if module.ROUTE_OPTIONAL}
+    monitored = {module.NAME for module in oh_integrations.REGISTRY if module.MONITORED}
     present = {name for file in conf.yaml.values() for name in file.items}
+    all_things = {uid for file in conf.yaml.values() for uid in file.things}
     out: list[Signal] = []
     for module in oh_integrations.REGISTRY:
         if module.NAME not in listed:
             continue
         file = conf.yaml.get(module.FILE)
         things = [uid for uid in (file.things if file else {}) if thing_device(uid) == ident]
+        if module.RUNTIME_THINGS and module.thing_uid and _uses(device, module.PHASE, module.NAME):
+            uid = module.thing_uid(device)
+            if uid and uid not in things:
+                things.append(uid)
         through = module.transport(device) if module.transport else None
-        if through and file and through in file.things and through not in things:
+        if through and (through in all_things or module.RUNTIME_THINGS) and through not in things:
             things.append(through)
-        control = module.NAME in needed
+        is_monitored = module.NAME in monitored and _uses(device, module.PHASE, module.NAME)
+        control = module.NAME in needed or is_monitored
         if module.THING_FOLLOWS_DEVICE:
             out += [Signal("thing", (module.NAME,), "thermite_thing_online", (("thing", uid),), 0, control)
                     for uid in things]
-        if module.READS and _commands.tally_item(ident, module.NAME) in present:
+        script_feedback = (
+            not things
+            and module.fields is not None
+            and module.rule_path is not None
+            and _uses(device, "control", module.NAME)
+            and any((field.get("feedback") or {}).get("kind") in ("poll", "push")
+                    for field in (module.fields(device) or {}).values()
+                    if isinstance(field, dict))
+        )
+        if (module.READS or script_feedback) and _commands.tally_item(ident, module.NAME) in present:
             out.append(Signal("reads", (module.NAME,), "thermite_device_read_ok",
                               (("device", ident), ("integration", module.NAME)), 0, control))
         if file and f"{ident}_online" in file.items:
             out.append(Signal("online", (module.NAME,), "thermite_item_value",
-                              (("item", f"{ident}_online"), ("point", "online")), 0, False))
+                              (("item", f"{ident}_online"), ("point", "online")), 0, is_monitored))
+        if file and f"{ident}_recording" in file.items and is_monitored:
+            out.append(Signal("recording", (module.NAME,), "thermite_item_value",
+                              (("item", f"{ident}_recording"), ("point", "recording")), 0, True))
     out += [Signal("port", probe.integrations, "probe_success",
                    (("job", DEVICE_JOB), ("device", ident), ("port", str(probe.port))), 0,
                    bool(needed.intersection(probe.integrations)))
@@ -519,6 +538,7 @@ SIGNAL_WORDS = {
     "port": ("TCP port {port}", "accepts connections", "closed, or nothing answers there"),
     "reads": ("{integration}'s own reads of it", "it answers", "it cannot be read"),
     "online": ("Ping, or its controller's word", "it answers", "no response"),
+    "recording": ("Camera recording", "recording", "not recording"),
 }
 
 
@@ -532,16 +552,36 @@ def signal_words(signal: Signal) -> tuple[str, str, str]:
 def unobserved(house: House, conf=None) -> list[tuple[str, str]]:
     """What generation must name, since no reading would ever say that it
     stopped answering: (device, integration) for an integration a device
-    lists under control with no signal of its own (signals()), and
-    (device, "") for a device with an address and no signal at all.
-    `thermite check house` prints each, and prometheus.yml's header lists them."""
+    lists under control with no active health signal of its own (signals()),
+    an observe integration with THING_FOLLOWS_DEVICE or MONITORED that yields
+    no health signal, and (device, "") for a device with an address and no
+    signal at all. `thermite check house` prints each, and prometheus.yml's
+    header lists them."""
+    import oh_integrations
+
     conf = conf if conf is not None else _build(house)
     found, _ = probes(house, conf)
+    by_name = {module.NAME: module for module in oh_integrations.REGISTRY}
     out: list[tuple[str, str]] = []
     for device in house.devices:
         read = signals(device, conf, found)
         through = {name for signal in read for name in signal.integrations}
-        missing = [name for name in (device.get("controls") or {}).get("control") or [] if name not in through]
+        checked = {name for signal in read if signal.control for name in signal.integrations}
+        controls = device.get("controls") or {}
+        missing: list[str] = []
+        for name in controls.get("control") or []:
+            module = by_name.get(name)
+            if name not in through or (module is not None and not module.ROUTE_OPTIONAL and name not in checked):
+                missing.append(name)
+        for name in controls.get("observe") or []:
+            module = by_name.get(name)
+            if module is None:
+                continue
+            if module.MONITORED:
+                if name not in checked:
+                    missing.append(name)
+            elif module.THING_FOLLOWS_DEVICE and name not in through:
+                missing.append(name)
         out += [(device["id"], name) for name in dict.fromkeys(missing)]
         if not read and not missing and device.get("ip"):
             out.append((device["id"], ""))
@@ -551,9 +591,10 @@ def unobserved(house: House, conf=None) -> list[tuple[str, str]]:
 def unobserved_text(device: str, integration: str) -> str:
     """One finding of unobserved(), as a person reads it."""
     import oh_integrations
-    if integration in oh_integrations.PLANNED["control"]:
-        # Not a reading that is missing: nothing was rendered to read.
-        return oh_integrations.planned_text(device, "control", integration)
+    for phase in ("control", "observe"):
+        if integration in oh_integrations.PLANNED[phase]:
+            # Not a reading that is missing: nothing was rendered to read.
+            return oh_integrations.planned_text(device, phase, integration)
     if integration:
         return (f"{device}: nothing reads whether it answers {integration}: no Thing, probed port or read of the "
                 "rule's own says so, and no check or alert can")
@@ -602,6 +643,8 @@ def select_point(name: str, item: dict) -> tuple[str, str] | None:
         return "problem", "problem"
     if kind == "Switch" and name.endswith("_online"):
         return "online", "switch"
+    if kind == "Switch" and name.endswith("_recording"):
+        return "recording", "switch"
     if "Power" in tags:
         return {"Switch": ("power", "switch"), "String": ("power_state", "enum")}.get(kind)
     if "SoundVolume" in tags:
@@ -640,6 +683,22 @@ def exporter_map(house: House, conf=None) -> dict:
     for path, file in conf.yaml.items():
         for uid in ([] if path in mute else file.things):
             things.setdefault(thing_device(uid), []).append(uid)
+    bridge_candidates: set[str] = set()
+    for device in house.devices:
+        ident = device["id"]
+        for module in oh_integrations.REGISTRY:
+            if not (module.RUNTIME_THINGS and module.THING_FOLLOWS_DEVICE and _uses(device, module.PHASE, module.NAME)):
+                continue
+            if module.thing_uid:
+                uid = module.thing_uid(device)
+                if uid and uid not in things.get(ident, ()):
+                    things.setdefault(ident, []).append(uid)
+            if module.transport:
+                bridge = module.transport(device)
+                if bridge:
+                    bridge_candidates.add(bridge)
+    owned_things = {uid for uids in things.values() for uid in uids}
+    bridges = sorted(bridge_candidates - owned_things)
     devices: dict[str, dict] = {}
     items: dict[str, dict] = {}
     present = {name for file in conf.yaml.values() for name in file.items}
@@ -713,7 +772,10 @@ def exporter_map(house: House, conf=None) -> dict:
     shown = {device["id"]: names for device in house.devices
              if (names := playing.items(device)) and set(names.values()) <= present}
     result = {"version": MAP_VERSION, "rooms": rooms, "devices": devices, "sources": sources,
-              "items": dict(sorted(items.items())), "paths": paths, "health_checks": checks, "playing": shown}
+              "items": dict(sorted(items.items())), "paths": paths, "health_checks": checks, "playing": shown,
+              "helpers": sorted(oh_integrations.helper_services(house))}
+    if bridges:
+        result["bridges"] = bridges
     # Each script's tally of the commands it took for a device, which the
     # exporter turns into thermite_device_commands_total.
     tallies = _commands.tallies(house.devices, present)
@@ -786,7 +848,7 @@ def health_paths(house: House, conf, items: dict) -> tuple[dict, list[dict]]:
     checks: dict[tuple, dict] = {}
 
     def add(name: str, device: str, metric: str, labels: dict, bad: int, demand: dict | None) -> None:
-        key = (metric, tuple(sorted(labels.items())), bad)
+        key = (device, metric, tuple(sorted(labels.items())), bad)
         check = checks.setdefault(key, {"metric": metric, "labels": labels, "bad": bad, "device": device,
                                        "check": name, "always": False, "required": [],
                                        "optional": devices[device].get("monitor") == "optional"})
@@ -836,8 +898,11 @@ def health_paths(house: House, conf, items: dict) -> tuple[dict, list[dict]]:
             if audio in devices and audio not in used and path.get("carries") != "display":
                 used.append(audio)
                 device_checks(audio, {"item": name, "source": source})
+    import oh_integrations
+    monitored = {module.NAME for module in oh_integrations.REGISTRY if module.MONITORED}
     for ident, device in devices.items():
-        if device.get("kind") in ("hdmi_matrix", "usb_matrix", "hdmi_switch"):
+        if (device.get("kind") in ("hdmi_matrix", "usb_matrix", "hdmi_switch")
+                or any(_uses(device, "observe", name) for name in monitored)):
             device_checks(ident, None)
     for name, spec in sorted(items.items()):
         if spec.get("point") == "playing":
@@ -875,10 +940,13 @@ def _blackbox_job(name: str, targets: list[dict], port: int, interval: str | Non
 
 
 def prometheus_yml(house: House, host: dict, conf=None) -> str:
+    import oh_integrations
+
     port = ports(host)
     yoke_job = yoke_scrape_job(host)
     found, _ = probes(house, conf)
     unread = unobserved(house, conf)
+    atv = oh_units.ATV in oh_integrations.helper_services(house)
     device_targets = [{"targets": [probe.target],
                        "labels": {"__param_module": TCP, "device": probe.device, "room": probe.room,
                                   "kind": probe.kind, "integration": ",".join(probe.integrations),
@@ -887,8 +955,8 @@ def prometheus_yml(house: House, host: dict, conf=None) -> str:
     service_targets = [
         {"targets": [f"http://{openhab_address(host)}/rest/"],
          "labels": {"__param_module": HTTP_2XX, "service": "openhab"}},
-        {"targets": [f"http://{LOOPBACK}:{HELPER_PORT}/"],
-         "labels": {"__param_module": HTTP_ANSWERS, "service": "apple_tv_helper"}},
+        *([{"targets": [f"http://{LOOPBACK}:{HELPER_PORT}/"],
+            "labels": {"__param_module": HTTP_ANSWERS, "service": "apple_tv_helper"}}] if atv else []),
         {"targets": [f"http://{LOOPBACK}:{port['grafana']}/api/health"],
          "labels": {"__param_module": HTTP_2XX, "service": "grafana"}},
     ]

@@ -25,6 +25,7 @@ READ, GET, POST = ("GET", "HEAD"), ("GET",), ("POST",)
 #: the HTTPS site.
 ASSETS = frozenset({
     "home.html", "index.html", "access-config.js", "access.js", "navigation.js", "appearance.js", "shell.js",
+    "dom.js", "hold.js", "sse.js",
     "house.js", "remotes.js", "activity.js", "activity.json", "diagnostics.js", "diagnostics.json", "backend.js",
     "session.js", "log.js", "remote.js", "home.js", "alerts.js", "theme.css", "shell.css", "remote.css", "home.css",
     "audio-session.js", "music-backend.js", "music-session.js", "listen-session.js", "listen.js", "listen.css",

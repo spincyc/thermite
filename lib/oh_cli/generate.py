@@ -102,7 +102,7 @@ def rendered(house: House, versions: dict, host: dict) -> tuple[dict[str, str | 
     by their path in the area. The conf agrees with the house, or this
     raises oh_render.Disagreement (build()'s own check)."""
     built = render.build(house, host=host, versions=versions)
-    return built.render(), metrics.render(house, host, versions, conf=built), deploy.render_units(versions, host)
+    return built.render(), metrics.render(house, host, versions, conf=built), deploy.render_units(versions, host, house)
 
 
 def stale_units(units: dict[str, str], root: Path) -> list[str]:

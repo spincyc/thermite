@@ -118,8 +118,10 @@ from types import ModuleType
 import oh_integrations as integrations
 import oh_inventory as inventory
 from oh_integrations import _hotplug
-from oh_conf import Addon, Conf, House, fill, indented, options_text, uses
+from oh_conf import Addon, Conf, House, config as device_config, fill, indented, options_text, uses
 from oh_shape import LIST, MAPPING, NUMBER, TEXT, TRUTH, Key, unknown
+
+from . import hops
 
 NAME = "routing"
 ITEMS = "yaml/routing.yaml"
@@ -133,13 +135,15 @@ HEADER = (
     "runs ahead of them.",
 )
 #: The Source command and state of a room with nothing routed to it.
-OFF = "off"
+OFF = hops.OFF
+#: The Source state of a room with some devices on and an incomplete path.
+PARTIAL = hops.PARTIAL
 #: Routing telemetry: JSON counts routing.js posts (its METRICS_ITEM).
 METRICS_ITEM = "house_routing_metrics"
 HOUSE_ITEMS = (METRICS_ITEM,)
 #: A room's devices that a choice powers and switches, in the order the
 #: signal reaches them: the screen is the last.
-STAGES = ("receiver", "display")
+STAGES = hops.STAGE_ROLES
 #: Kinds of network player that are a room's sound where they stand, as a
 #: soundbar is (targets()).
 PLAYERS = ("streaming_amp", "audio_streamer")
@@ -148,7 +152,7 @@ PLAYERS = ("streaming_amp", "audio_streamer")
 ROOM_ACTIONS = ("on_actions", "off_actions")
 #: What a source's signal carries to a room (its `carries`): a picture
 #: alone, sound alone, or both, as for a source it leaves out.
-CARRIES = ("display", "audio", "both")
+CARRIES = hops.CARRIES
 SIGNAL_TRANSPORTS = ("hdmi", "optical", "coaxial", "analog", "arc", "earc")
 
 #: The shape of `routing`, declared (oh_shape): the checks of its key names
@@ -156,7 +160,7 @@ SIGNAL_TRANSPORTS = ("hdmi", "optical", "coaxial", "analog", "arc", "earc")
 #: from here. What each value must be beyond its kind (a port the matrix
 #: has, a device that can switch) is validate()'s, in its own words.
 _INPUT = Key(TEXT, "an input of the device, by the name its integration gives it")
-#: A room's receiver or display.
+#: A room's receiver, soundbar, or display.
 STAGE = {
     "device": Key(TEXT, "its device id", required=True),
     "zone": Key(NUMBER, "the receiver's zone this room listens to: 2 or more, and left out for the main zone"),
@@ -170,6 +174,14 @@ STAGE = {
 DISPLAY = {k: v for k, v in STAGE.items() if k not in ("zone", "sync_with")} | {
     "passive": Key(TRUTH, "whether thermite leaves the display alone: true for one it sends nothing "
                           "to and reads nothing from, which then has only its device here")}
+#: One HDMI switch or downstream matrix output in front of a room's stages.
+HDMI_SWITCH_KEYS = {
+    "device": Key(TEXT, "the switch's device id", required=True),
+    "output": Key(NUMBER, "which output of a matrix of its own the room is on"),
+    "matrix_input": Key(NUMBER, "the switch input the house's HDMI matrix or previous switch arrives on"),
+    "inputs": Key(MAPPING, "the sources cabled to the switch, each on its input", by="source",
+                  each=Key(NUMBER, "an input of the switch")),
+}
 _ACTIONS = {name: Key(MAPPING, what, by="device id", each=Key(TEXT, "the name of one of the device's actions, in quotes"))
             for name, what in zip(ROOM_ACTIONS, ("what other devices are sent when the room turns to any source: a curtain "
                                                  "and lights, say", "what they are sent when it turns Off"), strict=True)}
@@ -184,12 +196,10 @@ ROOM = {
                                       "receiver need not convert); any other choice, Off included, gives the output "
                                       "the matrix's settings.scaler back", by="source",
                              each=Key(TEXT, "one of the HDMI matrix's scaler names")),
-    "hdmi_switch": Key(MAPPING, "the HDMI switch in front of its display, or one output of a matrix of its own", keys={
-        "device": Key(TEXT, "the switch's device id", required=True),
-        "output": Key(NUMBER, "which output of a matrix of its own the room is on"),
-        "matrix_input": Key(NUMBER, "the switch input the house's HDMI matrix arrives on"),
-        "inputs": Key(MAPPING, "the sources cabled to the switch, each on its input", by="source",
-                      each=Key(NUMBER, "an input of the switch"))}),
+    "hdmi_switch": Key(MAPPING, "the HDMI switch in front of its display, or one output of a matrix of its own",
+                       keys=HDMI_SWITCH_KEYS),
+    "hdmi_switches": Key(LIST, "cascaded HDMI switches or downstream matrices in front of its display, ordered upstream to downstream",
+                         each=Key(MAPPING, "an HDMI switch or downstream matrix output", keys=HDMI_SWITCH_KEYS)),
     "usb": Key(MAPPING, "its USB device ports (keyboard, camera), by USB matrix", by="device id of a USB matrix",
                each=Key(LIST, "the matrix's device ports that are this room's", each=Key(NUMBER, "a device port"))),
     "usb_only": Key(MAPPING, "sources that move only some of those ports", by="source", each=Key(
@@ -221,7 +231,10 @@ ROOM = {
             "port": Key((TEXT, NUMBER), "the native output connector name or number", required=True)}),
         "transport": Key(TEXT, "the cable's audio transport", required=True, choices=SIGNAL_TRANSPORTS)}),
     "receiver": Key(MAPPING, "its receiver", keys=STAGE),
+    "soundbar": Key(MAPPING, "its soundbar stage in the room's signal chain", keys=STAGE),
     "display": Key(MAPPING, "its display", keys=DISPLAY),
+    "displays": Key(LIST, "its displays, for a room with more than one screen",
+                    each=Key(MAPPING, "a display", keys=DISPLAY)),
     **_ACTIONS,
 }
 SOURCE_KEYS = {
@@ -260,9 +273,14 @@ def home(house: House, room: str) -> str:
     return house.data["routing"]["rooms"][room].get("room", room)
 
 
+room_switches = hops.room_switches
+room_displays = hops.room_displays
+room_stage_specs = hops.room_stage_specs
+
+
 def covered_rooms(house: House, room: str) -> set:
     """The inventory rooms a routed room covers: its own (`home`), its
-    display's and, when its own is a Building, every room nested in those
+    display(s)' and, when its own is a Building, every room nested in those
     (rooms.<id>.in), however deep. This is inventory containment, not an
     inference from names: the site contract lets the routed room command
     their devices, and the remote lists them as the room's."""
@@ -270,10 +288,10 @@ def covered_rooms(house: House, room: str) -> set:
     devices = house.by_id
     entry = house.data["routing"]["rooms"][room]
     covered = {home(house, room)}
-    display = entry.get("display") if isinstance(entry.get("display"), dict) else {}
-    shown = _known(devices, display.get("device"))
-    if shown is not None:
-        covered.add(shown.get("room"))
+    for display in room_displays(entry):
+        shown = _known(devices, display.get("device"))
+        if shown is not None:
+            covered.add(shown.get("room"))
     if (rooms.get(home(house, room)) or {}).get("tag") == "Building":
         while additions := {ident for ident, spec in rooms.items()
                             if isinstance(spec, dict) and spec.get("in") in covered} - covered:
@@ -298,10 +316,11 @@ def targets(house: House, room: str) -> dict[str, str]:
     devices = house.devices
     shown_by: dict = {}
     for other, spec in routed.items():
-        shown_by.setdefault((spec.get("display") or {}).get("device"), set()).add(other)
+        for disp in room_displays(spec):
+            shown_by.setdefault(disp.get("device"), set()).add(other)
     covered = covered_rooms(house, room)
     shared = set(entry["sources"])
-    shared.update(spec.get("device") for stage in STAGES if (spec := entry.get(stage)) and not spec.get("passive"))
+    shared.update(spec.get("device") for _, spec in room_stage_specs(entry) if not spec.get("passive"))
     # Only endpoint audio devices join the explicit roles: an aliased TV
     # screen does not gain the desk amplifier beside it.
     sound = {d["id"]: d["room"] for d in devices if d.get("room") in covered
@@ -313,8 +332,9 @@ def targets(house: House, room: str) -> dict[str, str]:
                and not shown_by.get(d["id"], {room}) - {room})
     roles = {**{ident: "shared" for ident in shared}, **{ident: "own" for ident in own}}
     roles.pop(None, None)
-    if (entry.get("display") or {}).get("passive"):
-        roles.pop(entry["display"].get("device"), None)
+    for disp in room_displays(entry):
+        if disp.get("passive"):
+            roles.pop(disp.get("device"), None)
     return roles
 
 
@@ -549,7 +569,7 @@ def validate(data: object) -> list[str]:
         if "hdmi_audio_output" in entry:
             if not fed or "receiver" not in entry:
                 problems.append(f"{where}.hdmi_audio_output: needs hdmi_output and receiver")
-            if "hdmi_switch" in entry:
+            if "hdmi_switch" in entry or "hdmi_switches" in entry:
                 problems.append(f"{where}.hdmi_audio_output: a split output cannot also use hdmi_switch")
         usb = entry.get("usb", {})
         if not isinstance(usb, dict):
@@ -597,17 +617,42 @@ def validate(data: object) -> list[str]:
                               and source in spec["sources"]]
                     if others:
                         problems.append(f"{where}.sleep_sources: {source!r} is shared with {', '.join(others)}")
+        if "hdmi_switch" in entry and "hdmi_switches" in entry:
+            problems.append(f"{where}.hdmi_switches: cannot specify both hdmi_switch and hdmi_switches")
         if "hdmi_switch" in entry:
             problems += _switch_problems(f"{where}.hdmi_switch", entry["hdmi_switch"], offered, sources, devices,
                                          switch_rooms, room, fed, routing.get("hdmi_matrix"))
+        if "hdmi_switches" in entry:
+            sw_list = entry["hdmi_switches"]
+            if not isinstance(sw_list, list) or not sw_list:
+                problems.append(f"{where}.hdmi_switches: must list one or more HDMI switches")
+            else:
+                for idx, sw in enumerate(sw_list):
+                    sw_fed = fed if idx == 0 else True
+                    problems += _switch_problems(f"{where}.hdmi_switches[{idx}]", sw, offered, sources, devices,
+                                                 switch_rooms, room, sw_fed, routing.get("hdmi_matrix"),
+                                                 cascaded=idx > 0)
         if "usb_only" in entry:
             problems += _usb_only_problems(f"{where}.usb_only", entry["usb_only"], offered, usb)
-        upstream = fed or "hdmi_switch" in entry
-        for key in STAGES:
+        upstream = fed or "hdmi_switch" in entry or bool(entry.get("hdmi_switches"))
+        for key in ("receiver", "soundbar"):
             if key in entry:
                 problems += _stage_problems(f"{where}.{key}", entry[key], offered, sources, devices, upstream,
-                                            staged, room)
+                                            staged, room, role=key)
                 upstream = True
+        if "display" in entry and "displays" in entry:
+            problems.append(f"{where}.displays: cannot specify both display and displays")
+        if "display" in entry:
+            problems += _stage_problems(f"{where}.display", entry["display"], offered, sources, devices, upstream,
+                                        staged, room, role="display")
+        if "displays" in entry:
+            disp_list = entry["displays"]
+            if not isinstance(disp_list, list) or not disp_list:
+                problems.append(f"{where}.displays: must list one or more displays")
+            else:
+                for idx, disp in enumerate(disp_list):
+                    problems += _stage_problems(f"{where}.displays[{idx}]", disp, offered, sources, devices, upstream,
+                                                staged, room, role="display")
         problems += [problem for key in ROOM_ACTIONS if key in entry
                      for problem in _action_problems(f"{where}.{key}", entry[key], devices)]
         local = _local(entry)
@@ -677,18 +722,20 @@ def validate(data: object) -> list[str]:
     problems += _sync_problems(rooms_section, sources, devices)
 
     if routing.get("edid") is not None and hdmi is not None:
-        fixed = (devices[routing["hdmi_matrix"]].get("settings") or {}).get("edid") or {}
+        matrix_device = devices[routing["hdmi_matrix"]]
+        matrix_module = switcher(matrix_device)
+        fixed = (device_config(matrix_device, matrix_module.NAME).get("edid") or {}) if matrix_module else {}
         if isinstance(fixed, dict):
             for number, source in sorted(inputs.items()):
                 key = (number if number in fixed else str(number) if str(number) in fixed
                        else "default" if "default" in fixed else None)
                 if key is not None:
-                    problems.append(f"{routing['hdmi_matrix']}.settings.edid.{key}: routing.edid sets the "
+                    problems.append(f"{routing['hdmi_matrix']}.config.{matrix_module.NAME}.edid.{key}: routing.edid sets the "
                                     f"EDID of input {number} ({source}); fix only the inputs no source uses")
     for key in sorted(unknown(HOUSE_KEYS["routing"].keys, routing)):
         problems.append(f"routing: unknown key '{key}'")
     if not problems and any(source.get("idle") == "standby" for source in sources.values()):
-        contract = table(House.unchecked(data))["lifecycle"]
+        contract = table(House.unchecked(data)).get("lifecycle") or {}
         for source, coverage in contract.get("coverage", {}).items():
             if sources[source].get("idle") == "standby" and not coverage["complete"]:
                 problems.append(f"routing.sources.{source}.idle: standby requires complete observable consumer coverage; "
@@ -699,8 +746,8 @@ def validate(data: object) -> list[str]:
 def _audio_problems(where: str, data: dict, room: str, devices: dict) -> list[str]:
     """Problems with a room's `audio`: the device its Volume and Mute drive,
     which must offer a volume thermite controls and be in a room the routed
-    room covers, or be its own receiver or display. A receiver's zone is not
-    the zone its volume moves (the main zone's), so it cannot be one."""
+    room covers, or be its own receiver, soundbar or display. A receiver's zone
+    is not the zone its volume moves (the main zone's), so it cannot be one."""
     from .. import remote_model  # it imports this module
 
     entry = data["routing"]["rooms"][room]
@@ -711,12 +758,12 @@ def _audio_problems(where: str, data: dict, room: str, devices: dict) -> list[st
     if "volume" not in (remote_model.provider(device)[1] or {}):
         return [f"{where}.audio: {ident} offers no volume thermite controls (an integration under controls.control "
                 "that drives one)"]
-    stages = {spec["device"]: spec for key in STAGES
-              if isinstance(spec := entry.get(key), dict) and isinstance(spec.get("device"), str)}
-    if ident in stages and stages[ident].get("zone") is not None:
-        return [f"{where}.audio: {ident} is this room's receiver on zone {stages[ident]['zone']}, and its volume is "
+    stage_map = {spec["device"]: spec for _, spec in room_stage_specs(entry)
+                 if isinstance(spec.get("device"), str)}
+    if ident in stage_map and stage_map[ident].get("zone") is not None:
+        return [f"{where}.audio: {ident} is this room's receiver on zone {stage_map[ident]['zone']}, and its volume is "
                 "the main zone's"]
-    if ident not in stages and device.get("room") not in covered_rooms(House.unchecked(data), room):
+    if ident not in stage_map and device.get("room") not in covered_rooms(House.unchecked(data), room):
         return [f"{where}.audio: {ident} is in {device.get('room')}, not in a room {room} covers"]
     return []
 
@@ -739,10 +786,10 @@ def _audio_scaler_problems(where: str, entry: dict, offered: list, sources: dict
     if module.SCALER is None:
         return [f"{where}: {module.NAME} cannot set an output's scaler"]
     problems = []
-    settings = device.get("settings")
-    fixed = settings.get("scaler") if isinstance(settings, dict) else None
+    settings = device_config(device, module.NAME)
+    fixed = settings.get("scaler")
     if not (isinstance(fixed, str) and fixed in module.SCALER):
-        problems.append(f"{where}: needs {device['id']}.settings.scaler, the scaler the output gets back for the "
+        problems.append(f"{where}: needs {device['id']}.config.{module.NAME}.scaler, the scaler the output gets back for the "
                         "room's other choices")
     local = _local(entry)
     for source, name in scalers.items():
@@ -814,8 +861,7 @@ def _audio_link_problems(where: str, entry: dict, devices: dict, data: dict, roo
         problems.append(f"{where}.from.port: must be a nonempty connector name or a nonnegative integer")
     if link["transport"] not in SIGNAL_TRANSPORTS:
         problems.append(f"{where}.transport: must be one of {', '.join(SIGNAL_TRANSPORTS)}")
-    if entry.get("audio") and any(isinstance(stage := entry.get(role), dict) and stage.get("device") == entry["audio"]
-                                  for role in STAGES):
+    if entry.get("audio") and any(spec.get("device") == entry["audio"] for _, spec in room_stage_specs(entry)):
         problems.append(f"{where}: audio is already a routing stage; its route describes that connection")
     if problems:
         return problems
@@ -841,58 +887,53 @@ def _audio_link_problems(where: str, entry: dict, devices: dict, data: dict, roo
     return problems
 
 
-def _switch_inputs(room: dict) -> dict:
-    """{source: switch input} of a room's HDMI switch, as far as it is a mapping."""
-    switch = room.get("hdmi_switch")
-    inputs = switch.get("inputs") if isinstance(switch, dict) else None
-    return inputs if isinstance(inputs, dict) else {}
-
-
 def _local(room: dict, first: bool = False) -> dict:
     """{source: where it is cabled} for the sources cabled to the room's
-    HDMI switch, receiver or display alone, as far as those are mappings:
-    the last place a source is listed (`first`: the first)."""
-    out: dict = {}
-    places = [("hdmi_switch", _switch_inputs(room))]
-    places += [(key, (room[key].get("sources") if isinstance(room.get(key), dict) else None) or {}) for key in STAGES]
-    for place, inputs in places:
-        for source in inputs if isinstance(inputs, dict) else {}:
-            if first:
-                out.setdefault(source, place)
-            else:
-                out[source] = place
-    return out
+    HDMI switch(es), receiver, soundbar or display(s) alone."""
+    return hops.local_sources(room, first=first)
 
 
 def _local_twice(room: dict) -> list[tuple[str, str]]:
     """(source, key) for each source listed under a second place in a room."""
     seen: set = set()
     twice = []
-    for key in ("hdmi_switch", *STAGES):
+    places: list[tuple[str, str, dict | None]] = []
+    if isinstance(room.get("hdmi_switches"), list):
+        for idx, sw in enumerate(room["hdmi_switches"]):
+            places.append((f"hdmi_switches[{idx}]", "inputs", sw.get("inputs") if isinstance(sw, dict) else None))
+    elif isinstance(room.get("hdmi_switch"), dict):
+        places.append(("hdmi_switch", "inputs", room["hdmi_switch"].get("inputs")))
+    for key in ("receiver", "soundbar"):
         place = room.get(key)
-        inputs = (place.get("inputs") if key == "hdmi_switch" else place.get("sources")) if isinstance(place, dict) \
-            else None
+        places.append((key, "sources", place.get("sources") if isinstance(place, dict) else None))
+    if isinstance(room.get("displays"), list):
+        for idx, disp in enumerate(room["displays"]):
+            places.append((f"displays[{idx}]", "sources", disp.get("sources") if isinstance(disp, dict) else None))
+    elif isinstance(room.get("display"), dict):
+        places.append(("display", "sources", room["display"].get("sources")))
+    for label, field, inputs in places:
         for source in inputs if isinstance(inputs, dict) else {}:
             if source in seen:
-                twice.append((source, f"{key}.{'inputs' if key == 'hdmi_switch' else 'sources'}.{source}"))
+                twice.append((source, f"{label}.{field}.{source}"))
             seen.add(source)
     return twice
 
 
 def _stage_problems(where: str, spec: object, offered: list, sources: dict, devices: dict, upstream: bool,
-                    used: dict, room: str) -> list[str]:
-    """Problems with a room's receiver or display; records its device and
-    zone in `used`. `upstream` is whether a signal reaches it from before:
-    the matrix, the room's HDMI switch or its receiver."""
+                    used: dict, room: str, *, role: str = "receiver") -> list[str]:
+    """Problems with a room's receiver, soundbar or display; records its device
+    and zone in `used`. `upstream` is whether a signal reaches it from before:
+    the matrix, the room's HDMI switch(es), its receiver or its soundbar."""
     if not isinstance(spec, dict):
         return [f"{where}: must be a mapping"]
     problems: list[str] = []
+    is_display = role == "display" or where.endswith(".display")
     device_id = spec.get("device")
     device = _known(devices, device_id)
     if "passive" in spec:
         if spec["passive"] is not True:
             problems.append(f"{where}.passive: must be true; omit it for a controlled stage")
-        if not where.endswith(".display"):
+        if not is_display:
             problems.append(f"{where}.passive: only a display may be passive")
         if device is None:
             problems.append(f"{where}.device: '{device_id}' is not a device id")
@@ -972,7 +1013,7 @@ def _stage_problems(where: str, spec: object, offered: list, sources: dict, devi
             problems.append(f"{at}: must name an offered source upstream of this stage")
         if value(at, input_) and input_ in taken and taken[input_] != "input":
             problems.append(f"{at}: {input_} is already a locally cabled source input")
-    for key in sorted(unknown(DISPLAY if where.endswith(".display") else STAGE, spec)):
+    for key in sorted(unknown(DISPLAY if is_display else STAGE, spec)):
         problems.append(f"{where}: unknown key '{key}'")
     return problems
 
@@ -986,8 +1027,17 @@ def _wiring_problems(rooms: dict) -> list[str]:
     carried: dict[tuple, tuple] = {}  # (device, input) -> (its signal, cabled source or None, room, where)
     placed: dict[tuple, tuple] = {}  # (device, source) -> (its input, room, where)
     for room, entry in rooms.items():
-        for key in STAGES:
-            spec = entry.get(key) if isinstance(entry, dict) else None
+        if not isinstance(entry, dict):
+            continue
+        stage_entries: list[tuple[str, object]] = [
+            ("receiver", entry.get("receiver")),
+            ("soundbar", entry.get("soundbar")),
+        ]
+        if isinstance(entry.get("displays"), list):
+            stage_entries.extend((f"displays[{idx}]", disp) for idx, disp in enumerate(entry["displays"]))
+        elif "display" in entry:
+            stage_entries.append(("display", entry.get("display")))
+        for key, spec in stage_entries:
             if not isinstance(spec, dict) or not isinstance(spec.get("device"), str):
                 continue  # _stage_problems() says what is wrong with it
             where, device = f"routing.rooms.{room}.{key}", spec["device"]
@@ -1014,15 +1064,7 @@ def _synced(entry: dict, leader: dict, sources: dict) -> dict:
     """{source: the leader receiver's input for it} for each source a
     follower room (`entry`) and its leader both take from the HDMI matrix,
     as far as both are mappings: offered by both and cabled to neither alone."""
-    lead = leader.get("receiver") if isinstance(leader.get("receiver"), dict) else {}
-    by_source = lead.get("input_by_source") if isinstance(lead.get("input_by_source"), dict) else {}
-    offered = [entry.get("sources"), leader.get("sources")]
-    if "input" not in lead or not all(isinstance(names, list) for names in offered):
-        return {}
-    local = {**_local(entry), **_local(leader)}
-    return {source: by_source.get(source, lead["input"]) for source in offered[0]
-            if source in offered[1] and source not in local and isinstance(sources.get(source), dict)
-            and "hdmi_input" in sources[source]}
+    return hops.synced_sources(entry, leader, sources)
 
 
 def _sync_problems(rooms: dict, sources: dict, devices: dict) -> list[str]:
@@ -1035,6 +1077,12 @@ def _sync_problems(rooms: dict, sources: dict, devices: dict) -> list[str]:
             continue
         if isinstance(entry.get("display"), dict) and "sync_with" in entry["display"]:
             problems.append(f"routing.rooms.{room}.display.sync_with: only a receiver can sync with another room's")
+        if isinstance(entry.get("displays"), list):
+            for idx, disp in enumerate(entry["displays"]):
+                if isinstance(disp, dict) and "sync_with" in disp:
+                    problems.append(f"routing.rooms.{room}.displays[{idx}].sync_with: only a receiver can sync with another room's")
+        if isinstance(entry.get("soundbar"), dict) and "sync_with" in entry["soundbar"]:
+            problems.append(f"routing.rooms.{room}.soundbar.sync_with: only a receiver can sync with another room's")
         if isinstance(entry.get("receiver"), dict) and "sync_with" in entry["receiver"]:
             followed[room] = entry["receiver"]["sync_with"]
     for room, leader in followed.items():
@@ -1050,7 +1098,7 @@ def _sync_problems(rooms: dict, sources: dict, devices: dict) -> list[str]:
             found.append(f"{room} and {leader} both need an hdmi_output")
         found += [f"{name} splits its audio (hdmi_audio_output), so its receiver does not show its picture"
                   for name in (room, leader) if "hdmi_audio_output" in rooms[name]]
-        if "hdmi_switch" in other:
+        if "hdmi_switch" in other or "hdmi_switches" in other:
             found.append(f"{leader} has an hdmi_switch, so its matrix output does not decide what its receiver shows")
         if leader in followed:
             found.append(f"{leader} syncs with {followed[leader]!r} itself; a leader cannot follow another room")
@@ -1096,11 +1144,11 @@ def _action_problems(where: str, steps: object, devices: dict) -> list[str]:
 
 
 def _switch_problems(where: str, switch: object, offered: list, sources: dict, devices: dict,
-                     used: dict, room: str, fed: bool, hdmi_matrix: object) -> list[str]:
-    """Problems with one room's hdmi_switch (an HDMI switch, or one
-    `output` of an HDMI matrix other than routing.hdmi_matrix); records its
-    device and output in `used`. `fed` is whether the room has an
-    hdmi_output, which the switch's matrix_input then takes."""
+                     used: dict, room: str, fed: bool, hdmi_matrix: object, *, cascaded: bool = False) -> list[str]:
+    """Problems with one room's hdmi_switch (or cascaded hdmi_switches entry):
+    an HDMI switch, or one `output` of an HDMI matrix other than
+    routing.hdmi_matrix; records its device and output in `used`. `fed` is
+    whether an upstream matrix or switch feeds its `matrix_input`."""
     if not isinstance(switch, dict):
         return [f"{where}: must be a mapping"]
     problems: list[str] = []
@@ -1155,7 +1203,9 @@ def _switch_problems(where: str, switch: object, offered: list, sources: dict, d
     elif number(f"{where}.matrix_input", switch.get("matrix_input")):
         taken[switch["matrix_input"]] = "matrix_input"
     inputs = switch.get("inputs")
-    if not isinstance(inputs, dict) or not inputs:
+    if inputs is None and cascaded and "matrix_input" in switch:
+        inputs = {}
+    elif not isinstance(inputs, dict) or (not inputs and not (cascaded and "matrix_input" in switch)):
         problems.append(f"{where}.inputs: must map the sources cabled to it to its inputs")
         inputs = {}
     for source, value in inputs.items():
@@ -1168,7 +1218,7 @@ def _switch_problems(where: str, switch: object, offered: list, sources: dict, d
             if value in taken:
                 problems.append(f"{at}: {value} already used by {taken[value]}")
             taken.setdefault(value, source)
-    for name in sorted(unknown(ROOM["hdmi_switch"].keys, switch)):
+    for name in sorted(unknown(HDMI_SWITCH_KEYS, switch)):
         problems.append(f"{where}: unknown key '{name}'")
     return problems
 
@@ -1259,16 +1309,8 @@ def _hotplug_item(devices: dict, matrix_id: str, port: int) -> str | None:
 
 def audio_scaler(house: House, room: str, choice: str) -> list[list]:
     """[[Item, code]] that sets the scaler of the room's hdmi_audio_output
-    for `choice`: its hdmi_audio_scaler for the choice, else the matrix's
-    fixed scaler; none for a room without hdmi_audio_scaler."""
-    routing = house.data["routing"]
-    entry = routing["rooms"][room]
-    if "hdmi_audio_scaler" not in entry:
-        return []
-    device = house.by_id[routing["hdmi_matrix"]]
-    module = switcher(device)
-    name = entry["hdmi_audio_scaler"].get(choice, device["settings"]["scaler"])
-    return [[module.scaler_item(device, entry["hdmi_audio_output"]), module.SCALER[name]]]
+    for `choice`, derived from the room's compiled hop graph."""
+    return hops.compile_room_path(house, room, choice).audio_scaler_steps()
 
 
 def routed_scalers(house: House, matrix_id: str) -> dict[int, str]:
@@ -1283,92 +1325,47 @@ def routed_scalers(house: House, matrix_id: str) -> dict[int, str]:
 
 def commands(house: House, room: str, choice: str) -> list[list]:
     """[[Item, value], ...] that put `choice` (a source id or OFF) on in
-    `room`'s matrices: its HDMI output first (a room without one has
-    none), then the scaler of its audio output (audio_scaler()) and that
-    output, then its HDMI switch if it has one, then each of its USB device
-    ports. A source cabled to the room alone (its HDMI switch, receiver or
-    display) turns the room's HDMI output off; any other choice puts the
-    switch on the matrix, but Off leaves a switch the matrix does not reach
-    (no matrix_input) as it is. A source with no host on a room's USB
-    matrix parks those ports, and a source under the room's usb_only moves
-    only the ports listed there: the room's others stay where they are."""
-    routing = house.data["routing"]
-    devices = house.by_id
-    entry = routing["rooms"][room]
-    source = routing["sources"].get(choice, {}) if choice != OFF else {}
-    switch = entry.get("hdmi_switch")
-    local = switch is not None and choice in switch["inputs"]
-    off = routing.get("hdmi_off_input")
-    hdmi_input = off if choice in _local(entry) else source.get("hdmi_input", off)
-    out = []
-    if "hdmi_output" in entry:
-        out.append([_port_item(devices, routing["hdmi_matrix"], entry["hdmi_output"]), hdmi_input])
-    if "hdmi_audio_output" in entry:
-        out += audio_scaler(house, room, choice)
-        out.append([_port_item(devices, routing["hdmi_matrix"], entry["hdmi_audio_output"]), hdmi_input])
-    if switch is not None and (local or "matrix_input" in switch):
-        out.append([_switch_item(devices, switch), switch["inputs"][choice] if local else switch["matrix_input"]])
-    only = (entry.get("usb_only") or {}).get(choice)
-    for matrix_id, ports in (entry.get("usb") or {}).items():
-        host = usb_host(source, matrix_id, routing["usb_off_host"])
-        moved = ports if only is None else only.get(matrix_id, [])
-        out += [[_port_item(devices, matrix_id, port), host] for port in moved]
-        if only is not None and entry.get("usb_unused", "preserve") == "park":
-            out += [[_port_item(devices, matrix_id, port), routing["usb_off_host"]]
-                    for port in ports if port not in moved]
-    return out
+    `room`'s matrices and switches, derived from the room's compiled hop graph."""
+    return hops.compile_room_path(house, room, choice).command_steps()
 
 
 def stages(house: House, room: str) -> list[tuple[dict, dict]]:
-    """(spec, stage()) of the room's receiver, then its display; one whose
-    device lists no integration that powers it (validate() reports it) is
-    left out. A passive display is always skipped, including when a device
-    gains a provider later; enabling routing requires removing passive."""
+    """(spec, stage()) of the room's receiver, soundbar, and display(s) in
+    upstream-to-downstream signal order; passive displays and unintegrated
+    devices are omitted."""
     devices = house.by_id
     entry = house.data["routing"]["rooms"][room]
     out = []
-    for key in STAGES:
-        if key in entry and entry[key].get("passive") is True:
+    for _, spec in room_stage_specs(entry):
+        if spec.get("passive") is True:
             continue
-        module = stager(devices[entry[key]["device"]]) if key in entry else None
-        if module is not None:
-            out.append((entry[key], module.stage(devices[entry[key]["device"]], entry[key].get("zone"))))
+        device = devices.get(spec["device"]) if isinstance(spec.get("device"), str) else None
+        module = stager(device) if device is not None else None
+        if module is not None and device is not None:
+            out.append((spec, module.stage(device, spec.get("zone"))))
     return out
 
 
 def wake(house: House, choice: str) -> list[list]:
     """[[Item, "ON"]] that wakes the chosen source, when its integration
-    can (an Apple TV, a SHIELD); none for Off. Dedicated-source standby is
+    can (a streaming box); none for Off. Dedicated-source standby is
     explicitly configured with sleep_sources and sent by after()."""
-    device = house.by_id.get(choice) if choice != OFF else None
-    module = waker(device) if device is not None else None
-    return [[module.wake_item(device), "ON"]] if module is not None else []
+    if choice == OFF:
+        return []
+    item = hops.source_wake_item(house.by_id, choice)
+    return [[item, "ON"]] if item else []
 
 
 def power(house: House, room: str, choice: str) -> list[list]:
-    """[[Item, "ON"], ...] a choice sends before it routes: the display's
-    power, then the receiver's, which take longest, then the source's own
-    (wake()); none for Off."""
-    if choice == OFF:
-        return []
-    return [[stage["power"], "ON"] for _, stage in reversed(stages(house, room))] + wake(house, choice)
+    """[[Item, "ON"], ...] a choice sends before it routes, derived from the
+    room's compiled hop graph; none for Off."""
+    return hops.compile_room_path(house, room, choice).power_steps()
 
 
 def inputs(house: House, room: str, choice: str) -> list[list]:
-    """[[Item, input], ...] that put a choice on the room's screen once it
-    is routed: the display's input, then the receiver's, as far as the
-    choice passes through each. A source cabled to the display leaves the
-    receiver's input alone; none for Off."""
-    if choice == OFF:
-        return []
-    out = []
-    for spec, stage in reversed(stages(house, room)):
-        cabled = spec.get("sources") or {}
-        if choice in cabled:
-            out.append([stage["input"], cabled[choice]])
-            break
-        out.append([stage["input"], spec.get("input_by_source", {}).get(choice, spec["input"])])
-    return out
+    """[[Item, input], ...] that put a choice on the room's active stages,
+    derived from the room's compiled hop graph; none for Off."""
+    return hops.compile_room_path(house, room, choice).input_steps()
 
 
 def sync_sources(house: House, room: str) -> dict[str, str]:
@@ -1383,27 +1380,20 @@ def sync_sources(house: House, room: str) -> dict[str, str]:
 def sync_plan(source: str, leader: str) -> str:
     """The lifecycle route of a follower's choice of `source` while synced
     with `leader`; the room's Source choice stays `source`."""
-    return f"{source}@{leader}"
+    return hops.sync_plan(source, leader)
 
 
 def synced_inputs(house: House, room: str, source: str) -> list[list]:
     """inputs() of a follower's synced route: its receiver zone on the
-    leader's input for the source, its display as on its own route."""
-    receiver = house.data["routing"]["rooms"][room]["receiver"]
-    item = next(stage["input"] for spec, stage in stages(house, room) if spec is receiver)
-    value = sync_sources(house, room)[source]
-    return [[name, value if name == item else target] for name, target in inputs(house, room, source)]
+    leader's input for the source, its downstream stages as on its own route."""
+    return hops.compile_room_path(house, room, source).input_steps(synced=True)
 
 
 def after(house: House, room: str, choice: str) -> list[list]:
-    """[[Item, value], ...] sent last: for Off, explicitly selected dedicated
-    sources sleep before the receiver and display; then the room's actions."""
-    devices = house.by_id
-    entry = house.data["routing"]["rooms"][room]
-    out = ([[item, "OFF"] for source in entry.get("sleep_sources", []) for item, _ in wake(house, source)]
-           + [[stage["power"], "OFF"] for _, stage in stages(house, room)]) if choice == OFF else []
-    actions = entry.get(ROOM_ACTIONS[1] if choice == OFF else ROOM_ACTIONS[0]) or {}
-    return out + [[action_item(devices, device_id), action] for device_id, action in actions.items()]
+    """[[Item, value], ...] sent last, derived from the room's compiled hop
+    graph: for Off, dedicated sleep_sources sleep strictly before receiver,
+    soundbar and display power Off; then the room's actions."""
+    return hops.compile_room_path(house, room, choice).after_steps()
 
 
 def edid_table(house: House) -> dict | None:
@@ -1454,126 +1444,187 @@ REASONS = ("unavailable", "unsupported_input", "no_display")
 MISSED = 1.5
 
 
-def reads(house: House, rooms: dict) -> dict[str, int]:
+def reads(house: House, rooms: dict, *, graph: hops.HopGraph | None = None) -> dict[str, int]:
     """routing.js's TABLE.reads: {Item: ms} of each room's HDMI output, audio
-    output and HDMI switch Item, and how long one missed read of it holds
-    the input it read before (MISSED of its integration's POLL_S)."""
-    routing = house.data["routing"]
-    devices = house.by_id
-    out = {}
-    for room, entry in routing["rooms"].items():
-        raw = rooms[room]
-        held = [(raw[key], switcher(devices[routing["hdmi_matrix"]])) for key in ("hdmi", "audioHdmi") if raw.get(key)]
-        if raw["switch"]:
-            held.append((raw["switch"]["item"], switch_module(devices, entry["hdmi_switch"])))
-        out.update({item: round(1000 * MISSED * module.POLL_S) for item, module in held})
+    output and HDMI switch Item(s), derived from the compiled hop graph."""
+    compiled = hops.compile_house(house) if graph is None else graph
+    out: dict[str, int] = {}
+    for room in rooms:
+        off_path = compiled.rooms[room][OFF]
+        for mhop in off_path.matrix_hops():
+            if mhop.item and mhop.poll_s:
+                out[mhop.item] = round(1000 * MISSED * mhop.poll_s)
+        for shop in off_path.switch_hops():
+            if shop.item and shop.poll_s:
+                out[shop.item] = round(1000 * MISSED * shop.poll_s)
     return out
 
 
 #: Seconds routing.js holds a room's Source after a choice while its
 #: receiver or display does not show it yet (RECENT_MS): at least this, a
 #: receiver being read seconds after the matrix.
-HOLD = 15
+HOLD = hops.HOLD
+
+
+def room_hold_ms(house: House, room: str) -> int:
+    """Per-room holdMs derived from that room's own stages' READ_BACK."""
+    return hops.compile_room_path(house, room, OFF).hold_ms
 
 
 def hold_ms(house: House) -> int:
-    """routing.js's RECENT_MS: HOLD, or the slowest read-back (READ_BACK)
-    of a room's receiver or display and 2 s, if longer."""
-    devices = house.by_id
-    rooms = ((house.data.get("routing") or {}).get("rooms") or {}).values()
-    staged = {(entry.get(role) or {}).get("device") for entry in rooms for role in ("receiver", "display")}
-    slowest = max((module.READ_BACK for ident in staged if ident in devices
-                   for module in [stager(devices[ident])] if module), default=0)
-    return 1000 * max(HOLD, slowest + 2)
+    """House-wide fallback RECENT_MS: the max of each room's holdMs (used by
+    remote_model.py until clients read per-room holdMs)."""
+    graph = hops.compile_house(house)
+    return max(graph.room_hold_ms.values(), default=1000 * HOLD)
 
 
 def table(house: House) -> dict:
-    """What routing.js needs: by room id, the EDID table, and the Source
-    state of a room that is off. A room's stages are its display, then its
-    receiver: the order the Source is read back in."""
+    """What routing.js needs: compiled directly from the house's hop graph.
+
+    Each room entry carries its own `holdMs`, `stages` (downstream-to-upstream,
+    each with its `role`), `switch` / cascaded `switches`, optional `sleep`
+    source-power items, and `sync`. Lifecycle execution is adopted per-field
+    whenever any routed field declares an ordered executor capability.
+    """
     routing = house.data["routing"]
     devices = house.by_id
-    rooms = {}
+    graph = hops.compile_house(house)
+    rooms: dict = {}
     for room, entry in routing["rooms"].items():
         offered = list(entry["sources"])
-        fed = "hdmi_output" in entry
-        readback = {str(routing["hdmi_off_input"]): OFF} if fed else {}
-        readback.update({str(routing["sources"][s]["hdmi_input"]): s for s in offered
-                         if fed and "hdmi_input" in routing["sources"][s]})
-        switch = entry.get("hdmi_switch")
         choices = [OFF, *offered]
-        rooms[room] = {
+        room_paths = graph.rooms[room]
+        off_path = room_paths[OFF]
+        video_hop = next((h for h in off_path.matrix_hops() if h.role == "video"), None)
+        audio_hop = next((h for h in off_path.matrix_hops() if h.role == "audio"), None)
+        fed = video_hop is not None
+        readback = {str(video_hop.park_value): OFF} if video_hop is not None else {}
+        if fed:
+            for s in offered:
+                if "hdmi_input" in routing["sources"][s]:
+                    readback[str(routing["sources"][s]["hdmi_input"])] = s
+        # Downstream-to-upstream switches for readback order in routing.js.
+        switch_rows = [
+            {
+                "item": shop.item,
+                "matrix": str(shop.park_value) if shop.park_value is not None else None,
+                "readback": {str(num): src for src, num in shop.inputs_map},
+                "hotplug": shop.hotplug_item,
+            }
+            for shop in reversed(off_path.switch_hops())
+        ]
+        stage_rows = []
+        for shop_stage in reversed(off_path.stage_hops()):
+            if shop_stage.passive or not shop_stage.power_item or not shop_stage.input_item:
+                continue
+            row: dict = {
+                "role": shop_stage.role,
+                "power": shop_stage.power_item,
+                "input": shop_stage.input_item,
+                "feed": shop_stage.feed_input,
+                "readback": {val: src for src, val in shop_stage.local_sources},
+            }
+            if shop_stage.by_source:
+                row["bySource"] = dict(shop_stage.by_source)
+            stage_rows.append(row)
+        raw: dict = {
             "item": item_name(room),
             "label": room_label(house, room),
-            "hdmi": _port_item(devices, routing["hdmi_matrix"], entry["hdmi_output"]) if fed else None,
-            "hdmiHotplug": _hotplug_item(devices, routing["hdmi_matrix"], entry["hdmi_output"]) if fed else None,
-            "choices": {choice: commands(house, room, choice) for choice in choices},
-            "power": {choice: power(house, room, choice) for choice in choices},
-            "inputs": {choice: inputs(house, room, choice) for choice in choices},
-            "after": {choice: after(house, room, choice) for choice in choices},
+            "holdMs": off_path.hold_ms,
+            "hdmi": video_hop.item if video_hop is not None else None,
+            "hdmiHotplug": video_hop.hotplug_item if video_hop is not None else None,
+            "choices": {choice: room_paths[choice].command_steps() for choice in choices},
+            "power": {choice: room_paths[choice].power_steps() for choice in choices},
+            "inputs": {choice: room_paths[choice].input_steps() for choice in choices},
+            "after": {choice: room_paths[choice].after_steps() for choice in choices},
             "readback": readback,
-            "switch": None if switch is None else {
-                "item": _switch_item(devices, switch),
-                "matrix": str(switch["matrix_input"]) if "matrix_input" in switch else None,
-                "readback": {str(number): source for source, number in switch["inputs"].items()},
-                "hotplug": _hotplug_item(devices, switch["device"], switch["output"]) if "output" in switch else None,
-            },
-            "stages": [{"power": stage["power"], "input": stage["input"], "feed": spec.get("input"),
-                        "readback": {value: source for source, value in (spec.get("sources") or {}).items()}}
-                       for spec, stage in reversed(stages(house, room))],
+            "switch": switch_rows[0] if switch_rows else None,
+            "stages": stage_rows,
         }
-        if "hdmi_audio_output" in entry:
-            rooms[room]["audioHdmi"] = _port_item(devices, routing["hdmi_matrix"], entry["hdmi_audio_output"])
-        for raw_stage, (spec, _) in zip(rooms[room]["stages"], reversed(stages(house, room)), strict=True):
-            if spec.get("input_by_source"):
-                raw_stage["bySource"] = dict(spec["input_by_source"])
-        sync = sync_sources(house, room)
-        if sync:
-            leader = entry["receiver"]["sync_with"]
-            rooms[room]["sync"] = {
-                "leader": leader,
-                "hdmi": _port_item(devices, routing["hdmi_matrix"], routing["rooms"][leader]["hdmi_output"]),
-                "input": next(stage["input"] for spec, stage in stages(house, room) if spec is entry["receiver"]),
-                "choices": {source: {"plan": sync_plan(source, leader), "value": value,
-                                     "inputs": synced_inputs(house, room, source)} for source, value in sync.items()},
+        if len(switch_rows) > 1:
+            raw["switches"] = switch_rows
+        if audio_hop is not None:
+            raw["audioHdmi"] = audio_hop.item
+        sleep_items = off_path.sleep_items()
+        if sleep_items:
+            raw["sleep"] = sleep_items
+        sync_entries = {src: room_paths[src].sync for src in offered if room_paths[src].sync is not None}
+        if sync_entries:
+            first_sync = next(iter(sync_entries.values()))
+            assert first_sync is not None
+            raw["sync"] = {
+                "leader": first_sync.leader,
+                "hdmi": first_sync.leader_hdmi_item,
+                "input": first_sync.follower_input_item,
+                "choices": {
+                    src: {
+                        "plan": rel.plan_name,
+                        "value": rel.leader_input_value,
+                        "inputs": room_paths[src].input_steps(synced=True),
+                    }
+                    for src, rel in sync_entries.items() if rel is not None
+                },
             }
-        checks = {}
-        raw = rooms[room]
-        for item, action in ([(raw[key], "read matrix output input") for key in ("hdmi", "audioHdmi") if raw.get(key)]) + (
-                [(raw["switch"]["item"], "read selected input")] if raw["switch"] else []) + [
-                (stage[field], action) for stage in raw["stages"]
-                for field, action in (("power", "read power"), ("input", "read selected input"))] + (
-                [(raw["sync"]["hdmi"], "read matrix output input")] if "sync" in raw else []):
+        checks: dict = {}
+        check_items: list[tuple[str, str]] = []
+        if video_hop is not None:
+            check_items.append((video_hop.item, "read matrix output input"))
+        if audio_hop is not None:
+            check_items.append((audio_hop.item, "read matrix output input"))
+        for sw_row in switch_rows:
+            check_items.append((sw_row["item"], "read selected input"))
+        for stage in stage_rows:
+            check_items.append((stage["power"], "read power"))
+            check_items.append((stage["input"], "read selected input"))
+        if "sync" in raw:
+            check_items.append((raw["sync"]["hdmi"], "read matrix output input"))
+        for item, action in check_items:
             ident = next((ident for ident in sorted(devices, key=len, reverse=True) if item.startswith(ident + "_")), None)
             if ident:
                 device = devices[ident]
                 checks[item] = {"device": ident, "label": device.get("name") or device.get("model") or ident,
                                 "model": device.get("model") or "", "action": action}
-        for item, matrix_id, output in ([(raw["hdmiHotplug"], routing.get("hdmi_matrix"), entry.get("hdmi_output"))] + (
-                [(raw["switch"]["hotplug"], switch["device"], switch.get("output"))] if raw["switch"] else [])):
+        hotplug_sources: list[tuple[str | None, str, int | None]] = []
+        if video_hop is not None:
+            hotplug_sources.append((video_hop.hotplug_item, video_hop.device, video_hop.output))
+        for shop in off_path.switch_hops():
+            hotplug_sources.append((shop.hotplug_item, shop.device, shop.output))
+        for item, matrix_id, output in hotplug_sources:
             if item:
                 device = devices[matrix_id]
                 checks[item] = {"device": matrix_id, "label": device.get("name") or device.get("model") or matrix_id,
                                 "model": device.get("model") or "", "action": DETECT, "output": output}
         raw["diagnosis"] = {"item": problem_item_name(room), "checks": checks,
                             "reported": readback_inputs(devices[row["device"]] for row in checks.values())}
+        rooms[room] = raw
     for room, raw in rooms.items():
         if "sync" in raw:
             rooms[raw["sync"]["leader"]].setdefault("followers", []).append(room)
-    result = {"rooms": rooms, "edid": edid_table(house), "off": OFF, "holdMs": hold_ms(house),
-              "hotplug": {"reports": _hotplug.REPORTS, "absentMs": 1000 * _hotplug.ABSENT},
-              "reads": reads(house, rooms)}
-    if lifecycle_enabled(house):
-        from .lifecycle import compile_descriptor
-        from .lifecycle_io import capabilities
-        result["lifecycle"] = compile_descriptor(house, result, capabilities(house.devices))
+    result: dict = {
+        "rooms": rooms,
+        "edid": edid_table(house),
+        "off": OFF,
+        "partial": PARTIAL,
+        "holdMs": max(graph.room_hold_ms.values(), default=1000 * HOLD),
+        "hotplug": {"reports": _hotplug.REPORTS, "absentMs": 1000 * _hotplug.ABSENT},
+        "reads": reads(house, rooms, graph=graph),
+    }
+    from .lifecycle import compile_descriptor
+    from .lifecycle_io import capabilities
+    caps = capabilities(house.devices)
+    if caps:
+        descriptor = compile_descriptor(house, result, caps)
+        if descriptor["resources"]:
+            result["lifecycle"] = descriptor
     return result
 
 
 def lifecycle_enabled(house: House) -> bool:
-    routing = house.data.get("routing") or {}
-    return (any(room.get("usb_unused") == "park" for room in routing.get("rooms", {}).values())
-            or any(source.get("idle") == "standby" for source in routing.get("sources", {}).values()))
+    """Whether any routed field in the house has an ordered executor capability
+    (per-field adoption; replaces the retired house-wide policy flag)."""
+    if not (house.data.get("routing") or {}).get("rooms"):
+        return False
+    return "lifecycle" in table(house)
 
 
 def options(house: House, room: str) -> str:
@@ -1582,8 +1633,15 @@ def options(house: House, room: str) -> str:
     return options_text([(OFF, "Off")] + [(s, sources[s]["label"]) for s in offered])
 
 
+def state_options(house: House, room: str) -> str:
+    sources = house.data["routing"]["sources"]
+    offered = house.data["routing"]["rooms"][room]["sources"]
+    return options_text([(OFF, "Off"), (PARTIAL, "Partially on")] + [(s, sources[s]["label"]) for s in offered])
+
+
 def source_item(house: House, room: str) -> dict:
     choices = options(house, room)
+    states = state_options(house, room)
     # A Location with two screens (the Office's desk and TV) names each.
     shared = sum(home(house, other) == home(house, room) for other in house.data["routing"]["rooms"]) > 1
     return {
@@ -1594,7 +1652,7 @@ def source_item(house: House, room: str) -> dict:
         "tags": ["Control"],
         "autoupdate": False,
         "metadata": {
-            "stateDescription": {"config": {"options": choices}},
+            "stateDescription": {"config": {"options": states}},
             "commandDescription": {"config": {"options": choices}},
         },
     }
@@ -1641,10 +1699,9 @@ def render(house: House, conf: Conf) -> None:
                      {routing["hdmi_off_input"]: "Off",
                       **{s["hdmi_input"]: s["label"] for s in sources if "hdmi_input" in s}})
     for entry in routing["rooms"].values():
-        if "hdmi_switch" in entry:
-            switch = entry["hdmi_switch"]
+        for switch in room_switches(entry):
             labels = {switch["matrix_input"]: "HDMI matrix"} if "matrix_input" in switch else {}
-            labels.update({n: routing["sources"][s]["label"] for s, n in switch["inputs"].items()})
+            labels.update({n: routing["sources"][s]["label"] for s, n in (switch.get("inputs") or {}).items()})
             _label(conf, _switch_item(devices, switch), labels)
     off_host = routing.get("usb_off_host")
     for matrix_id in dict.fromkeys(m for e in routing["rooms"].values() for m in e.get("usb") or {}):

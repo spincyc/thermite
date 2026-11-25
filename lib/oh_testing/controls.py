@@ -29,7 +29,7 @@ import oh_sony_sim as sony_sim
 import oh_sonos_sim as sonos_sim
 import oh_trace
 from oh_cli import pair as pair_cli
-from oh_conf import Conf, House, YamlFile, uses
+from oh_conf import Conf, House, YamlFile, config as device_config, uses
 from oh_features import all_off, remote_model, routing, threadpools
 from oh_testing.routing import SIGNAL_WAIT, signal_problems, simulated_lifecycle
 
@@ -206,7 +206,7 @@ class SonosStandIn:
 class CECStandIn:
     """Source CEC requests acknowledged by a matrix, without player feedback."""
     def __init__(self, module, device: dict) -> None:
-        self.sim = cec_sim.Matrix(device["cec"]["input"])
+        self.sim = cec_sim.Matrix(device_config(device, module.NAME)["input"])
         self.server = cec_sim.Server(self.sim)
         self.names = {index: key for key, index in module.KEYS.items()}
 
@@ -448,16 +448,37 @@ class Check:
                 generated = module.files(selected, house)
                 out.update(generated)
                 selected_conf.files.update(generated)
-        # A module that needs another's Things and Items (sony_ip_control,
-        # sony_rest's power) gets them for its own devices only.
+        # A module that needs another's Things and Items (sony_ip_control ->
+        # sony_rest's power, bk808_cec -> bk808_http's shared matrix Thing)
+        # gets them for its own devices (or its transport device) only.
         for module in modules.values():
             for needed in module.NEEDS:
-                part = YamlFile(tuple(needed.HEADER))
+                part = selected_conf.yaml.get(needed.FILE) or YamlFile(tuple(needed.HEADER))
+                chosen_devices: list[dict] = []
+                seen_ids: set[str] = set()
                 for ident, (owner, _) in self.controls.items():
-                    if owner is module and uses(self.devices[ident], needed.PHASE, needed.NAME):
-                        needed.render(self.devices[ident], house, part)
+                    if owner is not module:
+                        continue
+                    target = self.devices[ident]
+                    if uses(target, needed.PHASE, needed.NAME):
+                        chosen = target
+                    elif module.transport and (uid := module.transport(target)):
+                        chosen = self.devices.get(uid.rsplit(":", 1)[-1])
+                    else:
+                        chosen = None
+                    if chosen is not None and chosen["id"] not in seen_ids and uses(chosen, needed.PHASE, needed.NAME):
+                        needed.render(chosen, house, part)
+                        chosen_devices.append(chosen)
+                        seen_ids.add(chosen["id"])
                 out[needed.FILE] = part.text()
                 selected_conf.yaml[needed.FILE] = part
+                for asset in needed.ASSETS:
+                    if asset in files:
+                        out[asset] = files[asset]
+                if needed.files and chosen_devices:
+                    generated = needed.files(chosen_devices, house)
+                    out.update(generated)
+                    selected_conf.files.update(generated)
         contract = routing.table(house) if house.data.get("routing") else {}
         if "lifecycle" in contract:
             from oh_features.routing import lifecycle_io
@@ -475,13 +496,22 @@ class Check:
         leaks = sorted({f"{path}: {device['id']} ({device['ip']})" for path, text in out.items()
                         if isinstance(text, str) for device in house.devices
                         if device.get("ip") and re.search(rf"(?<![\d.]){re.escape(device['ip'])}(?![\d.])", text)})
+        def _sonos_udn(device: dict) -> str:
+            explicit = device_config(device, "sonos").get("udn")
+            if isinstance(explicit, str) and explicit:
+                return explicit
+            mac = device.get("mac")
+            if isinstance(mac, str) and mac and (uses(device, "observe", "sonos") or uses(device, "control", "sonos")):
+                return "RINCON_" + mac.replace(":", "").upper() + "01400"
+            return ""
+
         leaks += sorted({f"{path}: {device['id']} (real Sonos UDN)" for path, text in out.items()
                          if isinstance(text, str) for device in house.devices
-                         if device.get("sonos_udn") and device["sonos_udn"] in text})
+                         if (real_udn := _sonos_udn(device)) and real_udn in text})
         leaks += sorted({f"{path}: {device['id']} (real IR emitter)" for path, text in out.items()
                          if isinstance(text, str) for device in house.devices
-                         if isinstance(device.get("ir"), dict) and device["ir"].get("ip")
-                         and re.search(rf"(?<![\d.]){re.escape(device['ir']['ip'])}(?![\d.])", text)})
+                         if (ir_ip := device_config(device, "ir").get("ip"))
+                         and re.search(rf"(?<![\d.]){re.escape(ir_ip)}(?![\d.])", text)})
         if leaks:
             raise lib.SandboxError("the conf would reach a real device: " + "; ".join(leaks))
         return out
@@ -569,15 +599,16 @@ class Check:
         if tv is None:
             return
         device = self.devices[tv.ident]
-        item = f"{tv.ident}_pairing"
-        result = tv.module.pairing_result(device)
+        spec = tv.module.pairing(device)
+        item = spec["item"]
+        result = spec["result"]
         # A distinct synthetic PIN avoids matching ordinary timestamps.
         tv.sim.pin = "8429"
         try:
             before = pair_cli.item_state(self.http, result)
-            paired = pair_cli.pair_sony(device, self.http, None, ask=lambda _: tv.sim.pin, log=self.log)
+            paired = pair_cli.pair_device(device, spec, self.http, None, ask=lambda _: tv.sim.pin, log=self.log)
             after = pair_cli.item_state(self.http, result)
-            status = pair_cli.item_state(self.http, f"{tv.ident}_pairing_status")
+            status = pair_cli.item_state(self.http, spec["status"])
         except pair_cli.OpenHABError as exc:
             self.failures.append(f"Sony PIN round trip: {exc}")
             return

@@ -87,14 +87,46 @@ def literal(text: str) -> dict:
         raise ValueError("invalid remote presentation data") from exc
 
 
+BUILTIN_LAYOUTS: dict[str, dict] = {
+    "pc": {
+        "label": "Keyboard and mouse",
+        "note": "{device} is a PC: use its own keyboard and mouse",
+    },
+    "ps5": {
+        "label": "DualSense controller",
+        "note": "thermite cannot drive {device}: use its own controller",
+    },
+}
+
+
+def all_remote_layouts(device: dict | None = None) -> dict[str, dict]:
+    """All remote button layout definitions declared by integrations plus built-ins."""
+    collected: dict[str, dict] = {name: dict(spec) for name, spec in BUILTIN_LAYOUTS.items()}
+    for module in integrations.defining("remote_layouts"):
+        declared = module.remote_layouts(device)
+        if declared:
+            for name, spec in declared.items():
+                collected[name] = spec
+    return collected
+
+
 def provider(device: dict) -> tuple[object | None, dict | None]:
-    """The first integration (in remote()'s order) that gives the device a
-    remote, and its control Items; (None, None) without one."""
+    """Compose non-overlapping remote() control keys across all matching
+    integrations in remote()'s hook order; the first matching integration
+    provides the primary layout, and later integrations add any missing
+    control keys without overriding higher-priority ones."""
+    primary = None
+    merged: dict = {}
     for module in integrations.defining("remote"):
         control = module.remote(device)
-        if control:
-            return module, control
-    return None, None
+        if not control:
+            continue
+        if primary is None:
+            primary = module
+        for key, value in control.items():
+            if key not in merged:
+                merged[key] = value
+    return (primary, merged) if primary is not None else (None, None)
 
 
 def audio_page(device: dict) -> dict | None:
@@ -144,8 +176,8 @@ def build(house: House) -> dict:
     data = house.data
     route = data.get("routing") or {}
     devices = house.by_id
-    passive = {(room.get("display") or {}).get("device") for room in (route.get("rooms") or {}).values()
-               if (room.get("display") or {}).get("passive") is True}
+    passive = {disp.get("device") for room in (route.get("rooms") or {}).values()
+               for disp in routing.room_displays(room) if disp.get("passive") is True}
     out = {"version": 1, "rooms": [], "sources": {}, "devices": {}, "initial": {}, "holdMs": routing.hold_ms(house)}
     for ident, device in devices.items():
         row = {"label": device.get("name") or device.get("model") or ident,
@@ -187,17 +219,21 @@ def build(house: House) -> dict:
     for ident, entry in entries.items():
         physical = entry.get("room", ident)
         sources = list(entry["sources"])
-        display = (entry.get("display") or {}).get("device")
+        displays = routing.room_displays(entry)
+        display = displays[0].get("device") if displays else None
         # The room's own `audio`, else its receiver unless on a zone (whose
-        # volume is the main zone's), else its display (routing's docstring).
+        # volume is the main zone's), else its soundbar, else its display (routing's docstring).
         receiver = entry.get("receiver") or {}
-        candidates = [entry.get("audio"), None if receiver.get("zone") else receiver.get("device"), display]
+        soundbar = entry.get("soundbar") or {}
+        candidates = [entry.get("audio"), None if receiver.get("zone") else receiver.get("device"),
+                      None if soundbar.get("zone") else soundbar.get("device"), display]
         audio = next((d for d in candidates if d and "volume" in out["devices"][d].get("control", {})), None)
         covered = routing.covered_rooms(house, ident)
         members = [d for d, spec in devices.items() if spec["room"] in covered]
         row = {"id": ident, "label": routing.room_label(house, ident), "sources": sources,
                "display": display, "audio": audio, "devices": members,
                "speakers": speakers.pop(ident, []),
+               "holdMs": routing.room_hold_ms(house, ident),
                "routeProblem": routing.problem_item_name(ident)}
         if entry.get("audio_link") and entry.get("audio_input") and audio == entry.get("audio"):
             row["audioFeed"] = {"input": entry["audio_input"], "sources": [
@@ -207,6 +243,21 @@ def build(house: House) -> dict:
         out["rooms"].append(row)
     out["speakerRooms"] = [{"id": ident, "label": house.room_label(ident), "speakers": members}
                            for ident, members in speakers.items()]
+    used_layouts: dict[str, dict] = {}
+    fallback_layouts = all_remote_layouts()
+    for ident, row in out["devices"].items():
+        layout_id = row.get("remote")
+        if not layout_id or layout_id in used_layouts:
+            continue
+        device = devices.get(ident)
+        declared = all_remote_layouts(device) if device is not None else fallback_layouts
+        if layout_id in declared:
+            used_layouts[layout_id] = declared[layout_id]
+    for row in out["sources"].values():
+        layout_id = row.get("remote")
+        if layout_id and layout_id not in used_layouts and layout_id in fallback_layouts:
+            used_layouts[layout_id] = fallback_layouts[layout_id]
+    out["layouts"] = {"remotes": {rid: used_layouts[rid] for rid in sorted(used_layouts)}}
     return out
 
 

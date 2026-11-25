@@ -87,14 +87,19 @@ def ready() -> bool:
         return False
 
 
-def setup() -> int:
+def setup(find_links: Path | None = None, *, if_needed: bool = False) -> int:
+    if if_needed and ready():
+        oh_service.normalize_owned_runtime(VENV)
+        return 0
     if VENV.exists():
         oh_service.normalize_owned_runtime(VENV)
     built = (VENV / "bin/python").exists()
     if not built or not ready():
         subprocess.run([sys.executable, "-m", "venv", *(["--clear"] if built else []), str(VENV)], check=True)
+    source_args = ["--no-index", "--find-links", str(find_links)] if find_links is not None else []
     subprocess.run([str(VENV / "bin/python"), "-m", "pip", "install", "--quiet", "--disable-pip-version-check",
-                    "--no-cache-dir", "--require-hashes", "--only-binary", ":all:", "-r", str(REQUIREMENTS)],
+                    "--no-cache-dir", *source_args, "--require-hashes", "--only-binary", ":all:",
+                    "-r", str(REQUIREMENTS)],
                    check=True)
     subprocess.run([str(VENV / "bin/python"), "-c",
                     "import pyatv, pyatv.const, importlib.metadata as m, sys; "
@@ -138,8 +143,12 @@ def serve(arguments: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = oh_cli.command("apple-tv", "\n".join((DESCRIPTION, SETUP, SERVE)), EXAMPLES, NOTES)
     commands = oh_cli.actions(parser)
-    oh_cli.action(commands, "setup", "create build/pyatv-venv (or $OPENHAB_ATV_VENV) with the pinned pyatv",
-                  description=SETUP, examples=SETUP_EXAMPLES)
+    setup_parser = oh_cli.action(commands, "setup", "create build/pyatv-venv (or $OPENHAB_ATV_VENV) with the pinned pyatv",
+                                 description=SETUP, examples=SETUP_EXAMPLES)
+    setup_parser.add_argument("--find-links", type=Path, default=None, metavar="DIR",
+                              help="install offline from pre-fetched hash-verified wheels in DIR (--no-index)")
+    setup_parser.add_argument("--if-needed", action="store_true",
+                              help="skip rebuilding when the venv already matches the current pins and Python")
     serve_parser = oh_cli.action(commands, "serve", "run the helper (in build/pyatv-venv)",
                                  description=SERVE, examples=SERVE_EXAMPLES, notes=NOTES)
     serve_parser.add_argument("--setup", action="store_true",
@@ -154,5 +163,5 @@ def main(argv: list[str] | None = None) -> int:
                                    "reaches it can pair with and drive the Apple TVs)")
     arguments = parser.parse_args(argv)
     if arguments.command == "setup":
-        return setup()
+        return setup(arguments.find_links, if_needed=arguments.if_needed)
     return serve(arguments)

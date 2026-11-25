@@ -87,7 +87,7 @@ def _built_from_conf(house, conf, versions: dict, host: dict) -> tuple[dict, int
     import oh_metrics as metrics
     files = conf.render()
     monitoring = metrics.render(house, host, versions, conf=conf)
-    units = deploy.render_units(versions, host)
+    units = deploy.render_units(versions, host, house)
     return {"conf": len(files), "metrics": len(monitoring), "units": len(units)}, 0
 
 

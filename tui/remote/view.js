@@ -744,7 +744,7 @@ function remoteContent(frame, g, w, height, ctx) {
   // A room that is off shows no remote until a device bubble is tapped.
   if (session.remoteHidden(list)) return paragraph(g, 2, y + 1, w - 4, "Off \u00b7 choose a source, or a device for its buttons", "dim");
   const remote = session.remoteOf(target);
-  const groups = remote && remote.keyGroups ? remote.keyGroups : null;
+  const groups = remote && remote.keyGroups && remote.keyGroups.length ? remote.keyGroups : null;
   const dense = w >= 104 && remote && remote.wide && groups && groups.some((group) => !group.primary);
   const width = dense ? 100 : Math.min(54, w);
   const primaryWidth = dense ? 48 : width;
@@ -845,7 +845,7 @@ function bubbleRow(frame, g, w, ctx, list, state) {
       : part.shown === "switching" ? (heard(ctx) ? "bubble.switching" : "bubble.current") : item.id === selectedId ? "bubble.selected" : "bubble";
     const cursor = !ctx.ui.overlay && ctx.ui.pane !== "remote" && ctx.ui.sourceCursor[session.current().id] === item.id;
     if (focused(ctx, key) || cursor) style = "bubble.focus";
-    const remote = item.remote ? ctx.layouts.remotes[item.remote] : null;
+    const remote = item.remote ? (session.remoteOf(item) || (ctx.layouts && ctx.layouts.remotes && ctx.layouts.remotes[item.remote])) : null;
     const hit = {
       kind: "bubble", item: item, key: key, focus: true, disabled: part.lock.inert,
       label: session.bubbleLabel(item, part.shown) + (part.unconfirmed ? ", not confirmed" : "") + (remote ? " \u00b7 " + remote.label : "")
@@ -925,13 +925,13 @@ function note(g, w, y, title, body) {
 function layout(g, ctx, w, y, remote, groups) {
   let row = y;
   if (remote.corners) row = cluster(g, ctx, w, row, remote.corners) + 1;
-  if (remote.top) row = keyRows(g, ctx, row, w, remote.top) + 1;
+  if (remote.top && remote.top.length) row = keyRows(g, ctx, row, w, remote.top) + 1;
   const playback = remote.playback || [];
   // The page puts up to three playback keys in its lower group when a
   // D-pad exists. Longer transport rows stay above the labelled keys.
   if (playback.length && (!remote.corners || playback.length > 3)) row = keyRows(g, ctx, row, w, playback, 5) + 1;
-  if (groups) row = groupRows(g, ctx, w, row, groups);
-  else if (remote.keys && remote.keys.length) row = keyRows(g, ctx, row, w, remote.keys, 8) + 1;
+  if (groups && groups.length) row = groupRows(g, ctx, w, row, groups);
+  else if (!groups && remote.keys && remote.keys.length) row = keyRows(g, ctx, row, w, remote.keys, 8) + 1;
   return row - 1;
 }
 

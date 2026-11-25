@@ -1,41 +1,19 @@
 /*
- * The remotes the page draws: one for each kind of device it controls, with
- * the buttons that device's own remote has. house.js names each device's
- * remote (and each source's). Every remote is drawn in the same frame, so the
- * D-pad and the volume stay where the thumb expects them.
+ * Shared button vocabulary and layout planner for thermite remotes.
  *
- * REMOTE_LAYOUTS = {
- *   version: 1,
- *   buttons: { <id>: { label, icon, text, repeat } }
- *       every button any remote has. icon names a symbol in index.html
- *       (#i-<icon>); text is a caption instead; repeat: held, it presses again
- *   remotes: { <id>: {
- *       label,                       what the real remote is called
- *       corners: [tl, tr, bl, br],   the keys around the D-pad, null for none;
- *                                    absent: the remote has no D-pad
- *       top: [id, ...],              keys after the D-pad, or first without one
- *       playback: [id, ...],         up to three sit beside Mute; more get a row of their own
- *       channel: true,               a CH rocker opposite the volume
- *       keys: [id, ...],             labelled keys under the D-pad
- *       keyGroups: [{label, keys, columns, primary?}],
- *                                    optional semantic grids; keys is derived
- *                                    from these for older consumers. Secondary
- *                                    groups can sit beside a wide terminal remote.
- *       wide: true,                  a wide terminal lays secondary groups beside the primary ones
- *       note                         instead of buttons, for a source that takes none
- *                                    (a PC); {device} becomes its name
- *   } }
- * }
- *
- * Volume and Mute are on every remote and always drive the room's audio
- * device, whichever remote is shown. Voice buttons (Siri, Google Assistant)
- * are left out: a press cannot carry speech. Sony TV keys use its IP-control
- * IRCC commands, advertised by the TV's getRemoteControllerInfo response.
+ * Integration-owned remote layouts are emitted into house.js
+ * (REMOTE_HOUSE.layouts.remotes) by lib/oh_features/remote_model.py from each
+ * integration's remote_layouts() hook. This file keeps the shared button icon
+ * and caption vocabulary plus minimal built-in fallback layouts (pc, ps5) and
+ * exports RemoteLayouts.layoutPlan() / forHouse() for Web, TUI, and Handheld.
  */
-globalThis.REMOTE_LAYOUTS = {
-  version: 1,
+(function (global) {
+  "use strict";
 
-  buttons: {
+  const PAD = ["up", "down", "left", "right", "ok"];
+  const CHANNEL = ["channel_up", "channel_down"];
+
+  const BUTTONS = {
     power_on: { label: "Power on", text: "On" },
     power_off: { label: "Standby", text: "Standby" },
     power: { label: "Power", icon: "power" },
@@ -108,107 +86,10 @@ globalThis.REMOTE_LAYOUTS = {
     lens: { label: "Picture position", text: "Position" },
     night: { label: "Night sound", text: "Night" },
     speech: { label: "Speech enhancement", text: "Speech" }
-  },
+  };
 
-  remotes: {
-    nvidia_shield: {
-      label: "SHIELD remote",
-      corners: ["power", "menu", "back", "home"],
-      playback: ["rewind", "play_pause", "fast_forward"],
-      keys: ["netflix"]
-    },
-    apple_tv: {
-      label: "Siri Remote",
-      corners: ["power", null, "back", "tv"],
-      playback: ["play_pause"],
-      keyGroups: [{ label: "Apps", keys: ["netflix", "youtube"], columns: 2, primary: true }]
-    },
-    sony_bluray: {
-      label: "Blu-ray remote",
-      wide: true,
-      corners: ["power", "eject", "back", "home"],
-      playback: ["previous", "rewind", "play", "pause", "stop", "fast_forward", "next"],
-      keyGroups: [
-        { label: "Apps", keys: ["netflix", "favorite"], columns: 2, primary: true },
-        { label: "Disc menus", keys: ["top_menu", "popup_menu", "options", "display"], columns: 2 },
-        { label: "Audio", keys: ["audio", "subtitle"], columns: 2 },
-        { label: "Wireless audio", keys: ["bluetooth"], columns: 1 },
-        { label: "Color keys", keys: ["red", "green", "yellow", "blue"], columns: 4 }
-      ]
-    },
-    sony_bluray_cec: {
-      label: "Blu-ray CEC remote",
-      corners: ["power", "eject", "back", "home"],
-      top: ["power_on", "power_off", "menu"],
-      playback: ["previous", "rewind", "play", "pause", "stop", "fast_forward", "next"],
-      keyGroups: [
-        { label: "Apps", keys: ["netflix", "favorite"], columns: 2, primary: true },
-        { label: "Disc menus", keys: ["top_menu", "popup_menu", "options", "display"], columns: 2 },
-        { label: "Audio", keys: ["audio", "subtitle"], columns: 2 },
-        { label: "Wireless audio", keys: ["bluetooth"], columns: 1 },
-        { label: "Color keys", keys: ["red", "green", "yellow", "blue"], columns: 4 }
-      ]
-    },
-    sony_tv: {
-      label: "Sony TV remote",
-      wide: true,
-      corners: ["power", "settings", "back", "home"],
-      top: ["input", "guide", "info", "action_menu"],
-      playback: ["previous", "rewind", "play", "pause", "stop", "fast_forward", "next"],
-      channel: true,
-      keyGroups: [
-        { label: "Apps", keys: ["netflix", "youtube"], columns: 2, primary: true },
-        { label: "TV", keys: ["tv", "exit", "options", "help"], columns: 2 },
-        { label: "Audio", keys: ["audio", "subtitle"], columns: 2 },
-        { label: "Channels", keys: ["digit_1", "digit_2", "digit_3", "digit_4", "digit_5", "digit_6",
-          "digit_7", "digit_8", "digit_9", "digit_dot", "digit_0", "digit_enter"], columns: 3 },
-        { label: "Color keys", keys: ["red", "green", "yellow", "blue"], columns: 4 }
-      ]
-    },
-    android_tv: {
-      label: "Android TV remote",
-      corners: ["power", null, "back", "home"],
-      playback: ["rewind", "play", "pause", "fast_forward"],
-      channel: true,
-      keys: ["netflix", "youtube"]
-    },
-    sony_projector: {
-      label: "Projector remote",
-      corners: ["power", "input", "menu", null],
-      keys: ["picture", "aspect", "lens"]
-    },
-    marantz_avr: {
-      label: "Marantz remote",
-      corners: ["power", "input", "back", "settings"],
-      keyGroups: [
-        { label: "Sound modes", keys: ["sound_movie", "sound_music", "sound_game", "sound_pure"], columns: 2 },
-        { label: "Information", keys: ["info", "options"], columns: 2 }
-      ]
-    },
-    marantz_heos: {
-      label: "Marantz remote · HEOS transport",
-      corners: ["power", "input", "back", "settings"],
-      playback: ["previous", "play", "pause", "next"],
-      keyGroups: [
-        { label: "Sound modes", keys: ["sound_movie", "sound_music", "sound_game", "sound_pure"], columns: 2 },
-        { label: "Information", keys: ["info", "options"], columns: 2 }
-      ]
-    },
-    sonos: {
-      label: "Audio controls",
-      playback: ["previous", "play_pause", "next"],
-      keyGroups: [{ label: "Audio", keys: ["tv", "night", "speech"], columns: 3, primary: true }]
-    },
-    sonos_amp: {
-      label: "Audio controls",
-      playback: ["previous", "play_pause", "next"],
-      keyGroups: [{ label: "Audio", keys: ["night", "speech"], columns: 2, primary: true }]
-    },
-    wiim: {
-      label: "WiiM remote",
-      top: ["input"],
-      playback: ["previous", "play_pause", "next"]
-    },
+  // Built-in fallbacks for devices without an integration remote layout.
+  const BUILTIN_REMOTES = {
     pc: {
       label: "Keyboard and mouse",
       note: "{device} is a PC: use its own keyboard and mouse"
@@ -217,11 +98,167 @@ globalThis.REMOTE_LAYOUTS = {
       label: "DualSense controller",
       note: "thermite cannot drive {device}: use its own controller"
     }
-  }
-};
+  };
 
-// One definition of group membership; legacy command/content consumers still
-// see the same flat keys array, with no extra button IDs or control behavior.
-Object.values(globalThis.REMOTE_LAYOUTS.remotes).forEach((remote) => {
-  if (remote.keyGroups) remote.keys = remote.keyGroups.flatMap((group) => group.keys);
-});
+  function houseRemotes(source) {
+    if (!source || typeof source !== "object") return null;
+    if (source.layouts && source.layouts.remotes && typeof source.layouts.remotes === "object") return source.layouts.remotes;
+    if (source.remotes && typeof source.remotes === "object") return source.remotes;
+    return source;
+  }
+
+  function normalizeRemote(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const groups = Array.isArray(raw.keyGroups)
+      ? raw.keyGroups.filter((group) => group && Array.isArray(group.keys) && group.keys.length).map((group) => ({
+          label: String(group.label || ""),
+          keys: group.keys.slice(),
+          columns: Number(group.columns) || group.keys.length,
+          primary: Boolean(group.primary)
+        }))
+      : null;
+    const keys = groups ? groups.flatMap((group) => group.keys) : (Array.isArray(raw.keys) ? raw.keys.slice() : null);
+    const out = Object.assign({}, raw);
+    if (groups) out.keyGroups = groups;
+    if (keys) out.keys = keys;
+    return out;
+  }
+
+  function mergeRemotes(houseOrLayouts) {
+    const out = {};
+    const add = (map) => {
+      if (!map || typeof map !== "object") return;
+      Object.keys(map).forEach((id) => {
+        const spec = normalizeRemote(map[id]);
+        if (spec) out[id] = spec;
+      });
+    };
+    add(BUILTIN_REMOTES);
+    if (global.REMOTE_LAYOUTS && global.REMOTE_LAYOUTS.remotes && global.REMOTE_LAYOUTS.remotes !== BUILTIN_REMOTES) {
+      add(global.REMOTE_LAYOUTS.remotes);
+    }
+    if (global.REMOTE_HOUSE && global.REMOTE_HOUSE.layouts && global.REMOTE_HOUSE.layouts.remotes) {
+      add(global.REMOTE_HOUSE.layouts.remotes);
+    }
+    add(houseRemotes(houseOrLayouts));
+    return out;
+  }
+
+  function forHouse(house) {
+    return {
+      version: 1,
+      buttons: (global.REMOTE_LAYOUTS && global.REMOTE_LAYOUTS.buttons) || BUTTONS,
+      remotes: mergeRemotes(house)
+    };
+  }
+
+  function lookupRemote(remoteOrId, layouts) {
+    if (!remoteOrId) return { id: null, spec: null };
+    if (typeof remoteOrId === "object") return { id: remoteOrId.id || null, spec: remoteOrId };
+    const id = String(remoteOrId);
+    const candidates = [
+      houseRemotes(layouts),
+      global.REMOTE_HOUSE && global.REMOTE_HOUSE.layouts && global.REMOTE_HOUSE.layouts.remotes,
+      global.REMOTE_LAYOUTS && global.REMOTE_LAYOUTS.remotes,
+      BUILTIN_REMOTES
+    ];
+    for (let i = 0; i < candidates.length; i += 1) {
+      const map = candidates[i];
+      if (map && Object.prototype.hasOwnProperty.call(map, id) && map[id]) {
+        return { id, spec: map[id] };
+      }
+    }
+    return { id, spec: null };
+  }
+
+  // Normalized layout plan shared by Web (remote.js), TUI (view.js), and
+  // Handheld (screen.js). Derives flat `keys` from `keyGroups` when omitted
+  // and computes the complete ordered list of unique button IDs (`buttons`).
+  function layoutPlan(remoteOrId, layouts) {
+    const found = lookupRemote(remoteOrId, layouts);
+    if (!found.spec) return null;
+    const raw = found.spec;
+    const corners = Array.isArray(raw.corners) ? [0, 1, 2, 3].map((at) => raw.corners[at] || null) : null;
+    const top = Array.isArray(raw.top) ? raw.top.slice() : [];
+    const playback = Array.isArray(raw.playback) ? raw.playback.slice() : [];
+    const keyGroups = Array.isArray(raw.keyGroups)
+      ? raw.keyGroups.filter((group) => group && Array.isArray(group.keys) && group.keys.length).map((group) => ({
+          label: String(group.label || ""),
+          keys: group.keys.slice(),
+          columns: Number(group.columns) || group.keys.length,
+          primary: Boolean(group.primary)
+        }))
+      : [];
+    const keys = keyGroups.length
+      ? keyGroups.flatMap((group) => group.keys)
+      : (Array.isArray(raw.keys) ? raw.keys.slice() : []);
+    const channel = Boolean(raw.channel);
+    const wide = Boolean(raw.wide);
+    const note = raw.note ? String(raw.note) : "";
+    const buttons = [];
+    const seen = new Set();
+    const push = (id) => {
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        buttons.push(id);
+      }
+    };
+    if (!note) {
+      if (corners) {
+        corners.forEach(push);
+        PAD.forEach(push);
+      }
+      top.forEach(push);
+      playback.forEach(push);
+      keys.forEach(push);
+      if (channel) CHANNEL.forEach(push);
+    }
+    return {
+      id: found.id,
+      label: String(raw.label || found.id || ""),
+      corners,
+      top,
+      playback,
+      channel,
+      keyGroups,
+      keys,
+      wide,
+      note,
+      buttons
+    };
+  }
+
+  function buttonsOf(remoteOrId, layouts) {
+    const plan = layoutPlan(remoteOrId, layouts);
+    return plan ? plan.buttons.slice() : [];
+  }
+
+  const initialRemotes = {};
+  Object.keys(BUILTIN_REMOTES).forEach((id) => { initialRemotes[id] = normalizeRemote(BUILTIN_REMOTES[id]); });
+  if (global.REMOTE_HOUSE && global.REMOTE_HOUSE.layouts && global.REMOTE_HOUSE.layouts.remotes) {
+    Object.keys(global.REMOTE_HOUSE.layouts.remotes).forEach((id) => {
+      const spec = normalizeRemote(global.REMOTE_HOUSE.layouts.remotes[id]);
+      if (spec) initialRemotes[id] = spec;
+    });
+  }
+
+  global.REMOTE_LAYOUTS = {
+    version: 1,
+    buttons: BUTTONS,
+    remotes: initialRemotes
+  };
+
+  const api = {
+    version: 1,
+    buttons: BUTTONS,
+    remotes: global.REMOTE_LAYOUTS.remotes,
+    PAD,
+    CHANNEL,
+    forHouse,
+    mergeRemotes,
+    layoutPlan,
+    buttonsOf
+  };
+  global.RemoteLayouts = api;
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+})(globalThis);

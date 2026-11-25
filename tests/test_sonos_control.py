@@ -20,6 +20,7 @@ import yaml
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 import oh_conf  # noqa: E402
+import oh_inventory  # noqa: E402
 import oh_render  # noqa: E402
 import oh_sandbox  # noqa: E402
 import oh_site_contract  # noqa: E402
@@ -37,16 +38,16 @@ def mac(last):
 
 
 def house(control=True):
-    return {"version": 1, "rooms": {"example_lounge": {"label": "Example Lounge", "tag": "Room"}}, "devices": [
+    return {"version": 2, "rooms": {"example_lounge": {"label": "Example Lounge", "tag": "Room"}}, "devices": [
         {"id": ARC, "room": "example_lounge", "kind": "soundbar", "make": "Sonos", "model": "Arc",
-         "ip": "192.0.2.10", "mac": mac("10"), "sonos_udn": UDN,
+         "ip": "192.0.2.10", "mac": mac("10"), "config": {"sonos": {"udn": UDN}},
          "controls": {"observe": ["sonos"], "control": ["sonos"] if control else []}}]}
 
 
 def cottage(audio=True):
     """The example house with a Building whose TV is in the Building itself
     and whose Arc is in a room nested in it, named the room's `audio`."""
-    data = json.loads((AREA / "instance/devices.yaml").read_text())
+    data = oh_inventory.load(AREA / "instance/devices.yaml")
     data["rooms"][COTTAGE] = {"label": "Example Cottage", "tag": "Building"}
     data["rooms"][NOOK] = {"label": "Example Cottage Nook", "tag": "LivingRoom", "in": COTTAGE}
     data["devices"] += [
@@ -55,7 +56,7 @@ def cottage(audio=True):
         {"id": "example_cottage_computer", "room": COTTAGE, "kind": "computer", "model": "Computer",
          "ip": "192.0.2.31", "controls": {}},
         {"id": COTTAGE_ARC, "room": NOOK, "kind": "soundbar", "make": "Sonos", "model": "Arc",
-         "ip": "192.0.2.32", "mac": mac("32"), "sonos_udn": sonos.udn(mac("32")),
+         "ip": "192.0.2.32", "mac": mac("32"), "config": {"sonos": {"udn": sonos.udn(mac("32"))}},
          "controls": {"observe": ["sonos"], "control": ["sonos"]}}]
     data["routing"]["sources"]["example_cottage_computer"] = {"label": "Cottage computer"}
     room = {"sources": ["example_cottage_computer"],
@@ -158,7 +159,7 @@ class AudioPage(unittest.TestCase):
     def amp(self, control=True):
         device = copy.deepcopy(house(control)["devices"][0])
         device.update(id="example_amp", kind="amp", model="Amp", ip="192.0.2.11", mac=mac("11"),
-                      sonos_udn=sonos.udn(mac("11")))
+                      config={"sonos": {"udn": sonos.udn(mac("11"))}})
         return device
 
     def test_a_standalone_amp_has_a_remote_and_a_page_without_an_arcs_extras(self):
@@ -174,9 +175,9 @@ class AudioPage(unittest.TestCase):
 
     def test_an_amps_remote_has_no_tv_key(self):
         self.assertEqual((sonos.remote_of(house()["devices"][0]), sonos.remote_of(self.amp())), ("sonos", "sonos_amp"))
-        layouts = (AREA / "web/remote/remotes.js").read_text()
-        amp = layouts[layouts.index("    sonos_amp: {"):]
-        self.assertNotIn('"tv"', amp[:amp.index("\n    },")])
+        amp_layout = sonos.remote_layouts(self.amp())["sonos_amp"]
+        amp_keys = [k for g in amp_layout.get("keyGroups", ()) for k in g.get("keys", ())]
+        self.assertNotIn("tv", amp_keys)
         self.assertNotIn("tv", sonos.keys(self.amp()))
 
     def test_the_feed_keeps_an_arcs_tv_audio_and_leaves_out_track_details(self):
@@ -285,7 +286,7 @@ class ContractStandIn(unittest.TestCase):
         data = house()
         observer = copy.deepcopy(data["devices"][0])
         observer.update(id="example_bonded_amp", model="Amp", kind="amp", ip="192.0.2.11", mac=mac("11"),
-                        sonos_udn="RINCON_02000000001101400", controls={"observe": ["sonos"]})
+                        config={"sonos": {"udn": "RINCON_02000000001101400"}}, controls={"observe": ["sonos"]})
         data["devices"].append(observer)
         self.data = data
         self.check = controls.Check(oh_conf.House(data), log=lambda _: None)
@@ -298,7 +299,7 @@ class ContractStandIn(unittest.TestCase):
         self.assertNotIn("example_bonded_amp", files[sonos.FILE] + files[sonos.RULE])
         for device in self.data["devices"]:
             self.assertNotIn(device["ip"], text)
-            self.assertNotIn(device["sonos_udn"], text)
+            self.assertNotIn(sonos.udn(device), text)
         document = yaml.safe_load(files[sonos.FILE])
         # The settings poll on a slower Thing of their own; both reach only the stand-in.
         self.assertEqual(list(document["things"]), [f"http:url:{ARC}", f"http:url:settings:{ARC}"])

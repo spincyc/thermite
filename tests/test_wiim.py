@@ -31,7 +31,7 @@ AMP = {"id": "example_amp", "room": "example_desk", "kind": "streaming_amp", "ma
 
 
 def house(**changes):
-    return {"version": 1, "rooms": {"example_desk": {"label": "Example Desk", "tag": "Room"}},
+    return {"version": 2, "rooms": {"example_desk": {"label": "Example Desk", "tag": "Room"}},
             "devices": [{**AMP, **changes}]}
 
 
@@ -229,30 +229,34 @@ class Render(unittest.TestCase):
                          ["example_amp_play_mode", "example_amp_eq", "example_amp_eq_preset", "example_amp_light"])
         self.assertFalse({"example_amp_sub", "example_amp_cpu_temperature"} & {e["item"] for e in page["facts"]})
 
-    def test_a_model_it_does_not_know_is_refused(self):
+    def test_unknown_model_uses_generic_profile_and_invalid_model_profile_is_refused(self):
         self.assertEqual(wiim_http.validate(AMP), [])
-        self.assertEqual(wiim_http.validate({**AMP, "model": "WiiM Amp Pro"}),
-                         ["example_amp: wiim_http knows no model 'WiiM Amp Pro' (one of Amp Pro, Mini)"])
-        self.assertTrue(render.validate(house(model="Ultra")))
-        # Under control alone (itself refused) too.
-        controlled = {**AMP, "model": "Ultra", "controls": {"control": ["wiim_http"]}}
-        self.assertIn("example_amp: wiim_http knows no model 'Ultra' (one of Amp Pro, Mini)",
-                      wiim_http.validate(controlled))
+        # Arbitrary WiiM models fall back to the generic capability profile.
+        ultra = {**AMP, "model": "Ultra"}
+        self.assertEqual(wiim_http.validate(ultra), [])
+        self.assertEqual(render.validate(house(model="Ultra")), [])
+        self.assertEqual(wiim_http._profile(ultra), wiim_http._PROFILES["generic"])
+        # Explicit config.wiim_http.model_profile overrides model-string lookup,
+        # and an unknown profile is refused cleanly.
+        self.assertEqual(wiim_http._profile({**ultra, "config": {"wiim_http": {"model_profile": "amp_pro"}}}),
+                         wiim_http._PROFILES["amp_pro"])
+        bad_profile = {**AMP, "config": {"wiim_http": {"model_profile": "unknown"}}}
+        self.assertTrue(any("model_profile" in p for p in wiim_http.validate(bad_profile)))
+        # Control without observe is still refused.
+        self.assertTrue(any("observe" in p for p in render.validate(house(model="Ultra", controls={"control": ["wiim_http"]}))))
 
-    def test_an_unknown_model_named_a_rooms_audio_is_refused_not_a_crash(self):
-        # The routing feature asks the WiiM for its remote's inputs: only
-        # once the integrations have found every device well formed.
-        data = json.loads((AREA / "instance/devices.yaml").read_text())
+    def test_an_unknown_model_named_a_rooms_audio_validates_and_renders(self):
+        # Unknown WiiM models use the generic profile and work cleanly as room audio.
+        data = oh_inventory.load(AREA / "instance/devices.yaml")
         data["devices"].append({**AMP, "model": "Ultra", "room": "example_east", "ip": "192.0.2.41"})
         data["routing"]["rooms"]["example_east"]["audio"] = AMP["id"]
-        self.assertIn("example_amp: wiim_http knows no model 'Ultra' (one of Amp Pro, Mini)", render.validate(data))
+        self.assertEqual(render.validate(data), [])
 
-    def test_each_model_is_the_kind_it_is(self):
+    def test_supported_kinds_are_accepted_and_wrong_kinds_refused(self):
         self.assertEqual(wiim_http.validate({**AMP, "model": "Mini", "kind": "audio_streamer"}), [])
-        self.assertEqual(wiim_http.validate({**AMP, "model": "Mini"}),
-                         ["example_amp: a WiiM Mini is kind audio_streamer, not 'streaming_amp'"])
-        self.assertEqual(wiim_http.validate({**AMP, "kind": "streamer"}),
-                         ["example_amp: a WiiM Amp Pro is kind streaming_amp, not 'streamer'"])
+        self.assertEqual(wiim_http.validate({**AMP, "model": "Mini", "kind": "streaming_amp"}), [])
+        self.assertTrue(any("streaming_amp or audio_streamer" in p
+                            for p in wiim_http.validate({**AMP, "kind": "streamer"})))
 
     def test_the_stand_in_has_what_each_model_has(self):
         # oh_av_sim's Player answers as the integration expects each model to.

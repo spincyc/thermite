@@ -28,6 +28,7 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
 from oh_conf import House  # noqa: E402
+import oh_inventory  # noqa: E402
 from oh_features import remote_model  # noqa: E402
 
 ROOM, OWNED, DEN, MINI, FREE, LOUNGE, ARC = (
@@ -36,7 +37,7 @@ WIIM = {"make": "WiiM", "controls": {"observe": ["wiim_http"], "control": ["wiim
 
 
 def model():
-    data = json.loads((AREA / "instance/devices.yaml").read_text())
+    data = oh_inventory.load(AREA / "instance/devices.yaml")
     data["rooms"][DEN] = {"label": "Fixture Den", "tag": "Room"}
     data["rooms"][LOUNGE] = {"label": "Fixture Lounge", "tag": "Room"}
     data["devices"] += [
@@ -45,7 +46,7 @@ def model():
         {"id": OWNED, "room": ROOM, "ip": "192.0.2.41", "kind": "streaming_amp", "model": "Amp Pro", **WIIM},
         {"id": ARC, "room": LOUNGE, "name": "Fixture Lounge Arc", "ip": "192.0.2.44", "kind": "soundbar", "make": "Sonos", "model": "Arc",
          # The UDN a player derives from its mac (sonos.udn); the mac in two parts, for the public guard.
-         "mac": "02:00:00:00:00:" + "44", "sonos_udn": "RINCON_02000000004401400",
+         "mac": "02:00:00:00:00:" + "44", "config": {"sonos": {"udn": "RINCON_02000000004401400"}},
          "controls": {"observe": ["sonos"], "control": ["sonos"]}}]
     data["routing"]["rooms"][ROOM]["audio"] = OWNED
     built = remote_model.build(House(data))
@@ -185,8 +186,8 @@ class ListenTUI(unittest.TestCase):
         group = self.proof["group"]
         self.assertEqual((group["kind"], group["title"], group["ticked"]), ("music-group", "Group with Example East", True))
         self.assertEqual(group["result"], [])
-        self.assertEqual(group["toast"], ["Fixture Lounge could not join", "Fixture Lounge cannot join Example East: Sonos and WiiM speakers "
-                                          "group only over AirPlay, and one of them has none."])
+        self.assertEqual(group["toast"], ["Fixture Lounge could not join", "Fixture Lounge cannot join Example East: speakers from different "
+                                          "providers cannot group without a shared protocol."])
         level, sent = group["stepped"]
         self.assertEqual(sent, ["volume", OWNED, "group", level + 2])
         self.assertEqual(group["drawn"], [])

@@ -24,7 +24,7 @@ import oh_render
 from oh_cli import discover, status
 from oh_conf import House
 
-EXAMPLE = json.loads((AREA / "instance/devices.yaml").read_text())
+EXAMPLE = oh_inventory.load(AREA / "instance/devices.yaml")
 DOCUMENTS = [AREA / "README.md", AREA / "FAQ.md", *sorted((AREA / "docs").glob("*.md")),
              *sorted((AREA / "site/pages").glob("*.md"))]
 FENCED = re.compile(r"^```ya?ml\n(.*?)^```", re.MULTILINE | re.DOTALL)
@@ -122,14 +122,14 @@ class Closed(unittest.TestCase):
             (lambda d: d.update(services="network"), "services must be a list"),
             (lambda d: d["rooms"]["example_west"].update({"in": ["x"]}), "is not another room id"),
             (lambda d: d["rooms"]["example_west"].update(tag={"x": 1}), "is not an openHAB Location tag"),
-            (lambda d: d.update(control4_rooms={"Den": ["x"]}), "which is not in rooms"),
+            (lambda d: d.update(control4={"rooms": {"Den": ["x"]}}), "which is not in rooms"),
         )
         for change, expected in cases:
             with self.subTest(expected=expected):
                 found = self.problems(change)
                 self.assertTrue(any(expected in problem for problem in found), found)
 
-    def test_mac_is_optional_except_for_an_integration_that_needs_it(self):
+    def test_mac_is_optional_and_sonos_derives_udn_from_mac_or_explicit_config(self):
         data = copy.deepcopy(EXAMPLE)
         del data["devices"][0]["mac"]
         self.assertEqual(oh_render.validate(data), [])
@@ -137,10 +137,12 @@ class Closed(unittest.TestCase):
         self.assertEqual(oh_inventory.without_mac(house), ["example_tv"])
         self.assertNotIn("example-tv", [row[0] for row in oh_inventory.reservations(house)])
         self.assertEqual(oh_discover.compare(house, {})["no_mac"], ["example_tv"])
-        sonos = {"id": "den_speaker", "room": "example_west", "kind": "speaker", "ip": "192.0.2.30",
+        sonos = {"id": "den_speaker", "room": "example_west", "kind": "soundbar", "ip": "192.0.2.30",
                  "model": "Arc", "controls": {"observe": ["sonos"]}}
         data["devices"].append(sonos)
-        self.assertIn("den_speaker: sonos needs the device's mac", oh_inventory.validate(data))
+        self.assertTrue(any("config.sonos.udn or the device's mac" in p for p in oh_render.validate(data)))
+        sonos["config"] = {"sonos": {"udn": "RINCON_02000000003001400"}}
+        self.assertEqual(oh_render.validate(data), [])
 
     def test_every_device_example_in_the_docs_validates(self):
         examples = [(document, block) for document in DOCUMENTS for block in FENCED.findall(document.read_text())
@@ -150,7 +152,7 @@ class Closed(unittest.TestCase):
             with self.subTest(document=document.name):
                 data, refused = oh_inventory.read(block)
                 self.assertEqual(refused, [])
-                data.setdefault("version", 1)
+                data.setdefault("version", 2)
                 self.assertEqual(oh_render.validate(data), [])
 
 
@@ -516,16 +518,16 @@ class Phase0Regressions(unittest.TestCase):
 
     def test_extension_device_and_house_keys_are_shape_checked_even_when_unused(self):
         cases = (
-            lambda d: d["devices"][0].update(sony_speaker_audio="yes"),
-            lambda d: d["devices"][0].update(settings=123),
-            lambda d: d["devices"][0].update(heos_pid=[]),
-            lambda d: d["devices"][0].update(ir="bad"),
-            lambda d: d["devices"][0].update(cec="bad"),
-            lambda d: d["devices"][0].update(protect=123),
-            lambda d: d["devices"][0].update(sonos_udn=123),
-            lambda d: d["devices"][0].update(zones="two"),
+            lambda d: d["devices"][0].update(config={"sony_ip_control": {"speaker_audio": "yes"}}),
+            lambda d: d["devices"][0].update(config={"bk808_http": 123}),
+            lambda d: d["devices"][0].update(config={"heos": {"pid": []}}),
+            lambda d: d["devices"][0].update(config={"ir": "bad"}),
+            lambda d: d["devices"][0].update(config={"bk808_cec": "bad"}),
+            lambda d: d["devices"][0].update(config={"unifi_protect": 123}),
+            lambda d: d["devices"][0].update(config={"sonos": {"udn": 123}}),
+            lambda d: d["devices"][0].update(config={"denonmarantz_http": {"zones": "two"}}),
             lambda d: d.update(protect={"host": 123}),
-            lambda d: d.update(control4_director=123),
+            lambda d: d.update(control4={"director": 123}),
             lambda d: d.update(theme=123),
             lambda d: d.update(diagnostics="yes"),
         )
@@ -553,11 +555,11 @@ class Phase0Regressions(unittest.TestCase):
         from oh_integrations import denonmarantz_http
         for zones in (1, 3, 4):
             data = {
-                "version": 1,
+                "version": 2,
                 "rooms": {"den": {"label": "Den", "tag": "Room"}},
                 "devices": [{
                     "id": "den_avr", "room": "den", "kind": "avr", "make": "Marantz", "model": "CINEMA 40",
-                    "ip": "192.0.2.60", "zones": zones,
+                    "ip": "192.0.2.60", "config": {"denonmarantz_http": {"zones": zones}},
                     "controls": {"observe": ["denonmarantz_http"], "control": ["denonmarantz_http"]},
                 }],
             }
@@ -601,7 +603,7 @@ class Phase0Regressions(unittest.TestCase):
 
     def test_cross_check_indexed_network_and_prefix_matching(self):
         data = {
-            "version": 1,
+            "version": 2,
             "rooms": {"living_room_main": {"label": "Living Room", "tag": "Room"}},
             "devices": [
                 {"id": "living_room_tv", "room": "living_room_main", "ip": "192.0.2.10", "kind": "tv",
@@ -629,6 +631,214 @@ class Phase0Regressions(unittest.TestCase):
         self.assertTrue(any("stray_widget_power" in p for p in problems), problems)
         self.assertFalse(any("living_room_tv" in p for p in problems), problems)
         self.assertFalse(any("loc_living_room_main" in p for p in problems), problems)
+
+
+class SchemaV2(Scratch):
+    """Schema v2 device.timing, derived defaults, capability decoupling, and unifi_protect observe."""
+
+    def test_device_timing_propagates_to_lifecycle_io_room_policy_and_ports(self):
+        from oh_features.routing import lifecycle_io
+        from oh_integrations import androidtv_googletv, avpro_telnet, bk808_http, denonmarantz_http, sony_adcp
+        from oh_room_policy import expected_plan
+
+        data = copy.deepcopy(EXAMPLE)
+        # Override settle & poll_s on example_tv and example_matrix
+        data["devices"][0]["timing"] = {"settle": {"ON": 18000}}
+        data["devices"][4]["timing"] = {"poll_s": 25}
+        self.assertEqual(oh_render.validate(data), [])
+        caps = lifecycle_io.capabilities(data["devices"])
+        self.assertEqual(caps["example_tv_power"]["field"]["settle"], {"ON": 18000})
+        self.assertEqual(caps["example_matrix_output1_input"]["field"]["feedback"]["interval_s"], 25)
+        # Room policy plan max_age reflects the overridden poll_s (2 * 25 + 10 = 60.0, up from 30.0)
+        plan = expected_plan(data, "example_east", "example_computer")
+        out2 = next(f for f in plan.fields if f.item == "example_matrix_output2_input")
+        self.assertEqual(out2.max_age, 60.0)
+
+        # timing.port overrides integration default ports
+        avr = {"id": "den_avr", "room": "example_west", "kind": "avr", "ip": "192.0.2.60",
+               "timing": {"port": 18080}, "controls": {"observe": ["denonmarantz_http"], "control": ["denonmarantz_http"]}}
+        avpro = {"id": "den_avpro", "room": "example_west", "kind": "hdmi_matrix", "ip": "192.0.2.61",
+                 "timing": {"port": 2323}, "controls": {"control": ["avpro_telnet"]}}
+        proj = {"id": "den_proj", "room": "example_west", "kind": "projector", "ip": "192.0.2.62",
+                "timing": {"port": 53599}, "controls": {"observe": ["sony_adcp"], "control": ["sony_adcp"]}}
+        atv = {"id": "den_atv", "room": "example_west", "kind": "streamer", "ip": "192.0.2.63",
+               "timing": {"port": 6470}, "controls": {"control": ["androidtv_googletv"]}}
+        port_house = {"version": 2, "rooms": {"example_west": {"label": "West", "tag": "Room"}},
+                      "devices": [avr, avpro, proj, atv]}
+        self.assertEqual(oh_render.validate(port_house), [])
+        built = oh_render.build(House(port_house))
+        self.assertEqual(built.yaml[denonmarantz_http.FILE].things["denonmarantz:avr:den_avr"]["config"]["httpPort"], 18080)
+        self.assertEqual(built.yaml[androidtv_googletv.FILE].things["androidtv:googletv:den_atv"]["config"]["googletvPort"], 6470)
+        self.assertIn('"port":2323', built.files[avpro_telnet.rule_path(avpro)])
+        self.assertIn('"port":53599', built.files[sony_adcp.rule_path(proj)])
+
+        # Invalid timing values are rejected cleanly
+        for bad_timing in ({"settle": {"ON": 0}}, {"settle": {"ON": 300001}}, {"poll_s": 0}, {"poll_s": 4000}, {"port": 70000}):
+            with self.subTest(timing=bad_timing):
+                bad = copy.deepcopy(EXAMPLE)
+                bad["devices"][0]["timing"] = bad_timing
+                self.assertTrue(oh_inventory.validate(bad))
+        self.assertEqual(bk808_http.ports(data["devices"][4]), (8, 8))
+
+    def test_sonos_optional_udn_and_model_profile_decoupling(self):
+        from oh_access import native_boundary
+        from oh_integrations import sonos
+
+        mac = bytes((2, 0, 0, 0, 0, 42)).hex(":")
+        expected_udn = sonos.udn(mac)
+        # UDN omitted -> derived from mac automatically; custom model with model_profile: soundbar
+        bar = {"id": "den_bar", "room": "example_west", "kind": "soundbar", "make": "Sonos", "model": "Custom Bar",
+               "ip": "192.0.2.42", "mac": mac, "config": {"sonos": {"model_profile": "soundbar"}},
+               "controls": {"observe": ["sonos"], "control": ["sonos"]}}
+        # MAC omitted -> explicit config.sonos.udn accepted; Beam inferred as soundbar
+        beam = {"id": "den_beam", "room": "example_west", "kind": "soundbar", "make": "Sonos", "model": "Beam",
+                "ip": "192.0.2.43", "config": {"sonos": {"udn": "RINCON_02000000002B01400"}},
+                "controls": {"observe": ["sonos"], "control": ["sonos"]}}
+        data = {"version": 2, "rooms": {"example_west": {"label": "West", "tag": "Room"}}, "devices": [bar, beam]}
+        self.assertEqual(oh_render.validate(data), [])
+        self.assertEqual(sonos.udn(bar), expected_udn)
+        self.assertEqual(sonos.remote_of(bar), "sonos")
+        self.assertEqual(sonos.remote_of(beam), "sonos")
+        built = oh_render.build(House(data))
+        self.assertEqual(built.yaml[sonos.FILE].things["sonos:Arc:den_bar"]["config"]["udn"], expected_udn)
+        self.assertEqual(built.yaml[sonos.FILE].things["sonos:Arc:den_beam"]["config"]["udn"], "RINCON_02000000002B01400")
+        # Descriptor routes work both with MAC-derived UDN and UDN-without-MAC.
+        xml = (f'<root xmlns="{native_boundary.DEVICE_NAMESPACE}"><device><UDN>uuid:{expected_udn}</UDN>'
+               '<serviceList><service><serviceId>urn:sonos-com:serviceId:DeviceProperties</serviceId>'
+               '<eventSubURL>/DeviceProperties/Event</eventSubURL></service></serviceList></device></root>').encode()
+        self.assertTrue(native_boundary.descriptor_routes(xml, bar))
+        xml_beam = xml.replace(expected_udn.encode(), b"RINCON_02000000002B01400")
+        self.assertTrue(native_boundary.descriptor_routes(xml_beam, beam))
+
+    def test_ir_emitter_via_inheritance_and_profile_decoupling(self):
+        import oh_conf
+        from oh_integrations import globalcache_ir
+
+        instance = self.root / "instance"
+        (instance / "ir").mkdir(parents=True)
+        profile = {"version": 1, "make": "Panasonic", "model": "DP-UB820", "source": "fictional fixture",
+                   "commands": {"play": {"code": "38000,1,1,24,24", "verified": True}}}
+        (instance / "ir/panasonic.json").write_text(json.dumps(profile), encoding="utf-8")
+        data = {
+            "version": 2,
+            "rooms": {"den": {"label": "Den", "tag": "Room"}},
+            "devices": [
+                {"id": "rack_ir", "room": "den", "kind": "control4_controller", "make": "Global Cache",
+                 "model": "iTach IP2IR", "ip": "192.0.2.50"},
+                {"id": "den_disc", "room": "den", "kind": "disc_player", "make": "Panasonic", "model": "DP-UB820",
+                 "ip": "192.0.2.51",
+                 "config": {"ir": {"via": "rack_ir", "connector": 2, "profile": "ir/panasonic.json"}},
+                 "controls": {"control": ["ir"]}},
+                {"id": "den_disc_via", "room": "den", "kind": "disc_player", "make": "Panasonic", "model": "DP-UB820",
+                 "via": "rack_ir",
+                 "config": {"ir": {"connector": 3, "profile": "ir/panasonic.json"}},
+                 "controls": {"control": ["ir"]}},
+            ],
+        }
+        with oh_conf.instance_at(instance):
+            self.assertEqual(oh_render.validate(data), [])
+            house = House(data)
+            for ident in ("den_disc", "den_disc_via"):
+                disc = house.by_id[ident]
+                self.assertEqual(disc["config"]["ir"]["ip"], "192.0.2.50")
+                self.assertEqual(disc["config"]["ir"]["model"], "iTach IP2IR")
+            files = oh_render.render(house)
+            self.assertIn("192.0.2.50", files[globalcache_ir.FILE])
+            self.assertIn('"id":"den_disc"', files[globalcache_ir.RULE])
+            self.assertIn('"id":"den_disc_via"', files[globalcache_ir.RULE])
+
+    def test_bk808_cec_derives_matrix_and_input_from_routing_without_hardcoded_models(self):
+        from oh_integrations import bk808_cec
+
+        data = {
+            "version": 2,
+            "rooms": {"den": {"label": "Den", "tag": "Room"}},
+            "devices": [
+                {"id": "custom_matrix", "room": "den", "kind": "hdmi_matrix", "make": "OEM", "model": "Custom 4x4",
+                 "ip": "192.0.2.60", "config": {"bk808_http": {"ports": [4, 4]}},
+                 "controls": {"control": ["bk808_http"]}},
+                {"id": "den_disc", "room": "den", "kind": "disc_player", "make": "Panasonic", "model": "DP-UB820",
+                 "via": "custom_matrix", "controls": {"control": ["bk808_cec"]}},
+            ],
+            "routing": {
+                "hdmi_matrix": "custom_matrix", "hdmi_off_input": 4, "usb_off_host": 4,
+                "sources": {"den_disc": {"label": "Disc", "hdmi_input": 2}},
+                "rooms": {"den": {"hdmi_output": 1, "sources": ["den_disc"]}},
+            },
+        }
+        self.assertEqual(oh_render.validate(data), [])
+        house = House(data)
+        disc = house.by_id["den_disc"]
+        self.assertEqual(disc["config"]["bk808_cec"], {"matrix": "custom_matrix", "input": 2})
+        self.assertEqual(bk808_cec.thing_uid(disc), "http:url:custom_matrix")
+        files = oh_render.render(house)
+        self.assertIn('\\"port\\":[0,1,0,0,0,0,0,0]', files[bk808_cec.RULE])
+
+    def test_capability_decoupling_across_integrations_and_unifi_protect_observe(self):
+        from oh_integrations import (
+            androidtv_googletv,
+            avpro_telnet,
+            bk808_http,
+            denonmarantz_http,
+            pyatv_http,
+            sony_adcp,
+            sony_ip_control,
+            unifi_protect,
+        )
+
+        data = {
+            "version": 2,
+            "protect": {"host": "192.0.2.1"},
+            "rooms": {"den": {"label": "Den", "tag": "Room"}},
+            "devices": [
+                # Non-Apple pyatv_http on kind=tv
+                {"id": "den_atv", "room": "den", "kind": "tv", "make": "Generic", "model": "Box",
+                 "ip": "192.0.2.70", "controls": {"control": ["pyatv_http"]}},
+                # Non-NVIDIA androidtv_googletv with custom remote_layout
+                {"id": "den_gtv", "room": "den", "kind": "game_console", "make": "Onn", "model": "4K Pro",
+                 "ip": "192.0.2.71", "config": {"androidtv_googletv": {"remote_layout": "nvidia_shield"}},
+                 "controls": {"control": ["androidtv_googletv"]}},
+                # Custom AVR model with explicit inputs & has_diagnostics
+                {"id": "den_avr", "room": "den", "kind": "avr", "make": "Denon", "model": "Custom AVR",
+                 "ip": "192.0.2.72", "config": {"denonmarantz_http": {"zones": 2, "inputs": ["BD", "GAME"],
+                                                                       "has_diagnostics": True}},
+                 "controls": {"observe": ["denonmarantz_http"], "control": ["denonmarantz_http"]}},
+                # Custom ports on avpro_telnet and bk808_http
+                {"id": "den_avpro", "room": "den", "kind": "hdmi_matrix", "model": "AC-MX-88X",
+                 "ip": "192.0.2.73", "controls": {"control": ["avpro_telnet"]}},
+                {"id": "den_bk", "room": "den", "kind": "hdmi_matrix", "model": "Custom Matrix",
+                 "ip": "192.0.2.74", "config": {"bk808_http": {"ports": [4, 4]}},
+                 "controls": {"control": ["bk808_http"]}},
+                # Custom inputs on sony_ip_control and sony_adcp
+                {"id": "den_tv", "room": "den", "kind": "tv", "make": "Sony", "model": "Custom TV",
+                 "ip": "192.0.2.75", "config": {"sony_ip_control": {"speaker_audio": False, "inputs": ["hdmi1", "hdmi2"]}},
+                 "controls": {"observe": ["sony_rest"], "control": ["sony_ip_control"]}},
+                {"id": "den_proj", "room": "den", "kind": "projector", "make": "Sony", "model": "Custom Proj",
+                 "ip": "192.0.2.76", "config": {"sony_adcp": {"inputs": ["hdmi1"]}},
+                 "controls": {"observe": ["sony_adcp"], "control": ["sony_adcp"]}},
+                # unifi_protect under observe with config.unifi_protect
+                {"id": "front_cam", "room": "den", "kind": "doorbell", "ip": "192.0.2.77",
+                 "config": {"unifi_protect": {"device_id": "0123456789abcdef01234567", "package_camera": True}},
+                 "controls": {"observe": ["unifi_protect"]}},
+            ],
+        }
+        self.assertEqual(oh_render.validate(data), [])
+        house = House(data)
+        self.assertEqual(androidtv_googletv.remote_of(house.by_id["den_gtv"]), "nvidia_shield")
+        for kind in ("tv", "streamer", "console", "media_player"):
+            self.assertEqual(androidtv_googletv.validate({"id": "g", "kind": kind, "ip": "192.0.2.71",
+                                                          "controls": {"control": ["androidtv_googletv"]}}), [])
+        self.assertIsNotNone(denonmarantz_http.diagnostics(house.by_id["den_avr"]))
+        self.assertEqual(avpro_telnet.ports(house.by_id["den_avpro"]), (8, 8))
+        self.assertEqual(bk808_http.ports(house.by_id["den_bk"]), (4, 4))
+        self.assertEqual(sony_ip_control.fields(house.by_id["den_tv"])["den_tv_input"]["values"], ["hdmi1", "hdmi2"])
+        self.assertEqual(sony_adcp.fields(house.by_id["den_proj"])["den_proj_input"]["values"], ["hdmi1"])
+        self.assertIsNotNone(pyatv_http.remote(house.by_id["den_atv"]))
+        self.assertEqual(unifi_protect.PHASE, "observe")
+        # Listing unifi_protect under control is refused cleanly.
+        bad_cam = copy.deepcopy(data)
+        bad_cam["devices"][-1]["controls"] = {"control": ["unifi_protect"]}
+        self.assertTrue(any("unifi_protect" in p for p in oh_render.validate(bad_cam)))
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
 from oh_conf import House  # noqa: E402
+import oh_inventory  # noqa: E402
 from oh_features import remote_model  # noqa: E402
 
 MINI, AMP, OWNED, ROOM = "fixture_den_mini", "fixture_den_amp", "fixture_amp", "example_east"
@@ -27,7 +28,7 @@ WIIM = {"make": "WiiM", "controls": {"observe": ["wiim_http"], "control": ["wiim
 
 
 def house(**changes):
-    data = json.loads((AREA / "instance/devices.yaml").read_text())
+    data = oh_inventory.load(AREA / "instance/devices.yaml")
     data["rooms"]["fixture_den"] = {"label": "Fixture Den", "tag": "Room"}
     data["devices"] += [
         {"id": MINI, "room": "fixture_den", "name": "Fixture Den Mini", "ip": "192.0.2.43", "kind": "audio_streamer", "model": "Mini", **WIIM},
@@ -75,7 +76,7 @@ class Rooms(unittest.TestCase):
         self.assertEqual(built["devices"][OWNED]["audio"]["rooms"], {"example_west": "own", ROOM: "own"})
 
     def test_a_house_without_speakers_lists_none(self):
-        data = json.loads((AREA / "instance/devices.yaml").read_text())
+        data = oh_inventory.load(AREA / "instance/devices.yaml")
         built = remote_model.build(House(data))
         self.assertEqual(built["speakerRooms"], [])
         self.assertTrue(all(room["speakers"] == [] for room in built["rooms"]))

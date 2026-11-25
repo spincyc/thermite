@@ -24,6 +24,7 @@ const METER = 32;
 const LIGHTS = {
   ok: { glyph: "\u25cf", role: "ok" },
   busy: { glyph: "\u25d0", blink: "\u25d1", role: "busy" },
+  partial: { glyph: "\u25d2", role: "busy" },
   bad: { glyph: "!", role: "bad", bold: true },
   // A source chosen, sent and never read back.
   unconfirmed: { glyph: "?", role: "bad", bold: true },

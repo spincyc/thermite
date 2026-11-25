@@ -65,8 +65,10 @@ beside the live runtime, connects to no matrix; the metrics probe no port
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
-from oh_conf import Addon, House, YamlFile, uses
+from oh_conf import Addon, House, YamlFile, config as device_config, uses
+from oh_shape import LIST, NUMBER, Key
 from .. import _commands, _hotplug, _script
 
 NAME = "avpro_telnet"
@@ -80,6 +82,10 @@ HEADER = (
 )
 ADDONS = (Addon("automation", "jsscripting", "the HDMI matrix rule (avpro_telnet.js)"),)
 ASSETS: dict[str, str] = {}
+DEVICE_KEYS = {
+    "ports": Key(LIST, "number of [inputs, outputs] when different from model detection or 4x4",
+                 each=Key(NUMBER, "positive port count")),
+}
 KINDS = {"hdmi_matrix"}
 PORT = 23
 #: Its web server, which takes the network module's restart.
@@ -91,6 +97,7 @@ READS = True
 #: Seconds between those reads (avpro_telnet.js POLL).
 POLL_S = 10
 INPUTS = OUTPUTS = 4
+_MODEL_PORTS = re.compile(r"AC-MX-(\d)(\d)", re.IGNORECASE)
 READBACK_INPUTS = tuple(str(number) for number in range(1, INPUTS + 1))
 #: All that the rule ever sends, named as lib/oh_matrix_sim's stand-in
 #: records it: routing, restart and optional read-only diagnostic queries.
@@ -103,6 +110,17 @@ SOURCE = Path(__file__).resolve().parent / "avpro_telnet.js"
 
 def ports(device: dict) -> tuple[int, int]:
     """(inputs, outputs)."""
+    custom = device_config(device, NAME).get("ports")
+    if (isinstance(custom, list) and len(custom) == 2
+            and all(type(n) is int and 1 <= n <= 32 for n in custom)):
+        return custom[0], custom[1]
+    model = device.get("model")
+    if isinstance(model, str):
+        match = _MODEL_PORTS.search(model)
+        if match:
+            ins, outs = int(match.group(1)), int(match.group(2))
+            if ins >= 1 and outs >= 1:
+                return ins, outs
     return INPUTS, OUTPUTS
 
 
@@ -126,8 +144,15 @@ def reboot(device: dict) -> dict:
     read again. Nothing it reports shows that an output is in use, so it has
     no idle readings of its own; oh_features.reboots adds the Off of each
     room that shows one of its outputs (`rooms`)."""
-    return {"item": reboot_item(device), "answers": [switch_item(device, output) for output in range(1, OUTPUTS + 1)],
+    _, outputs = ports(device)
+    return {"item": reboot_item(device), "answers": [switch_item(device, output) for output in range(1, outputs + 1)],
             "idle": [], "rooms": True}
+
+
+def manual_items(device: dict) -> int:
+    """Number of manual command Items handled by the matrix's actor (outputs + reboot)."""
+    _, outputs = ports(device)
+    return outputs + 1
 
 
 def fields(device: dict) -> dict[str, dict]:
@@ -136,24 +161,36 @@ def fields(device: dict) -> dict[str, dict]:
     SET names its one output, so a lost answer leaves the others as they
     were."""
     inputs, outputs = ports(device)
+    feedback = {"kind": "poll", "interval_s": POLL_S}
     return {switch_item(device, output): {"kind": "avpro", "values": [str(n) for n in range(1, inputs + 1)],
-                                          "independent": True}
+                                          "independent": True, "feedback": feedback}
             for output in range(1, outputs + 1)}
 
 
 def validate(device: dict) -> list[str]:
-    if uses(device, PHASE, NAME) and device.get("kind") not in KINDS:
-        return [f"{device.get('id')}: {NAME} drives an hdmi_matrix, not a {device.get('kind')}"]
-    return []
+    if not uses(device, PHASE, NAME):
+        return []
+    problems: list[str] = []
+    where = device.get("id") or "a device"
+    if device.get("kind") not in KINDS:
+        problems.append(f"{where}: {NAME} drives an hdmi_matrix, not a {device.get('kind')}")
+    cfg = device_config(device, NAME)
+    if "ports" in cfg:
+        custom = cfg["ports"]
+        if (not isinstance(custom, list) or len(custom) != 2
+                or any(type(n) is not int or not 1 <= n <= 32 for n in custom)):
+            problems.append(f"{where}.config.{NAME}.ports: must be [inputs, outputs] of integers 1-32")
+    return problems
 
 
 def render(device: dict, house: House, out: YamlFile) -> None:
+    _, outputs = ports(device)
     out.items[f"{device['id']}_signal"] = {
         "type": "String", "label": "Native HDMI diagnostic replies", "groups": [device["id"]],
         "tags": ["Status"], "autoupdate": False,
         "metadata": {"stateDescription": {"config": {"readOnly": True}}},
     }
-    for output in range(1, OUTPUTS + 1):
+    for output in range(1, outputs + 1):
         out.items[switch_item(device, output)] = {
             "type": "Number",
             "label": f"Output {output} input",
@@ -176,9 +213,10 @@ def render(device: dict, house: House, out: YamlFile) -> None:
 
 def diagnostics(device: dict) -> dict:
     """Bounded native replies; components are not decoded without wire evidence."""
+    inputs, outputs = ports(device)
     item = f"{device['id']}_signal"
     readings = []
-    for direction, count in (("input", INPUTS), ("output", OUTPUTS)):
+    for direction, count in (("input", inputs), ("output", outputs)):
         fields = (("format", "video format"), ("presence", "signal status")) if direction == "input" else (
             ("presence", "signal status"), ("hpd", "hot-plug status"))
         for port in range(1, count + 1):
@@ -198,8 +236,12 @@ def problem(device: dict) -> str | None:
 
 def table(devices: list[dict]) -> list[dict]:
     """The rule's device table: id, host, telnet and web ports, and the numbers of inputs and outputs."""
-    return [{"id": d["id"], "host": d["ip"], "port": PORT, "webPort": WEB_PORT, "inputs": INPUTS, "outputs": OUTPUTS}
-            for d in devices]
+    out = []
+    for d in devices:
+        ins, outs = ports(d)
+        port = (d.get("timing") or {}).get("port", PORT)
+        out.append({"id": d["id"], "host": d["ip"], "port": port, "webPort": WEB_PORT, "inputs": ins, "outputs": outs})
+    return out
 
 
 def rule(devices: list[dict]) -> str:

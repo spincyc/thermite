@@ -24,6 +24,7 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
 from oh_conf import House  # noqa: E402
+import oh_inventory  # noqa: E402
 import oh_matrix_sim  # noqa: E402
 import oh_render  # noqa: E402
 from oh_cli import matrix_settings  # noqa: E402
@@ -45,11 +46,11 @@ def device(ident, kind, number, **extra):
 
 
 HOUSE = {
-    "version": 1,
+    "version": 2,
     "rooms": {LOUNGE: {"label": "Example Lounge", "tag": "Room"}},
     "devices": [
         device("example_matrix", "hdmi_matrix", 20, model="HDMI matrix", controls={"control": ["bk808_http"]},
-               settings={"scaler": "auto"}),
+               config={"bk808_http": {"scaler": "auto"}}),
         device("example_usb", "usb_matrix", 21, model="UKM-404", controls={"control": ["ukm404_http"]}),
         device("example_avr", "avr", 22, make="Marantz", model="CINEMA 30",
                controls={"observe": ["denonmarantz_http"], "control": ["denonmarantz_http"]}),
@@ -101,9 +102,9 @@ class Validation(unittest.TestCase):
         for value in ([], {}):
             with self.subTest(value=value):
                 data = house()
-                matrix(data)["settings"]["scaler"] = value
+                matrix(data)["config"]["bk808_http"]["scaler"] = value
                 problems = oh_render.validate(data)
-                self.assertIn(f"example_matrix.settings.scaler: {value!r} is not one of "
+                self.assertIn(f"example_matrix.config.bk808_http.scaler: {value!r} is not one of "
                               "bypass, 8k-to-4k, to-1080p, auto, audio-only", problems)
 
     def test_each_rule_has_a_clear_problem(self):
@@ -116,7 +117,7 @@ class Validation(unittest.TestCase):
 
         def without_scaler(_, data):
             matrix(data)["controls"]["control"] = ["avpro_telnet"]
-            matrix(data).pop("settings")
+            matrix(data).pop("config")
             data["routing"]["hdmi_off_input"] = 4
 
         names = "bypass, 8k-to-4k, to-1080p, auto, audio-only"
@@ -131,8 +132,8 @@ class Validation(unittest.TestCase):
                                f"{WHERE}.{PLAYER}: '{PLAYER}' is not one of this room's sources from the HDMI matrix"),
             "not offered": (unoffered,
                             f"{WHERE}.{DISC}: '{DISC}' is not one of this room's sources from the HDMI matrix"),
-            "no fixed scaler": (lambda _, data: matrix(data).pop("settings"),
-                                f"{WHERE}: needs example_matrix.settings.scaler, the scaler the output gets back "
+            "no fixed scaler": (lambda _, data: matrix(data).pop("config"),
+                                f"{WHERE}: needs example_matrix.config.bk808_http.scaler, the scaler the output gets back "
                                 "for the room's other choices"),
             "integration without scalers": (without_scaler, f"{WHERE}: avpro_telnet cannot set an output's scaler"),
         }
@@ -154,7 +155,7 @@ class Commands(unittest.TestCase):
 
     def test_other_choices_restore_the_configured_fixed_scaler(self):
         data = house()
-        matrix(data)["settings"]["scaler"] = "to-1080p"
+        matrix(data)["config"]["bk808_http"]["scaler"] = "to-1080p"
         config = House(data)
         for choice in (DISC, PLAYER, routing.OFF):
             with self.subTest(choice):
@@ -162,7 +163,7 @@ class Commands(unittest.TestCase):
 
     def test_without_it_no_route_sets_a_scaler(self):
         plain = House(house(lambda rooms, _: rooms[LOUNGE].pop("hdmi_audio_scaler")))
-        example = House(json.loads((AREA / "instance/devices.yaml").read_text()))
+        example = House(oh_inventory.load(AREA / "instance/devices.yaml"))
         for data in (plain, example):
             for raw in routing.table(data)["rooms"].values():
                 steps = [item for choice in raw["choices"].values() for item, _ in choice]
@@ -217,11 +218,12 @@ class Matrix(unittest.TestCase):
         self.assertIn("set video scaler", bk808_http.COMHEADS)
         self.assertEqual(bk808_http.fields(matrix(data))[SCALER2],
                          {"kind": "http", "thing": bk808_http.thing_uid(matrix(data)), "channel": "output2_scaler",
-                          "values": ["0", "1", "2", "3", "4"], "ack": "result", "independent": True})
+                          "values": ["0", "1", "2", "3", "4"], "ack": "result", "independent": True,
+                          "feedback": {"kind": "poll", "interval_s": bk808_http.POLL_S}})
 
     def test_matrix_settings_leaves_a_routed_scaler_alone(self):
         device = matrix(house())
-        device["settings"]["hdr"] = "auto"
+        device["config"]["bk808_http"]["hdr"] = "auto"
         status = oh_matrix_sim.BK808.default_status()
         changed = [what for what, _ in bk808_http.plan(device, status)]
         self.assertIn("output 2 scaler bypass -> auto", changed)
@@ -342,10 +344,13 @@ class RoutingCheck(unittest.TestCase):
 @unittest.skipUnless(shutil.which("node"), "node is required for the production routing script")
 class Runtime(unittest.TestCase):
     def test_the_scaler_follows_the_choice_with_and_without_the_lifecycle(self):
-        tables = {"lifecycle": rendered_table(house()),
-                  "plain": rendered_table(house(lambda rooms, _: rooms[LOUNGE].pop("usb_unused")))}
-        self.assertIn("lifecycle", tables["lifecycle"])
-        self.assertNotIn("lifecycle", tables["plain"])
+        with_lifecycle = rendered_table(house())
+        without_flag = rendered_table(house(lambda rooms, _: rooms[LOUNGE].pop("usb_unused")))
+        # Per-field executor adoption compiles lifecycle even without usb_unused.
+        self.assertIn("lifecycle", with_lifecycle)
+        self.assertIn("lifecycle", without_flag)
+        tables = {"lifecycle": with_lifecycle,
+                  "plain": {k: v for k, v in without_flag.items() if k != "lifecycle"}}
         result = subprocess.run([shutil.which("node"), str(AREA / "tests/audio_scaler_harness.js"),
                                  str(routing.SOURCE), str(routing.SOURCE.with_name("lifecycle.js"))],
                                 input=json.dumps(tables), capture_output=True, text=True, timeout=60)

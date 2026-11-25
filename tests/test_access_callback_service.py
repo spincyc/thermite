@@ -33,7 +33,7 @@ class Configuration(unittest.TestCase):
         json_private(self.path, CONFIG)
 
     def test_exact_private_configuration_loads_without_client_or_listener_or_state(self):
-        with patch("socket.create_connection", side_effect=AssertionError("network forbidden")), patch.object(service, "header_protocol", side_effect=AssertionError("listener forbidden")):
+        with patch("socket.create_connection", side_effect=AssertionError("network forbidden")), patch.object(service, "listener", side_effect=AssertionError("listener forbidden")):
             self.assertEqual(service.load_config(self.path, runtime_url="http://127.0.0.1:8080/"), CONFIG)
         self.assertEqual(list(self.root.iterdir()), [self.path])
 
@@ -88,25 +88,29 @@ class Configuration(unittest.TestCase):
         serve.assert_called_once_with(self.path)
 
     def test_server_has_actual_header_deadline_and_no_forwarded_trust_logging_or_credentials(self):
-        fake_uvicorn = type(sys)("uvicorn")
-        fake_uvicorn.run = Mock()
-        protocol = object()
-        with patch.object(service, "require_service_account"), patch.dict(sys.modules, {"uvicorn": fake_uvicorn}), patch.object(service, "header_protocol", return_value=protocol):
+        from oh_access import service as access_service
+        import logging
+
+        with patch.object(service, "require_service_account"), \
+                patch.object(access_service, "_run_server") as run_server:
             service.serve(self.path)
-        app = fake_uvicorn.run.call_args.args[0]
-        options = fake_uvicorn.run.call_args.kwargs
+        run_server.assert_called_once()
+        [(app, config)] = run_server.call_args.args[0]
         self.assertEqual(app.routes, CONFIG["routes"])
         self.assertIsNone(app.client)
-        self.assertEqual((options["host"], options["port"]), (CONFIG["bind_host"], CONFIG["port"]))
-        self.assertIs(options["http"], protocol)
-        self.assertEqual(options["lifespan"], "on")
-        for key in ("proxy_headers", "access_log", "server_header", "date_header"):
-            self.assertFalse(options[key])
-        self.assertEqual(options["forwarded_allow_ips"], "")
-        self.assertEqual(options["ws"], "none")
-        self.assertIn(("Connection", "close"), options["headers"])
-        self.assertEqual((options["h11_max_incomplete_event_size"], options["limit_concurrency"]), (16384, 32))
-        self.assertEqual((options["timeout_keep_alive"], options["timeout_graceful_shutdown"]), (1, 5))
+        self.assertEqual(config.bind, [f"{CONFIG['bind_host']}:{CONFIG['port']}"])
+        self.assertFalse(config.ssl_enabled)
+        self.assertIsNone(config.accesslog)
+        self.assertIs(config.errorlog, logging.getLogger("hypercorn.error"))
+        self.assertIsNone(config.logconfig)
+        self.assertIsNone(config.logconfig_dict)
+        self.assertFalse(config.include_server_header)
+        self.assertFalse(config.include_date_header)
+        self.assertEqual(config.response_headers("h11"), [])
+        self.assertEqual((config.keep_alive_timeout, config.keep_alive_max_requests, config.graceful_timeout), (3, 1, 5))
+        self.assertEqual((config.h11_max_incomplete_size, config.h2_max_header_list_size), (16384, 16384))
+        self.assertEqual((config.h2_max_concurrent_streams, config.backlog, config.workers), (1, 64, 1))
+        self.assertEqual(config.connection_limit.limit, 32)
         self.assertEqual((app.timeout, app.receive_timeout), (3, 3))
 
     def test_composed_relay_lifespan_starts_and_closes_dedicated_transport(self):
@@ -251,86 +255,170 @@ class Configuration(unittest.TestCase):
         self.assertFalse((self.root / "site-state").exists())
 
 
-@unittest.skipUnless(importlib.util.find_spec("uvicorn"), "optional pinned service environment required")
+@unittest.skipUnless(importlib.util.find_spec("hypercorn"), "optional pinned service environment required")
 class Protocol(unittest.IsolatedAsyncioTestCase):
-    async def asyncSetUp(self):
-        from uvicorn import Config
-        from uvicorn.server import ServerState
-        self.loop = asyncio.get_running_loop()
-        self.timers = []
-        class Clock:
-            def call_later(clock, delay, callback):
-                timer = Mock()
-                timer.delay, timer.callback = delay, callback
-                self.timers.append(timer)
-                return timer
-            def create_task(clock, coro): return self.loop.create_task(coro)
-        self.clock = Clock()
+    class _Running:
+        """Run oh_access.service._serve in its own thread & event loop, just
+        as the real service process does, so its task-cleanup teardown stays
+        isolated from the test loop."""
+
+        def __init__(self, app, config):
+            self.app, self.config = app, config
+            self.sockets = config.create_sockets()
+            self.port = self.sockets.insecure_sockets[0].getsockname()[1]
+            self.started = asyncio.Event()
+            self._ready = __import__("threading").Event()
+            self._thread = None
+            self._loop = None
+            self._stop = None
+
+        def start(self):
+            import threading
+            self._thread = threading.Thread(target=asyncio.run, args=(self._main(),), daemon=True)
+            self._thread.start()
+            assert self._ready.wait(5), "callback test server failed to start"
+            return self
+
+        async def _main(self):
+            from oh_access import service as access_service
+            self._loop = asyncio.get_running_loop()
+            self._stop = asyncio.Event()
+            self._ready.set()
+            await access_service._serve([(self.app, self.config, self.sockets)], stop=self._stop)
+
+        def stop(self):
+            if self._loop is not None and self._stop is not None:
+                self._loop.call_soon_threadsafe(self._stop.set)
+            if self._thread is not None:
+                self._thread.join(10)
+                assert not self._thread.is_alive(), "callback test server did not stop cleanly"
+
+    async def start_server(self, *, connections=service.CONNECTIONS, header_seconds=0.35):
+        self.seen = []
+        self.lifespan_events = []
+
         async def app(scope, receive, send):
+            if scope["type"] == "lifespan":
+                while True:
+                    event = await receive()
+                    self.lifespan_events.append(event["type"])
+                    if event["type"] == "lifespan.startup":
+                        await send({"type": "lifespan.startup.complete"})
+                    elif event["type"] == "lifespan.shutdown":
+                        await send({"type": "lifespan.shutdown.complete"})
+                        return
+            self.seen.append(scope)
             await send({"type": "http.response.start", "status": 200, "headers": [(b"content-length", b"0")]})
             await send({"type": "http.response.body", "body": b""})
-        self.config = Config(app, http=service.header_protocol(), ws="none", lifespan="off", proxy_headers=False,
-                             access_log=False, server_header=False, log_config=None,
-                             h11_max_incomplete_event_size=16384, headers=[("Connection", "close")])
-        self.config.load()
-        self.state = ServerState()
-        self.state.default_headers = self.config.encoded_headers
-        self.connections = []
 
-    def connection(self):
-        class Transport:
-            closing, data = False, b""
-            def get_extra_info(transport, name):
-                return {"peername": (PEER, 1400), "sockname": ("192.0.2.2", 8088)}.get(name)
-            def is_closing(transport): return transport.closing
-            def close(transport): transport.closing = True
-            def write(transport, data): transport.data += data
-            def pause_reading(transport): pass
-            def resume_reading(transport): pass
-        protocol = self.config.http_protocol_class(self.config, self.state, {}, _loop=self.clock)
-        transport = Transport()
-        protocol.connection_made(transport)
-        self.connections.append((protocol, transport))
-        return protocol, transport
+        config = service.listener("127.0.0.1", 0, connections=connections, header_seconds=header_seconds,
+                                  graceful_seconds=1)
+        running = self._Running(app, config).start()
+        for _ in range(100):
+            if "lifespan.startup" in self.lifespan_events:
+                break
+            await asyncio.sleep(0.01)
+        return running.port, config, running
 
-    async def asyncTearDown(self):
-        if self.state.tasks:
-            await asyncio.gather(*self.state.tasks)
-        for protocol, _ in self.connections:
-            protocol.connection_lost(None)
-        self.assertFalse(self.state.connections)
-        self.assertFalse(self.state.tasks)
+    async def stop_server(self, running):
+        await asyncio.to_thread(running.stop)
 
     async def test_partial_initial_headers_keep_fixed_deadline_and_close_on_expiry(self):
-        protocol, transport = self.connection()
-        timer = self.timers[0]
-        self.assertEqual(timer.delay, 3)
-        protocol.data_received(b"NOTIFY /upnpcallback HTTP/1.1\r\nHost: ")
-        self.assertIsNone(protocol.cycle)
-        timer.cancel.assert_not_called()
-        self.assertEqual(len(self.timers), 1)  # Dripping bytes do not extend it.
-        timer.callback()
-        self.assertTrue(transport.closing)
+        port, config, running = await self.start_server(header_seconds=0.25)
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(b"NOTIFY /upnpcallback HTTP/1.1\r\nHost: ")
+            await writer.drain()
+            # Dripping bytes before the deadline must not extend it.
+            await asyncio.sleep(0.12)
+            writer.write(b"127.0.0.1")
+            await writer.drain()
+            data = await asyncio.wait_for(reader.read(), timeout=1.5)
+            self.assertEqual(data, b"")
+            self.assertEqual(self.seen, [])
+            writer.close()
+            await writer.wait_closed()
+        finally:
+            await self.stop_server(running)
+        self.assertEqual(self.lifespan_events, ["lifespan.startup", "lifespan.shutdown"])
+        self.assertEqual(config.connection_limit.active, 0)
 
-    async def test_complete_headers_cancel_timer_and_each_response_closes_connection(self):
-        protocol, transport = self.connection()
-        protocol.data_received(b"NOTIFY /upnpcallback HTTP/1.1\r\nHost: 192.0.2.2:8088\r\nContent-Length: 0\r\n\r\n")
-        self.timers[0].cancel.assert_called_once()
-        self.assertIsNone(protocol.header_deadline)
-        await asyncio.gather(*self.state.tasks)
-        self.assertIn(b"200 OK", transport.data)
-        self.assertTrue(transport.closing)
+    async def test_complete_headers_answer_without_server_or_date_and_close_connection(self):
+        port, config, running = await self.start_server(header_seconds=2)
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(f"NOTIFY /upnpcallback HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n"
+                         "X-Forwarded-For: 198.51.100.7\r\nContent-Length: 0\r\n\r\n".encode())
+            await writer.drain()
+            response = await asyncio.wait_for(reader.read(), timeout=2)
+            writer.close()
+            await writer.wait_closed()
+        finally:
+            await self.stop_server(running)
+        self.assertTrue(response.startswith(b"HTTP/1.1 200 "), response)
+        lowered = response.lower()
+        self.assertIn(b"\r\nconnection: close\r\n", lowered)
+        self.assertNotIn(b"\r\nserver:", lowered)
+        self.assertNotIn(b"\r\ndate:", lowered)
+        # Hypercorn trusts no forwarded header: client stays the socket peer.
+        self.assertEqual(len(self.seen), 1)
+        self.assertEqual(self.seen[0]["client"][0], "127.0.0.1")
+        self.assertEqual(config.connection_limit.active, 0)
 
     async def test_header_size_and_connection_count_are_bounded_before_asgi(self):
-        protocol, transport = self.connection()
-        with patch.object(protocol.logger, "warning"):
-            protocol.data_received(b"NOTIFY / HTTP/1.1\r\nX-Long: " + b"x" * 17000)
-        self.assertIn(b"400 Bad Request", transport.data)
-        self.assertTrue(transport.closing)
-        for _ in range(service.CONNECTIONS):
-            last, last_transport = self.connection()
-        self.assertTrue(last_transport.closing)
-        self.assertIsNone(last.header_deadline)
+        port, config, running = await self.start_server(connections=2, header_seconds=0.5)
+        try:
+            # Oversized incomplete header is rejected before ASGI runs.
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(b"NOTIFY / HTTP/1.1\r\nX-Long: " + b"x" * 17000)
+            await writer.drain()
+            oversized = await asyncio.wait_for(reader.read(), timeout=2)
+            self.assertRegex(oversized, rb"^HTTP/1\.1 (?:400|431) ")
+            self.assertIn(b"\r\nconnection: close\r\n", oversized.lower())
+            self.assertEqual(self.seen, [])
+            writer.close()
+            await writer.wait_closed()
+            for _ in range(100):
+                if config.connection_limit.active == 0:
+                    break
+                await asyncio.sleep(0.02)
+            self.assertEqual(config.connection_limit.active, 0)
+
+            # Two open connections fill the limit; a third is closed immediately.
+            held = [await asyncio.open_connection("127.0.0.1", port) for _ in range(2)]
+            for _ in range(50):
+                if config.connection_limit.active == 2:
+                    break
+                await asyncio.sleep(0.01)
+            self.assertEqual(config.connection_limit.active, 2)
+            extra_reader, extra_writer = await asyncio.open_connection("127.0.0.1", port)
+            self.assertEqual(await asyncio.wait_for(extra_reader.read(), timeout=1.5), b"")
+            extra_writer.close()
+            await extra_writer.wait_closed()
+            self.assertEqual(config.connection_limit.active, 2)
+            for _, w in held:
+                w.close()
+                await w.wait_closed()
+            # Hypercorn's idle task finishes at header_seconds and closes the
+            # accepted sockets, releasing both slots for subsequent requests.
+            for _ in range(100):
+                if config.connection_limit.active == 0:
+                    break
+                await asyncio.sleep(0.02)
+            self.assertEqual(config.connection_limit.active, 0)
+            self.assertEqual(self.seen, [])
+
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(f"NOTIFY /upnpcallback HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n"
+                         "Content-Length: 0\r\n\r\n".encode())
+            await writer.drain()
+            after = await asyncio.wait_for(reader.read(), timeout=2)
+            self.assertTrue(after.startswith(b"HTTP/1.1 200 "), after)
+            writer.close()
+            await writer.wait_closed()
+        finally:
+            await self.stop_server(running)
+        self.assertEqual(config.connection_limit.active, 0)
 
 
 if __name__ == "__main__":

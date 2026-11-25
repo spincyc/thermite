@@ -138,7 +138,7 @@ class OwnFiles(unittest.TestCase):
                    "commands": {"play": {"code": "38000,1,1,24,24", "verified": True}}}
         (self.instance / "ir/disc.json").write_text(json.dumps(profile), encoding="utf-8")
         self.player = {"kind": "disc_player", "model": "UBP-X800M2",
-                       "ir": {"model": "iTach IP2IR", "ip": "192.0.2.25", "connector": 1, "profile": "ir/disc.json"}}
+                       "config": {"ir": {"model": "iTach IP2IR", "ip": "192.0.2.25", "connector": 1, "profile": "ir/disc.json"}}}
         # Whatever a test binds, the next one starts as this one did.
         bound = oh_conf.instance_at(None)
         bound.__enter__()
@@ -163,7 +163,7 @@ class OwnFiles(unittest.TestCase):
                          oh_brand.css(oh_brand.load(self.instance / "mine.json")).encode("utf-8"))
         # A failed House.load() leaves no process-global directory behind either.
         bad = self.instance / "bad.yaml"
-        bad.write_text(json.dumps({**mapping(), "version": 2}), encoding="utf-8")
+        bad.write_text(json.dumps({**mapping(), "version": 1}), encoding="utf-8")
         with self.assertRaises(oh_inventory.ConfigError):
             oh_conf.House.load(bad)
         self.assertIsNone(oh_conf.instance())

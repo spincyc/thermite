@@ -36,7 +36,9 @@
   // A room not read yet, or whose read failed: "Reading…" until its next update, as on Remotes.
   const UNREAD = { value: "NULL", pending: null, status: "unknown", reason: "" };
   // The last column's word for what a room's LED says.
-  const WORDS = { reported: "Reported", off: "Room off", switching: "Switching", unavailable: "Source unknown", unknown: "Reading…" };
+  const WORDS = { reported: "Reported", off: "Room off", partial: "Partially on", switching: "Switching", unavailable: "Source unknown", unknown: "Reading…" };
+  const Dom = global.ThermiteDom || null;
+  const clean = (value, max) => Dom ? Dom.cleanText(value, max) : String(value == null ? "" : value).trim().slice(0, max || 120);
   // Listen's sessions on a remote-view backend, made when Listen is first shown.
   let heard = null;
   function ensureSession(activeBackend) {
@@ -97,6 +99,11 @@
   }
   // An icon of the page's sprite whose label says what it stands for.
   function icon(name, symbol) {
+    if (Dom) {
+      const svg = Dom.svgIcon(name, symbol, " ");
+      svg.setAttribute("aria-label", "");
+      return svg;
+    }
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"), use = document.createElementNS(svg.namespaceURI, "use");
     svg.setAttribute("class", name); svg.setAttribute("role", "img"); use.setAttribute("href", symbol); svg.appendChild(use);
     return svg;
@@ -112,6 +119,7 @@
   // A row's state, for its colours, from a view: its LED, and unavailable while the house is not heard.
   function stateOf(shown) {
     if (shown.connected === false || shown.led === "bad") return "unavailable";
+    if (shown.led === "partial") return "partial";
     return shown.led === "ok" ? "reported" : shown.led === "busy" ? "switching" : shown.short === "…" ? "unknown" : "off";
   }
   // What a room shows (session.js view): its source as the remote's list
@@ -259,8 +267,62 @@
       return { get: key => memory.get(key) ?? null, set: (key, value) => { memory.set(key, String(value)); } };
     }
   }
+  // Concise recent 24h room history from GET /api/v1/history/rooms when served
+  // through the gateway; stays hidden when native, mock, empty, or unavailable.
+  const historyPanel = document.querySelector("[data-home-history]");
+  function formatDuration(seconds) {
+    const mins = Math.max(1, Math.round(seconds / 60));
+    if (mins < 60) return mins + "m";
+    const hrs = Math.floor(mins / 60), rem = mins % 60;
+    return rem ? hrs + "h " + rem + "m" : hrs + "h";
+  }
+  function renderHistory(data) {
+    if (!historyPanel) return;
+    if (!data || data.version !== 1 || !Array.isArray(data.rooms)) { historyPanel.hidden = true; return; }
+    const labels = data.labels && typeof data.labels === "object" ? data.labels : {};
+    const list = historyPanel.querySelector("[data-home-history-list]");
+    const summary = historyPanel.querySelector("[data-home-history-summary]");
+    const entries = [];
+    data.rooms.forEach(room => {
+      if (!room || !Array.isArray(room.segments) || !room.segments.length) return;
+      const durations = new Map();
+      let latest = null;
+      room.segments.forEach(seg => {
+        if (!Array.isArray(seg) || seg.length < 3) return;
+        const span = Math.max(0, Number(seg[1]) - Number(seg[0]));
+        const value = seg[2];
+        if (typeof value === "string" && value !== "off") {
+          durations.set(value, (durations.get(value) || 0) + span);
+          latest = value;
+        }
+      });
+      if (!durations.size) return;
+      const parts = Array.from(durations.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([val, secs]) => clean(labels[val] || val, 40) + " (" + formatDuration(secs) + ")");
+      const latestText = latest ? clean(labels[latest] || latest, 40) : "";
+      entries.push({ label: clean(room.label || room.room, 60), detail: parts.join(" · "), latest: latestText });
+    });
+    if (!entries.length) { historyPanel.hidden = true; return; }
+    if (summary) summary.textContent = entries.length + (entries.length === 1 ? " active room in the last 24h" : " active rooms in the last 24h");
+    if (list) {
+      list.textContent = "";
+      entries.forEach(entry => {
+        const li = Dom ? Dom.el("li", null, Dom.el("strong", null, entry.label), Dom.el("span", null, entry.detail))
+          : (() => { const row = document.createElement("li"), a = document.createElement("strong"), b = document.createElement("span"); a.textContent = entry.label; b.textContent = entry.detail; row.append(a, b); return row; })();
+        list.appendChild(li);
+      });
+    }
+    historyPanel.hidden = false;
+  }
+  function loadHistory() {
+    if (!historyPanel || !access || access.native || mock || typeof access.historyRooms !== "function") return;
+    access.historyRooms().then(renderHistory).catch(() => { historyPanel.hidden = true; });
+  }
   watching?.subscribe(alerts);
   show(mode, false);
+  loadHistory();
   // A page shown again reads the house afresh; until then its rows are what
   // was last read, and once its stream fails they say so (the connection event).
   document.addEventListener("visibilitychange", live);

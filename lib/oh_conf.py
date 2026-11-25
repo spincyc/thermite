@@ -327,13 +327,34 @@ class House:
     """
 
     def __init__(self, data: object, *, instance_dir: Path | None = None) -> None:
-        # Imported here: oh_render imports this module.
+        # Imported here: oh_render and oh_integrations import this module.
+        import oh_integrations
         import oh_render
+        if instance_dir is not None and isinstance(data, dict) and "include" in data:
+            data = inventory.expand_includes(data, instance_dir)
         problems = oh_render.validate(data)
         if problems:
             raise inventory.ConfigError(None, "not a valid house: " + "; ".join(problems), problems=problems)
+        assert isinstance(data, dict)
+        resolved = inventory.resolve_profiles(data)
+        assert isinstance(resolved, dict)
+        resolvers = oh_integrations.defining("resolve")
+        if resolvers and resolved.get("devices"):
+            devices = resolved["devices"]
+            changed = False
+            new_devices = []
+            for device in devices:
+                current = device
+                for module in resolvers:
+                    updated = module.resolve(current, resolved)
+                    if updated is not None:
+                        current = updated
+                        changed = True
+                new_devices.append(current)
+            if changed:
+                resolved = {**resolved, "devices": new_devices}
         # Valid, so the shape the house file's types (oh_inventory) give it.
-        self._hold(cast(inventory.HouseFile, data), instance_dir=instance_dir)
+        self._hold(cast(inventory.HouseFile, resolved), instance_dir=instance_dir)
 
     @classmethod
     def unchecked(cls, data: dict, *, instance_dir: Path | None = None) -> House:
@@ -376,6 +397,14 @@ class House:
         House.instance_dir without mutating process-global state."""
         data = inventory.load(path)
         directory = Path(path).parent
+        if isinstance(data, dict) and "include" in data:
+            try:
+                data = inventory.expand_includes(data, directory, source=path)
+            except inventory.ConfigError as error:
+                problems = error.problems or [error.message]
+                count = len(problems)
+                raise inventory.ConfigError(path, f"{count} problem{'s' if count != 1 else ''}; nothing done",
+                                            problems=problems) from None
         with instance_at(directory):
             try:
                 return cls(data, instance_dir=directory)
@@ -406,6 +435,13 @@ class House:
 def uses(device: dict, phase: str, name: str) -> bool:
     """Whether the device lists integration `name` under controls.<phase>."""
     return name in ((device.get("controls") or {}).get(phase) or [])
+
+
+def config(device: dict, name: str) -> dict:
+    """The integration-specific config mapping for `name` on `device`, or {}."""
+    section = device.get("config")
+    entry = section.get(name) if isinstance(section, dict) else None
+    return entry if isinstance(entry, dict) else {}
 
 
 # ---------------------------------------------------------------- Items and pages

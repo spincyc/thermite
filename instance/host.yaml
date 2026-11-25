@@ -1,10 +1,9 @@
-{
-  "timezone": "Etc/UTC",
-  "http_port": 13602,
-  "https_port": 13603,
-  "uid": 9001,
-  "gid": 9001,
-  "metrics": {
-    "units": []
-  }
-}
+# yaml-language-server: $schema=../docs/host.schema.json
+version: 1
+timezone: Etc/UTC
+http_port: 13602
+https_port: 13603
+uid: 9001
+gid: 9001
+metrics:
+  units: []

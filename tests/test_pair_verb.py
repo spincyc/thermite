@@ -124,14 +124,77 @@ class Pair(unittest.TestCase):
                 self.assertEqual(self.run_main(*argv)[0], 2)
         status, _, err = self.run_main("lounge_atv", "--status")
         self.assertEqual(status, 2)
-        self.assertIn("not a TV under sony_ip_control control: lounge_atv (those are: lounge_tv, den_tv)", err)
+        self.assertIn("not a device that pairs: lounge_atv (those are: lounge_tv, den_tv)", err)
         self.openhab.assert_not_called()
 
     def test_device_alone_still_pairs_it(self):
-        with mock.patch.object(pair, "pair_sony", return_value=0) as pairing:
+        with mock.patch.object(pair, "pair_device", return_value=0) as pairing:
             status, _, err = self.run_main("lounge_tv", "1234")
         self.assertEqual((status, err), (0, ""))
-        pairing.assert_called_once_with(LOUNGE, self.http, "1234")
+        self.assertEqual(pairing.call_count, 1)
+        args, kwargs = pairing.call_args
+        self.assertEqual((args[0], args[2], args[3]), (LOUNGE, self.http, "1234"))
+        self.assertEqual(args[1]["integration"], NAME)
+        self.assertEqual(args[1]["result"], "lounge_tv_pairing_result")
+        self.assertEqual(kwargs, {"timeout": pair.STATUS_TIMEOUT})
+
+    def test_android_tv_and_apple_tv_pair_and_report_status_through_shared_pairing_items(self):
+        shield = {"id": "den_shield", "name": "Den SHIELD", "kind": "streamer", "make": "NVIDIA",
+                  "ip": "192.0.2.22", "controls": {"control": ["androidtv_googletv"]}}
+        atv = {"id": "office_atv", "name": "Office Apple TV", "kind": "streamer", "make": "Apple",
+               "ip": "192.0.2.23", "controls": {"control": ["pyatv_http"]}}
+        house = types.SimpleNamespace(devices=[LOUNGE, shield, atv],
+                                      by_id={d["id"]: d for d in (LOUNGE, shield, atv)})
+
+        class ScriptedHttp(Http):
+            def __init__(self, states, transitions):
+                super().__init__(states)
+                self.transitions = transitions
+                self.commands = []
+
+            def request(self, method, path, body, headers):
+                item = path.rsplit("/", 1)[1]
+                value = body.decode()
+                self.commands.append((item, value))
+                if (item, value) in self.transitions:
+                    self.states.update(self.transitions[(item, value)])
+
+        http = ScriptedHttp(
+            {"lounge_tv_pairing_status": "paired", "lounge_tv_problem": "NULL",
+             "den_shield_pairing_status": "unpaired", "den_shield_problem": "NULL",
+             "office_atv_pairing_status": "unpaired", "office_atv_problem": "NULL"},
+            {("den_shield_pairing", "REQUEST"): {"den_shield_pairing_status": "code_shown"},
+             ("den_shield_pairing", "A1B2C3"): {"den_shield_pairing_status": "paired"},
+             ("den_shield_pairing", "AGAIN"): {"den_shield_pairing_status": "repairing"},
+             ("den_shield_pairing", "DEADBE"): {"den_shield_pairing_status": "paired"},
+             ("office_atv_pairing", "REQUEST"): {"office_atv_pairing_status": "code_shown"},
+             ("office_atv_pairing", "4321"): {"office_atv_pairing_status": "paired"}})
+        with mock.patch.object(pair, "House", mock.Mock(load=mock.Mock(return_value=house))), \
+                mock.patch.object(pair, "openhab", return_value=http):
+            status, out, err = self.run_main("--json")
+            self.assertEqual((status, err), (1, ""))
+            parsed = json.loads(out)
+            self.assertEqual([row["id"] for row in parsed["tvs"]], ["lounge_tv", "den_shield", "office_atv"])
+            self.assertEqual([row["paired"] for row in parsed["tvs"]], [True, False, False])
+            # Interactive pairing for NVIDIA SHIELD (6 hex chars)
+            known = pair.pairable(house)
+            lines = []
+            self.assertEqual(pair.pair_device(*known["den_shield"], http, None, ask=lambda _: "A1B2C3",
+                                              timeout=1.0, log=lines.append), 0)
+            self.assertEqual(http.commands[-2:], [("den_shield_pairing", "REQUEST"), ("den_shield_pairing", "A1B2C3")])
+            # Already paired SHIELD asks confirm before sending AGAIN
+            answers = iter(["y", "DEADBE"])
+            self.assertEqual(pair.pair_device(*known["den_shield"], http, None, ask=lambda _: next(answers),
+                                              timeout=1.0, log=lines.append), 0)
+            self.assertEqual(http.commands[-2:], [("den_shield_pairing", "AGAIN"), ("den_shield_pairing", "DEADBE")])
+            # Interactive pairing for Apple TV (4 digits)
+            self.assertEqual(pair.pair_device(*known["office_atv"], http, None, ask=lambda _: "4321",
+                                              timeout=1.0, log=lines.append), 0)
+            self.assertEqual(http.commands[-2:], [("office_atv_pairing", "REQUEST"), ("office_atv_pairing", "4321")])
+            # All three now report paired
+            status, out, err = self.run_main("--json")
+            self.assertEqual((status, err), (0, ""))
+            self.assertTrue(json.loads(out)["paired"])
 
 
 if __name__ == "__main__":

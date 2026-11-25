@@ -1,20 +1,18 @@
-"""Pair a TV with thermite, or read the Sony TVs' pairing.
+"""Pair a device with thermite, or read pairable devices' pairing status.
 
     thermite pair DEVICE [CODE] [--production | --sandbox]
-                     what the device needs, by its integration in the house
-                     file: a Sony TV's PIN (asked for once the TV shows it,
-                     and sent through thermite), or an Android TV's pairing
-                     code
+                     pair any device whose integration implements the
+                     _pairing Item contract (Sony TV, Android TV / SHIELD,
+                     Apple TV): ask it to show a code and send the code back
     thermite pair [--production | --sandbox] [--json]
-                     whether each Sony TV is paired with thermite
+                     whether each pairable device is paired with thermite
     thermite pair DEVICE --status [--production | --sandbox] [--json]
-                     whether that Sony TV is paired with thermite
+                     whether that device is paired with thermite
 """
 
 from __future__ import annotations
 
 import json
-import socket
 import sys
 import time
 import urllib.error
@@ -22,89 +20,73 @@ import urllib.parse
 
 import oh_cli
 import oh_deploy as deploy
+import oh_integrations as integrations
 import oh_sandbox as sandbox
-from oh_conf import House, uses
+from oh_conf import House
 from oh_integrations import _pairing
-from oh_integrations import androidtv_googletv as googletv
-from oh_integrations import pyatv_http
-from oh_integrations import sony_ip_control
 
 DESCRIPTION = """\
-Pair a device with thermite, as its integration in the house file
-(instance/devices.yaml) needs:
+Pair a device with thermite through its pairing Items (the same _pairing
+Item contract the Pairing page drives), for every integration in the house
+file (instance/devices.yaml) that defines a pairing() hook (Sony TVs,
+Android TVs / NVIDIA SHIELDs, and Apple TVs):
 
-  - a Sony TV under sony_ip_control control: thermite commands it over
-    Sony's IP control once the TV has registered thermite, with a PIN it
-    shows. On the TV: Settings, Network (and Internet), Home network, IP
-    control: Authentication "Normal", and Remote Start on so that it
-    answers, and turns on, from standby (the menu path varies by model).
-    Stand at the TV: this asks thermite (production, or with --sandbox the
-    sandbox) to have the TV show four digits, through the TV's Pairing
-    Items, as the Pairing page does, then asks for the digits and sends
-    them back. thermite keeps the TV's registration in its own userdata;
-    the PIN is never shown, logged or put in Git. With CODE it sends four
-    digits the TV shows already. Without DEVICE it reads each Sony TV's
-    pairing instead, and DEVICE --status that TV's alone.
-  - an Android TV or Google TV under androidtv_googletv control, with
-    --sandbox: the binding reaches a TV only once the TV trusts its
-    certificate, kept in the sandbox's userdata/androidtv/. Stand at the
-    TV: without CODE it asks the TV to show six letters and digits, once
-    the TV's pairing port (the Thing's port + 1) connects; with CODE it
-    sends them (the Karaf console's openhab:androidtv <Thing UID> pincode
-    REQUEST|CODE) and waits for the Thing to come ONLINE.
-    Production pairs it from the remote's Pairing screen (thermite remote
-    --pair) or the Pairing page.
-  - an Apple TV: it pairs from the remote's Pairing screen or the Pairing
-    page, through the Apple TV helper (thermite apple-tv).
+  - Without DEVICE: reads every pairable device's pairing status from
+    production thermite (or with --sandbox, the running sandbox).
+  - With DEVICE --status: reads that device's pairing status alone.
+  - With DEVICE: asks thermite to make the device show a pairing code on
+    its screen, asks you to type that code, and sends it back through the
+    device's pairing Item. When a paired device requires confirmation to
+    pair again, asks before replacing its pairing.
+  - With DEVICE CODE: sends the code the device is already showing.
 """
 
 EXAMPLES = (
-    ("thermite pair DEVICE", "have that Sony TV show a PIN, then type it to pair it with production"),
+    ("thermite pair DEVICE", "have DEVICE show a pairing code, then type it to pair with production"),
     ("thermite pair DEVICE --sandbox", "the same with the sandbox"),
-    ("thermite pair DEVICE 1234", "send the PIN the TV shows already"),
-    ("thermite pair DEVICE --sandbox", "ask an Android TV to show a pairing code"),
-    ("thermite pair DEVICE A1B2C3 --sandbox", "send the code it shows; wait for it to come ONLINE"),
-    ("thermite pair", "whether every Sony TV is paired with production"),
-    ("thermite pair DEVICE --status --sandbox", "whether that Sony TV is paired with the sandbox"),
-    ("thermite pair --json", "every Sony TV's pairing as JSON"),
+    ("thermite pair DEVICE 1234", "send the code DEVICE shows already"),
+    ("thermite pair", "whether every pairable device is paired with production"),
+    ("thermite pair DEVICE --status --sandbox", "whether DEVICE is paired with the sandbox"),
+    ("thermite pair --json", "every pairable device's pairing status as JSON"),
 )
 
 NOTES = """\
 exit status:
-  0  done: the TV is paired, every TV checked is paired, or the TV was
-     asked for a code
-  1  a TV showed no PIN, refused the PIN, did not answer, is not paired,
-     its pairing port does not connect, or it is not ONLINE after its code
-  2  the house file is invalid, no such device, thermite could not be
-     reached or has no such Items, the sandbox is not running, or the
-     device pairs elsewhere
+  0  done: the device is paired, every device checked is paired, or
+     re-pairing was declined
+  1  a device showed no code, refused the code, did not answer, its pairing
+     port was closed, or a checked device is not paired
+  2  the house file is invalid, no such pairable device, invalid code
+     format, thermite could not be reached or has no such Items, or the
+     sandbox is not running
 
 --json:
   Without DEVICE, or with --status, one object: target (production or
-  sandbox), paired (whether every TV read is), and tvs, one entry for each
-  Sony TV: id, label, paired, and its state and problem as thermite reports
-  them, or error where its Items could not be read.
+  sandbox), paired (whether every device read is), and tvs, one entry for
+  each pairable device: id, label, paired, and its state and problem as
+  thermite reports them, or error where its Items could not be read.
 """
 
-#: How long an Android TV's Thing may take to come ONLINE after its code.
-ONLINE_TIMEOUT = 30.0
-#: How long an Android TV's pairing port has to connect.
-CONNECT_TIMEOUT = 3.0
-#: How long thermite's rule may take to report what a Sony TV made of a
-#: pairing command: it waits up to 6 s for the TV.
-STATUS_TIMEOUT = 15.0
+#: How long thermite's rule may take to settle a pairing command (Apple TV
+#: helper discovery + pairing start can take up to 35 s).
+STATUS_TIMEOUT = 35.0
 POLL = 0.25
-#: Where production pairs what this verb does not.
-PAIRING_SCREEN = "the remote's Pairing screen (thermite remote --pair) or the Pairing page"
 
 
 class OpenHABError(Exception):
     """thermite could not be reached, or refused a request, with the reason."""
 
 
-def tvs(house: House) -> dict[str, dict]:
-    """Device id -> device, for every TV under sony_ip_control control."""
-    return {d["id"]: d for d in house.devices if uses(d, sony_ip_control.PHASE, sony_ip_control.NAME)}
+def pairable(house: House) -> dict[str, tuple[dict, dict]]:
+    """Device id -> (device, pairing spec) for every device whose control
+    integration declares a pairing() hook."""
+    out: dict[str, tuple[dict, dict]] = {}
+    for device in house.devices:
+        spec = next((found for module in integrations.defining("pairing")
+                     if (found := module.pairing(device)) is not None), None)
+        if spec is not None:
+            out[device["id"]] = (device, spec)
+    return out
 
 
 def name(device: dict) -> str:
@@ -164,45 +146,70 @@ def settle(http: sandbox.Http, item: str, done, timeout: float) -> str:
         time.sleep(POLL)
 
 
-def pairing_command(device: dict, http: sandbox.Http, value: str, timeout: float) -> dict:
-    """Wait for this command's acknowledgement, even when its status stays the same.
+def pairing_command(device: dict, spec: dict, http: sandbox.Http, value: str, timeout: float) -> dict:
+    """Send `value` to the device's pairing Item and wait for its outcome.
 
-    A POST queues an Item command; its rule may not have run when the next
-    GET returns. The result carries both a fresh id and the final status, so
-    neither an old status nor a missed, brief checking state can settle it.
+    Integrations that expose a result Item carry a unique acknowledgement id
+    and safe failure detail; others settle on their status Item transitioning
+    to a terminal _pairing.STATES value.
     """
-    result = sony_ip_control.pairing_result(device)
-    before = item_state(http, result)
-    command(http, _pairing.item(device), value)
+    result_item = spec.get("result")
+    if result_item:
+        before = item_state(http, result_item)
+        command(http, spec["item"], value)
 
-    def completed(text: str) -> bool:
-        if text == before:
-            return False
-        try:
-            answer = json.loads(text)
-            return isinstance(answer, dict) and bool(answer.get("id")) and answer.get("state") in _pairing.STATES
-        except (ValueError, TypeError):
-            return False
+        def completed(text: str) -> bool:
+            if text == before:
+                return False
+            try:
+                answer = json.loads(text)
+                return isinstance(answer, dict) and bool(answer.get("id")) and answer.get("state") in _pairing.STATES
+            except (ValueError, TypeError):
+                return False
 
-    answer = settle(http, result, completed, timeout)
-    return json.loads(answer) if completed(answer) else {"state": "checking"}
+        answer = settle(http, result_item, completed, timeout)
+        return json.loads(answer) if completed(answer) else {"state": "checking"}
+
+    status_item = spec["status"]
+    before = item_state(http, status_item)
+    command(http, spec["item"], value)
+    if value == _pairing.REQUEST:
+        terminal = {"code_shown", "paired", "failed", "closed", "unreachable", "unavailable"}
+    elif value == _pairing.AGAIN:
+        terminal = {"code_shown", "repairing", "failed", "closed", "unreachable", "unavailable"}
+    else:
+        terminal = {"paired", "failed", "unpaired", "closed", "unreachable", "unavailable"}
+    changed = False
+
+    def settled(state: str) -> bool:
+        nonlocal changed
+        if state != before:
+            changed = True
+        return state in terminal and (state != before or changed)
+
+    return {"state": settle(http, status_item, settled, timeout)}
 
 
 def registration_error(answer: dict) -> str | None:
-    """Safe detail from a Sony acknowledgement; never echo arbitrary response text."""
+    """Safe detail from a structured pairing acknowledgement; never echo raw text."""
     detail = answer.get("error")
     if not isinstance(detail, dict):
         return None
-    why = ("Sony error 1 (Internal Server Error)" if type(detail.get("code")) is int and detail["code"] == 1
-           else "a Sony API error" if detail.get("api") is True else "no authentication cookie")
+    why = ("error 1 (Internal Server Error)" if type(detail.get("code")) is int and detail["code"] == 1
+           else "a device API error" if detail.get("api") is True else "no authentication credential")
     status = detail.get("http")
     http = f", HTTP {status}" if type(status) is int and 100 <= status <= 599 else ""
-    return f"TV registration failed: {why}{http}."
+    return f"device registration failed: {why}{http}."
 
 
-def send_pin(device: dict, http: sandbox.Http, pin: str, timeout: float, log=print) -> int:
+def _code_description(spec: dict) -> str:
+    chars = "digits (0-9)" if spec["chars"] == "digits" else "letters and digits (0-9, A-F)"
+    return f"{spec['length']} {chars}"
+
+
+def send_code(device: dict, spec: dict, http: sandbox.Http, code: str, timeout: float, log=print) -> int:
     ident = device["id"]
-    answer = pairing_command(device, http, pin, timeout)
+    answer = pairing_command(device, spec, http, code, timeout)
     state = answer["state"]
     if state == "paired":
         log(f"paired  {name(device)}: thermite commands it from now on")
@@ -210,60 +217,78 @@ def send_pin(device: dict, http: sandbox.Http, pin: str, timeout: float, log=pri
     if state == "failed":
         detail = registration_error(answer)
         log(f"{name(device)}: {detail}" if detail else
-            f"{name(device)} did not take that PIN; ask for a new one: bin/thermite pair {ident}")
+            f"{name(device)} did not take that code; ask for a new one: bin/thermite pair {ident}")
+    elif state == "closed":
+        log(f"{name(device)}: its pairing port is closed; restart the device and try again")
     elif state == "unreachable":
-        log(f"{name(device)} did not answer; is it on, with Remote Start on?")
+        log(f"{name(device)} did not answer; check that it is on and reachable")
+    elif state == "unavailable":
+        log(f"{name(device)} cannot pair right now; check that its binding or helper is running")
     else:
         log(f"thermite reported {_pairing.STATES.get(state, state)!r} for {name(device)}; see openhab.log")
     return 1
 
 
-def pair_sony(device: dict, http: sandbox.Http, code: str | None, ask=input, timeout: float = STATUS_TIMEOUT,
-              log=print) -> int:
-    """Have a Sony TV show a PIN through thermite's pairing Items, ask for it
-    and send it back; with code, send that, the PIN the TV shows already."""
+def pair_device(device: dict, spec: dict, http: sandbox.Http, code: str | None, *, ask=input,
+                timeout: float = STATUS_TIMEOUT, log=print) -> int:
+    """Have a pairable device show a code through its _pairing Items, ask for
+    it and send it back; with code, send the code the device shows already."""
     ident = device["id"]
-    pin = _pairing.code_pattern(sony_ip_control.PAIRING["length"], sony_ip_control.PAIRING["chars"])
-    status = _pairing.status_item(device)
-    before = item_state(http, status)
+    pattern = _pairing.code_pattern(spec["length"], spec["chars"])
+    before = item_state(http, spec["status"])
     if code is not None:
-        if before != "code_shown":
-            log(f"{name(device)} is showing no PIN for thermite ({_pairing.STATES.get(before, before)}); "
+        if not pattern.fullmatch(code):
+            return error(f"{code!r} is not {_code_description(spec)}")
+        if before not in ("code_shown", "repairing"):
+            log(f"{name(device)} is showing no code for thermite ({_pairing.STATES.get(before, before)}); "
                 f"ask for one: bin/thermite pair {ident}")
             return 1
-        return send_pin(device, http, code, timeout, log)
-    answer = pairing_command(device, http, _pairing.REQUEST, timeout)
+        return send_code(device, spec, http, code, timeout, log)
+    action = _pairing.REQUEST
+    if before == "paired" and spec.get("confirm"):
+        if not spec.get("again"):
+            log(f"paired  {name(device)} is paired already")
+            return 0
+        reply = ask(f"{spec['confirm']} [y/N]: ").strip().lower()
+        if reply not in ("y", "yes"):
+            log(f"cancelled pairing {name(device)}")
+            return 0
+        action = _pairing.AGAIN
+    answer = pairing_command(device, spec, http, action, timeout)
     state = answer["state"]
     if state == "paired":
-        log(f"paired  {name(device)} registered thermite again without a PIN")
+        log(f"paired  {name(device)} is paired without needing a new code")
         return 0
     if state == "failed":
         detail = registration_error(answer)
-        log(f"{name(device)}: {detail}" if detail else
-            f"{name(device)} showed no PIN: is its IP control Authentication Normal (Settings, Network, "
-            "Home network, IP control)?")
-        log(sony_ip_control.PAIRING["hint"])
+        log(f"{name(device)}: {detail}" if detail else f"{name(device)} showed no code.")
+        log(spec["hint"])
+        return 1
+    if state == "closed":
+        log(f"{name(device)}: its pairing port is closed; restart the device and try again")
         return 1
     if state == "unreachable":
-        log(f"{name(device)} did not answer; is it on, with Remote Start on?")
+        log(f"{name(device)} did not answer; check that it is on and reachable")
         return 1
-    if state != "code_shown":
-        log(f"thermite did not report a PIN on {name(device)} ({_pairing.STATES.get(state, state)}); "
+    if state == "unavailable":
+        log(f"{name(device)} cannot pair right now; check that its binding or helper is running")
+        return 1
+    if state not in ("code_shown", "repairing"):
+        log(f"thermite did not report a code on {name(device)} ({_pairing.STATES.get(state, state)}); "
             "see openhab.log")
         return 1
-    typed = ask(f"The four digits {device.get('name') or ident} shows: ").strip()
-    if not pin.fullmatch(typed):
-        log("not four digits; nothing sent. Ask for a new PIN: "
-            f"bin/thermite pair {ident}")
+    typed = ask(f"The {_code_description(spec)} {device.get('name') or ident} shows: ").strip()
+    if not pattern.fullmatch(typed):
+        log(f"not {_code_description(spec)}; nothing sent. Ask for a new code: bin/thermite pair {ident}")
         return 2
-    return send_pin(device, http, typed, timeout, log)
+    return send_code(device, spec, http, typed, timeout, log)
 
 
-def check(devices: list[dict], http: sandbox.Http, log=print) -> int:
+def check(entries: list[tuple[dict, dict]], http: sandbox.Http, log=print) -> int:
     status = 0
-    for device in devices:
-        state = item_state(http, _pairing.status_item(device))
-        problem = item_state(http, sony_ip_control.problem(device))
+    for device, spec in entries:
+        state = item_state(http, spec["status"])
+        problem = item_state(http, spec["problem"]) if spec.get("problem") else "UNDEF"
         line = f"{name(device)}: {_pairing.STATES.get(state, state).lower()}"
         if problem not in ("NULL", "UNDEF"):
             line += f" ({problem})"
@@ -272,171 +297,76 @@ def check(devices: list[dict], http: sandbox.Http, log=print) -> int:
             status = 1
     return status
 
-def report(devices: list[dict], http: sandbox.Http) -> tuple[list[dict], int]:
-    """(each TV's pairing for --json, the exit status check() gives, or 2
-    where a TV's Items could not be read)."""
-    entries, status = [], 0
-    for device in devices:
+
+def report(entries: list[tuple[dict, dict]], http: sandbox.Http) -> tuple[list[dict], int]:
+    """(each device's pairing for --json, the exit status check() gives, or 2
+    where a device's Items could not be read)."""
+    rows, status = [], 0
+    for device, spec in entries:
         entry: dict = {"id": device["id"], "label": device.get("name") or device["id"]}
         try:
-            state = item_state(http, _pairing.status_item(device))
-            problem = item_state(http, sony_ip_control.problem(device))
+            state = item_state(http, spec["status"])
+            problem = item_state(http, spec["problem"]) if spec.get("problem") else "UNDEF"
         except OpenHABError as exc:
-            entries.append({**entry, "paired": False, "error": str(exc)})
+            rows.append({**entry, "paired": False, "error": str(exc)})
             status = 2
             continue
         fault = None if problem in ("NULL", "UNDEF") else problem
         paired = state == "paired" and fault is None
-        entries.append({**entry, "paired": paired, "state": _pairing.STATES.get(state, state).lower(),
-                        "problem": fault})
+        rows.append({**entry, "paired": paired, "state": _pairing.STATES.get(state, state).lower(),
+                     "problem": fault})
         if not paired:
             status = max(status, 1)
-    return entries, status
-
-
-def thing_status(http: sandbox.Http, uid: str) -> tuple[str | None, str]:
-    """(status, its description) of a Thing; (None, why) if thermite has none."""
-    code, thing = http.try_get_json(f"/rest/things/{urllib.parse.quote(uid, safe=':')}")
-    if code != 200 or not thing:
-        return None, f"HTTP {code}"
-    info = thing.get("statusInfo") or {}
-    return info.get("status"), info.get("description") or info.get("statusDetail") or ""
-
-
-def closed_pairing_port(thing: dict, timeout: float = CONNECT_TIMEOUT) -> str | None:
-    """"host:port" of a googletv Thing's pairing port (its googletvPort + 1)
-    when it does not connect, else None (also when the Thing names no
-    address: the binding is left to try)."""
-    config = thing.get("configuration") or {}
-    host, port = config.get("ipAddress"), config.get("googletvPort")
-    if not host or not isinstance(port, (int, float)):
-        return None
-    address = f"{host}:{int(port) + 1}"
-    try:
-        with socket.create_connection((host, int(port) + 1), timeout=timeout):
-            return None
-    except OSError:
-        return address
-
-
-def pair_android(device: dict, code: str | None, timeout: float = ONLINE_TIMEOUT, log=print) -> int:
-    """Ask an Android TV for a pairing code (code None), or send the code
-    it shows and wait for its Thing to come ONLINE, on the sandbox."""
-    try:
-        command = googletv.pair_command(device, code)
-    except ValueError as exc:
-        return error(str(exc))
-    inst = sandbox.sandbox_instance()
-    if not sandbox.running_pgid(inst):
-        return error("the sandbox is not running; start it first (thermite sandbox start)")
-    if not inst.token_file.exists():
-        return error(f"no API token in {inst.token_file}; start the sandbox without --no-token")
-    rt = sandbox.require_runtime(sandbox.load_versions())
-    uid = googletv.thing_uid(device)
-    http = sandbox.Http(inst.url, token=sandbox.read_token(inst.token_file), timeout=10)
-    status, why = thing_status(http, uid)
-    if status is None:
-        return error(f"thermite has no Thing {uid} ({why}); run thermite generate and thermite sandbox reload first")
-    if status == "ONLINE" and code is None:
-        log(f"paired  {uid} is ONLINE already: nothing to do")
-        return 0
-    if code is None:
-        # The binding drops a request it cannot send there without a word.
-        _, thing = http.try_get_json(f"/rest/things/{urllib.parse.quote(uid, safe=':')}")
-        closed = closed_pairing_port(thing or {})
-        if closed:
-            print(f"thermite pair: the pairing port {closed} does not connect, so no code was asked for "
-                  "(the binding would drop the request); restart the device, then try again", file=sys.stderr)
-            return 1
-    sandbox.karaf_command(rt, inst, command)
-    if code is None:
-        log(f"asked   {device.get('name', device['id'])} ({device['ip']}) to show a pairing code on its screen")
-        log(f"next    bin/thermite pair {device['id']} CODE --sandbox  (the six letters and digits it shows)")
-        return 0
-    deadline = time.monotonic() + timeout
-    while True:
-        status, why = thing_status(http, uid)
-        if status == "ONLINE":
-            log(f"paired  {uid} is ONLINE")
-            return 0
-        if time.monotonic() >= deadline:
-            break
-        time.sleep(1)
-    print(f"not yet {uid} is {status} ({why}) after {timeout:g}s; if the TV no longer shows the code, "
-          f"ask for a new one: bin/thermite pair {device['id']} --sandbox", file=sys.stderr)
-    return 1
-
-
-def kinds(device: dict) -> set[str]:
-    """How the device pairs: "sony" (a Sony TV's PIN), "android" (an
-    Android TV's pairing code), "apple" (an Apple TV)."""
-    out = set()
-    if uses(device, sony_ip_control.PHASE, sony_ip_control.NAME):
-        out.add("sony")
-    if uses(device, googletv.PHASE, googletv.NAME):
-        out.add("android")
-    if uses(device, pyatv_http.PHASE, pyatv_http.NAME):
-        out.add("apple")
-    return out
+    return rows, status
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = oh_cli.command("pair", DESCRIPTION, EXAMPLES, NOTES)
     parser.add_argument("device", nargs="?", metavar="DEVICE", help="the device's id in the house file")
     parser.add_argument("code", nargs="?", metavar="CODE",
-                        help="the code the device shows: a Sony TV's four digits, an Android TV's six letters "
-                             "and digits (omit to ask the device for them)")
+                        help="the pairing code the device shows (omit to ask the device for one)")
     parser.add_argument("--status", action="store_true",
-                        help="read DEVICE's pairing instead of pairing it (without DEVICE: every Sony TV's)")
+                        help="read DEVICE's pairing instead of pairing it (without DEVICE: every pairable device's)")
     oh_cli.add_renamed(parser, "--check", "--status")
     oh_cli.add_json(parser)
     oh_cli.add_target(parser, "production", "sandbox", default="production", meaning={
         "production": "production thermite on this host, with the API token bin/thermite install saved",
-        "sandbox": "the sandbox, and its Android TV pairings",
+        "sandbox": "the running sandbox",
     })
     oh_cli.add_house(parser)
-    oh_cli.add_timeout(parser, ONLINE_TIMEOUT, "an Android TV to come ONLINE after its code")
+    oh_cli.add_timeout(parser, STATUS_TIMEOUT, "a pairing command to settle")
     args = parser.parse_args(argv)
 
     house = House.load(args.house)
-    known = tvs(house)
+    known = pairable(house)
     if args.status or args.device is None:
         if args.code is not None:
             parser.error("--status takes one DEVICE at most")
         wanted = [args.device] if args.device else list(known)
         unknown = [ident for ident in wanted if ident not in known]
         if unknown:
-            return error(f"not a TV under {sony_ip_control.NAME} control: {', '.join(unknown)} "
+            return error(f"not a device that pairs: {', '.join(unknown)} "
                          f"(those are: {', '.join(known) or 'none'})")
         try:
             http = openhab(args.sandbox)
+            selected = [known[ident] for ident in wanted]
             if not args.json:
-                return check([known[ident] for ident in wanted], http)
-            entries, status = report([known[ident] for ident in wanted], http)
+                return check(selected, http)
+            rows, status = report(selected, http)
         except OpenHABError as exc:
             return error(str(exc))
         oh_cli.emit({"target": "sandbox" if args.sandbox else "production",
-                     "paired": all(entry["paired"] for entry in entries), "tvs": entries})
+                     "paired": all(row["paired"] for row in rows), "tvs": rows})
         return status
     if args.json:
         parser.error("--json reads the pairing: without DEVICE, or with --status")
-    devices = house.by_id
-    device = devices.get(args.device)
-    how = kinds(device) if device else set()
-    if not how:
-        pairing = [ident for ident, d in devices.items() if kinds(d)]
-        return error(f"not a device that pairs: {args.device} (those are: {', '.join(pairing) or 'none'})")
-    if "apple" in how:
-        return error(f"{name(device)} is an Apple TV: pair it from {PAIRING_SCREEN}")
-    if "sony" in how:
-        pin = _pairing.code_pattern(sony_ip_control.PAIRING["length"], sony_ip_control.PAIRING["chars"])
-        if args.code is not None and not pin.fullmatch(args.code):
-            return error(f"{args.code!r} is not the four digits a Sony TV shows")
-        try:
-            return pair_sony(device, openhab(args.sandbox), args.code)
-        except OpenHABError as exc:
-            return error(str(exc))
-    if not args.sandbox:
-        return error(f"{name(device)} pairs with production from {PAIRING_SCREEN}; "
-                     "thermite pair pairs it only with --sandbox")
-    return pair_android(device, args.code, args.timeout)
+    if args.device not in known:
+        return error(f"not a device that pairs: {args.device} (those are: {', '.join(known) or 'none'})")
+    device, spec = known[args.device]
+    pattern = _pairing.code_pattern(spec["length"], spec["chars"])
+    if args.code is not None and not pattern.fullmatch(args.code):
+        return error(f"{args.code!r} is not {_code_description(spec)}")
+    try:
+        return pair_device(device, spec, openhab(args.sandbox), args.code, timeout=args.timeout)
+    except OpenHABError as exc:
+        return error(str(exc))

@@ -27,12 +27,17 @@ ADDRESS = {WEST: "192.0.2.21", EAST: "192.0.2.22", THIRD: "192.0.2.23"}
 PID = {WEST: 101, EAST: "-202", THIRD: 303}
 
 
-def receiver(ident, room, *, use_heos=True, **extra):
+def receiver(ident, room, *, use_heos=True, heos_bridge=..., **extra):
     control = ["denonmarantz_http", "heos"] if use_heos else ["denonmarantz_http"]
     device = {"id": ident, "room": room, "kind": "avr", "make": "Marantz", "model": "Example AVR",
               "ip": ADDRESS[ident], "controls": {"observe": ["denonmarantz_http"], "control": control}, **extra}
+    heos_cfg = {}
     if use_heos:
-        device["heos_pid"] = PID[ident]
+        heos_cfg["pid"] = PID[ident]
+    if heos_bridge is not ...:
+        heos_cfg["bridge"] = heos_bridge
+    if heos_cfg:
+        device.setdefault("config", {})["heos"] = heos_cfg
     return device
 
 
@@ -149,24 +154,24 @@ class HostSelection(unittest.TestCase):
 
     def test_only_one_receiver_may_host_the_bridge(self):
         found = self.problems(two(**{WEST: {"heos_bridge": True}, EAST: {"heos_bridge": True}}))
-        self.assertEqual(found, [f"heos_bridge is true on {WEST} and {EAST}; "
+        self.assertEqual(found, [f"config.heos.bridge is true on {WEST} and {EAST}; "
                                  "only one HEOS receiver can host the house's bridge"])
         data = house(*(receiver(ident, "example_west", heos_bridge=True) for ident in (WEST, EAST, THIRD)))
-        self.assertEqual(self.problems(data), [f"heos_bridge is true on {WEST}, {EAST} and {THIRD}; "
+        self.assertEqual(self.problems(data), [f"config.heos.bridge is true on {WEST}, {EAST} and {THIRD}; "
                                                "only one HEOS receiver can host the house's bridge"])
 
     def test_heos_bridge_needs_a_device_that_uses_heos(self):
         data = house(receiver(WEST, "example_west"), receiver(EAST, "example_east", use_heos=False, heos_bridge=True))
-        next(device for device in data["devices"] if device["id"] == "example_tv")["heos_bridge"] = True
+        next(device for device in data["devices"] if device["id"] == "example_tv")["config"] = {"heos": {"bridge": True}}
         self.assertEqual(self.problems(data), [
-            "example_tv.heos_bridge: only a device that uses heos can host the house's HEOS bridge",
-            f"{EAST}.heos_bridge: only a device that uses heos can host the house's HEOS bridge"])
+            "example_tv.config.heos.bridge: only a device that uses heos can host the house's HEOS bridge",
+            f"{EAST}.config.heos.bridge: only a device that uses heos can host the house's HEOS bridge"])
 
     def test_heos_bridge_is_true_or_left_out(self):
         for value in (False, "yes", 1, None):
             with self.subTest(value=value):
                 self.assertEqual(self.problems(two(**{EAST: {"heos_bridge": value}})),
-                                 [f"{EAST}.heos_bridge: must be true; leave it out on the other HEOS receivers"])
+                                 [f"{EAST}.config.heos.bridge: must be true; leave it out on the other HEOS receivers"])
 
 
 class Metrics(unittest.TestCase):
@@ -217,9 +222,9 @@ class Metrics(unittest.TestCase):
 
     def test_reboot_follows_receiver_zone_count(self):
         one = receiver(WEST, "example_west")
-        one["zones"] = 1
+        one["config"]["denonmarantz_http"] = {"zones": 1}
         three = receiver(EAST, "example_east")
-        three["zones"] = 3
+        three["config"]["denonmarantz_http"] = {"zones": 3}
         self.assertEqual([check["item"] for check in heos.reboot(one)["idle"]], [f"{WEST}_main_power"])
         self.assertEqual([check["item"] for check in heos.reboot(three)["idle"]],
                          [f"{EAST}_main_power", f"{EAST}_zone2_power", f"{EAST}_zone3_power"])

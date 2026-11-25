@@ -29,14 +29,13 @@ is the receiver's to apply; thermite sets none.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-from oh_conf import GUARD_PROFILE, Addon, House, YamlFile, options_text, point, retarget, uses, volume_js
-from oh_shape import NUMBER, Key
+from oh_conf import Addon, House, YamlFile, config as device_config, options_text, point, retarget, uses, volume_js
+from oh_shape import LIST, NUMBER, TEXT, TRUTH, Key
 
 from . import _diagnostics as diag
-from . import _io, _script
+from . import _io, _items, _script
 
 NAME = "denonmarantz_http"
 PHASE = "observe"
@@ -54,7 +53,13 @@ HEADER = (
 ADDONS = (Addon("binding", "denonmarantz"), Addon("binding", "http"),
           Addon("automation", "jsscripting", "receiver signal snapshots and the routing actor"))
 ASSETS: dict[str, str] = {}
-DEVICE_KEYS = {"zones": Key(NUMBER, "how many zones the receiver has, the main zone included: 1 to 4, and 2 when left out")}
+DEVICE_KEYS = {
+    "zones": Key(NUMBER, "how many zones the receiver has, the main zone included: 1 to 4, and 2 when left out"),
+    "inputs": Key(LIST, "SI input codes the receiver offers; overrides model defaults",
+                  each=Key(TEXT, "a receiver SI input code such as BD or MPLAY")),
+    "has_diagnostics": Key(TRUTH, "whether the receiver supports read-only AppCommand0300 signal diagnostics; "
+                                  "overrides model detection"),
+}
 #: Seconds between the binding's polls of the HTTP API. The receiver closes
 #: every connection, and each poll opens one for each of its requests, so it
 #: polls three times less often than the binding allows (5 s). It reads
@@ -196,9 +201,22 @@ def volume_display_js() -> str:
 })()'''
 
 
+def _has_diagnostics(device: dict) -> bool:
+    override = device_config(device, NAME).get("has_diagnostics")
+    if isinstance(override, bool):
+        return override
+    return device.get("model") in SIGNAL_MODELS
+
+
+def zone_count(device: dict) -> int:
+    """Number of zones on the receiver (main zone included)."""
+    zones = device_config(device, NAME).get("zones", DEFAULT_ZONES)
+    return zones if type(zones) is int and zones in ZONES else DEFAULT_ZONES
+
+
 def diagnostics(device: dict) -> dict | None:
     """Main-zone measured formats and processing settings; no zone-2 claim."""
-    if device.get("model") not in SIGNAL_MODELS:
+    if not _has_diagnostics(device):
         return None
     items = [f"{device['id']}_{kind}_signal" for kind in SIGNAL_FIELDS]
     readings = [{"category": category, "label": label, "item": f"{device['id']}_{kind}_signal",
@@ -246,11 +264,20 @@ def thing_uid(device: dict) -> str:
     return f"denonmarantz:avr:{device['id']}"
 
 
+_INPUT_LABELS = {code: label for code, label in INPUTS} | {
+    code: label for pairs in GAME_INPUTS.values() for code, label in pairs
+}
+
+
 def inputs(device: dict, zone: int | None = None) -> list[tuple[str, str]]:
     """(value, label) of the inputs the receiver's remote offers for the
     main zone (zone None), or for zone `zone`: those and ZONE_SOURCE."""
+    custom = device_config(device, NAME).get("inputs")
+    if isinstance(custom, list) and custom:
+        out = [(code, _INPUT_LABELS.get(code, code)) for code in custom]
+        return out if zone is None else [*out, ZONE_SOURCE]
     games = GAME_INPUTS.get(device.get("model"))
-    out: list[tuple[str, str]] = []
+    out = []
     for value, label in INPUTS:
         out += list(games) if games and value == "GAME1" else [(value, label)]
     return out if zone is None else [*out, ZONE_SOURCE]
@@ -258,71 +285,58 @@ def inputs(device: dict, zone: int | None = None) -> list[tuple[str, str]]:
 
 def validate(device: dict) -> list[str]:
     problems = []
-    zones = device.get("zones")
-    if "zones" in device and (not isinstance(zones, int) or isinstance(zones, bool) or zones not in ZONES):
-        problems.append(f"{device.get('id')}: zones {zones!r} is not {ZONES.start}-{ZONES.stop - 1}")
+    where = device.get("id") or "a device"
+    cfg = device_config(device, NAME)
+    if "zones" in cfg:
+        zones = cfg["zones"]
+        if not isinstance(zones, int) or isinstance(zones, bool) or zones not in ZONES:
+            problems.append(f"{where}.config.{NAME}.zones: {zones!r} is not {ZONES.start}-{ZONES.stop - 1}")
+    if "inputs" in cfg:
+        custom = cfg["inputs"]
+        if (not isinstance(custom, list) or not custom
+                or any(not isinstance(v, str) or not v.strip() or v != v.strip() or "," in v or '"="' in v
+                       or v == ZONE_SOURCE[0] for v in custom)):
+            problems.append(f"{where}.config.{NAME}.inputs: must be a non-empty list of SI input codes")
+        elif len(set(custom)) != len(custom):
+            problems.append(f"{where}.config.{NAME}.inputs: must not repeat an input")
+    if "has_diagnostics" in cfg and not isinstance(cfg["has_diagnostics"], bool):
+        problems.append(f"{where}.config.{NAME}.has_diagnostics: must be true or false")
     return problems
-
-
-def _lookup_js(table: dict[str, str], otherwise: str = "null") -> str:
-    """Inline JS: table[input] for a key of the table, else `otherwise` (JS)."""
-    return (f"|(function (table) {{ return Object.prototype.hasOwnProperty.call(table, input) ? table[input] : "
-            f"{otherwise}; }})({json.dumps(table, separators=(',', ':'))})")
 
 
 def input_js(device: dict, zone: int | None = None) -> str:
     """Inline JS: an input command passed on only when it is one of the
     zone's inputs()."""
-    return _lookup_js({value: value for value, _ in inputs(device, zone)})
+    return _items.enum_guard_js([value for value, _ in inputs(device, zone)])
 
 
 def input_state_js() -> str:
     """Inline JS: the reported source, named as inputs() names it."""
-    return _lookup_js(INPUT_ALIASES, "input")
+    return _items.enum_guard_js(INPUT_ALIASES, otherwise="input")
 
 
 def key_js() -> str:
     """Inline JS: a remote button id -> its receiver command; null for any other."""
-    return _lookup_js(KEYS)
-
-
-def _control(ident: str, type_: str, label: str, tags: list[str], channel: str, *,
-             link: dict | None = None, icon: str | None = None, state: dict | None = None,
-             options: str | None = None) -> dict:
-    item: dict = {"type": type_, "label": label}
-    if icon:
-        item["icon"] = icon
-    item.update(groups=[ident], tags=tags, autoupdate=False)
-    if link is None:
-        item["channel"] = channel
-    else:
-        item["channels"] = {channel: {"profile": GUARD_PROFILE, **link}}
-    metadata: dict = {}
-    if state or options:
-        metadata["stateDescription"] = {"config": {**(state or {}), **({"options": options} if options else {})}}
-    if options:
-        metadata["commandDescription"] = {"config": {"options": options}}
-    if metadata:
-        item["metadata"] = metadata
-    return item
+    return _items.enum_guard_js(KEYS)
 
 
 def render(device: dict, house: House, out: YamlFile) -> None:
     ident = device["id"]
     uid = thing_uid(device)
+    zones = zone_count(device)
+    http_port = (device.get("timing") or {}).get("port", 8080)
     out.things[uid] = {
         "label": house.label(device),
         "location": house.room_label(device["room"]),
         "config": {
             "host": device["ip"],
             "telnetEnabled": False,
-            "httpPort": 8080,
+            "httpPort": http_port,
             "httpPollingInterval": POLL,
-            "zoneCount": device.get("zones", DEFAULT_ZONES),
+            "zoneCount": zones,
         },
     }
     items = out.items
-    zones = device.get("zones", DEFAULT_ZONES)
     _render_signal(device, house, out)
     if not uses(device, "control", NAME):
         items[f"{ident}_main_power"] = point(ident, "Switch", "Main Zone Power", ["Status", "Power"],
@@ -337,28 +351,29 @@ def render(device: dict, house: House, out: YamlFile) -> None:
             items[f"{ident}_zone{zone}_input"] = point(ident, "String", f"Zone {zone} Input", ["Status", "Channel"],
                                                        f"{uid}:zone{zone}#input", guarded=True)
         return
-    items[f"{ident}_main_power"] = _control(ident, "Switch", "Main Zone Power", ["Control", "Power"],
-                                            f"{uid}:mainZone#power", icon="receiver")
-    items[f"{ident}_main_volume"] = _control(
+    items[f"{ident}_main_power"] = _items.control_point(
+        ident, "Switch", "Main Zone Power", ["Control", "Power"], f"{uid}:mainZone#power", icon="receiver")
+    items[f"{ident}_main_volume"] = _items.control_point(
         ident, "Dimmer", "Main Zone Volume", ["Control", "SoundVolume"], f"{uid}:mainZone#volume",
         link={"toItemScript": "|input", "commandFromItemScript": volume_js(VOLUME)}, icon="soundvolume",
         state=dict(VOLUME))
-    items[f"{ident}_main_mute"] = _control(ident, "Switch", "Main Zone Mute", ["Control", "SoundVolume"],
-                                           f"{uid}:mainZone#mute", icon="soundvolume_mute")
-    items[f"{ident}_main_input"] = _control(
+    items[f"{ident}_main_mute"] = _items.control_point(
+        ident, "Switch", "Main Zone Mute", ["Control", "SoundVolume"], f"{uid}:mainZone#mute", icon="soundvolume_mute")
+    items[f"{ident}_main_input"] = _items.control_point(
         ident, "String", "Main Zone Input", ["Control", "Channel"], f"{uid}:mainZone#input",
         link={"toItemScript": input_state_js(), "commandFromItemScript": input_js(device)},
         options=options_text(inputs(device)))
     for zone in range(2, zones + 1):
-        items[f"{ident}_zone{zone}_power"] = _control(ident, "Switch", f"Zone {zone} Power", ["Control", "Power"],
-                                                      f"{uid}:zone{zone}#power", icon="receiver")
-        items[f"{ident}_zone{zone}_input"] = _control(
+        items[f"{ident}_zone{zone}_power"] = _items.control_point(
+            ident, "Switch", f"Zone {zone} Power", ["Control", "Power"], f"{uid}:zone{zone}#power", icon="receiver")
+        items[f"{ident}_zone{zone}_input"] = _items.control_point(
             ident, "String", f"Zone {zone} Input", ["Control", "Channel"], f"{uid}:zone{zone}#input",
             link={"toItemScript": input_state_js(), "commandFromItemScript": input_js(device, zone)},
             options=options_text(inputs(device, zone)))
     # No toItemScript: the command channel's state never reaches the Item.
-    items[f"{ident}_key"] = _control(ident, "String", "Remote Key", ["Control"], f"{uid}:general#command",
-                                     link={"commandFromItemScript": key_js()})
+    items[f"{ident}_key"] = _items.control_point(
+        ident, "String", "Remote Key", ["Control"], f"{uid}:general#command",
+        link={"commandFromItemScript": key_js()})
 
 
 def powered_by(device: dict) -> dict[str, str]:
@@ -367,7 +382,7 @@ def powered_by(device: dict) -> dict[str, str]:
     ident = device["id"]
     main = f"{ident}_main_power"
     out = {f"{ident}_main_volume": main, f"{ident}_main_mute": main, f"{ident}_main_input": main}
-    for zone in range(2, device.get("zones", DEFAULT_ZONES) + 1):
+    for zone in range(2, zone_count(device) + 1):
         out[f"{ident}_zone{zone}_input"] = f"{ident}_zone{zone}_power"
     return out
 
@@ -381,7 +396,7 @@ def stage(device: dict, zone: int | None) -> dict | None:
     if zone is None:
         return {"power": f"{ident}_main_power", "input": f"{ident}_main_input",
                 "inputs": [value for value, _ in inputs(device)]}
-    zones = device.get("zones", DEFAULT_ZONES)
+    zones = zone_count(device)
     if isinstance(zone, int) and not isinstance(zone, bool) and 2 <= zone <= zones:
         return {"power": f"{ident}_zone{zone}_power", "input": f"{ident}_zone{zone}_input",
                 "inputs": [value for value, _ in inputs(device, zone)], "follows": ZONE_SOURCE[0]}
@@ -393,12 +408,17 @@ def fields(device: dict) -> dict[str, dict]:
     and input (stage()), which the receiver's own rule (rule_path()) writes
     and reads back over the HTTP API at the Thing's current address."""
     out = {}
-    for zone in (None, *range(2, device.get("zones", DEFAULT_ZONES) + 1)):
+    feedback = {"kind": "poll", "interval_s": POLL}
+    input_reports = {raw: {"value": target, "transition": False} for raw, target in INPUT_ALIASES.items()}
+    for zone in (None, *range(2, zone_count(device) + 1)):
         staged = stage(device, zone)
         if staged:
-            for point, values in (("power", ["ON", "OFF"]), ("input", staged["inputs"])):
-                out[staged[point]] = {"kind": "denon", "thing": thing_uid(device), "zone": zone or 1, "point": point,
-                                      "values": list(values)}
+            out[staged["power"]] = {"kind": "denon", "thing": thing_uid(device), "zone": zone or 1,
+                                    "point": "power", "values": ["ON", "OFF"], "power": "absolute",
+                                    "feedback": feedback}
+            out[staged["input"]] = {"kind": "denon", "thing": thing_uid(device), "zone": zone or 1,
+                                    "point": "input", "values": list(staged["inputs"]),
+                                    "feedback": feedback, "reports": dict(input_reports)}
     return out
 
 
@@ -421,10 +441,6 @@ def remote(device: dict) -> dict | None:
         "input": {"item": f"{ident}_main_input", "options": [list(pair) for pair in inputs(device)]},
         "readBack": READ_BACK,
     }
-    from . import heos
-    if heos.enabled(device):
-        control["playback"] = {"item": heos.playback_item(device), "label": "HEOS playback",
-                               "input": "NET", "activate": "HEOS Music"}
     return control
 
 
@@ -442,6 +458,28 @@ def remote_of(device: dict) -> str:
     """Keep legacy receivers' controls unchanged when HEOS is not commissioned."""
     from . import heos
     return "marantz_heos" if heos.enabled(device) else "marantz_avr"
+
+
+def remote_layouts(device: dict | None = None) -> dict[str, dict]:
+    """Button layout definitions for Denon/Marantz receivers (with or without HEOS)."""
+    def groups() -> list[dict]:
+        return [
+            {"label": "Sound modes", "keys": ["sound_movie", "sound_music", "sound_game", "sound_pure"], "columns": 2},
+            {"label": "Information", "keys": ["info", "options"], "columns": 2},
+        ]
+    return {
+        "marantz_avr": {
+            "label": "Marantz remote",
+            "corners": ["power", "input", "back", "settings"],
+            "keyGroups": groups(),
+        },
+        "marantz_heos": {
+            "label": "Marantz remote \u00b7 HEOS transport",
+            "corners": ["power", "input", "back", "settings"],
+            "playback": ["previous", "play", "pause", "next"],
+            "keyGroups": groups(),
+        },
+    }
 
 
 def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:

@@ -161,7 +161,7 @@ catch (_) { process.stderr.write('selected model unavailable'); process.exitCode
     @unittest.skipUnless(shutil.which("node"), "Node is required for the topology preview")
     def test_mock_topology_uses_bundled_catalogue_without_generated_site_files(self):
         runtime = self.root / "runtime"
-        for name in ("tui/remote/topology.js", "tui/remote/grid.js", "web/remote/topology.json"):
+        for name in ("tui/remote/topology.js", "tui/remote/grid.js", "web/remote/topology.js", "web/remote/topology.json"):
             destination = runtime / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(AREA / name, destination)

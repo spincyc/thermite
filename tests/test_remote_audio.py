@@ -20,6 +20,7 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
 from oh_conf import House  # noqa: E402
+import oh_inventory  # noqa: E402
 import oh_render  # noqa: E402
 import oh_site_contract  # noqa: E402
 from oh_features import remote_model, routing  # noqa: E402
@@ -39,7 +40,7 @@ def add(data, ident, room, spec, number):
 def desk(audio="fixture_amp"):
     """The example house with example_east's screen a passive monitor and a
     streaming amplifier beside it, named its `audio` (none for None)."""
-    data = json.loads((AREA / "instance/devices.yaml").read_text())
+    data = oh_inventory.load(AREA / "instance/devices.yaml")
     add(data, "fixture_monitor", "example_east", {"kind": "monitor", "controls": {}}, 40)
     add(data, "fixture_amp", "example_east", AMP, 41)
     east = data["routing"]["rooms"]["example_east"]
@@ -54,13 +55,14 @@ def zones():
     def device(ident, room, kind, number, **extra):
         return {"id": ident, "room": room, "kind": kind, "ip": f"192.0.2.{number}", **extra}
     return {
-        "version": 1,
+        "version": 2,
         "rooms": {"example_cinema": {"label": "Example Cinema", "tag": "Room"},
                   "example_lounge": {"label": "Example Lounge", "tag": "Room"}},
         "devices": [
             device("example_matrix", "example_cinema", "hdmi_matrix", 20, model="HDMI matrix",
                    controls={"control": ["bk808_http"]}),
-            device("example_avr", "example_cinema", "avr", 22, make="Marantz", model="CINEMA 30", zones=2,
+            device("example_avr", "example_cinema", "avr", 22, make="Marantz", model="CINEMA 30",
+                   config={"denonmarantz_http": {"zones": 2}},
                    controls={"observe": ["denonmarantz_http"], "control": ["denonmarantz_http"]}),
             device("example_screen", "example_cinema", **{**copy.deepcopy(TV), "number": 23}),
             device("example_tv", "example_lounge", **{**copy.deepcopy(TV), "number": 24}),
@@ -114,7 +116,7 @@ class RoomAudio(unittest.TestCase):
         self.assertNotIn("example_avr.volume", authority["rooms"]["example_lounge"]["actions"])
 
     def test_every_room_audio_is_one_its_gateway_commands(self):
-        for data in (desk(), desk(audio=None), zones(), json.loads((AREA / "instance/devices.yaml").read_text())):
+        for data in (desk(), desk(audio=None), zones(), oh_inventory.load(AREA / "instance/devices.yaml")):
             model, authority = compiled(data)
             for row in model["rooms"]:
                 with self.subTest(room=row["id"], audio=row["audio"]):
@@ -275,6 +277,30 @@ const HOLD = Number(process.argv[1]);
         result = subprocess.run([shutil.which("node"), "-e", script, str(hold)], input=json.dumps(model), cwd=AREA,
                                 env=env, capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_composable_remote_providers_layouts_and_per_room_hold_ms(self):
+        """remote_model composes non-overlapping remote() providers (e.g.
+        denonmarantz_http + heos), emits deterministic house layouts, and
+        emits per-room holdMs alongside top-level holdMs."""
+        data = zones()
+        avr = next(d for d in data["devices"] if d["id"] == "example_avr")
+        avr["controls"]["control"].append("heos")
+        avr["config"]["heos"] = {"pid": 12345}
+        model, _ = compiled(data)
+        control = model["devices"]["example_avr"]["control"]
+        self.assertEqual(control["power"], "example_avr_main_power")
+        self.assertEqual(control["playback"]["item"], "example_avr_heos_playback")
+        self.assertEqual(model["devices"]["example_avr"]["remote"], "marantz_heos")
+        self.assertEqual(list(model["layouts"]["remotes"]), sorted(model["layouts"]["remotes"]))
+        self.assertEqual(set(model["layouts"]["remotes"]), {"marantz_heos", "pc", "sony_tv"})
+        by_room = {row["id"]: row for row in model["rooms"]}
+        hold = (denonmarantz_http.READ_BACK + 2) * 1000
+        self.assertEqual(by_room["example_cinema"]["holdMs"], hold)
+        self.assertEqual(by_room["example_lounge"]["holdMs"], hold)
+        # Fast room without a slow receiver gets 15 s room holdMs even if another room is slower.
+        desk_model, _ = compiled(desk())
+        for row in desk_model["rooms"]:
+            self.assertEqual(row["holdMs"], 15000)
 
 
 if __name__ == "__main__":

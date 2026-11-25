@@ -17,6 +17,7 @@ globalThis.REMOTE_HOUSE = {
         "example_matrix"
       ],
       "speakers": [],
+      "holdMs": 15000,
       "routeProblem": "loc_example_west_source_problem"
     },
     {
@@ -32,6 +33,7 @@ globalThis.REMOTE_HOUSE = {
         "example_computer"
       ],
       "speakers": [],
+      "holdMs": 15000,
       "routeProblem": "loc_example_east_source_problem"
     }
   ],
@@ -116,5 +118,119 @@ globalThis.REMOTE_HOUSE = {
   },
   "initial": {},
   "holdMs": 15000,
-  "speakerRooms": []
+  "speakerRooms": [],
+  "layouts": {
+    "remotes": {
+      "apple_tv": {
+        "label": "Siri Remote",
+        "corners": [
+          "power",
+          null,
+          "back",
+          "tv"
+        ],
+        "playback": [
+          "play_pause"
+        ],
+        "keyGroups": [
+          {
+            "label": "Apps",
+            "keys": [
+              "netflix",
+              "youtube"
+            ],
+            "columns": 2,
+            "primary": true
+          }
+        ]
+      },
+      "pc": {
+        "label": "Keyboard and mouse",
+        "note": "{device} is a PC: use its own keyboard and mouse"
+      },
+      "sony_tv": {
+        "label": "Sony TV remote",
+        "wide": true,
+        "corners": [
+          "power",
+          "settings",
+          "back",
+          "home"
+        ],
+        "top": [
+          "input",
+          "guide",
+          "info",
+          "action_menu"
+        ],
+        "playback": [
+          "previous",
+          "rewind",
+          "play",
+          "pause",
+          "stop",
+          "fast_forward",
+          "next"
+        ],
+        "channel": true,
+        "keyGroups": [
+          {
+            "label": "Apps",
+            "keys": [
+              "netflix",
+              "youtube"
+            ],
+            "columns": 2,
+            "primary": true
+          },
+          {
+            "label": "TV",
+            "keys": [
+              "tv",
+              "exit",
+              "options",
+              "help"
+            ],
+            "columns": 2
+          },
+          {
+            "label": "Audio",
+            "keys": [
+              "audio",
+              "subtitle"
+            ],
+            "columns": 2
+          },
+          {
+            "label": "Channels",
+            "keys": [
+              "digit_1",
+              "digit_2",
+              "digit_3",
+              "digit_4",
+              "digit_5",
+              "digit_6",
+              "digit_7",
+              "digit_8",
+              "digit_9",
+              "digit_dot",
+              "digit_0",
+              "digit_enter"
+            ],
+            "columns": 3
+          },
+          {
+            "label": "Color keys",
+            "keys": [
+              "red",
+              "green",
+              "yellow",
+              "blue"
+            ],
+            "columns": 4
+          }
+        ]
+      }
+    }
+  }
 };

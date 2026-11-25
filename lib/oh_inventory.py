@@ -7,9 +7,11 @@ Thing belongs to a known device at that device's address.
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import difflib
 import ipaddress
+import math
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict
@@ -39,17 +41,27 @@ ROOM = {
 #: What a device's controls list under a phase.
 INTEGRATION_NAMES = Key(LIST, "integration names", each=Key(TEXT, "the name of an integration"),
                         must="a list of integration names", empty=True)
+#: Per-device timing and endpoint override keys (design/device-contract.md).
+TIMING_KEYS = {
+    "settle": Key(MAPPING, "per-value settle time overrides in ms", by="value",
+                  each=Key(NUMBER, "milliseconds (1..300000)")),
+    "poll_s": Key(NUMBER, "poll interval override in seconds"),
+    "port": Key(NUMBER, "TCP/HTTP port override"),
+}
+#: Reusable device fields that a profile in `profiles` may set as defaults.
+PROFILE_FIELD_NAMES = ("kind", "make", "model", "controls", "config", "timing", "monitor", "reboot", "notes", "control4")
 #: The keys any device may have: its identity, address and controls, how
-#: closely monitoring watches it (monitor), and owner documentation no
-#: program reads: notes, and the Control4 driver name `thermite control4
-#: summary` suggests. Integrations, features and Control4 declare the
-#: fields they read (DEVICE_KEYS) and validate them. The text keys are
-#: checked in this order.
+#: closely monitoring watches it (monitor), timing overrides (timing),
+#: profile inheritance (profile), and owner documentation no program reads:
+#: notes, and the Control4 driver name `thermite control4 summary` suggests.
+#: Integrations declare their fields under device.config.<integration>;
+#: features and Control4 declare cross-cutting device keys directly.
 DEVICE = {
     "id": Key(TEXT, "its name in thermite: snake_case and its own; every Item of the device starts with it", required=True),
     "room": Key(TEXT, "the room id of the room it is in", required=True),
     "kind": Key(TEXT, "what it is (tv, avr, streamer, hdmi_matrix and so on), which gives it its place in the "
                       "semantic model", required=True),
+    "profile": Key(TEXT, "the id of a profile in profiles to inherit defaults from"),
     "name": Key(TEXT, "what people call it, where that is more than its model"),
     "make": Key(TEXT, "who makes it"),
     "model": Key(TEXT, "its model"),
@@ -59,6 +71,7 @@ DEVICE = {
                      "address of its own"),
     "controls": Key(MAPPING, "the integrations that read it (observe) and command it (control)", by="phase",
                     must="a mapping of phase to integration names", each=INTEGRATION_NAMES),
+    "timing": Key(MAPPING, "per-device timing and endpoint overrides", keys=TIMING_KEYS),
     "notes": Key(TEXT, "whatever its owner wants to remember; no program reads it"),
     "control4": Key(TEXT, "the Control4 driver name that thermite control4 summary suggested; no program reads it"),
     # required lets a device's failed control checks count against control
@@ -75,7 +88,11 @@ A_DEVICE = Key(MAPPING, "a device", keys=DEVICE)
 #: (HOUSE_KEYS: routing is the routing feature's); the module that reads
 #: each key validates what is under it.
 TOP = {
-    "version": Key(NUMBER, "the format of the file: 1", required=True, choices=(1,)),
+    "version": Key(NUMBER, "the format of the file: 2", required=True, choices=(2,)),
+    "include": Key(LIST, "relative YAML files under instance/ merged into this house file",
+                   each=Key(TEXT, "a relative path under instance/"), must="a list of relative paths", empty=True),
+    "profiles": Key(MAPPING, "reusable device profiles", by="profile id",
+                    each=Key(MAPPING, "a device profile"), must="a mapping of profile ids", empty=True),
     "rooms": Key(MAPPING, "the rooms of the house", by="room id", each=Key(MAPPING, "a room", keys=ROOM),
                  must="a mapping of room ids", empty=True),
     "devices": Key(LIST, "the devices of the house", each=A_DEVICE, must="a list of devices"),
@@ -110,34 +127,109 @@ TOP = {
 Room = TypedDict("Room", {"label": str, "tag": NotRequired[str], "in": NotRequired[str]})  # `in` is a Python word
 
 
+class DeviceTiming(TypedDict, total=False):
+    settle: dict[str, int]
+    poll_s: int | float
+    port: int
+
+
 class MatrixSettings(TypedDict, total=False):
     edid: dict[int | str, str]
     scaler: Literal["bypass", "8k-to-4k", "to-1080p", "auto", "audio-only"]
     hdr: Literal["bypass", "hdr-to-sdr", "auto"]
     hdcp: Literal["1.4", "2.2", "follow-sink", "follow-source"]
+    ports: list[int]
 
 
-class Camera(TypedDict):
+class MatrixPorts(TypedDict, total=False):
+    ports: list[int]
+
+
+class ReceiverConfig(TypedDict, total=False):
+    zones: int
+    inputs: list[str]
+    has_diagnostics: bool
+
+
+class HeosConfig(TypedDict, total=False):
+    pid: int | str
+    bridge: bool
+
+
+class SonosConfig(TypedDict, total=False):
+    udn: str
+    model_profile: Literal["soundbar", "amp"]
+
+
+class WiimConfig(TypedDict, total=False):
+    model_profile: Literal["amp_pro", "mini", "generic"]
+
+
+class TvConfig(TypedDict, total=False):
+    speaker_audio: bool
+    inputs: list[str]
+
+
+class ProjectorConfig(TypedDict, total=False):
+    inputs: list[str]
+
+
+class AndroidTvConfig(TypedDict, total=False):
+    remote_layout: Literal["android_tv", "nvidia_shield"]
+
+
+class Camera(TypedDict, total=False):
     device_id: str
-    package_camera: NotRequired[bool]
+    package_camera: bool
 
 
-class Infrared(TypedDict):
-    model: str
-    ip: str
+class Infrared(TypedDict, total=False):
+    via: str
     connector: int
     profile: str
+    model: str
+    ip: str
 
 
-class Cec(TypedDict):
+class Cec(TypedDict, total=False):
     matrix: str
     input: int
+
+
+class DeviceConfig(TypedDict, total=False):
+    sony_ip_control: TvConfig
+    androidtv_googletv: AndroidTvConfig
+    sonos: SonosConfig
+    denonmarantz_http: ReceiverConfig
+    heos: HeosConfig
+    wiim_http: WiimConfig
+    sony_adcp: ProjectorConfig
+    bk808_http: MatrixSettings
+    avpro_telnet: MatrixPorts
+    unifi_protect: Camera
+    ir: Infrared
+    bk808_cec: Cec
+
+
+class DeviceProfile(TypedDict, total=False):
+    extends: str
+    kind: str
+    make: str
+    model: str
+    controls: dict[str, list[str] | None]
+    config: DeviceConfig
+    timing: DeviceTiming
+    monitor: Literal["required", "optional"]
+    reboot: Literal["nightly", "when_hung", "nightly_and_when_hung"]
+    notes: str
+    control4: str
 
 
 class Device(TypedDict):
     id: str
     room: str
     kind: str
+    profile: NotRequired[str]
     name: NotRequired[str]
     make: NotRequired[str]
     model: NotRequired[str]
@@ -145,21 +237,14 @@ class Device(TypedDict):
     mac: NotRequired[str]
     via: NotRequired[str]
     controls: NotRequired[dict[str, list[str] | None]]
+    config: NotRequired[DeviceConfig]
+    timing: NotRequired[DeviceTiming]
     notes: NotRequired[str]
     control4: NotRequired[str]
     monitor: NotRequired[Literal["required", "optional"]]
-    # What the integrations, the features and Control4 declare (DEVICE_KEYS).
-    sony_speaker_audio: NotRequired[bool]
-    sonos_udn: NotRequired[str]
-    zones: NotRequired[int]
-    heos_pid: NotRequired[int | str]
-    heos_bridge: NotRequired[bool]
-    settings: NotRequired[MatrixSettings]
-    protect: NotRequired[Camera]
-    ir: NotRequired[Infrared]
-    cec: NotRequired[Cec]
+    # What features and Control4 declare directly on a device (DEVICE_KEYS).
     reboot: NotRequired[Literal["nightly", "when_hung", "nightly_and_when_hung"]]
-    c4_item: NotRequired[int | list[int]]
+    control4_item: NotRequired[int | list[int]]
 
 
 class Observer(TypedDict):
@@ -185,8 +270,98 @@ class Reboots(TypedDict, total=False):
     time: str
 
 
+class Control4(TypedDict, total=False):
+    director: str
+    rooms: dict[str, str]
+    stale: list[int]
+
+
+class RoutingEdid(TypedDict, total=False):
+    idle: str
+
+
+class RoutingSource(TypedDict):
+    label: str
+    hdmi_input: NotRequired[int]
+    usb_host: NotRequired[int | dict[str, int]]
+    idle: NotRequired[Literal["preserve", "standby"]]
+
+
+class RoutingSwitch(TypedDict):
+    device: str
+    output: NotRequired[int]
+    matrix_input: NotRequired[int]
+    inputs: NotRequired[dict[str, int]]
+
+
+class RoutingAudioOrigin(TypedDict):
+    device: str
+    port: str | int
+
+
+RoutingAudioLink = TypedDict("RoutingAudioLink", {
+    "from": RoutingAudioOrigin,
+    "transport": Literal["hdmi", "optical", "coaxial", "analog", "arc", "earc"],
+})
+
+
+class RoutingStage(TypedDict):
+    device: str
+    zone: NotRequired[int]
+    input: NotRequired[str]
+    input_by_source: NotRequired[dict[str, str]]
+    sources: NotRequired[dict[str, str]]
+    sync_with: NotRequired[str]
+
+
+class RoutingDisplay(TypedDict):
+    device: str
+    input: NotRequired[str]
+    input_by_source: NotRequired[dict[str, str]]
+    sources: NotRequired[dict[str, str]]
+    passive: NotRequired[bool]
+
+
+class RoutingRoom(TypedDict):
+    room: NotRequired[str]
+    label: NotRequired[str]
+    hdmi_output: NotRequired[int]
+    hdmi_audio_output: NotRequired[int]
+    hdmi_audio_scaler: NotRequired[dict[str, str]]
+    hdmi_switch: NotRequired[RoutingSwitch]
+    hdmi_switches: NotRequired[list[RoutingSwitch]]
+    usb: NotRequired[dict[str, list[int]]]
+    usb_only: NotRequired[dict[str, dict[str, list[int]]]]
+    usb_unused: NotRequired[Literal["preserve", "park"]]
+    sources: list[str]
+    sleep_sources: NotRequired[list[str]]
+    edid: NotRequired[str]
+    edid_by_source: NotRequired[dict[str, str]]
+    audio: NotRequired[str]
+    carries: NotRequired[dict[str, Literal["display", "audio", "both"]]]
+    audio_input: NotRequired[str]
+    audio_link: NotRequired[RoutingAudioLink]
+    receiver: NotRequired[RoutingStage]
+    soundbar: NotRequired[RoutingStage]
+    display: NotRequired[RoutingDisplay]
+    displays: NotRequired[list[RoutingDisplay]]
+    on_actions: NotRequired[dict[str, str]]
+    off_actions: NotRequired[dict[str, str]]
+
+
+class Routing(TypedDict):
+    hdmi_matrix: NotRequired[str]
+    hdmi_off_input: NotRequired[int]
+    usb_off_host: NotRequired[int]
+    edid: NotRequired[RoutingEdid]
+    sources: dict[str, RoutingSource]
+    rooms: dict[str, RoutingRoom]
+
+
 class HouseFile(TypedDict):
-    version: Literal[1]
+    version: Literal[2]
+    include: NotRequired[list[str] | None]
+    profiles: NotRequired[dict[str, DeviceProfile] | None]
     rooms: NotRequired[dict[str, Room] | None]
     devices: NotRequired[list[Device]]
     later: NotRequired[list[dict[str, Any]] | None]
@@ -194,13 +369,10 @@ class HouseFile(TypedDict):
     theme: NotRequired[str]
     diagnostics: NotRequired[Diagnostics]
     # What the integrations, the features and Control4 declare (HOUSE_KEYS).
-    # routing's own keys are the routing feature's to type.
     protect: NotRequired[Protect]
-    routing: NotRequired[dict[str, Any] | None]
+    routing: NotRequired[Routing | None]
     reboots: NotRequired[Reboots]
-    control4_rooms: NotRequired[dict[str, str]]
-    control4_stale: NotRequired[list[int]]
-    control4_director: NotRequired[str]
+    control4: NotRequired[Control4]
 
 
 class ConfigError(ValueError):
@@ -421,23 +593,45 @@ def validate_rooms(rooms: object) -> list[str]:
 def declarations() -> tuple[dict[str, Key], dict[str, Key], dict[tuple[str, str], str]]:
     """(top-level keys, device keys, who reads each) of devices.yaml: this
     module's, and those the integrations, the features and Control4
-    declare (HOUSE_KEYS, DEVICE_KEYS). The readers are by (hook, key), for
-    the keys that are not this module's."""
+    declare (HOUSE_KEYS, DEVICE_KEYS). Integration DEVICE_KEYS are nested
+    under device.config.<integration>; feature and Control4 DEVICE_KEYS sit
+    directly on a device. The readers are by (hook, key), for the keys that
+    are not this module's."""
     # Imported here: the integration modules import lib/oh_conf.py, which
     # imports this module.
     import oh_features
     import oh_integrations
 
     top, device, readers = dict(TOP), dict(DEVICE), {}
-    owners = [*((module, module.NAME) for module in (*oh_integrations.REGISTRY, *oh_features.REGISTRY)),
-              (oh_control4, "control4")]
-    for module, name in owners:
-        house, fields = oh_integrations.declared("HOUSE_KEYS", (module,)), oh_integrations.declared("DEVICE_KEYS", (module,))
+    config_keys: dict[str, Key] = {}
+    for module in oh_integrations.REGISTRY:
+        name = module.NAME
+        house = oh_integrations.declared("HOUSE_KEYS", (module,))
+        fields = oh_integrations.declared("DEVICE_KEYS", (module,))
+        for key, declaration in house.items():
+            if top.setdefault(key, declaration) is not declaration:
+                raise ValueError(f"HOUSE_KEYS: {name} declares {key}, which another module declares too")
+            readers["HOUSE_KEYS", key] = name
+        if fields:
+            config_keys[name] = Key(MAPPING, f"{name} integration settings", keys=fields)
+            readers["CONFIG_KEYS", name] = name
+    device["config"] = Key(MAPPING, "integration-specific device settings, keyed by integration name", keys=config_keys)
+    for module, name in (*((m, m.NAME) for m in oh_features.REGISTRY), (oh_control4, "control4")):
+        house = oh_integrations.declared("HOUSE_KEYS", (module,))
+        fields = oh_integrations.declared("DEVICE_KEYS", (module,))
         for hook, found, into in (("HOUSE_KEYS", house, top), ("DEVICE_KEYS", fields, device)):
             for key, declaration in found.items():
                 if into.setdefault(key, declaration) is not declaration:
                     raise ValueError(f"{hook}: {name} declares {key}, which another module declares too")
                 readers[hook, key] = name
+    profile_keys: dict[str, Key] = {
+        "extends": Key(TEXT, "the id of a parent profile in profiles to inherit defaults from"),
+    }
+    for field_name in PROFILE_FIELD_NAMES:
+        if field_name in device:
+            decl = device[field_name]
+            profile_keys[field_name] = dataclasses.replace(decl, required=False) if decl.required else decl
+    top["profiles"] = dataclasses.replace(top["profiles"], each=Key(MAPPING, "a device profile", keys=profile_keys))
     return top, device, readers
 
 
@@ -454,8 +648,320 @@ def shape() -> Key:
     return Key(MAPPING, "the house file", keys={**top, "devices": devices})
 
 
-_CORE_TOP = frozenset({"version", "rooms", "devices", "later", "services", "control4_rooms", "control4_stale"})
-_CORE_DEVICE = frozenset(DEVICE) | {"c4_item"}
+_CORE_TOP = frozenset({"version", "include", "profiles", "rooms", "devices", "later", "services", "control4"})
+_CORE_DEVICE = frozenset(DEVICE) | {"control4_item"}
+_SETTLE_MAX_MS = 300000
+_POLL_MAX_S = 3600
+
+
+def expand_includes(data: object, base_dir: Path, *, source: Path | str | None = None) -> object:
+    """Merge relative YAML files named in top-level `include:` under `base_dir`.
+
+    Refuses absolute paths, `..` traversal, symlinks escaping `base_dir`,
+    missing/unreadable files, non-mapping fragments, cycles, duplicate IDs in
+    `profiles`/`rooms`/`routing.sources`/`routing.rooms`, and conflicting
+    duplicate definitions of other keys. Strips `include` after expansion.
+    """
+    if not isinstance(data, dict) or "include" not in data:
+        return data
+    base = Path(base_dir).resolve()
+    root_label = Path(source).name if source is not None else "devices.yaml"
+    root_stack = [Path(source).resolve()] if source is not None else []
+    merged: dict[str, Any] = {}
+    top_origins: dict[str, str] = {}
+    routing_origins: dict[str, str] = {}
+    dict_origins: dict[str, dict[str, str]] = {
+        "profiles": {},
+        "rooms": {},
+        "routing.sources": {},
+        "routing.rooms": {},
+    }
+
+    def fail(message: str) -> None:
+        raise ConfigError(source, message, problems=[message])
+
+    def merge_mapping_ids(target: dict[str, Any], incoming: dict[str, Any], section: str, label: str) -> None:
+        origins = dict_origins[section]
+        for entry_id, entry_value in incoming.items():
+            key_text = str(entry_id)
+            if key_text in origins:
+                fail(f"{section}.{key_text} is defined in both {origins[key_text]} and {label}")
+            origins[key_text] = label
+            target[entry_id] = copy.deepcopy(entry_value)
+
+    def merge_file(mapping: dict[str, Any], label: str, stack: list[Path], *, is_root: bool) -> None:
+        includes = mapping.get("include")
+        if "include" in mapping and includes is not None and not isinstance(includes, list):
+            fail("include must be a list of relative paths" if is_root else f"{label}: include must be a list of relative paths")
+        for key, value in mapping.items():
+            if key == "include":
+                continue
+            if key == "version":
+                if not is_root and (type(value) is not int or value != 2):
+                    fail(f"{label}: version must be 2")
+                if "version" in merged:
+                    if type(merged["version"]) is not type(value) or merged["version"] != value:
+                        fail(f"version conflicts between {top_origins['version']} and {label}")
+                else:
+                    merged["version"] = value
+                    top_origins["version"] = label
+                continue
+            if key in ("profiles", "rooms"):
+                if value is None:
+                    merged.setdefault(key, None)
+                    continue
+                if not isinstance(value, dict):
+                    fail(f"{key} must be {TOP[key].must}" if is_root else f"{label}: {key} must be {TOP[key].must}")
+                if not isinstance(merged.get(key), dict):
+                    merged[key] = {}
+                merge_mapping_ids(merged[key], value, key, label)
+                continue
+            if key in ("devices", "later", "services"):
+                if value is None:
+                    if key == "devices" and not is_root:
+                        fail(f"{label}: devices must be a list of devices")
+                    merged.setdefault(key, None)
+                    continue
+                if not isinstance(value, list):
+                    fail(f"{key} must be {TOP[key].must}" if is_root else f"{label}: {key} must be {TOP[key].must}")
+                if not isinstance(merged.get(key), list):
+                    merged[key] = []
+                merged[key].extend(copy.deepcopy(value))
+                continue
+            if key == "routing":
+                if value is None:
+                    merged.setdefault("routing", None)
+                    continue
+                if not isinstance(value, dict):
+                    fail("routing must be a mapping" if is_root else f"{label}: routing must be a mapping")
+                if not isinstance(merged.get("routing"), dict):
+                    merged["routing"] = {}
+                target_routing = merged["routing"]
+                for rkey, rval in value.items():
+                    if rkey in ("sources", "rooms"):
+                        if rval is None:
+                            target_routing.setdefault(rkey, None)
+                            continue
+                        if not isinstance(rval, dict):
+                            fail(f"{label}: routing.{rkey} must be a mapping")
+                        if not isinstance(target_routing.get(rkey), dict):
+                            target_routing[rkey] = {}
+                        merge_mapping_ids(target_routing[rkey], rval, f"routing.{rkey}", label)
+                    else:
+                        if rval is None:
+                            target_routing.setdefault(rkey, None)
+                            continue
+                        if rkey in routing_origins:
+                            if target_routing[rkey] != rval:
+                                fail(f"routing.{rkey} conflicts between {routing_origins[rkey]} and {label}")
+                        else:
+                            routing_origins[rkey] = label
+                            target_routing[rkey] = copy.deepcopy(rval)
+                continue
+            if value is None:
+                merged.setdefault(key, None)
+                continue
+            if key in top_origins:
+                if merged[key] != value:
+                    fail(f"{key} conflicts between {top_origins[key]} and {label}")
+            else:
+                top_origins[key] = label
+                merged[key] = copy.deepcopy(value)
+
+        for rel in includes or []:
+            if not isinstance(rel, str) or not rel.strip():
+                fail(f"{label}: include entry {rel!r} must be a relative path")
+            rel_path = Path(rel)
+            if rel_path.is_absolute() or rel.startswith(("/", "\\")) or ".." in rel_path.parts:
+                fail(f"{label}: include path {rel!r} must be a relative path under instance/")
+            try:
+                resolved = (base / rel_path).resolve()
+            except OSError as error:
+                fail(f"{label}: include path {rel!r} cannot be resolved: {error}")
+            if not resolved.is_relative_to(base) or resolved == base:
+                fail(f"{label}: include path {rel!r} escapes instance/")
+            if resolved in stack:
+                trail = [p.relative_to(base).as_posix() if p.is_relative_to(base) else p.name for p in stack]
+                fail(f"include cycle: {' -> '.join([*trail, rel])}")
+            if not resolved.is_file():
+                fail(f"{label}: included file {rel!r} does not exist")
+            try:
+                child = load(resolved)
+            except ConfigError as error:
+                child_problems = [f"{rel}: {p}" for p in (error.problems or [error.message])]
+                raise ConfigError(source, f"{len(child_problems)} problem{'s' if len(child_problems) != 1 else ''}; nothing done",
+                                  problems=child_problems) from None
+            if not isinstance(child, dict):
+                fail(f"{rel}: included file must be a YAML mapping")
+            assert isinstance(child, dict)
+            merge_file(child, rel, [*stack, resolved], is_root=False)
+
+    merge_file(data, root_label, root_stack, is_root=True)
+    return merged
+
+
+def _validate_timing(timing: object, where: str) -> list[str]:
+    """Validate a device's or profile's `timing` mapping."""
+    if timing is None:
+        return []
+    if not isinstance(timing, dict):
+        return [f"{where}.timing: must be a mapping"]
+    problems: list[str] = []
+    for key in unknown(TIMING_KEYS, timing):
+        problems.append(f"{where}.timing: unknown key '{key}'{hint(key, TIMING_KEYS)}")
+    settle = timing.get("settle")
+    if settle is not None:
+        if not isinstance(settle, dict):
+            problems.append(f"{where}.timing.settle: must be a mapping of value to milliseconds")
+        else:
+            for value, ms in settle.items():
+                if not isinstance(value, str) or not value:
+                    problems.append(f"{where}.timing.settle: key {value!r} must be text")
+                if type(ms) is not int or not 1 <= ms <= _SETTLE_MAX_MS:
+                    problems.append(f"{where}.timing.settle.{value}: must be an integer from 1 to {_SETTLE_MAX_MS}")
+    poll_s = timing.get("poll_s")
+    if poll_s is not None:
+        if type(poll_s) not in (int, float) or not math.isfinite(poll_s) or not 0 < poll_s <= _POLL_MAX_S:
+            problems.append(f"{where}.timing.poll_s: must be a positive number up to {_POLL_MAX_S}")
+    port = timing.get("port")
+    if port is not None:
+        if type(port) is not int or not 1 <= port <= 65535:
+            problems.append(f"{where}.timing.port: must be an integer from 1 to 65535")
+    return problems
+
+
+def _merge_device_fields(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Deterministically merge `override` onto `base` (profile -> child profile or device)."""
+    out = copy.deepcopy(base)
+    for key, value in override.items():
+        if key == "extends":
+            continue
+        if key == "controls" and isinstance(value, dict) and isinstance(out.get("controls"), dict):
+            merged_controls = dict(out["controls"])
+            for phase, names in value.items():
+                merged_controls[phase] = copy.deepcopy(names)
+            out["controls"] = merged_controls
+        elif key == "config" and isinstance(value, dict) and isinstance(out.get("config"), dict):
+            merged_config = dict(out["config"])
+            for integ, sub in value.items():
+                if isinstance(sub, dict) and isinstance(merged_config.get(integ), dict):
+                    merged_config[integ] = {**merged_config[integ], **copy.deepcopy(sub)}
+                else:
+                    merged_config[integ] = copy.deepcopy(sub)
+            out["config"] = merged_config
+        elif key == "timing" and isinstance(value, dict) and isinstance(out.get("timing"), dict):
+            merged_timing = dict(out["timing"])
+            for tkey, tval in value.items():
+                if tkey == "settle" and isinstance(tval, dict) and isinstance(merged_timing.get("settle"), dict):
+                    merged_timing["settle"] = {**merged_timing["settle"], **copy.deepcopy(tval)}
+                else:
+                    merged_timing[tkey] = copy.deepcopy(tval)
+            out["timing"] = merged_timing
+        else:
+            out[key] = copy.deepcopy(value)
+    return out
+
+
+def validate_profiles(data: dict) -> list[str]:
+    """Validate top-level `profiles:` definitions, `extends:` references and cycles."""
+    profiles = data.get("profiles")
+    if profiles is None:
+        return []
+    if not isinstance(profiles, dict):
+        return [f"profiles must be {TOP['profiles'].must}"]
+    top_keys, _, _ = declarations()
+    profile_decl = top_keys["profiles"].each
+    assert profile_decl is not None and profile_decl.keys is not None
+    profile_keys = profile_decl.keys
+    problems: list[str] = []
+    for pid, entry in profiles.items():
+        where = f"profiles.{pid}"
+        if not ID.match(str(pid)):
+            problems.append(f"profile id '{pid}' is not snake_case")
+        if not isinstance(entry, dict):
+            problems.append(f"{where}: must be a mapping")
+            continue
+        for key in sorted(unknown(profile_keys, entry)):
+            problems.append(f"{where}: unknown key '{key}'{hint(key, profile_keys)}")
+        parent = entry.get("extends")
+        if parent is not None:
+            if not isinstance(parent, str):
+                problems.append(f"{where}: extends {parent!r} must be text")
+            elif parent == pid:
+                problems.append(f"{where}: extends '{parent}' cannot refer to itself")
+            elif parent not in profiles:
+                problems.append(f"{where}: extends '{parent}' is not in profiles{hint(parent, profiles)}")
+        for key, decl in profile_keys.items():
+            if key in entry and entry[key] is not None:
+                if key == "timing":
+                    problems += _validate_timing(entry[key], where)
+                else:
+                    problems += mismatches(decl, entry[key], f"{where}.{key}")
+    for pid in profiles:
+        trail = [pid]
+        while isinstance(profiles.get(trail[-1]), dict) and isinstance(profiles[trail[-1]].get("extends"), str) \
+                and profiles[trail[-1]]["extends"] in profiles:
+            nxt = profiles[trail[-1]]["extends"]
+            trail.append(nxt)
+            if nxt in trail[:-1]:
+                if nxt == pid and len(trail) > 2:
+                    problems.append(f"profiles.{pid}: extends forms a cycle: {' -> '.join(trail)}")
+                break
+    return problems
+
+
+def resolve_profiles(data: dict) -> dict:
+    """Return a working copy of `data` with `device.profile` defaults merged in.
+
+    Returns `data` unchanged (zero copy) when no `profiles` are declared and no
+    device references a `profile`. Raises ConfigError on invalid profiles,
+    unknown profiles, or `extends` cycles. Never mutates `data`.
+    """
+    if not isinstance(data, dict):
+        return data
+    profiles = data.get("profiles")
+    devices = data.get("devices")
+    has_ref = isinstance(devices, list) and any(isinstance(d, dict) and d.get("profile") is not None for d in devices)
+    if not profiles and not has_ref:
+        return data
+    problems = validate_profiles(data)
+    if problems:
+        raise ConfigError(None, "invalid profiles: " + "; ".join(problems), problems=problems)
+    profiles_map = profiles if isinstance(profiles, dict) else {}
+    memo: dict[str, dict[str, Any]] = {}
+
+    def resolve_one(pid: str) -> dict[str, Any]:
+        if pid in memo:
+            return memo[pid]
+        entry = profiles_map[pid]
+        parent = entry.get("extends")
+        base = resolve_one(parent) if isinstance(parent, str) else {}
+        memo[pid] = _merge_device_fields(base, entry)
+        return memo[pid]
+
+    for pid in profiles_map:
+        resolve_one(pid)
+
+    if not isinstance(devices, list):
+        return data
+    resolved_devices: list[Any] = []
+    missing_problems: list[str] = []
+    for index, device in enumerate(devices):
+        if not isinstance(device, dict) or device.get("profile") is None:
+            resolved_devices.append(copy.deepcopy(device))
+            continue
+        where = str(device.get("id") or f"devices[{index}]")
+        ref = device["profile"]
+        if not isinstance(ref, str):
+            missing_problems.append(f"{where}: profile {ref!r} must be text")
+            continue
+        if ref not in memo:
+            missing_problems.append(f"{where}: profile '{ref}' is not in profiles{hint(ref, memo)}")
+            continue
+        resolved_devices.append(_merge_device_fields(memo[ref], device))
+    if missing_problems:
+        raise ConfigError(None, "invalid profiles: " + "; ".join(missing_problems), problems=missing_problems)
+    return {**data, "devices": resolved_devices}
 
 
 def extension_mismatches(data: dict) -> list[str]:
@@ -470,12 +976,12 @@ def extension_mismatches(data: dict) -> list[str]:
             continue
         where = str(device.get("id") or f"devices[{index}]")
         for key, declaration in device_keys.items():
-            if key not in _CORE_DEVICE and key in device:
+            if key not in _CORE_DEVICE and key in device and device[key] is not None:
                 problems += mismatches(declaration, device[key], f"{where}.{key}")
     return problems
 
 
-def validate(data: object, *, check_extensions: bool = True) -> list[str]:
+def validate(data: object, *, check_extensions: bool = True, instance_dir: Path | None = None) -> list[str]:
     """Every structural problem in a parsed devices.yaml.
 
     Problems that concern one integration's or one feature's fields are
@@ -485,8 +991,14 @@ def validate(data: object, *, check_extensions: bool = True) -> list[str]:
     # imports this module.
     import oh_integrations
 
+    if instance_dir is not None and isinstance(data, dict) and "include" in data:
+        try:
+            data = expand_includes(data, instance_dir)
+        except ConfigError as error:
+            return list(error.problems) or [error.message]
+
     top_keys, device_keys, _ = declarations()
-    if not isinstance(data, dict) or not fits(top_keys["version"], data.get("version")):
+    if not isinstance(data, dict) or type(data.get("version")) is not int or not fits(top_keys["version"], data.get("version")):
         return [f"devices.yaml: version must be {words(top_keys['version'])}"]
     problems = [f"unknown top-level key '{key}'{hint(key, top_keys)}" for key in unknown(top_keys, data)]
     for key, declaration in top_keys.items():
@@ -497,13 +1009,22 @@ def validate(data: object, *, check_extensions: bool = True) -> list[str]:
     # data.get("devices", []) and data["devices"], which a null breaks.
     if "devices" in data and data["devices"] is None:
         problems.append("devices must be a list of devices; write `devices: []` for a house with none")
+    if "include" in data and isinstance(data["include"], list):
+        for index, entry in enumerate(data["include"]):
+            if not isinstance(entry, str) or not entry.strip():
+                problems.append(f"include[{index}]: {entry!r} must be a relative path")
     if problems:
         return problems
     problems = validate_rooms(data.get("rooms") or {})
+    profile_problems = validate_profiles(data)
+    problems += profile_problems
     rooms = data.get("rooms")
     rooms = rooms if isinstance(rooms, dict) else {}
     allowed = oh_integrations.allowed()
     needs_mac = {module.NAME for module in oh_integrations.REGISTRY if module.NEEDS_MAC}
+    config_decl = device_keys["config"]
+    assert config_decl.keys is not None
+    config_keys = config_decl.keys
     seen: dict[str, dict[str, str]] = {"id": {}, "ip": {}, "mac": {}}
 
     def unique(kind: str, value: str, where: str) -> None:
@@ -513,7 +1034,30 @@ def validate(data: object, *, check_extensions: bool = True) -> list[str]:
         else:
             seen[kind][value] = where
 
-    devices = data.get("devices") or []
+    raw_devices = data.get("devices") or []
+    # Check per-device profile references before resolving, then resolve on a
+    # working copy so missing required fields (such as kind or controls) can be
+    # satisfied by a profile.
+    raw_profiles = data.get("profiles")
+    profiles_map: dict[str, Any] = raw_profiles if isinstance(raw_profiles, dict) else {}
+    ref_bad = False
+    for index, raw in enumerate(raw_devices):
+        if not isinstance(raw, dict):
+            continue
+        where = str(raw.get("id") or f"devices[{index}]")
+        if "profile" in raw and raw["profile"] is not None:
+            if not isinstance(raw["profile"], str):
+                problems.append(f"{where}: profile {raw['profile']!r} must be text")
+                ref_bad = True
+            elif raw["profile"] not in profiles_map:
+                problems.append(f"{where}: profile '{raw['profile']}' is not in profiles{hint(raw['profile'], profiles_map)}")
+                ref_bad = True
+    if not profile_problems and not ref_bad:
+        resolved_data = resolve_profiles(data)
+    else:
+        resolved_data = data
+
+    devices = resolved_data.get("devices") or []
     for index, device in enumerate(devices):
         if not isinstance(device, dict):
             problems.append(f"devices[{index}]: must be a mapping with at least id, room and kind")
@@ -524,6 +1068,8 @@ def validate(data: object, *, check_extensions: bool = True) -> list[str]:
         wrong = [key for key, declaration in DEVICE.items()
                  if declaration.kind == TEXT and device.get(key) is not None and not of_kind(declaration, device[key])]
         for key in wrong:
+            if key == "profile" and ref_bad:
+                continue
             problems.append(f"{where}: {key} {device[key]!r} must be text")
         if wrong:
             continue
@@ -556,6 +1102,18 @@ def validate(data: object, *, check_extensions: bool = True) -> list[str]:
             unique("mac", device["mac"], where)
         if device.get("monitor") is not None and not fits(DEVICE["monitor"], device["monitor"]):
             problems.append(f"{where}: monitor must be {words(DEVICE['monitor'])}")
+        if device.get("timing") is not None:
+            problems += _validate_timing(device["timing"], where)
+        if "config" in device and device["config"] is not None:
+            cfg = device["config"]
+            if not isinstance(cfg, dict):
+                problems.append(f"{where}.config: must be a mapping")
+            else:
+                for integ in unknown(config_keys, cfg):
+                    problems.append(f"{where}.config: unknown integration '{integ}'{hint(integ, config_keys)}")
+                for integ, sub in cfg.items():
+                    if integ in config_keys and sub is not None and not isinstance(sub, dict):
+                        problems.append(f"{where}.config.{integ}: must be a mapping")
         controls = device.get("controls")
         if controls is None:
             controls = {}
@@ -597,17 +1155,17 @@ def validate(data: object, *, check_extensions: bool = True) -> list[str]:
                 if nxt == ident and len(trail) > 2:
                     problems.append(f"{ident}: via forms a cycle: {' -> '.join(trail)}")
                 break
-    problems += oh_control4.validate(data)
-    for index, entry in enumerate(data.get("later") or []):
+    problems += oh_control4.validate(resolved_data)
+    for index, entry in enumerate(resolved_data.get("later") or []):
         if not isinstance(entry, dict):
             problems.append(f"later[{index}]: must be a mapping with at least an id")
         elif entry.get("id"):
             unique("id", str(entry["id"]), f"later {entry['id']}")
-    for index, service in enumerate(data.get("services") or []):
+    for index, service in enumerate(resolved_data.get("services") or []):
         if not isinstance(service, str):
             problems.append(f"services[{index}]: {service!r} must be a service id")
     if check_extensions:
-        problems += extension_mismatches(data)
+        problems += extension_mismatches(resolved_data)
     return problems
 
 

@@ -38,6 +38,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from oh_conf import Addon, House, YamlFile, uses
+import oh_units
 from .. import _commands, _script
 
 from .. import _pairing
@@ -45,6 +46,7 @@ from .. import _pairing
 NAME = "pyatv_http"
 PHASE = "control"
 FILE = "yaml/appletv.yaml"
+HELPER_SERVICE = oh_units.ATV
 HEADER = (
     "Apple TVs through the Apple TV helper (bin/thermite apple-tv) on this host,",
     "which keeps one pyatv Companion connection per Apple TV: the rule",
@@ -69,6 +71,8 @@ DISCOVER_MDNS = ("_airplay", "_raop", "AirPlay", "AirTunes")
 from oh_ports import HELPER_PORT
 
 HELPER = f"http://127.0.0.1:{HELPER_PORT}"
+#: Seconds between polls of the Apple TV helper (pyatv_http.js POLL).
+POLL_S = 5
 #: Seconds from a command to its read-back: none, the helper returns its native
 #: cached state. An acknowledgement does not imply a new power observation.
 READ_BACK = 0
@@ -105,9 +109,12 @@ PAIRING = {
 }
 
 
+_SUPPORTED_KINDS = frozenset({"streamer", "tv"})
+
+
 def validate(device: dict) -> list[str]:
-    if uses(device, PHASE, NAME) and device.get("make") != "Apple":
-        return [f"{device.get('id')}: {NAME} drives an Apple TV, not a {device.get('make')} {device.get('kind')}"]
+    if uses(device, PHASE, NAME) and device.get("kind") not in _SUPPORTED_KINDS:
+        return [f"{device.get('id')}: {NAME} drives a streamer or tv, not a {device.get('kind')}"]
     return []
 
 
@@ -153,17 +160,51 @@ def remote(device: dict) -> dict | None:
     return {"key": f"{ident}_key", "power": f"{ident}_power"}
 
 
+def remote_layouts(device: dict | None = None) -> dict[str, dict]:
+    """Button layout definition for Apple TV."""
+    return {
+        "apple_tv": {
+            "label": "Siri Remote",
+            "corners": ["power", None, "back", "tv"],
+            "playback": ["play_pause"],
+            "keyGroups": [{"label": "Apps", "keys": ["netflix", "youtube"], "columns": 2, "primary": True}],
+        },
+    }
+
+
 def wake_item(device: dict) -> str | None:
     """The Item ON wakes the Apple TV with, when a room chooses it
     (oh_features.routing); None unless controlled."""
     return f"{device['id']}_power" if uses(device, PHASE, NAME) else None
 
 
+def pairing(device: dict) -> dict | None:
+    """Pairing contract (oh_integrations._pairing) when controlled, else None."""
+    if not uses(device, PHASE, NAME):
+        return None
+    return {
+        **PAIRING,
+        "integration": NAME,
+        "item": _pairing.item(device),
+        "status": _pairing.status_item(device),
+        "problem": problem(device),
+    }
+
+
+def manual_items(device: dict) -> int:
+    """Number of manual command Items handled by the Apple TV's actor (power, key, pairing)."""
+    return 3
+
+
 def fields(device: dict) -> dict[str, dict]:
     """The routing executor's field (oh_integrations): power, driven by
     this integration's own rule. Its actor also takes manual commands to
     the key and pairing Items."""
-    return {f"{device['id']}_power": {"kind": "pyatv", "values": ["ON", "OFF"], "manual": 3}}
+    return {f"{device['id']}_power": {
+        "kind": "pyatv", "values": ["ON", "OFF"], "power": "absolute",
+        "feedback": {"kind": "poll", "interval_s": POLL_S},
+        "reports": {"on": {"value": "ON", "transition": False}, "off": {"value": "OFF", "transition": False}},
+    }}
 
 
 def native_power_observation(device: dict) -> dict | None:

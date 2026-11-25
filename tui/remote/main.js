@@ -146,8 +146,15 @@ function assemble(args, env) {
     backend: args.mock ? "mock" : "openhab", base: args.url || "", fetch: request, EventSource: Events, location: null,
     native: !access || access.native === true
   }, later, clock));
+  const alertsFeed = !shared.Alerts ? null
+    : options.alertsRead ? options.alertsRead
+      : args.mock ? () => shared.Alerts.sample(house, options.alertsSample || "")
+        : access && !access.native ? () => access.alerts() : null;
+  const alerts = alertsFeed ? shared.Alerts.create(Object.assign({
+    read: alertsFeed, house, confirmMs: args.mock ? 0 : undefined
+  }, later, clock)) : null;
   const controller = Controller.create(Object.assign({
-    session: session, Session: shared.Session, Pairing: shared.Pairing, Remote: shared.Remote, access,
+    session: session, Session: shared.Session, Pairing: shared.Pairing, Remote: shared.Remote, access, alerts,
     layouts: shared.layouts, house: shared.house, store: store, backend: backend, createPairing,
     createCameras: () => Cameras.create({ base: args.url || "", mock: args.mock, fetch: request, ...timers }),
     createTopology: () => Topology.create({ base: args.url || "", mock: args.mock, fetch: request,

@@ -265,6 +265,7 @@ test('IR and CEC keys that cannot be sent warn once a minute per device and reas
     clock.now += 60000; r.send('SECRETKEY');
     warnings = r.said().filter(([level]) => level === 'warn'); assert.equal(warnings.length, 3);
     r.thing.status = 'ONLINE'; r.send(good); assert.equal(r.thing.handled.length, 1);
+    if (source === cecSource) assert.equal(r.thing.handled[0][0], `${uid}:cec`);
     // Each key has its record all the same: the reason is said once a
     // minute, that a key did not go out every time.
     const id = table.DEVICES[0].id, item = `${id}_key`;
@@ -1501,6 +1502,67 @@ test('the shared samples are fresh owned reads, and a command applied without on
   assert.deepEqual(r.helper.sample('ON'), { value: 'ON', fresh: true, basis: 'owned_native_read', observedAt: 5000 });
   assert.deepEqual(r.helper.applied(() => r.helper.sample('hdmi1')).sample.value, 'hdmi1');
   assert.deepEqual(r.helper.applied(() => { throw Error('unread'); }), { outcome: 'applied', sample: null });
+});
+
+test('Android TV read-before-toggle routingProvider prevents double-toggles and refuses blind toggles', () => {
+  const r = android({ status: 'ONLINE', description: '', items: { tv_android_power: 'ON' } });
+  const provider = r.context.routingProvider({ tv_android_power: { values: ['ON', 'OFF'], power: 'toggle', feedback: { kind: 'push' } } });
+  assert.equal(provider.has('tv_android_power', 'ON'), true);
+  assert.equal(provider.has('tv_android_power', 'STANDBY'), false);
+  assert.deepEqual(provider.probe('tv_android_power'), { value: 'ON', fresh: true, basis: 'owned_native_read', observedAt: 1000000 });
+  // Already ON -> noop, zero toggle keycodes pressed.
+  const noop = provider.execute('tv_android_power', 'ON');
+  assert.equal(noop.outcome, 'applied'); assert.equal(noop.sample.value, 'ON'); assert.deepEqual(r.tv.handled, []);
+  // Different target (OFF) -> sends single keycode 26 and lets actor observe push.
+  const toggle = provider.execute('tv_android_power', 'OFF');
+  assert.deepEqual(toggle, { outcome: 'applied', sample: null });
+  assert.deepEqual(r.tv.handled, [['androidtv:googletv:tv:keycode', '26']]);
+  // Unknown Item state -> refuses blind toggle.
+  const unknown = android({ status: 'ONLINE', description: '', items: { tv_android_power: 'UNDEF' } });
+  const unknownProv = unknown.context.routingProvider();
+  assert.deepEqual(unknownProv.execute('tv_android_power', 'ON'), { outcome: 'unsent', code: 'not_ready' });
+  assert.deepEqual(unknown.tv.handled, []);
+  assert.throws(() => unknownProv.probe('tv_android_power'), /native_androidtv_status_unavailable/);
+  // OFFLINE Thing -> refuses with auth or unreachable.
+  const offline = android({ status: 'OFFLINE', description: 'PIN Process Incomplete', items: { tv_android_power: 'OFF' } });
+  assert.deepEqual(offline.context.routingProvider().execute('tv_android_power', 'ON'), { outcome: 'unsent', code: 'auth' });
+  // Without an actor (legacy mode), android_power commands are left to the native binding channel.
+  const legacy = android({ status: 'ONLINE', description: '', items: { tv_android_power: 'OFF' } });
+  legacy.rules.androidtv_googletv_tv_command.execute({ itemName: 'tv_android_power', receivedCommand: 'ON' });
+  assert.deepEqual(legacy.tv.handled, []);
+});
+
+test('the shared _device.js primitives sanitize text, validate scales, normalize reports, and manage line clients', () => {
+  const polled = [];
+  const thermiteIO = {
+    open(host, port) { return { host, port, closed: false, written: [], lines: ['OK\r\n'], polled: ['NOTICE'] }; },
+    renew() {},
+    write(link, text) { link.written.push(text); },
+    line(link) { return link.lines.length ? link.lines.shift().replace(/\r?\n$/, '') : null; },
+    pollLine(link) { return link.polled.length ? link.polled.shift() : null; },
+    quietTimeout: () => true,
+    close(link) { link.closed = true; },
+  };
+  const r = device({ thermiteIO });
+  assert.equal(r.helper.cleanText(' \u202eHello\u0007\u2066World ', 8), 'HelloWor');
+  assert.equal(r.helper.cleanText(null), '');
+  assert.equal(r.helper.onScale('50', { min: 0, max: 100, step: 1 }), true);
+  assert.equal(r.helper.onScale('69.5', { min: 0, max: 98, step: 0.5 }), true);
+  assert.equal(r.helper.onScale('98.5', { min: 0, max: 98, step: 0.5 }), false);
+  assert.equal(r.helper.onScale('INCREASE', { min: 0, max: 100, step: 1 }), false);
+  const field = { reports: { GAME: { value: 'GAME1', transition: false }, startup: { value: 'ON', transition: true } } };
+  assert.deepEqual(r.helper.normalizeReport(field, 'GAME'), { value: 'GAME1', transition: false });
+  assert.deepEqual(r.helper.normalizeReport(field, 'startup'), { value: 'ON', transition: true });
+  assert.deepEqual(r.helper.normalizeReport(field, 'BD'), { value: 'BD', transition: false });
+  const client = r.helper.lineClient({ eol: '\r\n', connectMs: 1000, heard: (dev, line) => polled.push([dev.id, line]) });
+  const dev = { id: 'box', host: '192.0.2.50', port: 23 };
+  const link = client.connection(dev, 99999);
+  assert.equal(client.ask(link, 'PING', 1000, ans => ans === 'OK'), 'OK');
+  assert.deepEqual(link.written, ['PING\r\n']);
+  assert.equal(client.listen(dev, 99999), link);
+  assert.deepEqual(polled, [['box', 'NOTICE']]);
+  client.drop(dev);
+  assert.equal(link.closed, true);
 });
 
 test('in every scenario above, a problem Item held only a code of the table or UNDEF, and every record was of the table', () => {

@@ -13,13 +13,15 @@ import urllib.request
 from pathlib import Path
 
 import oh_conf
+import oh_integrations as integrations
 import oh_matrix_sim as sim
 import oh_cli
 import oh_render as render
 import oh_sandbox as lib
 import oh_trace
 from oh_features import all_off, remote, routing, threadpools
-from oh_integrations import _instr as instr, vrroom_telnet
+from oh_features.routing import hops
+from oh_integrations import _instr as instr
 
 SUMMARY = "the room Source selectors end to end, against simulated matrices"
 
@@ -88,7 +90,7 @@ STOP_TIMEOUT = 3
 SIGNAL_WAIT = 30
 #: Seconds a step may take: a poll of a matrix Thing or HDMI switch rule and
 #: its timeout, a command and its re-read.
-STEP = max(instr.REFRESH, vrroom_telnet.POLL_S) + 10
+STEP = max((instr.REFRESH, *(mod.POLL_S for mod in integrations.defining("POLL_S")))) + 10
 EXECUTOR_QUIET = 0.25
 #: The room Sources' updates, as the remote page follows them when openHAB
 #: serves it (web/remote/backend.js NATIVE_TOPICS) and the gateway's hub does.
@@ -195,20 +197,34 @@ class Check:
         self.house = house
         self.log = log
         self.routing = house.data["routing"]
+        self.graph = hops.compile_house(house)
         full = routing.table(house)
         self.executor_enabled = "lifecycle" in full
         self.table = full["rooms"]
         self.edid = full["edid"]
         self.devices = house.by_id
-        ids = [self.routing["hdmi_matrix"]]
-        ids += [m for e in self.routing["rooms"].values() for m in e.get("usb") or {} if m not in ids]
-        #: HDMI switch id (an HDMI switch, or a matrix a room's switch is an
-        #: output of) -> the room it is in front of
-        self.switches = {e["hdmi_switch"]["device"]: room for room, e in self.routing["rooms"].items()
-                         if "hdmi_switch" in e}
-        self.modules = {i: routing.switcher(self.devices[i]) for i in dict.fromkeys(ids)}
-        self.modules.update({e["hdmi_switch"]["device"]: routing.switch_module(self.devices, e["hdmi_switch"])
-                             for e in self.routing["rooms"].values() if "hdmi_switch" in e})
+        self.hdmi_matrix: str | None = self.routing.get("hdmi_matrix")
+        matrix_ids: list[str] = [self.hdmi_matrix] if self.hdmi_matrix is not None else []
+        #: HDMI switch id (an HDMI switch, or a downstream matrix a room's
+        #: switch is an output of) -> a room it is in front of
+        self.switches: dict[str, str] = {}
+        self.modules = {}
+        for room, paths in self.graph.rooms.items():
+            off_path = paths[routing.OFF]
+            for uhop in off_path.usb_hops():
+                if uhop.device not in matrix_ids:
+                    matrix_ids.append(uhop.device)
+            for swhop in off_path.switch_hops():
+                self.switches.setdefault(swhop.device, room)
+        for ident in dict.fromkeys(matrix_ids):
+            module = routing.switcher(self.devices[ident])
+            if module is not None:
+                self.modules[ident] = module
+        for entry in self.routing["rooms"].values():
+            for sw in routing.room_switches(entry):
+                module = routing.switch_module(self.devices, sw)
+                if module is not None:
+                    self.modules[sw["device"]] = module
         self.signal_since = time.time() * 1000
         self.signal_items = set()
         for ident, module in self.modules.items():
@@ -219,24 +235,31 @@ class Check:
         #: port Item -> (matrix or switch id, port); an HDMI switch's port is
         #: its output 0, the one its room's display is on, a matrix's the
         #: output the room's display is on
-        self.ports = {}
+        self.ports: dict[str, tuple[str, int]] = {}
         for ident, module in self.modules.items():
             if ident in self.switches:
                 continue
             for port in range(1, module.ports(self.devices[ident])[1] + 1):
                 self.ports[module.switch_item(self.devices[ident], port)] = (ident, port)
-        for room, entry in self.routing["rooms"].items():
-            if "hdmi_switch" in entry:
-                self.ports[self.table[room]["switch"]["item"]] = (entry["hdmi_switch"]["device"],
-                                                                  entry["hdmi_switch"].get("output", 0))
+        for paths in self.graph.rooms.values():
+            for swhop in paths[routing.OFF].switch_hops():
+                if swhop.item:
+                    self.ports[swhop.item] = (swhop.device, swhop.output if swhop.output is not None else 0)
         #: scaler Item -> (HDMI matrix id, output) of each output whose
         #: scaler the routing sets (hdmi_audio_scaler)
-        hdmi_id = self.routing["hdmi_matrix"]
-        self.scalers = {self.modules[hdmi_id].scaler_item(self.devices[hdmi_id], output): (hdmi_id, output)
-                        for output in routing.routed_scalers(house, hdmi_id)}
-        #: a receiver's or display's input Item -> the inputs it takes
-        self.inputs = {stage["input"]: stage["inputs"] for room in self.table
-                       for _, stage in routing.stages(house, room)}
+        self.scalers: dict[str, tuple[str, int]] = {
+            mhop.scaler_item: (mhop.device, mhop.output)
+            for paths in self.graph.rooms.values()
+            for mhop in paths[routing.OFF].matrix_hops()
+            if mhop.scaler_item
+        }
+        #: a stage's input Item -> the inputs it takes (receivers, soundbars, displays)
+        self.inputs: dict[str, list[str]] = {
+            stage.input_item: list(stage.inputs_allowed)
+            for paths in self.graph.rooms.values()
+            for stage in paths[routing.OFF].stage_hops()
+            if not stage.passive and stage.input_item
+        }
         #: stand-in Item -> its type
         self.stand_in_items: dict[str, str] = {}
         for room in self.table.values():
@@ -329,31 +352,34 @@ class Check:
         return out
 
     def seed(self) -> None:
-        """Every room off, but the first room on its first source, whose
-        input has that room's EDID and every other source's the idle one;
-        HDMI switches on the matrix; USB parked."""
-        hdmi = self.sims[self.routing["hdmi_matrix"]]
-        for entry in self.routing["rooms"].values():
-            for key in ("hdmi_output", "hdmi_audio_output"):
-                if key in entry:
-                    hdmi.set(entry[key], self.routing["hdmi_off_input"])
-            switch = entry.get("hdmi_switch")
-            if switch is not None and "matrix_input" in switch:
-                self.sims[switch["device"]].set(switch.get("output", 0), switch["matrix_input"])
-        room = next(r for r in self.table if self.table[r]["hdmi"] and self.matrix_choices(r))
-        source = self.number(self.matrix_choices(room)[0])
-        hdmi.set(self.routing["rooms"][room]["hdmi_output"], source)
-        if "hdmi_audio_output" in self.routing["rooms"][room]:
-            hdmi.set(self.routing["rooms"][room]["hdmi_audio_output"], source)
-        if self.edid is not None:
-            for number in self.edid["inputs"]:
-                if self.edid["idle"] is not None:
-                    hdmi.set_edid(int(number), self.edid["idle"])
-            hdmi.set_edid(source, self.code(room, source))
-        for ident, matrix in self.sims.items():
-            if ident != self.routing["hdmi_matrix"] and ident not in self.switches:
-                for port in range(1, self.modules[ident].ports(self.devices[ident])[1] + 1):
-                    matrix.set(port, self.routing["usb_off_host"])
+        """Every room off, but the first matrix-fed room on its first source,
+        whose input has that room's EDID and every other source's the idle one;
+        HDMI switches on their upstream feed; USB parked."""
+        hdmi_id = self.routing.get("hdmi_matrix")
+        for paths in self.graph.rooms.values():
+            off_path = paths[routing.OFF]
+            for mhop in off_path.matrix_hops():
+                self.sims[mhop.device].set(mhop.output, mhop.park_value)
+            for swhop in off_path.switch_hops():
+                if swhop.park_value is not None:
+                    self.sims[swhop.device].set(swhop.output if swhop.output is not None else 0, swhop.park_value)
+        room = next((r for r in self.table if self.table[r]["hdmi"] and self.matrix_choices(r)), None)
+        if hdmi_id is not None and room is not None:
+            hdmi = self.sims[hdmi_id]
+            first_choice = self.matrix_choices(room)[0]
+            source = self.number(first_choice)
+            for mhop in self.graph.path(room, first_choice).matrix_hops():
+                self.sims[mhop.device].set(mhop.output, mhop.input_value)
+            if self.edid is not None and source is not None:
+                for number in self.edid["inputs"]:
+                    if self.edid["idle"] is not None:
+                        hdmi.set_edid(int(number), self.edid["idle"])
+                hdmi.set_edid(source, self.code(room, source))
+        if "usb_off_host" in self.routing:
+            for ident, matrix in self.sims.items():
+                if ident != hdmi_id and ident not in self.switches:
+                    for port in range(1, self.modules[ident].ports(self.devices[ident])[1] + 1):
+                        matrix.set(port, self.routing["usb_off_host"])
 
     # ------------------------------------------------------------ runtime
 
@@ -458,7 +484,10 @@ class Check:
     def edid_problems(self) -> dict[str, tuple]:
         """Source inputs whose EDID is neither the code of a room showing
         them nor, when no room does, the idle code."""
-        hdmi = self.sims[self.routing["hdmi_matrix"]]
+        hdmi_id = self.routing.get("hdmi_matrix")
+        if self.edid is None or hdmi_id is None:
+            return {}
+        hdmi = self.sims[hdmi_id]
         codes: dict[str, set[int]] = {}
         overrides: dict[str, set[int]] = {}
         for room, raw in self.table.items():
@@ -489,60 +518,23 @@ class Check:
     # ------------------------------------------------------------ steps
 
     def readback_choice(self, room: str, silent: frozenset = frozenset(), states: dict | None = None) -> str:
-        """The Source a room should read back, with the matrices and
-        switches in `silent` not answering; `states`, the Items' states,
-        are read when the room has a receiver or display and none are given."""
-        stages = self.table[room]["stages"]
-        if stages and states is None:
+        """The Source a room should read back, derived from the canonical hop
+        readback evaluator with the matrices and switches in `silent` muted."""
+        raw = self.table[room]
+        if raw["stages"] and states is None:
             states = self.states()
 
         def reported(item: str) -> str | None:
+            if item in self.ports:
+                ident, port = self.ports[item]
+                if ident in silent:
+                    return None
+                value = self.sims[ident].get(port)
+                return None if value is None else str(value)
             value = (states or {}).get(item)
-            return None if value in (None, "NULL", "UNDEF") else value
+            return None if value in (None, "NULL", "UNDEF") else str(value)
 
-        if any(reported(stage["power"]) == "OFF" for stage in stages):
-            return routing.OFF
-        if self.table[room].get("audioHdmi") and any(reported(stage["power"]) != "ON" for stage in stages):
-            return "UNDEF"
-
-        def selected(choice):
-            return choice if all(reported(item) == str(value) for item, value in self.table[room]["inputs"].get(choice, [])) else "UNDEF"
-
-        sync = self.table[room].get("sync")
-        for stage in stages:
-            value = reported(stage["input"])
-            if value is None:
-                return "UNDEF"
-            if value in stage["readback"]:
-                return selected(stage["readback"][value])
-            if sync and stage["input"] == sync["input"] and value in {s["value"] for s in sync["choices"].values()}:
-                # A follower's zone on its leader's input shows what the
-                # leader's output does (routing.js syncedShown()).
-                ident, port = self.ports[sync["hdmi"]]
-                current = None if ident in silent else self.sims[ident].get(port)
-                choice = self.table[room]["readback"].get(str(current), "")
-                route = sync["choices"].get(choice)
-                if route is None or route["value"] != value:
-                    return "UNDEF"
-                return choice if all(reported(item) == str(v) for item, v in route["inputs"]) else "UNDEF"
-            if value != stage["feed"] and value not in stage.get("bySource", {}).values():
-                return "UNDEF"
-        switch = self.table[room]["switch"]
-        if switch is not None:
-            ident, port = self.ports[switch["item"]]
-            current = None if ident in silent else str(self.sims[ident].get(port))
-            if current in switch["readback"]:
-                return selected(switch["readback"][current])
-            if current != switch["matrix"]:
-                return "UNDEF"
-        if self.table[room]["hdmi"] is None or self.routing["hdmi_matrix"] in silent:
-            return "UNDEF"
-        output = self.routing["rooms"][room]["hdmi_output"]
-        current = self.sims[self.routing["hdmi_matrix"]].get(output)
-        audio = self.routing["rooms"][room].get("hdmi_audio_output")
-        if audio is not None and self.sims[self.routing["hdmi_matrix"]].get(audio) != current:
-            return "UNDEF"
-        return selected(self.table[room]["readback"].get(str(current), "UNDEF"))
+        return hops.evaluate_readback(raw, reported)
 
     def uid(self, ident: str) -> str:
         return self.modules[ident].thing_uid(self.devices[ident])
@@ -617,9 +609,10 @@ class Check:
 
     def expect_edid(self, what: str, number: int, code: int | None) -> bool:
         """Wait until the source on input `number` presents exactly `code`."""
-        if self.edid is None or code is None:
+        hdmi_id = self.routing.get("hdmi_matrix")
+        if self.edid is None or code is None or hdmi_id is None:
             return True
-        hdmi = self.sims[self.routing["hdmi_matrix"]]
+        hdmi = self.sims[hdmi_id]
         item = self.edid["inputs"][str(number)]
 
         def wrong():
@@ -639,13 +632,13 @@ class Check:
 
     def matrix_choices(self, room: str) -> list[str]:
         """The room's sources that the HDMI matrix routes to it."""
-        local = routing._local(self.routing["rooms"][room])
+        local = hops.local_sources(self.routing["rooms"][room])
         return [s for s in self.table[room]["choices"] if s != routing.OFF and s not in local
                 and self.number(s) is not None]
 
     def show_feed(self, room: str) -> None:
-        """The room's receiver and display on, and on the signal before
-        them, as if switched there: the Source then follows the matrix."""
+        """The room's receiver, soundbar, and displays on, and on the signal
+        before them, as if switched there: the Source then follows the matrix."""
         for stage in self.table[room]["stages"]:
             if stage["feed"] is not None:
                 self.update(stage["power"], "ON")
@@ -659,63 +652,74 @@ class Check:
     def step_outside(self) -> None:
         """Switches made at the matrix or at an HDMI switch are shown and
         answered with no write."""
-        hdmi = self.sims[self.routing["hdmi_matrix"]]
-        room = max((r for r in self.table if self.table[r]["hdmi"]),
-                   key=lambda r: (self.table[r]["switch"] is not None, len(self.matrix_choices(r))))
+        hdmi_id = self.routing.get("hdmi_matrix")
+        matrix_rooms = [r for r in self.table if self.table[r]["hdmi"] and self.matrix_choices(r)]
+        room = (
+            max(matrix_rooms, key=lambda r: (bool(hops._switches_of(self.table[r])), len(self.matrix_choices(r))))
+            if hdmi_id is not None and matrix_rooms
+            else None
+        )
         self.turn_off([r for r in self.table if r != room])
         if not self.executor_idle("before external matrix switches"):
             return
-        switch = self.table[room]["switch"]
         writes = {ident: self._writes(ident) for ident in self.sims}
-        self.show_feed(room)
-        if switch is not None:
-            ident, port = self.ports[switch["item"]]
-            self.sims[ident].set(port, int(switch["matrix"]))
-        output = self.routing["rooms"][room]["hdmi_output"]
-        source = next(s for s in self.matrix_choices(room) if self.number(s) != hdmi.get(output))
-        hdmi.set(output, self.number(source))
-        if "hdmi_audio_output" in self.routing["rooms"][room]:
-            hdmi.set(self.routing["rooms"][room]["hdmi_audio_output"], self.number(source))
-        self.sources({room: source})
-        offered = {int(k) for k in self.table[room]["readback"]}
-        inputs = self.modules[self.routing["hdmi_matrix"]].ports(self.devices[self.routing["hdmi_matrix"]])[0]
-        stranger = next((i for i in range(1, inputs + 1) if i not in offered), None)
-        if stranger is not None:
-            hdmi.set(output, stranger)
-            self.sources({room: "UNDEF"})
-        unfed = [r for r in self.table if self.table[r]["switch"] is not None and self.table[r]["hdmi"] is None]
-        for other in [room, *unfed]:
+        if room is not None and hdmi_id is not None:
+            hdmi = self.sims[hdmi_id]
+            self.show_feed(room)
+            for sw in hops._switches_of(self.table[room]):
+                if sw["matrix"] is not None:
+                    ident, port = self.ports[sw["item"]]
+                    self.sims[ident].set(port, int(sw["matrix"]))
+            output = self.routing["rooms"][room]["hdmi_output"]
+            source = next(s for s in self.matrix_choices(room) if self.number(s) != hdmi.get(output))
+            hdmi.set(output, self.number(source))
+            if "hdmi_audio_output" in self.routing["rooms"][room]:
+                hdmi.set(self.routing["rooms"][room]["hdmi_audio_output"], self.number(source))
+            self.sources({room: source})
+            offered = {int(k) for k in self.table[room]["readback"]}
+            inputs = self.modules[hdmi_id].ports(self.devices[hdmi_id])[0]
+            stranger = next((i for i in range(1, inputs + 1) if i not in offered), None)
+            if stranger is not None:
+                hdmi.set(output, stranger)
+                self.sources({room: "UNDEF"})
+        switched = [r for r in self.table if hops._switches_of(self.table[r])]
+        ordered = ([room] if room in switched else []) + [r for r in switched if r != room]
+        for other in ordered:
             if other != room:
                 self.show_feed(other)
-            if self.table[other]["switch"] is not None:
-                self.switched_outside(other)
+            self.switched_outside(other)
         time.sleep(3)
         for ident in self.sims:
             if self._writes(ident) != writes[ident]:
                 self.failures.append(f"a switch made at the matrix or an HDMI switch made runtime write to {ident}")
 
     def switched_outside(self, room: str) -> None:
-        """Each input of the room's HDMI switch, set at the switch, shows as
-        its source, and one the room does not offer as UNDEF; then the
-        switch goes back to the matrix, or where it was."""
-        switch = self.table[room]["switch"]
-        ident, port = self.ports[switch["item"]]
-        before = self.sims[ident].get(port)
-        for number, local in switch["readback"].items():
-            self.sims[ident].set(port, int(number))
-            self.sources({room: local})
-        known = {*map(int, switch["readback"]), *([int(switch["matrix"])] if switch["matrix"] is not None else [])}
-        other = next((n for n in self.switch_inputs(ident) if n not in known), None)
-        if other is not None:
-            self.sims[ident].set(port, other)
-            self.sources({room: "UNDEF"})
-        self.sims[ident].set(port, int(switch["matrix"]) if switch["matrix"] is not None else before)
-        self.sources({room: self.readback_choice(room)})
+        """Each input of each of the room's HDMI switches, set at the switch,
+        shows as its source, and one the room does not offer as UNDEF; then
+        each switch goes back to its upstream feed, or where it was."""
+        switches = hops._switches_of(self.table[room])
+        for index, switch in enumerate(switches):
+            for downstream in switches[:index]:
+                if downstream["matrix"] is not None:
+                    d_ident, d_port = self.ports[downstream["item"]]
+                    self.sims[d_ident].set(d_port, int(downstream["matrix"]))
+            ident, port = self.ports[switch["item"]]
+            before = self.sims[ident].get(port)
+            for number, local in switch["readback"].items():
+                self.sims[ident].set(port, int(number))
+                self.sources({room: local})
+            known = {*map(int, switch["readback"]), *([int(switch["matrix"])] if switch["matrix"] is not None else [])}
+            other = next((n for n in self.switch_inputs(ident) if n not in known), None)
+            if other is not None:
+                self.sims[ident].set(port, other)
+                self.sources({room: "UNDEF"})
+            self.sims[ident].set(port, int(switch["matrix"]) if switch["matrix"] is not None else before)
+            self.sources({room: self.readback_choice(room)})
 
     def step_devices(self) -> None:
-        """Switches made at a room's receiver or display (its front panel or
-        its own remote) are shown and answered with no write, and so is one
-        turned off there."""
+        """Switches made at a room's receiver, soundbar, or display (its front
+        panel or its own remote) are shown and answered with no write, and so
+        is one turned off there."""
         staged = [room for room, entry in self.table.items() if entry["stages"]]
         self.turn_off(staged)
         if not self.executor_idle("before external device switches"):
@@ -751,8 +755,15 @@ class Check:
                 for item, value in sent.items():
                     self.update(item, str(value))
                 self.update(stage["power"], "OFF")
-                self.sources({room: routing.OFF})
+                self.sources({room: self.readback_choice(room)})
                 self.update(stage["power"], "ON")
+                self.sources({room: self.readback_choice(room)})
+            if len(entry["stages"]) > 1:
+                for stage in entry["stages"]:
+                    self.update(stage["power"], "OFF")
+                self.sources({room: routing.OFF})
+                for stage in entry["stages"]:
+                    self.update(stage["power"], "ON")
                 self.sources({room: self.readback_choice(room)})
             time.sleep(3)
             later = self.device_commands()
@@ -782,13 +793,14 @@ class Check:
         it may already show `choice`, and the choice would read back before
         its write lands: put it on another input first, as if switched
         there while the room is off."""
-        switch = self.table[room]["switch"]
-        if switch is None or switch["matrix"] is not None:
-            return
-        wanted = dict(self.table[room]["choices"][choice]).get(switch["item"])
-        ident, port = self.ports[switch["item"]]
-        if wanted is not None and self.sims[ident].get(port) == int(wanted):
-            self.sims[ident].set(port, next(n for n in self.switch_inputs(ident) if n != int(wanted)))
+        planned = dict(self.table[room]["choices"][choice])
+        for switch in hops._switches_of(self.table[room]):
+            if switch["matrix"] is not None:
+                continue
+            wanted = planned.get(switch["item"])
+            ident, port = self.ports[switch["item"]]
+            if wanted is not None and self.sims[ident].get(port) == int(wanted):
+                self.sims[ident].set(port, next(n for n in self.switch_inputs(ident) if n != int(wanted)))
 
     def step_hand_over(self) -> None:
         """Two rooms on one source: the last to choose it wins; when it
@@ -825,8 +837,10 @@ class Check:
             self.expect_edid(what, number, code)
 
     def step_silent(self) -> None:
-        """The HDMI matrix, then each HDMI switch, stops answering and comes back."""
-        for ident in [self.routing["hdmi_matrix"], *self.switches]:
+        """The HDMI matrix (if any), then each HDMI switch, stops answering and comes back."""
+        hdmi_id = self.routing.get("hdmi_matrix")
+        targets = ([hdmi_id] if hdmi_id is not None else []) + list(self.switches)
+        for ident in targets:
             if not self.executor_idle(f"before {ident} stops answering"):
                 return
             writes = {i: self._writes(i) for i in self.sims}

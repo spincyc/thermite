@@ -58,6 +58,9 @@ class DocsExport(unittest.TestCase):
         for path in removed:
             self.assertFalse((self.root / path).exists(), path)
         self.assertTrue((self.root / "docs/installation.html").is_file())
+        self.assertTrue((self.root / "docs/host-file.html").is_file())
+        self.assertTrue((self.root / "docs/host.schema.json").is_file())
+        self.assertNotIn("{{host_keys}}", (self.root / "docs/host-file.html").read_text(encoding="utf-8"))
         self.assertEqual(oh_site.compare(self.root, oh_site.repository_files()), ([], []))
 
 

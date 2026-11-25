@@ -37,8 +37,10 @@ import urllib.parse
 import urllib.request
 from collections.abc import Iterable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import oh_host
+import oh_integrations
 import oh_ports
 import oh_service
 import oh_trace
@@ -47,6 +49,9 @@ import oh_metrics as metrics
 import oh_music as music
 import oh_shares as shares
 from oh_access import files as oh_access_files
+
+if TYPE_CHECKING:
+    from oh_conf import House
 
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 QUADLET = f"deploy/{oh_units.CONTAINERS[oh_units.RUNTIME]}.container"
@@ -57,6 +62,9 @@ MUSIC_QUADLET = f"deploy/{oh_units.CONTAINERS[oh_units.MUSIC]}.container"
 TARGET = f"deploy/{oh_units.TARGET}"
 SLICE = f"deploy/{oh_units.SLICE}"
 CONTAINER_DROPINS = {unit: f"deploy/{unit}.d/50-container-lifecycle.conf" for unit in oh_units.CONTAINED}
+#: Apple TV helper's unit and drop-in: generated and installed only when the
+#: house uses an integration that requires oh_units.ATV (or when house is None).
+ATV_UNITS = (ATV_QUADLET, CONTAINER_DROPINS[oh_units.ATV])
 #: Music Assistant's unit and drop-in: generated and installed only for a
 #: host with music: (host_units).
 MUSIC_UNITS = (MUSIC_QUADLET, CONTAINER_DROPINS[oh_units.MUSIC])
@@ -89,11 +97,24 @@ def share_units(host: dict) -> dict[str, Path]:
             for name, share in sorted(shares.settings(host).items())}
 
 
-def host_units(host: dict) -> dict[str, Path]:
+def helper_services(house: House) -> set[str]:
+    """Conditional localhost helper systemd units required by `house`."""
+    return oh_integrations.helper_services(house)
+
+
+def needs_atv(house: House | None = None) -> bool:
+    """Whether `house` requires the Apple TV helper unit (True when house is None)."""
+    return True if house is None else oh_units.ATV in helper_services(house)
+
+
+def host_units(host: dict, house: House | None = None) -> dict[str, Path]:
     """INSTALLED as this host has it: without MUSIC_UNITS unless it has
-    music:, without SHARE_GATE unless a share needs it, and with its shares'
+    music:, without SHARE_GATE unless a share needs it, without ATV_UNITS
+    when `house` is given and uses no Apple TV helper, and with its shares'
     mount units."""
-    absent = (*(() if music.enabled(host) else MUSIC_UNITS), *(() if shares.gated(host) else (SHARE_GATE,)))
+    absent = (*(() if music.enabled(host) else MUSIC_UNITS),
+              *(() if shares.gated(host) else (SHARE_GATE,)),
+              *(() if needs_atv(house) else ATV_UNITS))
     return {**{source: target for source, target in INSTALLED.items() if source not in absent},
             **share_units(host)}
 
@@ -104,10 +125,11 @@ def every_unit(host: dict) -> dict[str, Path]:
     return {**INSTALLED, **share_units(host)}
 
 
-def services(host: dict) -> tuple[str, ...]:
-    """SERVICES as this host has them: with Music Assistant when it has
-    music:, and each share's mount."""
-    return (*SERVICES, *((oh_units.MUSIC,) if music.enabled(host) else ()),
+def services(host: dict, house: House | None = None) -> tuple[str, ...]:
+    """SERVICES as this host has them: without oh_units.ATV when `house`
+    uses none, with Music Assistant when it has music:, and each share's mount."""
+    base = SERVICES if needs_atv(house) else tuple(unit for unit in SERVICES if unit != oh_units.ATV)
+    return (*base, *((oh_units.MUSIC,) if music.enabled(host) else ()),
             *(share.unit for _, share in sorted(shares.settings(host).items())))
 
 
@@ -1051,17 +1073,18 @@ def check_pins(versions: dict, host: dict) -> None:
                           "copy its entry from Thermite's versions.json")
 
 
-def render_units(versions: dict, host: dict) -> dict[str, str]:
+def render_units(versions: dict, host: dict, house: House | None = None) -> dict[str, str]:
     """{area path: text} of every unit and service drop-in the owner installs."""
     # Every host value below lands in unit text; never render unchecked facts.
     oh_host.validate(host)
     check_pins(versions, host)
     units = {
         QUADLET: render_quadlet(versions, host),
-        ATV_QUADLET: render_atv_quadlet(versions, host),
         TARGET: render_target(host),
         SLICE: render_slice(),
     }
+    if needs_atv(house):
+        units[ATV_QUADLET] = render_atv_quadlet(versions, host)
     for service in metrics.services(host):
         units[METRICS_QUADLETS[service.unit]] = render_metrics_quadlet(versions, host, service)
     if music.enabled(host):
@@ -1071,7 +1094,7 @@ def render_units(versions: dict, host: dict) -> dict[str, str]:
     found = shares.settings(host)
     units.update({source: render_share_mount(host, found[Path(source).stem.removeprefix("share-")])
                   for source in share_units(host)})
-    wanted = host_units(host)
+    wanted = host_units(host, house)
     units.update({source: render_container_dropin() for source in CONTAINER_DROPINS.values() if source in wanted})
     return units
 
@@ -1139,8 +1162,8 @@ def installed_units(area: Path, installed: dict[str, Path] | None = None, *, rev
             files = prepared_files(area, commit, Path(area) / "var")[0]
     out = []
     for name, target in (installed or INSTALLED).items():
-        if name in OPTIONAL_UNITS and (name not in files if files is not None else not (Path(area) / name).exists()):
-            # A host without music: (or shares:) has none; one still installed is left over.
+        if name in (*OPTIONAL_UNITS, *ATV_UNITS) and (name not in files if files is not None else not (Path(area) / name).exists()):
+            # A host without music:, shares:, or Apple TVs has none; one still installed is left over.
             if Path(target).exists():
                 out.append((name, Path(target), "unwanted"))
             continue

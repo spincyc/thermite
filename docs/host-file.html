@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>The host file · thermite</title>
+  <meta name="description" content="Every key of instance/host.yaml: what it holds and what reads it.">
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/palettes/thermite.css" id="palette-css">
+  <link rel="stylesheet" href="assets/site.css">
+  <script>
+    // Theme and palette before the first paint, so a light page never flashes dark.
+    (function () {
+      var theme, palette, names = "contrast thermite harbor".split(" ");
+      try {
+        theme = localStorage.getItem("thermite.theme");
+        palette = localStorage.getItem("thermite.palette");
+      } catch (error) { /* storage blocked */ }
+      if (theme !== "light" && theme !== "dark") {
+        theme = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      }
+      document.documentElement.setAttribute("data-theme", theme);
+      if (names.indexOf(palette) >= 0) {
+        document.getElementById("palette-css").href = "assets/palettes/" + palette + ".css";
+      }
+    })();
+  </script>
+</head>
+<body class="page-host-file">
+  <a class="skip" href="#main">Skip to the content</a>
+  <header class="bar">
+    <a class="brand" href="index.html" aria-label="thermite, home"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="18" height="18" role="img" aria-label="thermite"><title>thermite</title><path fill="none" stroke="var(--th-flame)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M16 44 C12 39 15 33 21 29 C19 35 24 37 26 36 C23 28 31 23 34 14 C39 21 35 28 41 32 C49 36 51 41 45 45 C37 48 23 48 16 44"/><path fill="none" stroke="var(--th-mark-core)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M29 42 C26 38 30 35 32 32 C32 37 36 39 34 43"/><path fill="none" stroke="var(--th-metal)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" d="M5 47 L59 47 C56 59 8 59 5 47"/></svg><span>thermite</span></a>
+    <nav aria-label="Pages"><a href="index.html">Home</a><a href="start.html">Get started</a><a href="dashboards.html">Dashboards</a><a href="commands.html">Commands</a><a href="colors.html">Colors</a><a href="faq.html">FAQ</a></nav>
+    <button class="theme" id="theme" type="button" aria-label="Switch to the light theme">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/></svg>
+    </button>
+  </header>
+  <main id="main">
+<h1 id="the-host-file">The host file</h1>
+<p><code>instance/host.yaml</code> in your private site says how the host running thermite is configured: its time zone, installation root, service account ids, listener ports, gateway addresses, optional plain-HTTP Guest listener, metrics overrides, Music Assistant libraries and mounted network shares. <a href="start.html">Get started</a> shows how a private site is created and deployed.</p>
+<p>This page lists every key the file may have. It is made from the declaration <code>thermite check</code> and <code>thermite install</code> check the file against, so it names every key the file takes and none it refuses.</p>
+<p>A value is text, a number, true or false, a list or a mapping. Write text that could be read as something else in quotes: <code>"3.1.1"</code>, <code>"on"</code>, <code>"010"</code>. <code>instance/host.yaml</code> is read with the same strict YAML rules as <a href="house-file.html">the house file</a>, naming the line of any value that does not mean one thing.</p>
+<h2 id="the-top-level">The top level</h2>
+<table><thead><tr><th>Key</th><th>Value</th><th>What it is</th></tr></thead><tbody><tr><td><code>version</code></td><td>1</td><td>The format of the file: 1.</td></tr><tr><td><code>timezone</code></td><td>text, required</td><td>The host's IANA time zone name such as Etc/UTC.</td></tr><tr><td><code>root</code></td><td>text</td><td>The root-owned installation directory (default /srv/thermite).</td></tr><tr><td><code>http_port</code></td><td>number</td><td>The native openHAB HTTP listener port on loopback (default 13602).</td></tr><tr><td><code>https_port</code></td><td>number</td><td>The native openHAB HTTPS listener port on loopback (default 13603).</td></tr><tr><td><code>uid</code></td><td>number</td><td>The positive non-root numeric user id of the thermite service account (default 9001).</td></tr><tr><td><code>gid</code></td><td>number</td><td>The positive non-root numeric group id of the thermite service account (default 9001).</td></tr><tr><td><code>gateway</code></td><td>mapping</td><td>HTTPS gateway listener port and bind addresses.</td></tr><tr><td><code>metrics</code></td><td>mapping</td><td>Prometheus, Grafana and node_exporter host overrides.</td></tr><tr><td><code>guest_http</code></td><td>mapping</td><td>Opt-in plain-HTTP Guest listener restricted to listed client networks.</td></tr><tr><td><code>music</code></td><td>mapping</td><td>Opt-in Music Assistant libraries and listener ports.</td></tr><tr><td><code>shares</code></td><td>mapping by share name</td><td>Network shares mounted by Thermite.</td></tr></tbody></table>
+<h2 id="gateway">gateway</h2>
+<table><thead><tr><th>Key</th><th>Value</th><th>What it is</th></tr></thead><tbody><tr><td><code>gateway.port</code></td><td>number</td><td>The HTTPS gateway listener port (default 13601).</td></tr><tr><td><code>gateway.listen</code></td><td>list of text</td><td>This host's own IP addresses the HTTPS gateway binds besides loopback.</td></tr></tbody></table>
+<h2 id="metrics">metrics</h2>
+<table><thead><tr><th>Key</th><th>Value</th><th>What it is</th></tr></thead><tbody><tr><td><code>metrics.units</code></td><td>list of text</td><td>Additional systemd unit names for node_exporter to report on.</td></tr><tr><td><code>metrics.retention</code></td><td>text</td><td>How long Prometheus keeps samples, a duration such as 395d.</td></tr><tr><td><code>metrics.retention_size</code></td><td>text</td><td>Maximum disk Prometheus uses, a size such as 12GB.</td></tr><tr><td><code>metrics.yoke_targets</code></td><td>list of text</td><td>Optional external Yoke observer host:port endpoints for Prometheus to scrape.</td></tr><tr><td><code>metrics.node_exporter_uid</code></td><td>number</td><td>Positive numeric uid and gid for node_exporter's own account, distinct from uid and gid.</td></tr><tr><td><code>metrics.prometheus_port</code></td><td>number</td><td>Prometheus loopback listener port (default 13607).</td></tr><tr><td><code>metrics.node_exporter_port</code></td><td>number</td><td>Node_exporter loopback listener port (default 13608).</td></tr><tr><td><code>metrics.blackbox_port</code></td><td>number</td><td>Blackbox_exporter loopback listener port (default 13609).</td></tr><tr><td><code>metrics.exporter_port</code></td><td>number</td><td>Thermite metrics exporter loopback listener port (default 13610).</td></tr><tr><td><code>metrics.grafana_port</code></td><td>number</td><td>Grafana LAN listener port (default 13611).</td></tr></tbody></table>
+<h2 id="guest-http">guest_http</h2>
+<table><thead><tr><th>Key</th><th>Value</th><th>What it is</th></tr></thead><tbody><tr><td><code>guest_http.port</code></td><td>number</td><td>The plain-HTTP Guest listener port (default 13600).</td></tr><tr><td><code>guest_http.listen</code></td><td>list of text, required</td><td>This host's own IP addresses the Guest listener binds.</td></tr><tr><td><code>guest_http.clients</code></td><td>list of text, required</td><td>Client CIDR networks admitted by the Guest listener.</td></tr><tr><td><code>guest_http.names</code></td><td>list of text</td><td>Lowercase DNS hostnames guests may type to reach the Guest listener.</td></tr></tbody></table>
+<h2 id="music">music</h2>
+<table><thead><tr><th>Key</th><th>Value</th><th>What it is</th></tr></thead><tbody><tr><td><code>music.libraries</code></td><td>mapping by library name</td><td>Music libraries mounted read-only into Music Assistant.</td></tr><tr><td><code>music.port</code></td><td>number</td><td>Music Assistant loopback API listener port (default 13627).</td></tr><tr><td><code>music.stream_port</code></td><td>number</td><td>Music Assistant LAN audio stream listener port (default 13628).</td></tr></tbody></table>
+<h2 id="shares">shares</h2>
+<table><thead><tr><th>Key</th><th>Value</th><th>What it is</th></tr></thead><tbody><tr><td><code>shares.&lt;share name&gt;.type</code></td><td>cifs or nfs, required</td><td>The network filesystem type.</td></tr><tr><td><code>shares.&lt;share name&gt;.server</code></td><td>text, required</td><td>The server hostname or IPv4 address.</td></tr><tr><td><code>shares.&lt;share name&gt;.share</code></td><td>text</td><td>The SMB share name (and optional subdirectory), for cifs shares.</td></tr><tr><td><code>shares.&lt;share name&gt;.export</code></td><td>text</td><td>The exported absolute directory path, for nfs shares.</td></tr><tr><td><code>shares.&lt;share name&gt;.where</code></td><td>text, required</td><td>The local mount point below /mnt or /media.</td></tr><tr><td><code>shares.&lt;share name&gt;.writable</code></td><td>true or false</td><td>Whether the share is mounted read-write instead of read-only.</td></tr><tr><td><code>shares.&lt;share name&gt;.version</code></td><td>text</td><td>Optional quoted SMB or NFS protocol version such as 3.1.1 or 4.2.</td></tr></tbody></table>
+<h2 id="checking-as-you-type">Checking as you type</h2>
+<p>Editors that understand JSON Schema complete and check the file as you type: start it with <code># yaml-language-server: $schema=https://spincyc.github.io/thermite/host.schema.json</code>. The schema is made from the same declaration. It knows the names of the keys and the kinds of value; <code>thermite check</code> checks the rest, such as valid IANA time zones, non-colliding ports and allowed mount points.</p>
+
+  </main>
+  <footer class="foot">
+    <span class="foot-mark"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="18" height="18" role="img" aria-label="thermite"><title>thermite</title><path fill="none" stroke="var(--th-flame)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M16 44 C12 39 15 33 21 29 C19 35 24 37 26 36 C23 28 31 23 34 14 C39 21 35 28 41 32 C49 36 51 41 45 45 C37 48 23 48 16 44"/><path fill="none" stroke="var(--th-mark-core)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M29 42 C26 38 30 35 32 32 C32 37 36 39 34 43"/><path fill="none" stroke="var(--th-metal)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" d="M5 47 L59 47 C56 59 8 59 5 47"/></svg> thermite</span>
+    <span>© 2026. All rights reserved.</span>
+  </footer>
+  <script src="assets/site.js"></script>
+</body>
+</html>

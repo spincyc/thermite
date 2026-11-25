@@ -115,6 +115,15 @@ class Paths(unittest.TestCase):
         with self.assertRaisesRegex(oh_host.HostError, "unknown setting state_root"):
             oh_host.validate({**host, "state_root": str(TOP)})
 
+    def test_minimal_host_receives_optional_port_and_identity_defaults(self):
+        minimal = {"version": 1, "timezone": "Etc/UTC"}
+        resolved = oh_host.validate(minimal)
+        self.assertEqual(minimal, {"version": 1, "timezone": "Etc/UTC"})
+        self.assertEqual((resolved["http_port"], resolved["https_port"], resolved["uid"], resolved["gid"]),
+                         (13602, 13603, 9001, 9001))
+        units = deploy.render_units(VERSIONS, resolved)
+        self.assertIn("User=9001\nGroup=9001\n", units[deploy.QUADLET])
+
 
 class InstallationRoot(unittest.TestCase):
     def actions(self, host):

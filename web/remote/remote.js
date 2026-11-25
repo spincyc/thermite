@@ -9,7 +9,8 @@
   "use strict";
 
   const house = globalThis.REMOTE_HOUSE;
-  const layouts = globalThis.REMOTE_LAYOUTS;
+  const layouts = globalThis.RemoteLayouts ? globalThis.RemoteLayouts.forHouse(house) : globalThis.REMOTE_LAYOUTS;
+  const Dom = globalThis.ThermiteDom || null;
   const Remote = globalThis.RemoteBackend;
   const Session = globalThis.RemoteSession;
   const params = new URLSearchParams(window.location.search);
@@ -491,7 +492,7 @@
       box.appendChild(note(KIND_ICON[target.kind] || "i-pc", target.label, remote.note.replace("{device}", target.label)));
     } else {
       if (remote.corners) box.appendChild(node("div", { class: "cluster-fit" }, [cluster(remote.corners)]));
-      if (remote.top) box.appendChild(row(remote.top, "keyrow", "Buttons", ""));
+      if (remote.top && remote.top.length) box.appendChild(row(remote.top, "keyrow", "Buttons", ""));
       const keys = remote.playback || [];
       if (remote.corners && keys.length <= 3) {
         keys.forEach((id) => playback.appendChild(key(id, PLAY[id] ? "key--play" : "key--sm")));
@@ -499,8 +500,8 @@
         const dense = keys.length > 5 ? " keyrow--dense" : "";
         box.appendChild(row(keys, "keyrow keyrow--playback" + dense, "Playback", remote.corners ? "key--sm" : ""));
       }
-      if (remote.keys) {
-        if (remote.keyGroups) {
+      if (remote.keys && remote.keys.length) {
+        if (remote.keyGroups && remote.keyGroups.length) {
           const primary = node("div", { class: "labels labels--grouped" });
           remote.keyGroups.forEach((group) => {
             const grid = node("div", { class: "keygroup", role: "group", "aria-label": group.label,
@@ -519,7 +520,7 @@
     auxiliary.hidden = !auxiliary.childNodes.length;
     panel.appendChild(auxiliary);
     // Labelled keys fit about four to a row.
-    const labelRows = remote && remote.keyGroups
+    const labelRows = remote && remote.keyGroups && remote.keyGroups.length
       ? remote.keyGroups.filter((group) => group.primary).reduce((sum, group) => sum + Math.ceil(group.keys.length / group.columns), 0)
       : Math.ceil(((remote && remote.keys) || []).length / 4);
     const rows = box.querySelectorAll(".keyrow").length + labelRows;
@@ -780,7 +781,7 @@
     const context = current.id + ":" + confirmed;
     const source = current.options.find((option) => option.id === confirmed);
     const sourceLabel = model && model.source ? model.source.label
-      : source ? source.label : confirmed === "off" ? "Off" : "Source unknown";
+      : source ? source.label : confirmed === "off" ? "Off" : confirmed === "partial" ? "Partially on" : "Source unknown";
     const routeNote = model && (model.routeReady === false || (model.routeStatus && model.routeStatus !== "done" && model.routeDetail))
       ? (model.routeDetail || "Awaiting confirmation of the physical route.") : "";
     const sig = JSON.stringify({
@@ -1134,10 +1135,29 @@
     return session.mode() === "listen" ? listenPage.press(button) : session.press(button);
   }
 
+  const repeater = globalThis.ThermiteHold
+    ? globalThis.ThermiteHold.createRepeater({
+        delay: Session.REPEAT_DELAY,
+        interval: Session.REPEAT_EVERY,
+        isValid: (entry) => Boolean(entry && entry.key && entry.key.isConnected !== false && !entry.key.disabled),
+        onFire: (entry) => pressButton(entry.button),
+        onStop: () => {
+          all(".is-pressed").forEach((pressed) => {
+            if (!pressed.pressTimer) pressed.classList.remove("is-pressed");
+          });
+        }
+      })
+    : null;
+
   function startRepeat(key) {
     stopRepeat();
     const button = key.getAttribute("data-button");
     key.pressedByPointer = true;
+    if (repeater) {
+      repeater.start({ key: key, button: button });
+      key.addEventListener("pointerleave", stopRepeat, { once: true });
+      return;
+    }
     pressButton(button);
     repeat = { key: key, timer: setTimeout(function tick() {
       if (!repeat || repeat.key.isConnected === false || repeat.key.disabled) {
@@ -1151,6 +1171,7 @@
   }
 
   function stopRepeat() {
+    if (repeater) repeater.stop();
     all(".is-pressed").forEach((pressed) => {
       if (!pressed.pressTimer) pressed.classList.remove("is-pressed");
     });
@@ -1467,6 +1488,7 @@
   }
 
   function node(tag, attributes, children) {
+    if (Dom) return Dom.el(tag, attributes, children);
     const element = document.createElement(tag);
     Object.keys(attributes || {}).forEach((name) => {
       if (attributes[name] !== null && attributes[name] !== undefined) element.setAttribute(name, attributes[name]);
@@ -1479,6 +1501,7 @@
   }
 
   function icon(id, extra) {
+    if (Dom) return Dom.svgIcon("icon" + (extra ? " " + extra : ""), id);
     const ns = "http://www.w3.org/2000/svg";
     const svg = document.createElementNS(ns, "svg");
     svg.setAttribute("class", "icon" + (extra ? " " + extra : ""));

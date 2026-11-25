@@ -18,6 +18,7 @@ from unittest.mock import patch
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
+import oh_inventory  # noqa: E402
 import oh_room_policy  # noqa: E402
 from oh_room_policy import (Field, Observation, Plan, PolicyError, canonical, conflicts, desired_at,  # noqa: E402
                             due_boundaries, expected_plan, local_instant, repair_plan, verify)
@@ -25,7 +26,7 @@ from oh_room_policy.worker import BACKOFF, RECONCILE_HEARTBEAT, ROUTE_IN_FLIGHT_
 from oh_access import AccessError  # noqa: E402
 from oh_access.worker import OBSERVED, NativeCache, PolicyIO, Warnings, compile_plans, observe, observed_fields  # noqa: E402
 
-HOUSE = json.loads((AREA / "instance/devices.yaml").read_text())
+HOUSE = oh_inventory.load(AREA / "instance/devices.yaml")
 WEST, EAST = "example_west", "example_east"
 PLAYER, COMPUTER = "example_player", "example_computer"
 MONDAY = datetime(2026, 11, 2, tzinfo=timezone.utc)  # weekday 0
@@ -165,10 +166,28 @@ class ManualHolds(Harness, unittest.TestCase):
 
     def test_unknown_or_stale_observations_are_never_verified_or_repaired(self):
         self.make((policy(WEST, hold=PLAYER, enabled=False), at(8)), observed={"example_tv_power": "OFF"})
-        self.devices.read = lambda items: {"example_tv_power": Observation("OFF", self.wall[0] - timedelta(seconds=31))}
+        # example_tv_power is polled every 15s (max_age = 2*15 + 10 = 40.0s).
+        self.devices.read = lambda items: {"example_tv_power": Observation("OFF", self.wall[0] - timedelta(seconds=41))}
         status = self.step()[WEST]
         self.assertEqual(status["state"], "unknown")
         self.assertEqual(self.devices.writes, [])
+
+    def test_field_max_age_is_derived_from_feedback_contract(self):
+        from oh_room_policy import plan as policy_plan
+        # Poll: 2 * interval_s + 10 (bk808 10s -> 30s, sony_ip_control 15s -> 40s, pyatv 5s -> 20s)
+        comp = expected_plan(HOUSE, WEST, COMPUTER)
+        by_item = {f.item: f.max_age for f in comp.fields}
+        self.assertEqual(by_item["example_matrix_output1_input"], 30.0)
+        self.assertEqual(by_item["example_tv_power"], 40.0)
+        self.assertEqual(by_item["example_tv_input"], 40.0)
+        play = expected_plan(HOUSE, WEST, PLAYER)
+        self.assertEqual({f.item: f.max_age for f in play.fields}["example_player_power"], 20.0)
+        # Direct feedback contract derivations: poll, push, none, and fallback.
+        self.assertEqual(policy_plan._max_age({"kind": "poll", "interval_s": 10}), 30.0)
+        self.assertEqual(policy_plan._max_age({"kind": "poll", "interval_s": 15}), 40.0)
+        self.assertEqual(policy_plan._max_age({"kind": "push"}), policy_plan.PUSH_MAX_AGE)
+        self.assertEqual(policy_plan._max_age({"kind": "none"}), 0.0)
+        self.assertEqual(policy_plan._max_age(None), policy_plan.DEFAULT_MAX_AGE)
 
     def test_a_passive_display_leaves_the_room_verified_on_what_it_can_read(self):
         self.make((policy(EAST, hold=COMPUTER, enabled=False), at(8)), house=passive_east(HOUSE),
@@ -795,7 +814,7 @@ class RouteVerification(unittest.TestCase):
         """A passive display is never read: the room is verified, degraded or
         unknown on the fields it can read, and its limitation is always reported."""
         plan = expected_plan(passive_east(HOUSE), EAST, COMPUTER)
-        self.assertEqual((plan.limitations, plan.observed()), ((PASSIVE,), (EAST_OUTPUT,)))
+        self.assertEqual((plan.limitations, plan.observed()), ((PASSIVE,), (EAST_OUTPUT, f"loc_{EAST}_source_lifecycle")))
         now = at(10)
         for value, state in (("1", "verified"), ("2", "degraded"), ("UNDEF", "unknown")):
             with self.subTest(value=value):

@@ -166,6 +166,7 @@
     const pending = state && own(routes, state.pending) ? state.pending : null;
     if (pending === source) return { label: "Switching", detail: "Waiting for the room to report " + routes[pending].label + "." };
     if (state?.value === "off") return { label: "Room off", detail: "The room source is Off; device power is not inferred." };
+    if (state?.value === "partial") return { label: "Partially on", detail: "Some devices in this room are on without a complete configured route." };
     if (!state || !own(routes, state.value)) return { label: "Unknown", detail: "No source report, no answer, or an input this room does not offer." };
     if (state.value === source) return { label: "Reported", detail: pending ? "Last reported source; switching to " + routes[pending].label + "." : "The room reports this configured source." };
     return { label: "Configured", detail: "The room reports " + routes[state.value].label + ", not this source." };
@@ -212,10 +213,26 @@
     return rows.slice().sort((a, b) => compare(a.sort[key] || "", b.sort[key] || "") * (direction === -1 ? -1 : 1) || compare(a.id, b.id));
   }
 
-  global.ThermiteTopology = { catalogue, carries, project, layout, sourcesOf, chains, compactLabel, routeStatus, videoRows, dataRows, sortRows };
+  function sourceGroups(model, roomId) {
+    const uses = new Map();
+    Object.entries(model.routes || {}).forEach(([room, routes]) => Object.keys(routes).forEach((id) => {
+      if (!uses.has(id)) uses.set(id, new Set());
+      uses.get(id).add(room);
+    }));
+    const groups = { shared: [], local: [] };
+    Object.entries((model.routes || {})[roomId] || {}).forEach(([id, route]) => {
+      groups[uses.get(id).size > 1 ? "shared" : "local"].push({ id, label: route.label });
+    });
+    return groups;
+  }
+
+  const api = { catalogue, carries, project, layout, sourcesOf, sourceGroups, chains, compactLabel, carriesLabel, nativePorts, routeStatus, videoRows, dataRows, sortRows };
+  global.ThermiteTopology = api;
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof document === "undefined") return;
   const $ = selector => document.querySelector(selector);
   const element = (tag, attrs = {}, value) => {
+    if (global.ThermiteDom) return global.ThermiteDom.el(tag, attrs, value != null ? String(value) : null);
     const node = document.createElement(tag);
     Object.entries(attrs).forEach(([key, val]) => node.setAttribute(key, val));
     if (value != null) node.textContent = value;
@@ -229,7 +246,7 @@
   const locationLabel = id => model.rooms.filter(entry => entry.location === id).length > 1
     ? id.split("_").map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(" ") : roomLabel(id);
   const deviceLabel = id => model.nodes.find(entry => entry.id === id)?.label || id;
-  const sourceLabel = (id, value) => model.routes[id]?.[value]?.label || (value === "off" ? "Off" : "Unknown");
+  const sourceLabel = (id, value) => model.routes[id]?.[value]?.label || (value === "off" ? "Off" : value === "partial" ? "Partially on" : "Unknown");
 
   function fillSources(reset) {
     const select = $("[data-source]"); select.textContent = "";

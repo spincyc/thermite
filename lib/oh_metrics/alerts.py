@@ -83,6 +83,8 @@ CHECK_WORDS = {
     "port": "Control port closed",
     "reads": "Cannot be read",
     "power": "Off while in use",
+    "online": "Camera offline",
+    "recording": "Not recording",
 }
 CHECK = "thermite:check"
 HEALTH = "thermite:control_health"
@@ -257,6 +259,20 @@ def _zone(mapping: dict, item: str) -> str:
     return str(((mapping.get("paths") or {}).get(item) or {}).get("zone") or item)
 
 
+def _needs_atv(mapping: dict) -> bool:
+    """Whether this house runs the Apple TV helper (true when helpers is omitted in fixture maps)."""
+    if "helpers" not in mapping:
+        return True
+    return oh_units.ATV in (mapping.get("helpers") or ())
+
+
+def active_daemons(mapping: dict) -> tuple[str, ...]:
+    """Long-running Thermite units monitored for this house."""
+    if _needs_atv(mapping):
+        return oh_units.DAEMONS
+    return tuple(unit for unit in oh_units.DAEMONS if unit != oh_units.ATV)
+
+
 def checks(mapping: dict) -> tuple[list[dict], int]:
     """(thermite:check recording rules, how many required control series always exist)."""
     rules: list[dict] = []
@@ -276,12 +292,13 @@ def checks(mapping: dict) -> tuple[list[dict], int]:
     record("max(thermite_openhab_up == bool 0) or vector(-1)", HOUSE_ROOM, "openhab", "runtime", True)
     for job in CORE_JOBS:
         record(f"max(up{{job={_q(job)}}} == bool 0) or vector(-1)", HOUSE_ROOM, job, "scrape", True, scope=MONITORING)
-    for service in SERVICES:
+    active_services = SERVICES if _needs_atv(mapping) else tuple(s for s in SERVICES if s != "apple_tv_helper")
+    for service in active_services:
         record(f'max(probe_success{{job="service_http",service={_q(service)}}} == bool 0) or vector(-1)',
                HOUSE_ROOM, service, "service", True, scope=MONITORING if service in MONITORING_SERVICES else CONTROL)
     record('max(node_scrape_collector_success{job="node",collector="systemd"} == bool 0) or vector(-1)',
            HOUSE_ROOM, "node", "systemd", True, scope=MONITORING)
-    always_required += 1 + len(SERVICES) - len(MONITORING_SERVICES)
+    always_required += 1 + len(active_services) - sum(service in MONITORING_SERVICES for service in active_services)
     for item in sorted((mapping.get("paths") or {})):
         by_demand(f'(count(thermite_item_info{{item={_q(item)},value!="other"}}) * 0) or vector(-1)', _in_use(item),
                   _zone_room(mapping, item), "", "source", _zone(mapping, item))
@@ -352,7 +369,7 @@ def rules(mapping):
     recorded, required_series = checks(mapping)
     held = [{"record": ZONE_SOURCE, "expr": zone_source()}] if mapping.get("paths") else []
     required = f'{CHECK}{{required="true",scope="{CONTROL}"}}'
-    daemons = _units(oh_units.DAEMONS)
+    daemons = _units(active_daemons(mapping))
     timeouts = "|".join(TIMEOUT_KINDS)
     return {"groups": [
         # Sequential within the group: the checks read this evaluation's zone

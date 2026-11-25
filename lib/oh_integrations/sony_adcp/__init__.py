@@ -50,7 +50,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from oh_conf import Addon, House, YamlFile, options_text, uses
+from oh_conf import Addon, House, YamlFile, config as device_config, options_text, uses
+from oh_shape import LIST, TEXT, Key
 from .. import _commands, _script
 
 NAME = "sony_adcp"
@@ -65,12 +66,18 @@ HEADER = (
 )
 ADDONS = (Addon("automation", "jsscripting", "the projector rule (sony_adcp.js)"),)
 ASSETS: dict[str, str] = {}
+DEVICE_KEYS = {
+    "inputs": Key(LIST, "inputs the projector offers (e.g. hdmi1, hdmi2); defaults to hdmi1 and hdmi2",
+                  each=Key(TEXT, "an input name such as hdmi1")),
+}
 KINDS = {"projector"}
 PORT = 53595
 #: A TCP probe of PORT would cost the projector a session, reset with its greeting unread.
 PROBED = False
 #: The rule's own read of the projector's status says whether it answers.
 READS = True
+#: Seconds between polls of the projector (sony_adcp.js POLL).
+POLL_S = 15
 #: Seconds from a command to its read-back: none, the command's session
 #: reads the projector again on the same connection.
 READ_BACK = 0
@@ -106,10 +113,41 @@ KEYS = {
 }
 
 
+_DEFAULT_INPUT_LABELS = dict(INPUTS)
+
+
+def _device_inputs(device: dict) -> tuple[tuple[str, str], ...]:
+    custom = device_config(device, NAME).get("inputs")
+    if isinstance(custom, list) and custom and all(isinstance(v, str) and v for v in custom):
+        out = []
+        for value in custom:
+            if value in _DEFAULT_INPUT_LABELS:
+                label = _DEFAULT_INPUT_LABELS[value]
+            elif value.startswith("hdmi") and value[4:].isdigit():
+                label = f"HDMI {value[4:]}"
+            else:
+                label = value
+            out.append((value, label))
+        return tuple(out)
+    return INPUTS
+
+
 def validate(device: dict) -> list[str]:
-    if (uses(device, PHASE, NAME) or uses(device, "control", NAME)) and device.get("kind") not in KINDS:
-        return [f"{device.get('id')}: {NAME} drives a projector, not a {device.get('kind')}"]
-    return []
+    if not (uses(device, PHASE, NAME) or uses(device, "control", NAME)):
+        return []
+    where = device.get("id") or "a device"
+    problems: list[str] = []
+    if device.get("kind") not in KINDS:
+        problems.append(f"{where}: {NAME} drives a projector, not a {device.get('kind')}")
+    cfg = device_config(device, NAME)
+    if "inputs" in cfg:
+        custom = cfg["inputs"]
+        if (not isinstance(custom, list) or not custom
+                or any(not isinstance(v, str) or not v.strip() or v != v.strip() or "," in v or '"="' in v for v in custom)):
+            problems.append(f"{where}.config.{NAME}.inputs: must be a non-empty list of input names")
+        elif len(set(custom)) != len(custom):
+            problems.append(f"{where}.config.{NAME}.inputs: must not repeat an input")
+    return problems
 
 
 def _item(ident: str, type_: str, label: str, tags: list[str], control: bool, *,
@@ -141,8 +179,9 @@ def render(device: dict, house: House, out: YamlFile) -> None:
                                         control, icon="projector")
     out.items[f"{ident}_power_state"] = _item(ident, "String", "Power State", ["Status", "Power"], False,
                                               options=states)
+    device_inputs = _device_inputs(device)
     out.items[f"{ident}_input"] = _item(ident, "String", "Input", ["Control" if control else "Status", "Channel"],
-                                        control, options=options_text(INPUTS), icon="video")
+                                        control, options=options_text(device_inputs), icon="video")
     out.items[f"{ident}_picture_mode"] = _item(ident, "String", "Picture Mode", ["Status", "Mode"], False)
     out.items[f"{ident}_video_signal"] = _item(ident, "String", "Input video snapshot", ["Status"], False)
     if control:
@@ -168,17 +207,23 @@ def problem(device: dict) -> str | None:
 
 def table(devices: list[dict]) -> list[dict]:
     """The rule's device table: id, host, port and whether it is controlled."""
-    return [{"id": d["id"], "host": d["ip"], "port": PORT, "control": uses(d, "control", NAME)} for d in devices]
+    return [{"id": d["id"], "host": d["ip"], "port": (d.get("timing") or {}).get("port", PORT),
+             "control": uses(d, "control", NAME)} for d in devices]
 
 
 def rule(devices: list[dict]) -> str:
     """sony_adcp.js with its tables filled in for these devices."""
-    return _script.rule(SOURCE, NAME, {"DEVICES": table(devices), "KEYS": KEYS,
-                                       "INPUTS": [value for value, _ in INPUTS]})
+    values = list(dict.fromkeys(v for d in devices for v, _ in _device_inputs(d))) if devices else [v for v, _ in INPUTS]
+    return _script.rule(SOURCE, NAME, {"DEVICES": table(devices), "KEYS": KEYS, "INPUTS": values})
 
 
 #: One script context per device; its polls and commands stay ordered.
 rule_path, files = _script.per_device(RULE, rule)
+
+
+def manual_items(device: dict) -> int:
+    """Number of manual command Items handled by the projector's actor (power, input, key)."""
+    return 3
 
 
 def fields(device: dict) -> dict[str, dict]:
@@ -195,9 +240,18 @@ def fields(device: dict) -> dict[str, dict]:
     or ignored during a transition the other way is busy for a tenth of
     the settle toward its end, then sent again."""
     ident = device["id"]
-    return {f"{ident}_power": {"kind": "adcp", "values": ["ON", "OFF"], "settle": {"ON": 60000, "OFF": 30000},
-                               "manual": 3},
-            f"{ident}_input": {"kind": "adcp", "values": [value for value, _ in INPUTS], "manual": 3}}
+    feedback = {"kind": "poll", "interval_s": POLL_S}
+    power_reports = {raw: {"value": "ON" if on else "OFF", "transition": raw in ("startup", "cooling1", "cooling2")}
+                     for raw, (_, on) in POWER_STATES.items()}
+    return {
+        f"{ident}_power": {
+            "kind": "adcp", "values": ["ON", "OFF"], "power": "absolute",
+            "settle": {"ON": 60000, "OFF": 30000}, "feedback": feedback, "reports": power_reports,
+        },
+        f"{ident}_input": {
+            "kind": "adcp", "values": [value for value, _ in _device_inputs(device)], "feedback": feedback,
+        },
+    }
 
 
 def stage(device: dict, zone: int | None) -> dict | None:
@@ -205,7 +259,8 @@ def stage(device: dict, zone: int | None) -> dict | None:
     whose display it is (oh_features.routing); it has no zones."""
     if zone is not None:
         return None
-    return {"power": f"{device['id']}_power", "input": f"{device['id']}_input", "inputs": [v for v, _ in INPUTS]}
+    return {"power": f"{device['id']}_power", "input": f"{device['id']}_input",
+            "inputs": [v for v, _ in _device_inputs(device)]}
 
 
 def remote(device: dict) -> dict | None:
@@ -216,7 +271,18 @@ def remote(device: dict) -> dict | None:
     return {
         "key": f"{ident}_key",
         "power": f"{ident}_power",
-        "input": {"item": f"{ident}_input", "options": [list(pair) for pair in INPUTS]},
+        "input": {"item": f"{ident}_input", "options": [list(pair) for pair in _device_inputs(device)]},
+    }
+
+
+def remote_layouts(device: dict | None = None) -> dict[str, dict]:
+    """Button layout definition for ADCP projectors."""
+    return {
+        "sony_projector": {
+            "label": "Projector remote",
+            "corners": ["power", "input", "menu", None],
+            "keys": ["picture", "aspect", "lens"],
+        },
     }
 
 

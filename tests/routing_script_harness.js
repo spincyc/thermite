@@ -700,4 +700,179 @@ test('manual command targeting a settling property is deferred until settled and
   assert(r.calls.includes('authorize legacy-defer1'), 'must authorize deferred manual command once settled');
 });
 
+test('shown() distinguishes explicit partial state from off and UNDEF', () => {
+  const r = load();
+  // Multi-stage room (display + receiver): mixed power or ON+parked matrix -> partial.
+  r.item('multi_tv_power', 'ON'); r.item('multi_tv_input', 'hdmi1');
+  r.item('multi_avr_power', 'ON'); r.item('multi_avr_input', 'BD');
+  r.item('multi_matrix_out', '1');
+  const multi = {
+    item: 'loc_multi_source', label: 'Multi', hdmi: 'multi_matrix_out',
+    choices: { off: [['multi_matrix_out', '9']], tv: [['multi_matrix_out', '1']], local: [['multi_matrix_out', '9']] },
+    power: { off: [], tv: [['multi_tv_power', 'ON'], ['multi_avr_power', 'ON']], local: [['multi_tv_power', 'ON'], ['multi_avr_power', 'ON']] },
+    inputs: { off: [], tv: [['multi_tv_input', 'hdmi1'], ['multi_avr_input', 'BD']], local: [['multi_tv_input', 'hdmi2'], ['multi_avr_input', 'AUX1']] },
+    after: { off: [['multi_tv_power', 'OFF'], ['multi_avr_power', 'OFF']], tv: [], local: [] },
+    readback: { 9: 'off', 1: 'tv' }, switch: null,
+    stages: [
+      { role: 'display', power: 'multi_tv_power', input: 'multi_tv_input', feed: 'hdmi1', bySource: { local: 'hdmi2' }, readback: {} },
+      { role: 'receiver', power: 'multi_avr_power', input: 'multi_avr_input', feed: 'BD', bySource: {}, readback: { AUX1: 'local' } },
+    ],
+    diagnosis: { item: 'loc_multi_source_problem', reported: ['hdmi1', 'hdmi2', 'BD', 'AUX1', 'CD'], checks: { multi_avr_input: { device: 'multi_avr', label: 'AVR', point: 'input' } } },
+  };
+  assert.equal(r.context.shown(multi), 'tv');
+  r.item('multi_avr_power').state = 'OFF';
+  assert.equal(r.context.shown(multi), 'partial');
+  r.item('multi_tv_power').state = 'OFF';
+  assert.equal(r.context.shown(multi), 'off');
+  r.item('multi_avr_power').state = 'ON';
+  assert.equal(r.context.shown(multi), 'partial');
+  // Both stages ON while matrix is parked at off -> partial, not off.
+  r.item('multi_tv_power').state = 'ON'; r.item('multi_matrix_out').state = '9';
+  assert.equal(r.context.shown(multi), 'partial');
+  // Known input disagreement (receiver on local AUX1, TV still on feed hdmi1) -> partial.
+  r.item('multi_avr_input').state = 'AUX1';
+  assert.equal(r.context.shown(multi), 'partial');
+  r.item('multi_tv_input').state = 'hdmi2';
+  assert.equal(r.context.shown(multi), 'local');
+  // Unrecognized input still reports UNDEF with readbackProblem.
+  r.item('multi_tv_input').state = 'hdmi1'; r.item('multi_avr_input').state = 'CD';
+  multi.readbackProblem = null;
+  assert.equal(r.context.shown(multi), 'UNDEF');
+  assert.equal(multi.readbackProblem.reason, 'unsupported_input');
+  // Single-stage room: OFF -> off; ON with parked matrix -> partial.
+  r.item('solo_tv_power', 'OFF'); r.item('solo_tv_input', 'hdmi1'); r.item('solo_out', '9');
+  const solo = {
+    item: 'loc_solo_source', label: 'Solo', hdmi: 'solo_out',
+    inputs: { off: [], tv: [['solo_tv_input', 'hdmi1']] }, readback: { 9: 'off', 1: 'tv' }, switch: null,
+    stages: [{ role: 'display', power: 'solo_tv_power', input: 'solo_tv_input', feed: 'hdmi1', readback: {} }],
+  };
+  assert.equal(r.context.shown(solo), 'off');
+  r.item('solo_tv_power').state = 'ON';
+  assert.equal(r.context.shown(solo), 'partial');
+  // Dual-display room: display1 local + display2 ON on feed -> partial; display2 OFF -> local1.
+  r.item('d1_power', 'ON'); r.item('d1_input', 'hdmi2');
+  r.item('d2_power', 'ON'); r.item('d2_input', 'hdmi1');
+  r.item('dual_out', '9');
+  const dual = {
+    item: 'loc_dual_source', label: 'Dual', hdmi: 'dual_out',
+    inputs: { off: [], tv: [['d2_input', 'hdmi1'], ['d1_input', 'hdmi1']], local1: [['d1_input', 'hdmi2']] },
+    readback: { 9: 'off', 1: 'tv' }, switch: null,
+    stages: [
+      { role: 'display', power: 'd2_power', input: 'd2_input', feed: 'hdmi1', readback: {} },
+      { role: 'display', power: 'd1_power', input: 'd1_input', feed: 'hdmi1', readback: { hdmi2: 'local1' } },
+    ],
+  };
+  assert.equal(r.context.shown(dual), 'partial');
+  r.item('d2_power').state = 'OFF';
+  assert.equal(r.context.shown(dual), 'local1');
+  r.item('d1_power').state = 'OFF';
+  assert.equal(r.context.shown(dual), 'off');
+});
+
+test('sleep_sources are commanded strictly before stage power-off and matrix parking on Off', () => {
+  const sleepDen = {
+    ...room('den', 'Den', 'matrix_output1_input'),
+    sleep: ['den_player_power'],
+    after: {
+      off: [['den_player_power', 'OFF'], ['den_tv_power', 'OFF'], ['den_lights', 'OFF']],
+      tv: [['den_lights', 'ON']],
+    },
+  };
+  // Without lifecycle: sleep_sources sent before matrix park and before display power OFF.
+  const plain = load({ table: { ...TABLE, lifecycle: null, rooms: { den: sleepDen } },
+    initial: { den_player_power: 'ON', den_tv_power: 'ON', matrix_output1_input: '1' } });
+  plain.item('den_player_power', 'ON');
+  plain.sent.length = 0;
+  plain.command('den', 'off');
+  const order = plain.sent.map(([name, val]) => `${name}=${val}`);
+  const sleepIdx = order.indexOf('den_player_power=OFF');
+  const matrixIdx = order.indexOf('matrix_output1_input=9');
+  const tvIdx = order.indexOf('den_tv_power=OFF');
+  const lightsIdx = order.indexOf('den_lights=OFF');
+  assert(sleepIdx >= 0 && sleepIdx < matrixIdx && matrixIdx < tvIdx && tvIdx < lightsIdx, order.join(', '));
+  // With lifecycle: unmanaged sleep_sources sent strictly before lifecycle.flush() dispatches matrix/stages.
+  const events = [];
+  const realTable = {
+    ...REAL,
+    rooms: { den: sleepDen },
+    lifecycle: {
+      ...REAL.lifecycle,
+      endpoints: {
+        den: { choices: {
+          tv: { requirements: { matrix_output1_input: '1' }, uses: [] },
+          off: { off: true, release: { matrix_output1_input: '9' } },
+        } },
+      },
+    },
+  };
+  const managed = load({ real: true, table: realTable, initial: { matrix_output1_input: '1' } });
+  const playerPower = managed.item('den_player_power', 'ON');
+  const origPlayerSend = playerPower.sendCommand.bind(playerPower);
+  playerPower.sendCommand = (v) => { events.push(`sleep:${v}`); origPlayerSend(v); };
+  const tvPower = managed.item('den_tv_power', 'ON');
+  const origTvSend = tvPower.sendCommand.bind(tvPower);
+  tvPower.sendCommand = (v) => { events.push(`tv:${v}`); origTvSend(v); };
+  const origDispatch = managed.deps().dispatch, origProbe = managed.deps().probe;
+  managed.deps().dispatch = (op, rep) => { events.push(`dispatch:${op.resource}=${op.value}`); origDispatch(op, rep); };
+  managed.deps().probe = (op, rep) => { events.push(`probe:${op.resource}`); origProbe(op, rep); };
+  managed.command('den', 'off');
+  const sIdx = events.indexOf('sleep:OFF');
+  const firstOp = events.findIndex((e) => e.startsWith('probe:') || e.startsWith('dispatch:'));
+  const tIdx = events.indexOf('tv:OFF');
+  assert(sIdx >= 0 && firstOp > sIdx && tIdx > firstOp, events.join(', '));
+});
+
+test('cascaded switches (room.switches) read back downstream-to-upstream and wire all triggers', () => {
+  const cascadedDen = {
+    ...room('den', 'Den', 'matrix_output1_input'),
+    switch: { item: 'sw_down_input', matrix: '1', readback: { 2: 'down_local' } },
+    switches: [
+      { item: 'sw_down_input', matrix: '1', readback: { 2: 'down_local' } },
+      { item: 'sw_up_input', matrix: '3', readback: { 4: 'up_local' } },
+    ],
+    inputs: { off: [], tv: [], down_local: [], up_local: [] },
+    choices: { off: [['matrix_output1_input', '9']], tv: [['matrix_output1_input', '1']],
+      down_local: [['matrix_output1_input', '9']], up_local: [['matrix_output1_input', '9']] },
+  };
+  const r = load({ table: { ...TABLE, rooms: { den: cascadedDen } },
+    initial: { matrix_output1_input: '1', sw_down_input: '1', sw_up_input: '3' } });
+  r.item('sw_down_input', '1'); r.item('sw_up_input', '3');
+  const triggerItems = r.rules.routing_den_switch_readback.triggers.map((t) => t.name);
+  assert.deepEqual(triggerItems, ['sw_down_input', 'sw_up_input']);
+  assert.equal(r.context.shown(cascadedDen), 'tv');
+  r.item('sw_up_input').state = '4';
+  assert.equal(r.context.shown(cascadedDen), 'up_local');
+  r.item('sw_down_input').state = '2';
+  assert.equal(r.context.shown(cascadedDen), 'down_local');
+  r.item('sw_down_input').state = '1'; r.item('sw_up_input').state = '3';
+  assert.equal(r.context.shown(cascadedDen), 'tv');
+});
+
+test('per-room holdMs holds a fast room for 15 s while a slow room holds for 25 s', () => {
+  const clock = { now: 1000 };
+  const fastDen = {
+    ...room('den', 'Den', 'matrix_output1_input'), holdMs: 15000,
+    stages: [{ role: 'display', power: 'den_tv_power', input: 'den_tv_input', feed: 'hdmi1', readback: {} }],
+  };
+  const slowOffice = {
+    ...room('office', 'Office', 'matrix_output2_input'), holdMs: 25000,
+    stages: [{ role: 'receiver', power: 'office_tv_power', input: 'office_tv_input', feed: 'hdmi1', readback: {} }],
+  };
+  const r = load({
+    clock,
+    table: { ...TABLE, lifecycle: null, holdMs: 25000, rooms: { den: fastDen, office: slowOffice } },
+    initial: { den_tv_power: 'OFF', den_tv_input: 'hdmi1', office_tv_power: 'OFF', office_tv_input: 'hdmi1',
+      matrix_output1_input: '9', matrix_output2_input: '9' },
+  });
+  r.command('den', 'tv');
+  r.command('office', 'tv');
+  r.posted.length = 0;
+  r.advance(15000);
+  // Fast room's 15 s hold expired and posted readback; slow room is still held.
+  assert(r.posted.some(([name]) => name === 'loc_den_source'), 'fast room hold should expire at 15 s');
+  assert(!r.posted.some(([name]) => name === 'loc_office_source'), 'slow room hold should still be active at 15 s');
+  r.advance(10000);
+  assert(r.posted.some(([name]) => name === 'loc_office_source'), 'slow room hold should expire at 25 s');
+});
+
 process.stdout.write(JSON.stringify({ passed: tests.length, tests }));

@@ -1,7 +1,6 @@
 """A source cabled to a receiver, offered on two of its zones: a room held on it
 leaves the other room free to choose it, never to drive it (the gateway's
 cross-room lock check compares the rooms' routes and resources)."""
-import json
 from pathlib import Path
 
 from django.conf import settings
@@ -22,9 +21,11 @@ def two_zone_house():
     """The example house with a receiver before both screens: its main zone
     the West TV's, its zone 2 the East display's. The player is cabled to the
     receiver, and both rooms offer it on its input there."""
-    data = json.loads((Path(__file__).resolve().parents[3] / "instance/devices.yaml").read_text())
+    import yaml
+    data = yaml.safe_load((Path(__file__).resolve().parents[3] / "instance/devices.yaml").read_text())
     data["devices"].append({"id": "example_avr", "room": WEST, "kind": "avr", "make": "Marantz", "model": "CINEMA 30",
-                            "name": "Example AVR", "ip": "192.0.2.15", "zones": 2,
+                            "name": "Example AVR", "ip": "192.0.2.15",
+                            "config": {"denonmarantz_http": {"zones": 2}},
                             "controls": {"observe": ["denonmarantz_http"], "control": ["denonmarantz_http"]}})
     rooms = data["routing"]["rooms"]
     rooms[WEST]["display"].pop("sources")

@@ -49,8 +49,9 @@ def house():
     """The example house with a WiiM Amp Pro as the East room's sound, and a
     WiiM Mini (no MAC listed) and a Sonos Amp in a kitchen no routed room
     covers."""
+    import yaml
     from oh_integrations import sonos
-    data = json.loads((Path(__file__).resolve().parents[3] / "instance/devices.yaml").read_text())
+    data = yaml.safe_load((Path(__file__).resolve().parents[3] / "instance/devices.yaml").read_text())
     data["rooms"][KITCHEN] = {"label": "Example Kitchen", "tag": "Kitchen"}
     wiim = {"observe": ["wiim_http"], "control": ["wiim_http"]}
     data["devices"] += [
@@ -59,7 +60,7 @@ def house():
         {"id": MINI, "room": KITCHEN, "kind": "audio_streamer", "make": "WiiM", "model": "Mini", "ip": "192.0.2.33",
          "controls": wiim},
         {"id": AMP, "room": KITCHEN, "kind": "amp", "make": "Sonos", "model": "Amp", "ip": "192.0.2.21", "mac": mac(21),
-         "sonos_udn": sonos.udn(mac(21)), "controls": {"observe": ["sonos"], "control": ["sonos"]}}]
+         "config": {"sonos": {"udn": sonos.udn(mac(21))}}, "controls": {"observe": ["sonos"], "control": ["sonos"]}}]
     data["routing"]["rooms"][EAST]["audio"] = WIIM
     return data
 

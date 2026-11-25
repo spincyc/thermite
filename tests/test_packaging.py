@@ -108,8 +108,9 @@ class Packaging(unittest.TestCase):
         site = self.root / "empty-site"
         report = oh_init.initialize(site, program=self.program, empty=True)
         self.assertTrue(report["empty"])
-        self.assertEqual(json.loads((site / "instance/devices.yaml").read_text()),
-                         {"version": 1, "rooms": {}, "devices": []})
+        import oh_inventory
+        self.assertEqual(oh_inventory.load(site / "instance/devices.yaml"),
+                         {"version": 2, "rooms": {}, "devices": []})
         # Only the house changes: the host defaults and release pin are the example's.
         self.assertEqual((site / "instance/host.yaml").read_bytes(), (self.program / "instance/host.yaml").read_bytes())
         self.assertIn("The house is empty", (site / "README.md").read_text())
@@ -151,7 +152,8 @@ class Packaging(unittest.TestCase):
         oh_init.initialize(site, program=self.program)
         path = site / file
         lines = path.read_text().splitlines()
-        first = next(number for number, line in enumerate(lines) if f'"{key}": ' in line)
+        first = next(number for number, line in enumerate(lines)
+                     if line.lstrip().startswith(f"{key}: ") or f'"{key}": ' in line)
         lines.insert(first + 1, lines[first].replace("Example", "Another"))
         path.write_text("\n".join(lines) + "\n")
         for args in (("init", "--initial-branch=fixture"), ("config", "user.name", "Fixture"),
@@ -322,7 +324,8 @@ class Packaging(unittest.TestCase):
             metadata = archive.read(f"thermite_app-{oh_release.VERSION}.dist-info/METADATA").decode()
             self.assertIn("Requires-Dist: PyYAML>=6,<7", metadata)
             self.assertIn("All rights reserved", metadata)
-            demo = json.loads(archive.read("thermite_app/runtime/instance/devices.yaml"))
+            import yaml
+            demo = yaml.safe_load(archive.read("thermite_app/runtime/instance/devices.yaml"))
             self.assertEqual(demo.get("access", {}).get("mode", "authenticated"), "authenticated")
 
     def test_pyatv_environment_reentry_uses_program_launcher_and_same_private_site(self):

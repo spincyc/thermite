@@ -76,7 +76,7 @@ class Seam(unittest.TestCase):
             actors = len(re.findall(r"\.(?:actor|httpActor)\(", text)) if "require('thermite-routing-io')" in text else 0
             self.assertEqual(text.count("record: thermiteDevice.recorder("), actors, name)
             made += actors
-        self.assertEqual(made, 6)
+        self.assertEqual(made, 7)
         conf = oh_render.build(House(zones.house()))
         generic = {path: text for path, text in conf.files.items() if "/thermite_routing_io_" in path}
         self.assertEqual(set(generic), {"automation/js/thermite_routing_io_example_matrix.js",
@@ -156,10 +156,11 @@ class Items(unittest.TestCase):
         conf = oh_render.build(House(EXAMPLE))
         items = {name: item for file in conf.yaml.values() for name, item in file.items.items()}
         problems = {name for name in items if name.endswith("_problem") and not name.startswith("loc_")}
-        self.assertEqual(problems, {"example_tv_problem", "example_display_problem", "example_player_problem"})
+        self.assertEqual(problems, {"example_tv_problem", "example_display_problem", "example_player_problem",
+                                    "example_matrix_problem"})
         self.assertEqual({name for name in items if name.endswith("_commands")},
                          {"example_tv_sony_ip_control_commands", "example_display_sony_ip_control_commands",
-                          "example_player_pyatv_http_commands"})
+                          "example_player_pyatv_http_commands", "example_matrix_bk808_http_commands"})
         for name in problems:
             options = items[name]["metadata"]["stateDescription"]["config"]["options"]
             self.assertEqual([code for code, _ in parse_options(options)], list(_commands.CODES), name)
@@ -190,8 +191,9 @@ class Items(unittest.TestCase):
         self.assertEqual(made["example_avr_problem"], _commands.items({"id": "example_avr"}, "x")["example_avr_problem"])
         # A device whose own script has an actor keeps the ones its integration renders.
         self.assertIn("example_tv_problem", conf.yaml["yaml/sony_ip_control.yaml"].items)
-        # Without the routing lifecycle its commands go to its binding, which reports nothing.
-        plain = {name for file in oh_render.build(House(EXAMPLE)).yaml.values() for name in file.items}
+        # Without routing (no routing actor) its commands go to its binding, which reports nothing.
+        unrouted = {k: v for k, v in EXAMPLE.items() if k != "routing"}
+        plain = {name for file in oh_render.build(House(unrouted)).yaml.values() for name in file.items}
         self.assertNotIn("example_matrix_problem", plain)
 
     def test_the_remote_model_names_the_problem_item_of_whichever_script_commands_the_device(self):
@@ -282,12 +284,14 @@ class Tally(unittest.TestCase):
         mapping = oh_metrics.exporter_map(House(EXAMPLE))
         self.assertEqual(mapping["commands"], {
             "example_display_sony_ip_control_commands": {"device": "example_display", "integration": "sony_ip_control"},
+            "example_matrix_bk808_http_commands": {"device": "example_matrix", "integration": "bk808_http"},
             "example_player_pyatv_http_commands": {"device": "example_player", "integration": "pyatv_http"},
             "example_tv_sony_ip_control_commands": {"device": "example_tv", "integration": "sony_ip_control"}})
         # A tally is read as a tally alone, and every problem Item's clear state is the record's.
         self.assertFalse(set(mapping["commands"]) & set(mapping["items"]))
         problems = {name: spec for name, spec in mapping["items"].items() if spec["point"] == "problem"}
-        self.assertEqual(set(problems), {"example_tv_problem", "example_display_problem", "example_player_problem"})
+        self.assertEqual(set(problems), {"example_tv_problem", "example_display_problem", "example_player_problem",
+                                         "example_matrix_problem"})
         self.assertEqual({spec.get("clear_state") for spec in problems.values()}, {_commands.CLEAR})
         actors = oh_metrics.exporter_map(House(zones.house()))["commands"]
         self.assertEqual(actors["example_avr_denonmarantz_http_commands"],

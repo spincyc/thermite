@@ -181,8 +181,10 @@ def _json(response):
 def descriptor_routes(body, device):
     """Derive only supported services of actual devices in this exact descriptor."""
     peer = _ipv4(device.get("ip"))
-    expected, mac = device.get("sonos_udn"), device.get("mac")
-    if not isinstance(expected, str) or not _UDN.fullmatch(expected) or not isinstance(mac, str) or not _MAC.fullmatch(mac) or expected != "RINCON_" + mac.replace(":", "").upper() + "01400":
+    expected, mac = sonos.udn(device), device.get("mac")
+    if (not isinstance(expected, str) or not _UDN.fullmatch(expected)
+            or (mac is not None and (not isinstance(mac, str) or not _MAC.fullmatch(mac)
+                                     or expected != sonos.udn(mac)))):
         raise BoundaryError("Sonos callback discovery requires matching committed UDN and MAC")
     try:
         if not isinstance(body, bytes) or not body or len(body) > MAX_BODY:

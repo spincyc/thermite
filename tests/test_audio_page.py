@@ -21,6 +21,7 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
 from oh_conf import House  # noqa: E402
+import oh_inventory  # noqa: E402
 from oh_features import remote_model  # noqa: E402
 from oh_integrations import sonos  # noqa: E402
 from tests.test_playing import SPEAKER as ARC  # noqa: E402
@@ -31,7 +32,7 @@ WIIM = {"kind": "streaming_amp", "make": "WiiM", "model": "Amp Pro",
 
 
 def model():
-    data = json.loads((AREA / "instance/devices.yaml").read_text())
+    data = oh_inventory.load(AREA / "instance/devices.yaml")
     data["rooms"]["fixture_den"] = {"label": "Fixture Den", "tag": "Room"}
     data["devices"] += [{"id": FREE, "room": "fixture_den", "name": "Fixture Den Amp", "ip": "192.0.2.42", **WIIM},
                         {"id": OWNED, "room": ROOM, "ip": "192.0.2.41", **WIIM}]
@@ -41,7 +42,7 @@ def model():
 
 def bar():
     """The example house with a controlled Sonos Arc in a den."""
-    data = json.loads((AREA / "instance/devices.yaml").read_text())
+    data = oh_inventory.load(AREA / "instance/devices.yaml")
     data["rooms"]["fixture_den"] = {"label": "Fixture Den", "tag": "Room"}
     data["devices"].append({**ARC, "room": "fixture_den"})
     return remote_model.build(House(data))
@@ -50,7 +51,7 @@ def bar():
 def routed():
     """The desk: example_east's amplifier is its `audio`, on the input its
     route feeds (`audio_input`), and its computer carries a picture alone."""
-    data = json.loads((AREA / "instance/devices.yaml").read_text())
+    data = oh_inventory.load(AREA / "instance/devices.yaml")
     data["devices"].append({"id": OWNED, "room": ROOM, "ip": "192.0.2.41", **WIIM})
     east = data["routing"]["rooms"][ROOM]
     east["audio"] = OWNED

@@ -44,12 +44,14 @@ PAGES = (
     ("music", "Music", "Music", "Music Assistant on a music: host: libraries, ports, AirPlay timing and backups."),
     ("screenshots", "Screenshots", "Documentation screenshots", "Reproduce the screenshots using fictional inventory and the actual clients."),
     ("house-file", "House file", "The house file", "Every key of the house file: what it holds, what it is for and what reads it."),
+    ("host-file", "Host file", "The host file", "Every key of instance/host.yaml: what it holds and what reads it."),
 )
 DOCUMENT_PAGES = {name: oh_cli.PROGRAM_ROOT / "docs" / f"{name}.md"
                   for name in ("requirements", "installation", "iso", "ports", "packaging", "service-account", "music")}
 DOCUMENT_PAGES["screenshots"] = SOURCE / "capture-docs.md"
-#: A reference page, reached from Get started and not from the navigation.
+#: Reference pages, reached from Get started and not from the navigation.
 DOCUMENT_PAGES["house-file"] = SOURCE / "pages/house-file.md"
+DOCUMENT_PAGES["host-file"] = SOURCE / "pages/host-file.md"
 EXAMPLES = ("harbor",)
 TOP = ("README.md", "FAQ.md")
 HOST_FILE = AREA / "instance/host.yaml"
@@ -323,7 +325,11 @@ def house_reference() -> str:
         for path, key in rows:
             value = oh_shape.words(key) + (", required" if key.required else "")
             doc = key.doc[:1].upper() + key.doc[1:] + "."
-            reader = f" {readers.get((hook, path), 'thermite')} |" if hook else ""
+            if hook == "CONFIG_KEYS":
+                owner = path.split(".")[1]
+                reader = f" {readers.get((hook, owner), 'thermite')} |"
+            else:
+                reader = f" {readers.get((hook, path), 'thermite')} |" if hook else ""
             out.append(f"| `{path}` | {value} | {doc} |{reader}")
         return out + [""]
 
@@ -334,13 +340,13 @@ def house_reference() -> str:
     out = ["## The top level", "", *table(top.items(), "HOUSE_KEYS"),
            "## A room", "", "Each entry of `rooms`, under the id the rest of the file calls the room by.", "",
            *table(nested("rooms", top["rooms"])),
-           "## A device", "", "Each entry of `devices`. The keys an integration reads are checked by it, and only "
-           "on a device that lists it.", "", *table(device.items(), "DEVICE_KEYS"),
+           "## A device", "", "Each entry of `devices`. The keys an integration reads live under `config.<integration>` "
+           "and are checked by it, only on a device that lists it.", "", *table(device.items(), "DEVICE_KEYS"),
            "### controls", "", "The integrations a device may list, by phase:", "",
            *(f"- `{phase}`: {', '.join(f'`{name}`' for name in sorted(allowed[phase]))}" for phase in allowed), ""]
     for name, key in device.items():
         if nested(name, key):
-            out += [f"### {name}", "", *table(nested(name, key))]
+            out += [f"### {name}", "", *table(nested(name, key), "CONFIG_KEYS" if name == "config" else None)]
     for name, key in top.items():
         if name not in ("rooms", "devices") and nested(name, key):
             out += [f"## {name}", "", *table(nested(name, key))]
@@ -355,6 +361,39 @@ def house_schema() -> dict:
 
     return {"$schema": "https://json-schema.org/draft/2020-12/schema", "$id": SITE_URL + "house.schema.json",
             "title": "thermite house file", **oh_shape.schema(oh_inventory.shape())}
+
+
+def host_reference() -> str:
+    """The host file's keys, as the Markdown tables of its reference page,
+    made from oh_host.SHAPE."""
+    import oh_host
+    import oh_shape
+
+    assert oh_host.SHAPE.keys is not None
+
+    def table(rows) -> list[str]:
+        out = ["| Key | Value | What it is |", "|---|---|---|"]
+        for path, key in rows:
+            value = oh_shape.words(key) + (", required" if key.required else "")
+            doc = key.doc[:1].upper() + key.doc[1:] + "."
+            out.append(f"| `{path}` | {value} | {doc} |")
+        return out + [""]
+
+    def nested(name: str, key) -> list[tuple]:
+        return oh_shape.rows({name: key})[1:]
+
+    out = ["## The top level", "", *table(oh_host.SHAPE.keys.items())]
+    for name, key in oh_host.SHAPE.keys.items():
+        if nested(name, key):
+            out += [f"## {name}", "", *table(nested(name, key))]
+    return "\n".join(out)
+
+
+def host_schema() -> dict:
+    """The host file as JSON Schema, from oh_host.SHAPE."""
+    import oh_host
+
+    return oh_host.schema(schema_id=SITE_URL + "host.schema.json")
 
 
 def fill(text: str) -> str:
@@ -372,6 +411,7 @@ def fill(text: str) -> str:
         "harbor": (SOURCE / "examples/harbor.json").read_text(encoding="utf-8").strip(),
         "palette_names": " ".join(all_palettes()),
         "house_keys": house_reference(),
+        "host_keys": host_reference(),
     }
     return re.sub(r"\{\{(\w+)\}\}", lambda m: pieces[m.group(1)], text)
 
@@ -420,7 +460,19 @@ def build() -> dict[str, bytes]:
     schema = json.loads(brand.SCHEMA.read_text(encoding="utf-8"))
     files["theme.schema.json"] = (json.dumps(schema, indent=2) + "\n").encode("utf-8")
     files["house.schema.json"] = (json.dumps(house_schema(), indent=2) + "\n").encode("utf-8")
+    files["host.schema.json"] = (json.dumps(host_schema(), indent=2) + "\n").encode("utf-8")
     return files
+
+
+def _schema_keys(key) -> set[str]:
+    found: set[str] = set()
+    if key.keys:
+        for name, inner in key.keys.items():
+            found.add(name)
+            found.update(_schema_keys(inner))
+    if key.each is not None:
+        found.update(_schema_keys(key.each))
+    return found
 
 
 # --------------------------------------------------------------------------
@@ -435,6 +487,7 @@ def house_facts(house: Path = oh_cli.HOUSE, host_file: Path = HOST_FILE) -> set[
     build host's own name is not one: a site that must not name it lists it
     in private-words.txt."""
     import yaml
+    import oh_inventory
     data = yaml.safe_load(house.read_text(encoding="utf-8")) or {}
     facts: set[str] = set()
     for device in [*(data.get("devices") or []), *(data.get("later") or [])]:
@@ -443,7 +496,9 @@ def house_facts(house: Path = oh_cli.HOUSE, host_file: Path = HOST_FILE) -> set[
                 facts.add(device[key].lower())
     facts -= PUBLIC_MAKES
     facts.update(str(room.get("label", "")).lower() for room in (data.get("rooms") or {}).values())
-    facts.update(name.lower() for name in (data.get("control4_rooms") or {}))
+    control4 = data.get("control4")
+    if isinstance(control4, dict):
+        facts.update(name.lower() for name in (control4.get("rooms") or {}))
     facts.discard("")
 
     def walk(value) -> None:
@@ -470,7 +525,7 @@ def house_facts(house: Path = oh_cli.HOUSE, host_file: Path = HOST_FILE) -> set[
         zone = str(host["timezone"]).lower()
         facts.update({zone, zone.rsplit("/", 1)[-1].replace("_", " ")})
     # Role names of the house file's schema, not facts about this house.
-    facts -= {"hdmi_input", "usb_host", "hdmi_output", "on_actions", "off_actions", "c4_item"}
+    facts -= _schema_keys(oh_inventory.shape())
     return facts - public_defaults()
 
 
@@ -574,7 +629,7 @@ def repository_files() -> dict[str, bytes]:
 #: themes/ and examples/. export() removes a stray file only here, so the
 #: Markdown sources docs/ also holds (DOCUMENT_PAGES) and anything else
 #: there are never removed.
-BUILT = re.compile(r"docs/(?:[^/]+\.html|(?:theme|house)\.schema\.json|(?:assets|themes|examples)/.+)")
+BUILT = re.compile(r"docs/(?:[^/]+\.html|(?:theme|house|host)\.schema\.json|(?:assets|themes|examples)/.+)")
 
 
 def compare(root: Path, files: dict[str, bytes]) -> tuple[list[str], list[str]]:

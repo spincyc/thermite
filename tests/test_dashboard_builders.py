@@ -26,8 +26,8 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
 import oh_metrics  # noqa: E402
-from oh_metrics import dashboards  # noqa: E402
-from oh_metrics.dashboards import Count, Series  # noqa: E402
+from oh_metrics import builders, dashboards  # noqa: E402
+from oh_metrics.builders import Count, Series  # noqa: E402
 from tests import test_alert_scenarios, test_metrics  # noqa: E402
 
 #: The panel kinds the builders make; a row is the Board's own.
@@ -105,32 +105,50 @@ class Builders(unittest.TestCase):
         board.add(dashboards.note("About", "Words."), 24, 2)
         self.assertEqual([panel["type"] for panel in board.panels], ["text"])
 
+    def test_builders_module_exports_dsl_and_dashboards_reexports_it(self):
+        exported = ("Panel", "Board", "BUILDERS", "Figure", "Column", "Series", "Count",
+                    "note", "stat", "figures", "table", "state_timeline", "timeseries", "events",
+                    "breakdown", "bar_gauge", "heatmap", "SEMANTIC", "OK", "WARN", "FAIL", "UNKNOWN",
+                    "OFF", "IN_USE", "value_map", "mapped_thresholds", "target", "board_link", "build_dashboard")
+        for name in exported:
+            self.assertTrue(hasattr(builders, name), name)
+            self.assertIs(getattr(dashboards, name), getattr(builders, name), name)
+
     def test_only_the_builders_make_a_panel_and_nothing_patches_one(self):
         """Read from the source: a Panel is constructed only inside a
-        builder, and what it holds is read only by the Board that places
-        it, so no function can make a panel of its own or change a
-        builder's afterwards."""
-        tree = ast.parse(Path(dashboards.__file__).read_text())
-        builders = {builder.__name__ for builder in dashboards.BUILDERS}
-        self.assertEqual(builders, {"note", "stat", "figures", "table", "state_timeline", "timeseries", "events",
-                                    "breakdown", "bar_gauge", "heatmap"})
-        made, read, placed = set(), set(), set()
-        for scope in tree.body:
-            for node in ast.walk(scope):
-                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Panel":
-                    made.add(scope.name)
-                if isinstance(node, ast.Attribute) and node.attr == "_json":
-                    read.add(scope.name)
-                # A board's list of panels is the Board's to fill.
-                if isinstance(node, ast.Attribute) and node.attr == "panels" and not isinstance(node.ctx, ast.Load):
-                    placed.add(scope.name)
-                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                        and node.func.attr in ("append", "extend", "insert", "update")
-                        and isinstance(node.func.value, ast.Attribute) and node.func.value.attr == "panels"):
-                    placed.add(scope.name)
-        self.assertEqual(made, builders)
+        builder in oh_metrics.builders, and what it holds is read only by
+        the Board that places it, so no function in builders or dashboards
+        can make a panel of its own or change a builder's afterwards."""
+        builder_names = {builder.__name__ for builder in builders.BUILDERS}
+        self.assertEqual(builder_names, {"note", "stat", "figures", "table", "state_timeline", "timeseries", "events",
+                                         "breakdown", "bar_gauge", "heatmap"})
+
+        def scan(path: Path) -> tuple[set[str], set[str], set[str]]:
+            tree = ast.parse(path.read_text())
+            made, read, placed = set(), set(), set()
+            for scope in tree.body:
+                for node in ast.walk(scope):
+                    if isinstance(node, ast.Call):
+                        callee = node.func
+                        if (isinstance(callee, ast.Name) and callee.id == "Panel") or (
+                                isinstance(callee, ast.Attribute) and callee.attr == "Panel"):
+                            made.add(scope.name)
+                    if isinstance(node, ast.Attribute) and node.attr == "_json":
+                        read.add(scope.name)
+                    # A board's list of panels is the Board's to fill.
+                    if isinstance(node, ast.Attribute) and node.attr == "panels" and not isinstance(node.ctx, ast.Load):
+                        placed.add(scope.name)
+                    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                            and node.func.attr in ("append", "extend", "insert", "update")
+                            and isinstance(node.func.value, ast.Attribute) and node.func.value.attr == "panels"):
+                        placed.add(scope.name)
+            return made, read, placed
+
+        made, read, placed = scan(Path(builders.__file__))
+        self.assertEqual(made, builder_names)
         self.assertEqual(read, {"Panel", "Board"})
         self.assertLessEqual(placed, {"Board"})
+        self.assertEqual(scan(Path(dashboards.__file__)), (set(), set(), set()))
 
     def test_every_panel_on_every_board_is_of_a_kind_a_builder_makes(self):
         self.assertEqual({panel["type"] for _, panel in drawn()}, KINDS)
@@ -198,9 +216,9 @@ class Builders(unittest.TestCase):
             for query in panel["targets"]:
                 self.assertTrue(counts_a_bucket(query["expr"], EVENT_BAR, ahead=False), (where, query["expr"]))
                 self.assertEqual(query["interval"], dashboards.EVENT_BUCKET, where)
-        # Switching & remotes (6 on example/speakers without executor, 7 on zones with executor, 4 on 0-zone wiim),
+        # Switching & remotes (7 on example/speakers/zones with per-field executor, 4 on 0-zone wiim),
         # plus Commands by outcome on Devices and btrfs errors on Host in each of the four houses.
-        self.assertEqual(bars, 8 + 8 + 9 + 6)
+        self.assertEqual(bars, 9 + 9 + 9 + 6)
         for _, panel in drawn():
             for config in configs(panel):
                 self.assertNotIn("custom.drawStyle", config, panel["title"])

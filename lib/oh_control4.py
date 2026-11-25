@@ -93,19 +93,21 @@ SECRET_VARIABLE = re.compile(r"(?i)pass|secret|token|key|auth|cred|user|login|pi
 
 # -- devices.yaml ----------------------------------------------------------
 
-#: The devices.yaml keys this module reads: c4_item on a device names the
-#: Control4 items that are that device; control4_stale lists items known to
-#: be gone; control4_rooms maps a Control4 room name to a room id;
-#: control4_director selects the controller `fetch` asks.
+#: The devices.yaml keys this module reads: control4_item on a device names
+#: the Control4 items that are that device; control4.stale lists items known
+#: to be gone; control4.rooms maps a Control4 room name to a room id;
+#: control4.director selects the controller `fetch` asks.
 HOUSE_KEYS = {
-    "control4_rooms": Key(MAPPING, "which room each Control4 room is", by="Control4 room name", each=Key(TEXT, "a room id")),
-    "control4_stale": Key(LIST, "Control4 items known to be gone, which the comparison then leaves out",
-                          each=Key(NUMBER, "a Control4 item id")),
-    "control4_director": Key(TEXT, "the device id of the controller that thermite control4 fetch asks, in a house with "
-                                   "more than one"),
+    "control4": Key(MAPPING, "Control4 project export and inventory comparison settings", keys={
+        "director": Key(TEXT, "the device id of the controller that thermite control4 fetch asks, in a house with "
+                              "more than one"),
+        "rooms": Key(MAPPING, "which room each Control4 room is", by="Control4 room name", each=Key(TEXT, "a room id")),
+        "stale": Key(LIST, "Control4 items known to be gone, which the comparison then leaves out",
+                     each=Key(NUMBER, "a Control4 item id")),
+    }),
 }
-DEVICE_KEYS = {"c4_item": Key((NUMBER, LIST), "the Control4 item, or the items, that are this device",
-                              each=Key(NUMBER, "a Control4 item id"))}
+DEVICE_KEYS = {"control4_item": Key((NUMBER, LIST), "the Control4 item, or the items, that are this device",
+                                    each=Key(NUMBER, "a Control4 item id"))}
 
 
 def item_id(value: object) -> bool:
@@ -115,7 +117,7 @@ def item_id(value: object) -> bool:
 
 def validate(data: dict) -> list[str]:
     """Problems in devices.yaml's Control4 keys; an item belongs to at most
-    one device or control4_stale."""
+    one device or control4.stale."""
     problems: list[str] = []
     owners: dict[int, str] = {}
 
@@ -123,32 +125,46 @@ def validate(data: dict) -> list[str]:
         if not item_id(c4_item):
             problems.append(f"{what} {c4_item!r} is not a Control4 item id")
         elif c4_item in owners:
-            problems.append(f"{where}: c4_item {c4_item} already used by {owners[c4_item]}")
+            problems.append(f"{where}: control4_item {c4_item} already used by {owners[c4_item]}")
         else:
             owners[c4_item] = where
 
     devices = data.get("devices") if isinstance(data.get("devices"), list) else []
     for index, device in enumerate(devices):
-        if not isinstance(device, dict) or device.get("c4_item") is None:
+        if not isinstance(device, dict) or device.get("control4_item") is None:
             continue
         where = str(device.get("id") or f"devices[{index}]")
-        c4_items = device["c4_item"] if isinstance(device["c4_item"], list) else [device["c4_item"]]
+        c4_items = device["control4_item"] if isinstance(device["control4_item"], list) else [device["control4_item"]]
         for c4_item in c4_items:
-            claim(c4_item, where, f"{where}: c4_item")
-    stale = data.get("control4_stale") or []
-    if not isinstance(stale, list):
-        problems.append("control4_stale must be a list of Control4 item ids")
-        stale = []
-    for c4_item in stale:
-        claim(c4_item, "control4_stale", "control4_stale:")
+            claim(c4_item, where, f"{where}: control4_item")
+    section = data.get("control4")
+    if section is None:
+        return problems
+    if not isinstance(section, dict):
+        problems.append("control4 must be a mapping")
+        return problems
+    allowed = HOUSE_KEYS["control4"].keys or {}
+    for key in sorted(k for k in section if k not in allowed):
+        problems.append(f"control4: unknown key '{key}'")
+    director = section.get("director")
+    if director is not None and not isinstance(director, str):
+        problems.append(f"control4.director: {director!r} must be text")
+    stale = section.get("stale")
+    if stale is not None:
+        if not isinstance(stale, list):
+            problems.append("control4.stale must be a list of Control4 item ids")
+        else:
+            for c4_item in stale:
+                claim(c4_item, "control4.stale", "control4.stale:")
     rooms = data.get("rooms") if isinstance(data.get("rooms"), dict) else {}
-    mapping = data.get("control4_rooms")
-    if mapping is not None and not isinstance(mapping, dict):
-        problems.append("control4_rooms must be a mapping")
-        mapping = {}
-    for name, room in (mapping or {}).items():
-        if not isinstance(room, str) or room not in rooms:
-            problems.append(f"control4_rooms: '{name}' maps to '{room}', which is not in rooms")
+    mapping = section.get("rooms")
+    if mapping is not None:
+        if not isinstance(mapping, dict):
+            problems.append("control4.rooms must be a mapping")
+        else:
+            for name, room in mapping.items():
+                if not isinstance(room, str) or room not in rooms:
+                    problems.append(f"control4.rooms: '{name}' maps to '{room}', which is not in rooms")
     return problems
 
 
@@ -159,12 +175,13 @@ def director_ip(inventory: dict, explicit: str | None = None) -> str:
     import ipaddress
     if explicit is not None:
         return str(ipaddress.ip_address(explicit))
-    selected = inventory.get("control4_director")
+    section = inventory.get("control4")
+    selected = section.get("director") if isinstance(section, dict) else None
     devices = [device for device in inventory.get("devices", [])
                if device.get("kind") == "control4_controller" and device.get("ip")
                and (selected is None or device.get("id") == selected)]
     if len(devices) != 1:
-        raise ValueError("select a controller with control4_director in devices.yaml or --controller-ip")
+        raise ValueError("select a controller with control4.director in devices.yaml or --controller-ip")
     return str(ipaddress.ip_address(devices[0]["ip"]))
 
 
@@ -476,16 +493,17 @@ def devices(items: list[dict], bindings: dict | None = None, inventory: dict | N
     inventory = inventory or {}
     details = details or {}
     inventory_devices = [d for d in inventory.get("devices") or [] if d.get("id")]
-    # devices.yaml c4_item settles a match; such a device matches nothing else.
+    # devices.yaml control4_item settles a match; such a device matches nothing else.
     # A list links one device to several Control4 items (a TV, its IR driver,
     # its UI button): that is no ambiguity. Two devices claiming one item is.
     linked: dict[object, list[str]] = {}
     for d in inventory_devices:
-        if d.get("c4_item") is not None:
-            for c4 in d["c4_item"] if isinstance(d["c4_item"], list) else [d["c4_item"]]:
+        if d.get("control4_item") is not None:
+            for c4 in d["control4_item"] if isinstance(d["control4_item"], list) else [d["control4_item"]]:
                 linked.setdefault(c4, []).append(d["id"])
-    unlinked = [d for d in inventory_devices if d.get("c4_item") is None]
-    stale = set(inventory.get("control4_stale") or [])
+    unlinked = [d for d in inventory_devices if d.get("control4_item") is None]
+    c4_section = inventory.get("control4") if isinstance(inventory.get("control4"), dict) else {}
+    stale = set(c4_section.get("stale") or [])
     by_id = {item.get("id"): item for item in items if isinstance(item, dict)}
     names = {key: str(item.get("name") or key) for key, item in by_id.items()}
 
@@ -511,7 +529,7 @@ def devices(items: list[dict], bindings: dict | None = None, inventory: dict | N
     room_ids = {normalized(entry.get("label") or key): key
                 for key, entry in (inventory.get("rooms") or {}).items()}
     room_ids.update({normalized(key): key for key in inventory.get("rooms") or {}})
-    room_ids.update({normalized(name): key for name, key in (inventory.get("control4_rooms") or {}).items()})
+    room_ids.update({normalized(name): key for name, key in (c4_section.get("rooms") or {}).items()})
 
     def room_entry(room: dict | None) -> dict:
         if room is None:
@@ -668,7 +686,7 @@ def markdown(source: Path, result: dict, inventory: dict) -> str:
                 facts.append(", ".join(sorted(d["ips"]) + sorted(d["macs"])))
             facts += [describe_link(link) for link in d["links"]]
             if d["stale"]:
-                facts.append("inventory: stale (control4_stale)")
+                facts.append("inventory: stale (control4.stale)")
             else:
                 facts.append("inventory: " + (", ".join(d["matches"]) if d["matches"] else "none")
                              + (f" (via {d['via']})" if d["via"] else ""))

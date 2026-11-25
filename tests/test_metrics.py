@@ -734,7 +734,8 @@ class RoutingSeries(unittest.TestCase):
         self.assertEqual(mapping["routing"]["executors"],
                          ["example_avr", "example_matrix", "example_screen", "example_tv", "example_usb"])
         self.assertLessEqual(set(mapping["routing"]["executors"]), set(mapping["devices"]))
-        self.assertEqual(MAP["routing"]["executors"], [], "the example house has no routing executor")
+        # Stage 3a per-field adoption enables the executor for every routed device with fields().
+        self.assertEqual(MAP["routing"]["executors"], ["example_display", "example_matrix", "example_tv"])
 
     def test_wrong_version_is_down(self):
         self.assertEqual(self.series(house_routing_metrics=json.dumps({"version": 2})),
@@ -945,9 +946,10 @@ class Checks(unittest.TestCase):
         # Each names the tally the exporter reads it from.
         for device, check in reads.items():
             self.assertIn(f"{device}_{check['labels']['integration']}_commands", mapping["commands"])
-        # The problem Items are exported as before, for the remotes' column on Devices.
+        # The problem Items are exported as before, for the remotes' column on Devices
+        # (including example_matrix, whose per-field routing executor renders its problem Item).
         self.assertEqual({spec["device"] for spec in mapping["items"].values() if spec["point"] == "problem"},
-                         {"example_player", "example_tv", "example_display", "example_avpro"})
+                         {"example_player", "example_tv", "example_display", "example_avpro", "example_matrix"})
 
     def test_a_ping_is_a_reading_of_its_own_never_a_things_status_and_never_a_check(self):
         """A ping Thing is ONLINE while nothing answers its address: counted
@@ -1128,7 +1130,7 @@ class Signals(unittest.TestCase):
             unread = oh_metrics.unobserved(House(inventory), conf)
             for device in inventory["devices"]:
                 read = oh_metrics.signals(device, conf, found)
-                self.assertLessEqual({signal.kind for signal in read}, {"thing", "port", "reads", "online"})
+                self.assertLessEqual({signal.kind for signal in read}, {"thing", "port", "reads", "online", "recording"})
                 for control in (device.get("controls") or {}).get("control") or []:
                     through = [signal for signal in read if control in signal.integrations]
                     self.assertEqual(not through, (device["id"], control) in unread, (name, phase, control))
@@ -1172,7 +1174,7 @@ class Signals(unittest.TestCase):
         mapping = oh_metrics.exporter_map(House(copy.deepcopy(inventory)))
         checks = [check for check in mapping["health_checks"] if check["device"] == "den_device"]
         self.assertEqual([(check["check"], check["metric"], check["labels"], check["always"]) for check in checks],
-                         [("thing", "thermite_thing_online", {"thing": "http:url:den_device_cec:den_matrix"}, False)])
+                         [("thing", "thermite_thing_online", {"thing": "http:url:den_matrix"}, False)])
         self.assertEqual(checks[0]["required"], [{"item": "loc_den_source", "source": "den_device"}])
         self.assertEqual(oh_metrics.unobserved(House(inventory)), [])
         # Without the integration's word for it the source is named, not passed over.
@@ -1195,8 +1197,36 @@ class Signals(unittest.TestCase):
         self.assertNotIn("No reading says", rendered(inventory)[oh_metrics.PROMETHEUS_YML])
         self.assertIn("nothing reads whether it answers bk808_cec", oh_metrics.unobserved_text("den_device", "bk808_cec"))
 
+    def test_script_device_with_feedback_poll_or_push_derives_reads_availability_signal(self):
+        import types
+        import oh_integrations as integrations
+        from oh_conf import Conf
+        from oh_integrations import _commands
+
+        for feedback, expects_reads in (({"kind": "poll", "interval_s": 10}, True),
+                                        ({"kind": "push"}, True),
+                                        ({"kind": "none"}, False)):
+            module = types.ModuleType("example_script_ctl")
+            module.__getattr__ = integrations._hooks.absent
+            module.NAME, module.PHASE, module.FILE = "example_script_ctl", "control", "yaml/example_script.yaml"
+            module.READS = False
+            module.rule_path = lambda device: f"automation/js/example_script_{device['id']}.js"
+            module.fields = lambda device, fb=feedback: {f"{device['id']}_power": {
+                "kind": "custom", "values": ["ON", "OFF"], "feedback": fb}}
+            device = {"id": "example_box", "room": "example_room", "kind": "streamer", "ip": "192.0.2.99",
+                      "controls": {"control": ["example_script_ctl"]}}
+            conf = Conf()
+            out = conf.yaml_file(module.FILE, ())
+            _commands.render(device, out, module.NAME)
+            with self.subTest(feedback=feedback), mock.patch.object(integrations, "REGISTRY", (*integrations.REGISTRY, module)):
+                got = [s for s in oh_metrics.signals(device, conf, []) if s.kind == "reads"]
+                self.assertEqual(len(got), 1 if expects_reads else 0)
+                if expects_reads:
+                    self.assertEqual(got[0].metric, "thermite_device_read_ok")
+                    self.assertTrue(got[0].control)
+
     def test_every_kind_of_signal_has_its_words_for_a_person(self):
-        self.assertEqual(set(oh_metrics.SIGNAL_WORDS), {"thing", "port", "reads", "online"})
+        self.assertEqual(set(oh_metrics.SIGNAL_WORDS), {"thing", "port", "reads", "online", "recording"})
         signal = oh_metrics.Signal("port", ("sony_rest",), "probe_success",
                                    (("job", "device_tcp"), ("device", "example_tv"), ("port", "80")), 0, True)
         self.assertEqual(oh_metrics.signal_words(signal),
@@ -1209,6 +1239,133 @@ class Signals(unittest.TestCase):
         self.assertEqual((oh_metrics.thing_device(uid), path), ("den_device", "yaml/network.yaml"))
         self.assertEqual(oh_metrics.device_things(conf, "den"), [])
         self.assertIn("list network_ping under", oh_metrics.unobserved_text("example_computer", ""))
+
+    def test_protect_nvr_and_cameras_expose_thing_online_and_recording_health_checks(self):
+        inventory = copy.deepcopy(INVENTORY)
+        inventory["protect"] = {"host": "192.0.2.1"}
+        inventory["devices"] += [
+            {"id": "front_cam", "room": "example_west", "kind": "camera", "ip": "192.0.2.61",
+             "controls": {"observe": ["unifi_protect"]},
+             "config": {"unifi_protect": {"device_id": "0123456789abcdef01234567"}}},
+            {"id": "optional_bell", "room": "example_east", "kind": "doorbell", "ip": "192.0.2.62",
+             "monitor": "optional", "controls": {"observe": ["unifi_protect"]},
+             "config": {"unifi_protect": {"device_id": "fedcba9876543210fedcba98"}}},
+        ]
+        self.assertEqual(oh_render.validate(copy.deepcopy(inventory)), [])
+        files = rendered(inventory)
+        mapping = json.loads(files[oh_metrics.EXPORTER_MAP])
+        self.assertEqual(mapping["devices"]["front_cam"]["things"], ["unifi:camera:protect:front_cam"])
+        self.assertEqual(mapping["devices"]["optional_bell"]["things"], ["unifi:camera:protect:optional_bell"])
+        self.assertEqual(mapping["bridges"], ["unifi:nvr:protect"])
+        self.assertEqual(mapping["items"]["front_cam_recording"]["point"], "recording")
+        self.assertEqual(mapping["items"]["front_cam_online"]["point"], "online")
+        # Exporter emits the shared NVR bridge Thing exactly once across multiple cameras.
+        things_payload = [
+            {"UID": "unifi:nvr:protect", "statusInfo": {"status": "ONLINE"}},
+            {"UID": "unifi:camera:protect:front_cam", "statusInfo": {"status": "ONLINE"}},
+            {"UID": "unifi:camera:protect:optional_bell", "statusInfo": {"status": "OFFLINE"}},
+        ]
+        thing_samples = exporter._things(mapping, things_payload)
+        nvr_online = [s for s in thing_samples
+                      if s[0] == "thermite_thing_online" and s[1]["thing"] == "unifi:nvr:protect"]
+        self.assertEqual(len(nvr_online), 1)
+        self.assertEqual(nvr_online[0][2], 1.0)
+        # Required camera gets required="true" checks for thing (camera + NVR), online, recording;
+        # monitor: optional camera gets required="false".
+        recorded = [rule for rule in yaml.safe_load(files["prometheus/alerts.yml"])["groups"][0]["rules"]
+                    if rule.get("record") == alerts.CHECK]
+        front = {rule["labels"]["check"]: rule for rule in recorded if rule["labels"].get("device") == "front_cam"}
+        self.assertEqual(set(front), {"thing", "online", "recording"})
+        for rule in front.values():
+            self.assertEqual(rule["labels"]["required"], "true")
+        self.assertIn('thing="unifi:camera:protect:front_cam"', front["thing"]["expr"])
+        self.assertIn('thing="unifi:nvr:protect"', front["thing"]["expr"])
+        opt = {rule["labels"]["check"]: rule for rule in recorded if rule["labels"].get("device") == "optional_bell"}
+        self.assertEqual(set(opt), {"thing", "online", "recording"})
+        for rule in opt.values():
+            self.assertEqual(rule["labels"]["required"], "false")
+        self.assertEqual(oh_metrics.unobserved(House(copy.deepcopy(inventory))), [("example_computer", "")])
+
+    def test_unobserved_flags_unwatched_observe_and_non_control_signal_exemptions(self):
+        import types
+        import oh_integrations as integrations
+        from oh_conf import Conf
+
+        # 1. An observe integration with THING_FOLLOWS_DEVICE=True and no signal is flagged.
+        broken_obs = types.ModuleType("example_broken_obs")
+        broken_obs.__getattr__ = integrations._hooks.absent
+        broken_obs.NAME, broken_obs.PHASE, broken_obs.FILE = "example_broken_obs", "observe", "yaml/broken_obs.yaml"
+        broken_obs.THING_FOLLOWS_DEVICE = True
+        broken_obs.PROBED = False
+        # 2. A MONITORED observe integration with only passive control=False signals is flagged.
+        broken_mon = types.ModuleType("example_broken_mon")
+        broken_mon.__getattr__ = integrations._hooks.absent
+        broken_mon.NAME, broken_mon.PHASE, broken_mon.FILE = "example_broken_mon", "observe", "yaml/broken_mon.yaml"
+        broken_mon.MONITORED = True
+        broken_mon.THING_FOLLOWS_DEVICE = False
+        broken_mon.PROBED = False
+        # 3. A passive-only observer (THING_FOLLOWS_DEVICE=False, MONITORED=False) stays exempted.
+        passive_obs = types.ModuleType("example_passive_obs")
+        passive_obs.__getattr__ = integrations._hooks.absent
+        passive_obs.NAME, passive_obs.PHASE, passive_obs.FILE = "example_passive_obs", "observe", "yaml/passive_obs.yaml"
+        passive_obs.THING_FOLLOWS_DEVICE = False
+        passive_obs.PROBED = False
+        # 4. A control integration whose only signal is control=False (<id>_online) is flagged.
+        weak_ctl = types.ModuleType("example_weak_ctl")
+        weak_ctl.__getattr__ = integrations._hooks.absent
+        weak_ctl.NAME, weak_ctl.PHASE, weak_ctl.FILE = "example_weak_ctl", "control", "yaml/weak_ctl.yaml"
+        weak_ctl.THING_FOLLOWS_DEVICE = False
+        weak_ctl.PROBED = False
+
+        house = House.unchecked({
+            "version": 2,
+            "rooms": {"den": {"label": "Den", "tag": "Room"}},
+            "devices": [
+                {"id": "d_obs", "room": "den", "kind": "tv", "ip": "192.0.2.71",
+                 "controls": {"observe": ["example_broken_obs"]}},
+                {"id": "d_mon", "room": "den", "kind": "camera", "ip": "192.0.2.72",
+                 "controls": {"observe": ["example_broken_mon"]}},
+                {"id": "d_pas", "room": "den", "kind": "tv", "ip": "192.0.2.73",
+                 "controls": {"observe": ["example_passive_obs"]}},
+                {"id": "d_ctl", "room": "den", "kind": "streamer", "ip": "192.0.2.74",
+                 "controls": {"control": ["example_weak_ctl"]}},
+            ],
+        })
+        conf = Conf()
+        conf.yaml_file(passive_obs.FILE, ()).items["d_pas_online"] = {"type": "Switch", "groups": ["d_pas"]}
+        conf.yaml_file(weak_ctl.FILE, ()).items["d_ctl_online"] = {"type": "Switch", "groups": ["d_ctl"]}
+        with mock.patch.object(integrations, "REGISTRY",
+                               (*integrations.REGISTRY, broken_obs, broken_mon, passive_obs, weak_ctl)):
+            found = oh_metrics.unobserved(house, conf)
+        self.assertIn(("d_obs", "example_broken_obs"), found)
+        self.assertIn(("d_mon", "example_broken_mon"), found)
+        self.assertIn(("d_ctl", "example_weak_ctl"), found)
+        self.assertNotIn(("d_pas", "example_passive_obs"), found)
+
+    def test_zero_apple_tv_house_omits_apple_tv_helper_from_prometheus_alerts_and_dashboard(self):
+        no_atv = copy.deepcopy(INVENTORY)
+        no_atv["devices"] = [d for d in no_atv["devices"] if d["id"] != "example_player"]
+        no_atv["routing"]["sources"].pop("example_player", None)
+        no_atv["routing"]["rooms"]["example_west"]["sources"] = ["example_computer"]
+        no_atv["routing"]["rooms"]["example_west"]["display"]["sources"].pop("example_player", None)
+        self.assertEqual(oh_render.validate(copy.deepcopy(no_atv)), [])
+        files = rendered(no_atv)
+        mapping = json.loads(files[oh_metrics.EXPORTER_MAP])
+        self.assertEqual(mapping["helpers"], [])
+        self.assertNotIn("apple_tv_helper", files[oh_metrics.PROMETHEUS_YML])
+        self.assertNotIn("apple_tv_helper", files["prometheus/alerts.yml"])
+        parsed_rules = yaml.safe_load(files["prometheus/alerts.yml"])
+        down = next(rule for rule in parsed_rules["groups"][1]["rules"] if rule.get("alert") == "ThermiteServiceDown")
+        self.assertNotIn("atv", down["expr"])
+        house_board = json.loads(files[f"{oh_metrics.GRAFANA_DASHBOARDS}/{dashboards.HOUSE}.json"])
+        host_tile = next(panel for panel in panels(house_board) if panel["title"] == "Host")
+        self.assertNotIn("atv", host_tile["targets"][0]["expr"])
+        # House with an Apple TV still monitors apple_tv_helper and thermite-atv.service.
+        self.assertEqual(MAP["helpers"], [oh_units.ATV])
+        self.assertIn("apple_tv_helper", FILES[oh_metrics.PROMETHEUS_YML])
+        self.assertIn("apple_tv_helper", FILES["prometheus/alerts.yml"])
+        with_atv_down = next(rule for rule in RULES["groups"][1]["rules"] if rule.get("alert") == "ThermiteServiceDown")
+        self.assertIn("atv", with_atv_down["expr"])
 
 
 class Alerting(unittest.TestCase):
@@ -1469,8 +1626,14 @@ class Dashboards(unittest.TestCase):
 
     def test_routing_counts_read_unknown_not_zero_while_telemetry_is_unreadable(self):
         from tests import test_zone_sync as zones
-        for files, executor in ((FILES, False), (rendered(zones.house()), True)):
-            board = json.loads(files[f"{oh_metrics.GRAFANA_DASHBOARDS}/{dashboards.HOUSE}.json"])
+        no_exec_map = copy.deepcopy(MAP)
+        no_exec_map["routing"]["status"] = None
+        no_exec_map["routing"]["executors"] = []
+        no_exec_board = dashboards.house(no_exec_map, [])
+        for board, executor in (
+                (no_exec_board, False),
+                (json.loads(FILES[f"{oh_metrics.GRAFANA_DASHBOARDS}/{dashboards.HOUSE}.json"]), True),
+                (json.loads(rendered(zones.house())[f"{oh_metrics.GRAFANA_DASHBOARDS}/{dashboards.HOUSE}.json"]), True)):
             since = next(panel for panel in panels(board) if panel["title"] == "Since yesterday evening")
             exprs = {target["legendFormat"]: target["expr"] for target in since["targets"]}
             for name in ("Source changes", "Slow or missed"):
@@ -1745,10 +1908,16 @@ class Dashboards(unittest.TestCase):
         top_row = [panel for panel in empty_house["panels"] if panel["gridPos"]["y"] == 0]
         self.assertEqual([panel["title"] for panel in top_row], ["Control", "Remotes"])
         self.assertEqual(sum(panel["gridPos"]["w"] for panel in top_row), 24)
-        # 3. Routed non-executor house (example) vs executor house (zones): executor panels gated cleanly.
+        # 3. Routed non-executor mapping vs executor houses (example, zones): executor panels gated cleanly.
+        no_exec_map = copy.deepcopy(MAP)
+        no_exec_map["routing"]["status"] = None
+        no_exec_map["routing"]["executors"] = []
+        no_exec_titles = [panel["title"] for panel in panels(dashboards.switching(no_exec_map))]
+        for title in ("Routing executor", "Operations by outcome", "Device failures", "Quarantined now"):
+            self.assertNotIn(title, no_exec_titles)
         example_switching = [panel["title"] for panel in panels(boards()[dashboards.SWITCHING])]
         for title in ("Routing executor", "Operations by outcome", "Device failures", "Quarantined now"):
-            self.assertNotIn(title, example_switching)
+            self.assertIn(title, example_switching)
         zones_files = rendered(test_zone_sync.house())
         zones_switching = json.loads(zones_files[f"{oh_metrics.GRAFANA_DASHBOARDS}/{dashboards.SWITCHING}.json"])
         zones_titles = [panel["title"] for panel in panels(zones_switching)]
@@ -1863,7 +2032,8 @@ class NoMatrix(unittest.TestCase):
                 text = oh_render.render(House(copy.deepcopy(data)))[routing.RULE]
                 start = text.index("const TABLE = ") + len("const TABLE = ")
                 table = json.JSONDecoder().raw_decode(text, start)[0]
-                self.assertEqual("lifecycle" in table, idle == "standby")
+                # Stage 3a per-field adoption compiles lifecycle for devices declaring fields() regardless of idle.
+                self.assertIn("lifecycle", table)
                 west = table["rooms"]["example_west"]
                 self.assertIsNone(west["hdmi"])
                 self.assertEqual(west["inputs"]["example_player"], [["example_tv_input", "hdmi1"]])

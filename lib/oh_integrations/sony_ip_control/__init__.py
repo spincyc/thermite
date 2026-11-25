@@ -69,12 +69,11 @@ and renewing included.
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
-from oh_conf import Addon, House, YamlFile, options_text, retarget, uses
-from oh_shape import TRUTH, Key
-from .. import _commands, _script
-
-from .. import _pairing, sony_rest
+from oh_conf import Addon, House, YamlFile, config as device_config, options_text, retarget, uses
+from oh_shape import LIST, TEXT, TRUTH, Key
+from .. import _commands, _items, _pairing, _script, sony_rest
 
 NAME = sony_rest.CONTROLLER
 PHASE = "control"
@@ -88,8 +87,13 @@ HEADER = (
 )
 ADDONS = (Addon("automation", "jsscripting", "the Sony TV rule (sony_ip_control.js)"),)
 ASSETS: dict[str, str] = {}
-DEVICE_KEYS = {"sony_speaker_audio": Key(TRUTH, "whether the TV's own speakers are used: false gives it no volume or mute "
-                                                "of its own, and true is the same as leaving it out")}
+DEVICE_KEYS = {
+    "speaker_audio": Key(TRUTH, "whether the TV's own speakers are used: false gives it no volume or mute "
+                                "of its own, and true is the same as leaving it out"),
+    "inputs": Key(LIST, "HDMI inputs the TV offers (e.g. hdmi1..hdmi4); defaults to hdmi1 through hdmi4",
+                  each=Key(TEXT, "an HDMI input name such as hdmi1")),
+}
+_HDMI_INPUT = re.compile(r"^hdmi([1-9][0-9]*)$")
 REMOTE_LAYOUT = "sony_tv"
 #: The rule talks to the TV's REST API and IRCC on plain HTTP.
 PROBE_PORTS = (80,)
@@ -102,6 +106,8 @@ DISCOVER_PORTS = (20060,)
 #: The modules whose files the rule needs beside its own: sony_rest's Thing
 #: reads the power Item the rule commands.
 NEEDS = (sony_rest,)
+#: Seconds between polls of a TV that is on (sony_ip_control.js POLL).
+POLL_S = 15
 #: Seconds from a command to its read-back: none, the rule reads it back at once.
 READ_BACK = 0
 RULE = "automation/js/sony_ip_control.js"
@@ -230,7 +236,26 @@ PAIRING = {
 
 def speaker_audio(device: dict) -> bool:
     """Whether this TV exposes its own speaker volume/mute controls and reads."""
-    return device.get("sony_speaker_audio", True)
+    return device_config(device, NAME).get("speaker_audio", True)
+
+
+def _hdmi_ports(device: dict) -> list[int]:
+    """HDMI port numbers configured on the TV, or default HDMI."""
+    custom = device_config(device, NAME).get("inputs")
+    if isinstance(custom, list) and custom:
+        ports = []
+        for name in custom:
+            match = _HDMI_INPUT.fullmatch(name) if isinstance(name, str) else None
+            if match:
+                ports.append(int(match.group(1)))
+        if len(ports) == len(custom):
+            return ports
+    return list(HDMI)
+
+
+def _device_inputs(device: dict) -> tuple[tuple[str, str], ...]:
+    """(value, label) of every HDMI input this TV accepts."""
+    return tuple((f"hdmi{n}", f"HDMI {n}") for n in _hdmi_ports(device))
 
 
 def pairing_label(device: dict) -> str:
@@ -250,33 +275,32 @@ def validate(device: dict) -> list[str]:
                         "which reads its power")
     if uses(device, "control", "androidtv_googletv"):
         problems.append(f"{ident}: {NAME} drives its power, volume, mute and keys; androidtv_googletv would too")
-    if not isinstance(speaker_audio(device), bool):
-        problems.append(f"{ident}: sony_speaker_audio must be true or false")
+    cfg = device_config(device, NAME)
+    if "speaker_audio" in cfg and not isinstance(cfg["speaker_audio"], bool):
+        problems.append(f"{ident}: config.sony_ip_control.speaker_audio must be true or false")
+    if "inputs" in cfg:
+        custom = cfg["inputs"]
+        if (not isinstance(custom, list) or not custom
+                or any(not isinstance(name, str) or not _HDMI_INPUT.fullmatch(name) for name in custom)):
+            problems.append(f"{ident}: config.sony_ip_control.inputs must be a non-empty list of hdmi<N> names")
+        elif len(set(custom)) != len(custom):
+            problems.append(f"{ident}: config.sony_ip_control.inputs must not repeat an input")
     return problems
-
-
-def _control(ident: str, type_: str, label: str, tags: list[str], *, icon: str | None = None,
-             metadata: dict | None = None) -> dict:
-    item: dict = {"type": type_, "label": label}
-    if icon:
-        item["icon"] = icon
-    item.update(groups=[ident], tags=tags, autoupdate=False)
-    if metadata:
-        item["metadata"] = metadata
-    return item
 
 
 def render(device: dict, house: House, out: YamlFile) -> None:
     ident = device["id"]
     items = out.items
-    items[f"{ident}_input"] = _control(ident, "String", "Input", ["Control", "Channel"], icon="video", metadata={
-        "stateDescription": {"config": {"options": options_text((*INPUTS, OWN))}},
-        "commandDescription": {"config": {"options": options_text(INPUTS)}}})
+    device_inputs = _device_inputs(device)
+    items[f"{ident}_input"] = _items.control_point(
+        ident, "String", "Input", ["Control", "Channel"], icon="video",
+        options=options_text((*device_inputs, OWN)), command_options=options_text(device_inputs))
     if speaker_audio(device):
-        items[f"{ident}_volume"] = _control(ident, "Dimmer", "Volume", ["Control", "SoundVolume"], icon="soundvolume",
-                                            metadata={"stateDescription": {"config": dict(VOLUME)}})
-        items[f"{ident}_mute"] = _control(ident, "Switch", "Mute", ["Control", "SoundVolume"], icon="soundvolume_mute")
-    items[f"{ident}_key"] = _control(ident, "String", "Remote Key", ["Control"])
+        items[f"{ident}_volume"] = _items.control_point(
+            ident, "Dimmer", "Volume", ["Control", "SoundVolume"], icon="soundvolume", state=dict(VOLUME))
+        items[f"{ident}_mute"] = _items.control_point(
+            ident, "Switch", "Mute", ["Control", "SoundVolume"], icon="soundvolume_mute")
+    items[f"{ident}_key"] = _items.control_point(ident, "String", "Remote Key", ["Control"])
     _pairing.render(device, house, out, NAME, label=pairing_label(device), result=pairing_result(device), **PAIRING)
     items[pairing_result(device)] = {"type": "String", "label": "Pairing result", "groups": [ident],
                                      "tags": ["Status"], "autoupdate": False,
@@ -289,6 +313,21 @@ def pairing_result(device: dict) -> str:
     return f"{device['id']}_pairing_result"
 
 
+def pairing(device: dict) -> dict | None:
+    """Pairing contract (oh_integrations._pairing) when controlled, else None."""
+    if not uses(device, PHASE, NAME):
+        return None
+    return {
+        **PAIRING,
+        "integration": NAME,
+        "label": pairing_label(device),
+        "item": _pairing.item(device),
+        "status": _pairing.status_item(device),
+        "result": pairing_result(device),
+        "problem": problem(device),
+    }
+
+
 def problem(device: dict) -> str | None:
     """The Item that says why openHAB cannot command the TV, for the remote
     page (web/remote/house.js devices.<id>.problem); None for a TV this
@@ -299,7 +338,7 @@ def problem(device: dict) -> str | None:
 def table(devices: list[dict]) -> list[dict]:
     """The rule's device table: address, inputs, the speaker's own volume
     scale and whether the TV has speaker controls."""
-    return [{"id": d["id"], "address": d["ip"], "inputs": list(HDMI), "volume": dict(VOLUME),
+    return [{"id": d["id"], "address": d["ip"], "inputs": _hdmi_ports(d), "volume": dict(VOLUME),
              "speakerAudio": speaker_audio(d)} for d in devices]
 
 
@@ -317,6 +356,12 @@ rule_path, files = _script.per_device(RULE, rule)
 BOOT_MS = 30000
 
 
+def manual_items(device: dict) -> int:
+    """Number of manual command Items handled by the TV's actor (power, input,
+    volume, mute, key, pairing)."""
+    return 6
+
+
 def fields(device: dict) -> dict[str, dict]:
     """The routing executor's fields (oh_integrations): power and the HDMI
     input, driven by this integration's own rule. Its actor also takes
@@ -326,8 +371,19 @@ def fields(device: dict) -> dict[str, dict]:
     content API may still be booting: a power read of ON while it answers
     a Sony error is a transition, and an input it declines then is busy
     (sony_ip_control.js routingProvider). Not yet timed on hardware."""
-    return {sony_rest.power_item(device): {"kind": "sony", "values": ["ON", "OFF"], "settle": {"ON": BOOT_MS}, "manual": 6},
-            f"{device['id']}_input": {"kind": "sony", "values": [value for value, _ in INPUTS], "manual": 6}}
+    feedback = {"kind": "poll", "interval_s": POLL_S}
+    return {
+        sony_rest.power_item(device): {
+            "kind": "sony", "values": ["ON", "OFF"], "power": "absolute",
+            "settle": {"ON": BOOT_MS}, "feedback": feedback,
+            "reports": {"active": {"value": "ON", "transition": False},
+                        "standby": {"value": "OFF", "transition": False}},
+        },
+        f"{device['id']}_input": {
+            "kind": "sony", "values": [value for value, _ in _device_inputs(device)], "feedback": feedback,
+            "reports": {OWN[0]: {"value": OWN[0], "transition": False}},
+        },
+    }
 
 
 def stage(device: dict, zone: int | None) -> dict | None:
@@ -336,7 +392,7 @@ def stage(device: dict, zone: int | None) -> dict | None:
     if zone is not None:
         return None
     return {"power": sony_rest.power_item(device), "input": f"{device['id']}_input",
-            "inputs": [value for value, _ in INPUTS]}
+            "inputs": [value for value, _ in _device_inputs(device)]}
 
 
 def remote(device: dict) -> dict | None:
@@ -349,6 +405,30 @@ def remote(device: dict) -> dict | None:
         control.update(mute=f"{ident}_mute",
                        volume={"item": f"{ident}_volume", **VOLUME})
     return control
+
+
+def remote_layouts(device: dict | None = None) -> dict[str, dict]:
+    """Button layout definition for Sony IP-controlled TVs."""
+    return {
+        "sony_tv": {
+            "label": "Sony TV remote",
+            "wide": True,
+            "corners": ["power", "settings", "back", "home"],
+            "top": ["input", "guide", "info", "action_menu"],
+            "playback": ["previous", "rewind", "play", "pause", "stop", "fast_forward", "next"],
+            "channel": True,
+            "keyGroups": [
+                {"label": "Apps", "keys": ["netflix", "youtube"], "columns": 2, "primary": True},
+                {"label": "TV", "keys": ["tv", "exit", "options", "help"], "columns": 2},
+                {"label": "Audio", "keys": ["audio", "subtitle"], "columns": 2},
+                {"label": "Channels", "keys": [
+                    "digit_1", "digit_2", "digit_3", "digit_4", "digit_5", "digit_6",
+                    "digit_7", "digit_8", "digit_9", "digit_dot", "digit_0", "digit_enter",
+                ], "columns": 3},
+                {"label": "Color keys", "keys": ["red", "green", "yellow", "blue"], "columns": 4},
+            ],
+        },
+    }
 
 
 def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:

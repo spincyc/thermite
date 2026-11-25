@@ -32,9 +32,10 @@ DEVICE = {
     "androidtv_googletv": {"kind": "tv", "make": "Sony", "model": "XR-TEST"},
     "pyatv_http": {"kind": "streamer", "make": "Apple", "model": "AppleTV14,1"},
     # A Sonos UDN is RINCON_, its MAC's hex digits and the port (oh_inventory checks it).
-    "sonos": {"kind": "soundbar", "make": "Sonos", "model": "Arc", "sonos_udn": "RINCON_" + MACS[0].replace(":", "").upper() + "01400"},
+    "sonos": {"kind": "soundbar", "make": "Sonos", "model": "Arc",
+              "config": {"sonos": {"udn": "RINCON_" + MACS[0].replace(":", "").upper() + "01400"}}},
     "denonmarantz_http": {"kind": "avr", "make": "Denon", "model": "AVR-X3800H"},
-    "heos": {"kind": "avr", "make": "Denon", "model": "AVR-X3800H", "heos_pid": 12345},
+    "heos": {"kind": "avr", "make": "Denon", "model": "AVR-X3800H", "config": {"heos": {"pid": 12345}}},
     "wiim_http": {"kind": "streaming_amp", "make": "WiiM", "model": "Amp Pro"},
     "sony_adcp": {"kind": "projector", "make": "Sony", "model": "VPL-VW915ES"},
     "bk808_http": {"kind": "hdmi_matrix", "make": "BZBGEAR", "model": "BK-808"},
@@ -43,10 +44,11 @@ DEVICE = {
     "vrroom_telnet": {"kind": "hdmi_switch", "make": "HDFury", "model": "VRROOM"},
     "avpro_telnet": {"kind": "hdmi_matrix", "make": "AVPro Edge", "model": "AC-MX-44X"},
     "unifi_protect": {"kind": "camera", "make": "Ubiquiti", "model": "G4 Bullet",
-                      "protect": {"device_id": "0123456789abcdef01234567"}},
+                      "config": {"unifi_protect": {"device_id": "0123456789abcdef01234567"}}},
     "drhdmi_http": {"kind": "hdmi_processor", "make": "HDFury", "model": "Dr.HDMI"},
     "ir": {"kind": "disc_player", "make": "Sony", "model": "UBP-X800M2"},
-    "bk808_cec": {"kind": "disc_player", "make": "Sony", "model": "UBP-X800M2", "cec": {"matrix": "den_matrix", "input": 3}},
+    "bk808_cec": {"kind": "disc_player", "make": "Sony", "model": "UBP-X800M2",
+                  "config": {"bk808_cec": {"matrix": "den_matrix", "input": 3}}},
 }
 
 
@@ -72,7 +74,7 @@ def house(name: str, phase: str) -> dict:
         controls["observe"] = ["denonmarantz_http"]
     device = {"id": "den_device", "room": "den", "ip": "192.0.2.10", "mac": MACS[0],
               **copy.deepcopy(DEVICE[name]), "controls": controls}
-    data = {"version": 1, "rooms": {"den": {"label": "Den", "tag": "Room"}}, "devices": [device]}
+    data = {"version": 2, "rooms": {"den": {"label": "Den", "tag": "Room"}}, "devices": [device]}
     if name == "unifi_protect":
         data["protect"] = {"host": "192.0.2.1"}
     if name == "bk808_cec":

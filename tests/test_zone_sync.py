@@ -24,6 +24,7 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
 from oh_conf import House  # noqa: E402
+import oh_inventory  # noqa: E402
 import oh_render  # noqa: E402
 from oh_features import routing  # noqa: E402
 from oh_testing import routing as routing_check  # noqa: E402
@@ -45,12 +46,13 @@ def device(ident, room, kind, number, **extra):
 
 TV = {"make": "Sony", "model": "Example TV", "controls": {"observe": ["sony_rest"], "control": ["sony_ip_control"]}}
 HOUSE = {
-    "version": 1,
+    "version": 2,
     "rooms": {CINEMA: {"label": "Example Cinema", "tag": "Room"}, LOUNGE: {"label": "Example Lounge", "tag": "Room"}},
     "devices": [
         device("example_matrix", CINEMA, "hdmi_matrix", 20, model="HDMI matrix", controls={"control": ["bk808_http"]}),
         device("example_usb", CINEMA, "usb_matrix", 21, model="UKM-404", controls={"control": ["ukm404_http"]}),
-        device("example_avr", CINEMA, "avr", 22, make="Marantz", model="CINEMA 30", zones=2,
+        device("example_avr", CINEMA, "avr", 22, make="Marantz", model="CINEMA 30",
+               config={"denonmarantz_http": {"zones": 2}},
                controls={"observe": ["denonmarantz_http"], "control": ["denonmarantz_http"]}),
         device("example_screen", CINEMA, "tv", 23, **copy.deepcopy(TV)),
         device("example_tv", LOUNGE, "tv", 24, **copy.deepcopy(TV)),
@@ -128,7 +130,7 @@ class Validation(unittest.TestCase):
 
     def test_the_synthetic_house_and_the_example_are_valid(self):
         self.assertEqual(oh_render.validate(house()), [])
-        self.assertEqual(oh_render.validate(json.loads((AREA / "instance/devices.yaml").read_text())), [])
+        self.assertEqual(oh_render.validate(oh_inventory.load(AREA / "instance/devices.yaml")), [])
 
     def test_each_rule_has_a_clear_problem(self):
         def swap_zones(rooms, _):
@@ -193,7 +195,7 @@ class Table(unittest.TestCase):
                 self.assertFalse(any("@" in choice for choice in raw[field]))
         self.assertEqual(lounge["inputs"][COMPUTER], [["example_tv_input", "hdmi2"], [ZONE2, "AUX2"]])
         # Without sync_with nothing changes: the example's output stays byte-identical.
-        example = routing.table(House(json.loads((AREA / "instance/devices.yaml").read_text())))
+        example = routing.table(House(oh_inventory.load(AREA / "instance/devices.yaml")))
         plain = routing.table(House(house(lambda rooms, _: rooms[LOUNGE]["receiver"].pop("sync_with"))))
         for rooms in (example["rooms"], plain["rooms"]):
             self.assertFalse(any({"sync", "followers"} & set(raw) for raw in rooms.values()))
@@ -498,14 +500,24 @@ class SharedSource(unittest.TestCase):
 @unittest.skipUnless(shutil.which("node"), "node is required for the production routing script")
 class Runtime(unittest.TestCase):
     def test_break_before_make_after_the_lease_and_a_shared_source_end_to_end(self):
+        def strip_lifecycle(tbl):
+            return {k: v for k, v in tbl.items() if k != "lifecycle"}
+
+        without_usb_flag = rendered_table(house(lambda rooms, _: rooms[LOUNGE].pop("usb_unused")))
+        capped_without_flag = rendered_table(house(lambda rooms, data: capped(rooms, data, plain=True)))
+        shared_caps_without_flag = rendered_table(house(lambda rooms, data: capped(rooms, data, plain=True,
+                                                                                   watchers=(CINEMA, DEN))))
+        # Per-field executor adoption compiles lifecycle whenever routed fields
+        # have ordered executor capabilities, even without usb_unused.
+        self.assertIn("lifecycle", without_usb_flag)
+        self.assertIn("lifecycle", capped_without_flag)
         tables = {"lifecycle": rendered_table(house()),
-                  "plain": rendered_table(house(lambda rooms, _: rooms[LOUNGE].pop("usb_unused"))),
+                  "plain": strip_lifecycle(without_usb_flag),
                   "shared": rendered_table(house(shared)),
                   "capped": rendered_table(house(capped)),
-                  "cappedPlain": rendered_table(house(lambda rooms, data: capped(rooms, data, plain=True))),
+                  "cappedPlain": strip_lifecycle(capped_without_flag),
                   "sharedCaps": rendered_table(house(lambda rooms, data: capped(rooms, data, watchers=(CINEMA, DEN)))),
-                  "sharedCapsPlain": rendered_table(house(lambda rooms, data: capped(rooms, data, plain=True,
-                                                                                     watchers=(CINEMA, DEN)))),
+                  "sharedCapsPlain": strip_lifecycle(shared_caps_without_flag),
                   "preserve": rendered_table(house(lambda rooms, data: shared(rooms, data, idle="preserve")))}
         self.assertIn("lifecycle", tables["lifecycle"])
         self.assertNotIn("lifecycle", tables["plain"])

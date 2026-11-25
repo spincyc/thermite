@@ -9,7 +9,7 @@ const WEB = path.join(__dirname, '..', 'web', 'remote');
 console.info = console.warn = () => {};
 const house = JSON.parse(fs.readFileSync(0, 'utf8'));
 globalThis.REMOTE_HOUSE = house;
-for (const name of ['navigation.js', 'remotes.js', 'backend.js', 'backend-mock.js', 'audio-session.js', 'music-backend.js', 'music-backend-mock.js', 'music-session.js',
+for (const name of ['navigation.js', 'dom.js', 'sse.js', 'hold.js', 'remotes.js', 'backend.js', 'backend-mock.js', 'audio-session.js', 'music-backend.js', 'music-backend-mock.js', 'music-session.js',
   'listen-session.js', 'session.js']) {
   vm.runInThisContext(fs.readFileSync(path.join(WEB, name), 'utf8'), {filename: name});
 }

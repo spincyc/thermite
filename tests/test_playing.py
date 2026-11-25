@@ -26,7 +26,8 @@ from oh_integrations import androidtv_googletv  # noqa: E402
 SHIELD = {"id": "example_shield", "room": "example_lounge", "kind": "streamer", "make": "NVIDIA",
           "model": "SHIELD TV Pro", "ip": "192.0.2.31", "controls": {"observe": ["cast"], "control": ["androidtv_googletv"]}}
 SPEAKER = {"id": "example_speaker", "room": "example_lounge", "kind": "soundbar", "make": "Sonos", "model": "Arc",
-           "ip": "192.0.2.20", "mac": bytes((2, 0, 0, 0, 0, 20)).hex(":"), "sonos_udn": "RINCON_02000000001401400",
+           "ip": "192.0.2.20", "mac": bytes((2, 0, 0, 0, 0, 20)).hex(":"),
+           "config": {"sonos": {"udn": "RINCON_02000000001401400"}},
            "controls": {"observe": ["sonos"], "control": ["sonos"]}}
 AMP = {"id": "example_amp", "room": "example_desk", "kind": "streaming_amp", "make": "WiiM", "model": "Amp Pro",
        "ip": "192.0.2.32", "controls": {"observe": ["wiim_http"]}}
@@ -35,7 +36,7 @@ TV = {"id": "example_tv", "room": "example_lounge", "kind": "tv", "make": "Sony"
 PC = {"id": "example_pc", "room": "example_desk", "kind": "computer", "ip": "192.0.2.70",
       "controls": {"observe": ["network_ping"]}}
 HOUSE = {
-    "version": 1,
+    "version": 2,
     "rooms": {"example_desk": {"label": "Example Desk", "tag": "Room"},
               "example_lounge": {"label": "Example Lounge", "tag": "Room"}},
     "devices": [SHIELD, SPEAKER, AMP, TV, PC],

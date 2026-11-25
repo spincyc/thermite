@@ -115,6 +115,12 @@
     // Device id + " " + action -> {value, at}: what a command sent, shown
     // until the device reads it back.
     const held = {};
+    const holdStore = global.ThermiteHold
+      ? global.ThermiteHold.createHold({
+          now: now, setTimeout: later, clearTimeout: cancel, duration: HOLD_MS,
+          onExpire: () => changed()
+        })
+      : null;
     const fader = { device: null, value: null, sent: null, sentTo: null, timer: 0 };
     // The draws due when a hold ends, cancelled when the session stops.
     const ends = new Set();
@@ -171,14 +177,15 @@
     // What the page shows for an action: the value sent while it is not
     // read back and HOLD_MS have not passed, else what was read.
     function shown(id, action, read, same) {
-      const key = id + " " + action, sent = held[key];
+      const key = id + " " + action;
+      const sent = holdStore ? holdStore.get(key) : held[key];
       if (!sent) return { value: read, pending: false };
       if (read !== null && (same ? same(read, sent.value) : read === sent.value)) {
-        delete held[key];
+        if (holdStore) holdStore.clear(key); else delete held[key];
         return { value: read, pending: false };
       }
       if (now() - sent.at >= holdMs(id)) {
-        delete held[key];
+        if (holdStore) holdStore.clear(key); else delete held[key];
         return { value: read, pending: false };
       }
       return { value: sent.value, pending: true };
@@ -199,7 +206,12 @@
     }
 
     function hold(id, action, value) {
-      held[id + " " + action] = { value: String(value), at: now() };
+      const key = id + " " + action;
+      if (holdStore) {
+        holdStore.set(key, String(value), holdMs(id) + 50);
+        return;
+      }
+      held[key] = { value: String(value), at: now() };
       // A device that ignored it reports nothing: draw what it read once the hold ends.
       const end = later(() => { ends.delete(end); changed(); }, holdMs(id) + 50);
       ends.add(end);
@@ -229,7 +241,9 @@
         if (result && !result.sent && result.tag !== "Mock") toast(title, text, "muted");
         else if (action !== "volume") emit({ type: "announce", message: label(id) + ": " + title + (text ? " " + text : "") });
       }).catch((error) => {
-        delete held[id + " " + (heldAs || action)];
+        const key = id + " " + (heldAs || action);
+        if (holdStore) holdStore.clear(key);
+        delete held[key];
         if (action === "volume" && fader.sentTo === id) fader.sent = null;
         changed();
         toast(title, error && error.message ? error.message : String(error), "bad");
@@ -615,6 +629,7 @@
       unsubscribe.splice(0).forEach((off) => off());
       if (polls) access.watchLocks(false);
       cancel(pending);
+      if (holdStore) holdStore.stop();
       ends.forEach(cancel);
       ends.clear();
       // A session started again hears nothing of the time between: it draws,

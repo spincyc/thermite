@@ -75,10 +75,10 @@ function receiver(state){
  return {requests,answer};
 }
 
-const FIELDS={avr_main_power:{kind:'denon',thing:'avr_thing',zone:1,point:'power',allowed:['ON','OFF']},
- avr_main_input:{kind:'denon',thing:'avr_thing',zone:1,point:'input',allowed:['SAT/CBL','MPLAY','GAME1']},
- avr_zone2_power:{kind:'denon',thing:'avr_thing',zone:2,point:'power',allowed:['ON','OFF']},
- avr_zone2_input:{kind:'denon',thing:'avr_thing',zone:2,point:'input',allowed:['SAT/CBL','MPLAY','GAME1','SOURCE']}};
+const FIELDS={avr_main_power:{kind:'denon',thing:'avr_thing',zone:1,point:'power',values:['ON','OFF'],power:'absolute',feedback:{kind:'poll',interval_s:15}},
+ avr_main_input:{kind:'denon',thing:'avr_thing',zone:1,point:'input',values:['SAT/CBL','MPLAY','GAME1'],feedback:{kind:'poll',interval_s:15},reports:{GAME:{value:'GAME1',transition:false}}},
+ avr_zone2_power:{kind:'denon',thing:'avr_thing',zone:2,point:'power',values:['ON','OFF'],power:'absolute',feedback:{kind:'poll',interval_s:15}},
+ avr_zone2_input:{kind:'denon',thing:'avr_thing',zone:2,point:'input',values:['SAT/CBL','MPLAY','GAME1','SOURCE'],feedback:{kind:'poll',interval_s:15},reports:{GAME:{value:'GAME1',transition:false}}}};
 
 function rig(options={}){
  const state={main:{power:'ON',input:'SAT/CBL'},zone2:{power:'ON',input:'SOURCE'},commands:[],...options};

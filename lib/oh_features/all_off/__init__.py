@@ -42,7 +42,7 @@ def commands(house: House) -> list[list[str]]:
     for device in house.devices:
         stager = routing.stager(device)
         if stager:
-            powers = [staged["power"] for zone in (None, *range(2, device.get("zones", 2) + 1))
+            powers = [staged["power"] for zone in (None, 2, 3, 4)
                       if (staged := stager.stage(device, zone))]
             if powers:
                 out.extend([power, "OFF"] for power in dict.fromkeys(powers))

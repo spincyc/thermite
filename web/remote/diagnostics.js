@@ -166,7 +166,8 @@
       pathRows(nodes, ""); pathRows(audioNodes, "Audio "); pathRows(audioEndpoints, "Audio endpoint · wiring unknown · ");
       const carries = chosen.source && chosen.source.carries;
       if (nodes.length && ["display", "audio"].includes(carries)) sections.path.push(row("Carries", carries === "display" ? "Display only" : "Audio only", "reported", { basis: "configured" }));
-      if (!nodes.length) sections.path.push(row("Path", sourceId === "off" ? "Room is off" : "Source not reported", "not_reported", { basis: "configured" }));
+      if (!nodes.length) sections.path.push(row("Path", sourceId === "off" ? "Room is off"
+        : sourceId === "partial" ? "Partially on (incomplete route)" : "Source not reported", "not_reported", { basis: "configured" }));
       for (const usb of chosen.usb) {
         if (!usb || usb.host == null || !Array.isArray(usb.ports) || !usb.ports.length) continue;
         sections.path.push(row("USB · " + (usb.label || usb.device), "HOST " + usb.host + " → DEVICE " + usb.ports.join(", "),
@@ -225,7 +226,8 @@
       });
       ["video", "audio"].forEach(category => {
         if (!sections[category].length) sections[category].push(row("Current " + category + " signal", sourceId === "off" ? "Room is off"
-          : carries === (category === "video" ? "audio" : "display") ? STATUS.not_applicable : STATUS.not_reported,
+          : sourceId === "partial" ? "Partially on (incomplete route)"
+            : carries === (category === "video" ? "audio" : "display") ? STATUS.not_applicable : STATUS.not_reported,
         sourceId === "off" || carries === (category === "video" ? "audio" : "display") ? "not_applicable" : "not_reported"));
       });
       if (!activeReadings.some(entry => entry.reading.category === "edid" && entry.reading.port && entry.reading.port.direction === "input")) sections.edid.push(row("Source-facing EDID", "Not reported", "not_reported"));

@@ -71,7 +71,7 @@ class Owned:
 def inspect(context: Context, system: System) -> Owned:
     entries, problems = [], []
     try:
-        templates = deploy.render_units(context.versions, context.host)
+        templates = deploy.render_units(context.versions, context.host, getattr(context, "house", None))
     except (ValueError, KeyError, TypeError) as exc:
         return Owned(problems=(f"cannot validate generated service ownership: {exc}",))
     manifest = recorded(context, system)

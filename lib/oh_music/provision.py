@@ -30,15 +30,17 @@ tries.
 
 Reconcile, idempotently, after a claim, whenever Music Assistant's server
 ID changes (its state was reset) and every EVERY seconds, whether the last
-one worked or not: the sonos, wiim and airplay player providers are present
-(MA groups a WiiM with a Sonos over AirPlay); the sonos and wiim providers
-are given the house's speakers' addresses for discovery; each library
-(oh_music.settings) is one filesystem_local instance on MEDIA/<name>, named
-LIBRARY_NAME, and once each has one every other filesystem_local instance
-is removed; the providers in UNWANTED are removed; remote access stays off;
-onboarding is complete. Each part is applied alone: one Music Assistant
-fails is logged and tried at the next reconcile, and the others go on.
-Players are never renamed or disabled.
+one worked or not: each player provider declared by the music integrations
+(oh_integrations.defining("music")) is present, along with AirPlay when
+multiple speaker families are present so Music Assistant can group across
+families; each speaker provider is given the house's speakers' addresses for
+discovery; each library (oh_music.settings) is one filesystem_local instance
+on MEDIA/<name>, named LIBRARY_NAME, and once each has one every other
+filesystem_local instance is removed; the providers in UNWANTED (other than
+active player providers) are removed; remote access stays off; onboarding is
+complete. Each part is applied alone: one Music Assistant fails is logged
+and tried at the next reconcile, and the others go on. Players are never
+renamed or disabled.
 """
 
 from __future__ import annotations
@@ -72,8 +74,65 @@ RENEW_DAYS = 30
 TOKEN_LIST = 100
 REVOKE_ROUNDS = 20
 DAY = 24 * 3600
-#: The player providers thermite drives.
-PLAYERS = ("sonos", "wiim", "airplay")
+#: Protocol provider Music Assistant uses to group speakers across families.
+GROUPING_PROVIDER = "airplay"
+
+
+def _registered_providers() -> tuple[str, ...]:
+    """Music Assistant player providers declared by integrations defining
+    the music() hook."""
+    import oh_integrations
+    from oh_shape import LIST, MAPPING, NUMBER, TEXT, TRUTH
+
+    placeholders: dict[str, object] = {TEXT: "probe", NUMBER: 1, TRUTH: False, LIST: [], MAPPING: {}}
+    found: list[str] = []
+    for module in oh_integrations.defining("music"):
+        sample: dict[str, object] = {
+            "id": "probe",
+            "room": "probe",
+            "kind": "speaker",
+            "ip": "192.0.2.1",
+            "mac": bytes((2, 0, 0, 0, 0, 1)).hex(":"),
+            "controls": {"observe": [module.NAME], "control": [module.NAME]},
+        }
+        for key, declaration in dict(module.DEVICE_KEYS).items():
+            sample.setdefault(key, placeholders[declaration.kinds()[0]])
+        result = module.music(sample)
+        if isinstance(result, dict):
+            provider = result.get("provider")
+            if isinstance(provider, str) and provider and provider not in found:
+                found.append(provider)
+    return tuple(found)
+
+
+def speaker_providers(spec: dict | None = None) -> tuple[str, ...]:
+    """Music Assistant speaker player providers: every provider declared by
+    registered music integrations plus any provider named by the contract's
+    speakers, in stable order without duplicates."""
+    found = list(_registered_providers())
+    speakers = spec.get("speakers") if isinstance(spec, dict) else None
+    if isinstance(speakers, dict):
+        for speaker in speakers.values():
+            if isinstance(speaker, dict):
+                provider = speaker.get("provider")
+                if isinstance(provider, str) and provider and provider not in found:
+                    found.append(provider)
+    return tuple(found)
+
+
+def player_providers(spec: dict | None = None) -> tuple[str, ...]:
+    """The player providers thermite ensures in Music Assistant: every
+    speaker provider (speaker_providers()), plus AirPlay when multiple
+    speaker families are present for cross-family grouping."""
+    found = speaker_providers(spec)
+    if len(found) > 1 and GROUPING_PROVIDER not in found:
+        return (*found, GROUPING_PROVIDER)
+    return found
+
+
+#: The player providers thermite drives, derived dynamically from registered
+#: music integrations.
+PLAYERS = player_providers()
 #: What the gateway names each library's filesystem_local instance; Music
 #: Assistant never reports the path an instance was set up with.
 LIBRARY_NAME = "thermite {}"
@@ -452,7 +511,7 @@ class Provisioner:
         listed = self.configs(client) if configs is None else configs
         domains = {config.get("domain") for config in listed}
         added = 0
-        for domain in PLAYERS:
+        for domain in player_providers(self.spec):
             if domain not in domains:
                 instance = self.add(client, domain)
                 if instance is not None:
@@ -463,9 +522,10 @@ class Provisioner:
     def discovery(self, client, info, configs=None):
         changed, key = 0, "manual_discovery_ip_addresses"
         speakers = self.spec["speakers"].values()
+        known = set(speaker_providers(self.spec))
         for config in self.configs(client) if configs is None else configs:
             domain, instance = config.get("domain"), config["instance_id"]
-            if domain in ("sonos", "wiim"):
+            if domain in known:
                 wanted = sorted({speaker["ip"] for speaker in speakers if speaker["provider"] == domain and "ip" in speaker})
                 if sorted(client.call("config/providers/get_value", instance_id=instance, key=key) or ()) != wanted:
                     client.call("config/providers/save", provider_domain=domain, instance_id=instance, values={key: wanted})
@@ -551,8 +611,10 @@ class Provisioner:
 
     def unwanted(self, client, info, configs=None):
         changed = 0
+        active = set(player_providers(self.spec))
         for config in self.configs(client) if configs is None else configs:
-            if config.get("domain") in UNWANTED:
+            domain = config.get("domain")
+            if domain in UNWANTED and domain not in active:
                 client.call("config/providers/remove", instance_id=config["instance_id"])
                 changed += 1
         return changed

@@ -1,7 +1,8 @@
 /* Bounded System metadata shared with the terminal. No device commands or polling. */
 (function (global) {
   "use strict";
-  const IDS = new Set(["openhab", "grafana", "prometheus"]);
+  const ID = /^[a-z][a-z0-9_-]{0,31}$/;
+  const MAX_TOOLS = 32;
   const unavailable = "System information is unavailable.";
   const MAX_BYTES = 32768, TIMEOUT_MS = 8000;
   const text = (value, size) => typeof value === "string" && value.length <= size && !/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/.test(value);
@@ -28,9 +29,9 @@
   function catalogue(raw, origin) {
     const base = new URL(origin);
     if (!raw || raw.version !== 1 || !raw.runtime || !text(raw.runtime.version, 80) || !raw.runtime.version
-        || !Array.isArray(raw.tools) || raw.tools.length > IDS.size) throw new Error(unavailable);
+        || !Array.isArray(raw.tools) || raw.tools.length > MAX_TOOLS) throw new Error(unavailable);
     const seen = new Set(), tools = raw.tools.map(tool => {
-      if (!tool || !IDS.has(tool.id) || seen.has(tool.id) || !text(tool.label, 80) || !tool.label
+      if (!tool || typeof tool.id !== "string" || !ID.test(tool.id) || seen.has(tool.id) || !text(tool.label, 80) || !tool.label
           || !text(tool.description, 240) || typeof tool.localOnly !== "boolean") throw new Error(unavailable);
       seen.add(tool.id);
       const target = endpoint(tool, base);
@@ -118,7 +119,10 @@
   const access = global.ThermiteAccess?.client;
   const client = create({ access, mock: access?.mock, base: location.origin,
     fetch: access && !access.native && !access.mock ? access.fetch : global.fetch.bind(global), changed: render });
-  function node(tag, value) { const item = document.createElement(tag); if (value != null) item.textContent = value; return item; }
+  function node(tag, value) {
+    if (global.ThermiteDom) return global.ThermiteDom.el(tag, null, value != null ? String(value) : null);
+    const item = document.createElement(tag); if (value != null) item.textContent = value; return item;
+  }
   function render() {
     const state = client.state;
     status.textContent = state.loading ? "Reading system information…" : state.error || "Configured version · live health not checked";

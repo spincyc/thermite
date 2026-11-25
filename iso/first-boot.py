@@ -22,6 +22,7 @@ import codecs
 import json
 import os
 from pathlib import Path
+import re
 import select
 import socket
 import subprocess
@@ -258,6 +259,18 @@ def open_transaction(command: str, site: Path, env: dict, say) -> str | None:
         return None
 
 
+def _set_timezone(text: str, timezone: str) -> str:
+    try:
+        settings = json.loads(text)
+    except json.JSONDecodeError:
+        updated, count = re.subn(r"(?m)^(timezone:\s*).*$", lambda match: match.group(1) + timezone, text, count=1)
+        if count:
+            return updated
+        return text + ("" if not text or text.endswith("\n") else "\n") + f"timezone: {timezone}\n"
+    settings["timezone"] = timezone
+    return json.dumps(settings, indent=2) + "\n"
+
+
 def run(home: Path | None = None, *, root: Path = Path("/"), command: str = "/usr/local/bin/thermite",
         online=online, sleep=time.sleep, out=None, timeout: float = TIMEOUT) -> int:
     answers = pending(root)
@@ -281,9 +294,8 @@ def run(home: Path | None = None, *, root: Path = Path("/"), command: str = "/us
             if step([command, "init", "--empty", str(site)]): return 1
             # The host's time zone, as the installer asked for it.
             host = site / "instance/host.yaml"
-            settings = json.loads(host.read_text())
-            settings["timezone"] = "Etc/UTC" if answers["timezone"] == "UTC" else answers["timezone"]
-            host.write_text(json.dumps(settings, indent=2) + "\n")
+            timezone = "Etc/UTC" if answers["timezone"] == "UTC" else answers["timezone"]
+            host.write_text(_set_timezone(host.read_text(), timezone))
         # thermite install deploys the site's committed configuration.
         if not (site / ".git").is_dir() and step(["git", "init", "-q", "-b", "main", str(site)]): return 1
         if subprocess.run(["git", "-C", str(site), "rev-parse", "--verify", "-q", "HEAD"], env=env,

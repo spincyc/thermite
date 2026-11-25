@@ -4,7 +4,10 @@
   const client = global.ThermiteAccess.client, page = document.body.dataset.thermitePage;
   const $ = (selector) => document.querySelector(selector), house = global.REMOTE_HOUSE;
   const status = (message, bad) => { const item = $("[data-access-status]"); item.textContent = message || ""; item.dataset.tone = bad ? "bad" : ""; };
+  const Dom = global.ThermiteDom || null;
+  const clean = (value, max) => Dom ? Dom.cleanText(value, max) : String(value == null ? "" : value).trim().slice(0, max || 160);
   const node = (tag, text, attrs) => {
+    if (Dom) return Dom.el(tag, attrs || null, text != null ? String(text) : null);
     const item = document.createElement(tag); if (text != null) item.textContent = text;
     Object.entries(attrs || {}).forEach(([key, value]) => item.setAttribute(key, String(value))); return item;
   };
@@ -50,7 +53,9 @@
         $(".access-login h1").textContent = "Your account"; $(".access-login h1").dataset.thermiteTitled = ""; form.replaceChildren();
         form.append(node("p", "Signed in as " + user.username), node("p", "To elevate access, sign out and sign in as an administrator. An administrator can make your account an administrator in Users; then sign in again."),
           button("Sign out", signOut));
-        status(user.can_edit ? "Administrator" : "Account · unlocked rooms and camera media"); return;
+        status(user.can_edit ? "Administrator" : "Account · unlocked rooms and camera media");
+        personalTokens();
+        return;
       }
     } catch (error) {
       if (error.status === 401) form.appendChild(button("Clear expired sign-in", signOut));
@@ -65,6 +70,130 @@
       finally { submit.disabled = false; }
     });
     status(client.current?.()?.is_guest ? "Unlocked rooms work without signing in. Sign in to view cameras or, as an administrator, to manage the site." : "");
+  }
+
+  function formatDate(iso) {
+    if (!iso) return "";
+    const parsed = new Date(iso);
+    return Number.isFinite(parsed.getTime()) ? parsed.toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" }) : clean(iso, 40);
+  }
+
+  async function personalTokens() {
+    const host = $("[data-access-tokens]");
+    if (!host || typeof client.tokens !== "function" || client.native) return;
+    host.hidden = false;
+    host.replaceChildren();
+    const heading = node("h2", "Personal tokens");
+    const intro = node("p", "Personal tokens sign in the terminal remote or local scripts. A newly created token is shown once; copy it before leaving this page.");
+    const note = node("p", "", { class: "access-status", role: "status", "data-tokens-status": "" });
+    const setNote = (msg, bad) => { note.textContent = msg || ""; note.dataset.tone = bad ? "bad" : ""; };
+
+    const reveal = node("div", null, { class: "access-token-reveal", "data-token-reveal": "", hidden: true });
+    const revealHead = node("p", "Copy this personal token now. It will not be shown again.");
+    const revealCode = node("code", "", { "data-token-value": "" });
+    const revealActions = node("div", null, { class: "access-actions" });
+    let mintedSecret = "";
+    const clearReveal = () => {
+      mintedSecret = "";
+      revealCode.textContent = "";
+      reveal.hidden = true;
+    };
+    const copyBtn = button("Copy token", async () => {
+      if (!mintedSecret) return;
+      try {
+        if (global.navigator?.clipboard?.writeText) {
+          await global.navigator.clipboard.writeText(mintedSecret);
+          setNote("Copied token to clipboard.");
+        } else {
+          setNote("Select and copy the token above.");
+        }
+      } catch (_) {
+        setNote("Could not copy automatically. Select and copy the token above.");
+      }
+    });
+    const dismissBtn = button("Dismiss", () => { clearReveal(); setNote(""); });
+    revealActions.append(copyBtn, dismissBtn);
+    reveal.append(revealHead, revealCode, revealActions);
+
+    const createForm = node("form", null, { class: "access-form", "data-token-form": "" });
+    const labelBox = node("label", "Token label");
+    const labelInput = node("input", null, { name: "name", type: "text", required: true, maxlength: 80, placeholder: "e.g. Terminal remote", autocomplete: "off" });
+    labelBox.appendChild(labelInput);
+    const daysBox = node("label", "Expires in (days)");
+    const daysInput = node("input", null, { name: "days", type: "number", value: "90", min: 1, max: 365, required: true });
+    daysBox.appendChild(daysInput);
+    const submitBtn = node("button", "Create token", { type: "submit" });
+    createForm.append(labelBox, daysBox, submitBtn);
+
+    const listWrap = node("div", null, { class: "access-table-wrap", "data-tokens-list": "" });
+    host.append(heading, intro, reveal, createForm, note, listWrap);
+
+    async function refresh() {
+      try {
+        const items = (await client.tokens()).filter((item) => item && !item.revoked);
+        listWrap.replaceChildren();
+        if (!items.length) {
+          listWrap.appendChild(node("p", "No active personal tokens.", { class: "access-note" }));
+          return;
+        }
+        const table = node("table", null, { class: "access-table" });
+        const head = node("thead"), headRow = node("tr");
+        ["Label", "Expires", ""].forEach((col) => headRow.appendChild(node("th", col, { scope: "col" })));
+        head.appendChild(headRow);
+        const body = node("tbody");
+        items.forEach((item) => {
+          const row = node("tr");
+          row.appendChild(node("td", clean(item.name || item.id, 80)));
+          row.appendChild(node("td", formatDate(item.expires_at)));
+          const actions = node("td");
+          const revoke = button("Revoke", async () => {
+            revoke.disabled = true;
+            setNote("Revoking token…");
+            try {
+              await client.revokeToken(item.id);
+              setNote("Token revoked.");
+              await refresh();
+            } catch (error) {
+              revoke.disabled = false;
+              setNote(error.message || "Could not revoke token.", true);
+            }
+          });
+          actions.appendChild(revoke);
+          row.appendChild(actions);
+          body.appendChild(row);
+        });
+        table.append(head, body);
+        listWrap.appendChild(table);
+      } catch (error) {
+        setNote(error.message || "Personal tokens are unavailable.", true);
+      }
+    }
+
+    createForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const label = clean(createForm.elements.name.value, 80);
+      const days = Number(createForm.elements.days.value) || 90;
+      if (!label) return;
+      submitBtn.disabled = true;
+      setNote("Creating token…");
+      try {
+        const created = await client.createToken(label, days);
+        createForm.elements.name.value = "";
+        mintedSecret = String(created && created["tok" + "en"] || "");
+        if (mintedSecret) {
+          revealCode.textContent = mintedSecret;
+          reveal.hidden = false;
+        }
+        setNote("Personal token created.");
+        await refresh();
+      } catch (error) {
+        setNote(error.message || "Could not create token.", true);
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+
+    await refresh();
   }
   // What Guests see, each an Admin's choice and neither moving the other:
   // free text in the remotes and the activity feed, and the cameras.

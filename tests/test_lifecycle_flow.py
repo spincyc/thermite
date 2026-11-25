@@ -252,7 +252,7 @@ class NativeDeadlinePolicy(unittest.TestCase):
             return {"native_security": True, "callbacks": callbacks if len(calls) > 1 else None}
 
         with mock.patch.object(boundary, "configure", side_effect=configure), \
-                mock.patch("oh_inventory.load", return_value={"version": 1, "rooms": {}, "devices": []}):
+                mock.patch("oh_inventory.load", return_value={"version": 2, "rooms": {}, "devices": []}):
             self.assertIsNone(hook(system, {}, None))
             self.assertNotIn("record", calls[0], "userdata, set aside by the transaction, keeps the originals")
             self.assertEqual(calls[0]["timeout"], 150)
@@ -272,7 +272,7 @@ class NativeDeadlinePolicy(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(dir=scratch())
         self.addCleanup(temporary.cleanup)
         house = Path(temporary.name) / "devices.yaml"
-        house.write_text(json.dumps({"version": 1, "rooms": {}, "devices": [{"id": "den_tv", "room": "attic"}]}))
+        house.write_text(json.dumps({"version": 2, "rooms": {}, "devices": [{"id": "den_tv", "room": "attic"}]}))
         system = mock.Mock(spec=System)
         clocked(system)
         native = steps.NativeDeadline(600)

@@ -19,6 +19,7 @@ import math
 from oh_conf import House, YamlFile, uses
 
 from . import _instr as instr
+from . import _items
 
 NAME = "ukm404_http"
 PHASE = "control"
@@ -70,9 +71,10 @@ def fields(device: dict) -> dict[str, dict]:
     acknowledges a write with {"result": 1}. Each is independent: a
     host_switch names its one port, so a lost answer leaves the other ports
     as they were."""
+    feedback = {"kind": "poll", "interval_s": POLL_S}
     return {switch_item(device, port): {"kind": "http", "thing": thing_uid(device), "channel": f"device{port}_host",
                                         "values": [str(n) for n in range(1, HOSTS + 1)], "ack": "result",
-                                        "independent": True}
+                                        "independent": True, "feedback": feedback}
             for port in range(1, DEVICES + 1)}
 
 
@@ -105,22 +107,13 @@ def render(device: dict, house: House, out: YamlFile) -> None:
         command = f"JSON.stringify({{comhead:'host_switch',device:[{port},parseInt(input)]}})"
         thing["channels"][channel] = instr.number_channel(f"Device port {port} host", "get_matrix_status",
                                                           "all_host", port, command)
-        out.items[switch_item(device, port)] = {
-            "type": "Number",
-            "label": f"Device port {port} host",
-            "icon": "switch",
-            "groups": [ident],
-            "tags": ["Control"],
-            "autoupdate": False,
-            "channel": f"{uid}:{channel}",
-        }
+        out.items[switch_item(device, port)] = _items.control_point(
+            ident, "Number", f"Device port {port} host", ["Control"], f"{uid}:{channel}", icon="switch")
     # Write-only, yet with the ports' poll and a state that keeps nothing:
     # oh_render.read_only() turning it READONLY then polls nothing more.
     thing["channels"]["reboot"] = {"type": "string", "label": "Reboot", "config": {
         "mode": "WRITEONLY", "stateContent": instr.body("get_matrix_status", language=0),
         "stateTransformation": [NOTHING], "commandTransformation": [REBOOT]}}
-    out.items[reboot_item(device)] = {
-        "type": "String", "label": "Reboot", "groups": [ident], "tags": ["Control"], "autoupdate": False,
-        "channel": f"{uid}:reboot", "metadata": {"commandDescription": {"config": {"options": "reboot=Reboot"}}},
-    }
+    out.items[reboot_item(device)] = _items.control_point(
+        ident, "String", "Reboot", ["Control"], f"{uid}:reboot", command_options="reboot=Reboot")
     out.things[uid] = thing

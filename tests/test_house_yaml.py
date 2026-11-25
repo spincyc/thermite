@@ -35,7 +35,7 @@ import yaml  # noqa: E402
 from oh_cli import generate  # noqa: E402
 from tests import test_generated_output  # noqa: E402
 
-EXAMPLE = json.loads((AREA / "instance/devices.yaml").read_text(encoding="utf-8"))
+EXAMPLE = inventory.load(AREA / "instance/devices.yaml")
 #: A hardware address of digits only, which YAML 1.1 reads as one number in
 #: base 60. Joined here: the public guard takes a written one for a real one.
 ADDRESS = ":".join(("10", "20", "30", "40", "50", "11"))
@@ -284,7 +284,7 @@ class HostFile(Scratch):
     """oh_host.load, the one reader of a host file, refuses what the
     house file's reader refuses, in the same words."""
 
-    HOST = json.loads((AREA / "instance/host.yaml").read_text(encoding="utf-8"))
+    HOST = oh_host.load(AREA / "instance/host.yaml")
 
     def test_what_a_house_file_is_refused_for_a_host_file_is_refused_for_in_the_same_words(self):
         written = "".join(f"{key}: {json.dumps(value)}\n" for key, value in self.HOST.items())

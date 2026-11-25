@@ -11,8 +11,13 @@ import oh_paths
 import oh_release
 
 IGNORED = ("/var/", "/build/", "/.scratch/", "/.venv/", "__pycache__/", "*.pyc", "/conf/", "/metrics/", "/deploy/")
-#: --empty's house: no rooms or devices, in the sample's JSON-as-YAML form.
-EMPTY_HOUSE = '{\n  "version": 1,\n  "rooms": {},\n  "devices": []\n}\n'
+#: --empty's house: no rooms or devices, in canonical block YAML.
+EMPTY_HOUSE = (
+    "# yaml-language-server: $schema=https://spincyc.github.io/thermite/house.schema.json\n"
+    "version: 2\n"
+    "rooms: {}\n"
+    "devices: []\n"
+)
 README = ("# Private thermite configuration\n\n{house} Run `thermite check --config .`, then commit instance/, "
           "versions.json and thermite-site.json in private Git. Install from any directory with `thermite install "
           "--config /path/to/this/site`. The application is installed separately; this directory needs no launcher or "

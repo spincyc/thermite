@@ -338,7 +338,7 @@ async function grouping(proof) {
   key(parts, null, { name: "enter" });
   await shows(parts, "joined Example East.");
   let shown = text(parts);
-  proof.group.result = ["Fixture Lounge cannot join Example East: Sonos and WiiM", "In the group", "Example East · leads", "Remove", "End",
+  proof.group.result = ["Fixture Lounge cannot join Example East: speakers from different", "In the group", "Example East · leads", "Remove", "End",
     "Volume", "Ungroup all"].filter((words) => !shown.includes(words));
   proof.group.toast = toast(parts);
   // The group's volume in the sheet: ← → step it.

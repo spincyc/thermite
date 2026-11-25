@@ -581,6 +581,31 @@
       // /api/v1/music/) is bounded and refused as a device's.
       // The house's firing alerts, as this viewer is given them (oh_identity.alerts); it gives up as every read does.
       async alerts() { await ready(); return bounded("/api/v1/alerts", "GET", undefined, config.readTimeout || 8000, "client_timeout"); },
+      async historyRooms() {
+        if (legacy || mock) return null;
+        try {
+          await ready();
+          return await bounded("/api/v1/history/rooms", "GET", undefined, config.readTimeout || 8000, "client_timeout");
+        } catch (error) {
+          if (error && (error.status === 404 || error.status === 503 || error.code === "history_unavailable" || error.code === "access_not_configured")) return null;
+          return null;
+        }
+      },
+      async tokens() {
+        if (legacy) return [];
+        await ready();
+        const answer = await json("/api/v1/tokens", "GET");
+        return Array.isArray(answer?.tokens) ? answer.tokens : [];
+      },
+      async createToken(name, days) {
+        await ready();
+        const payload = days != null && days !== "" ? { name: String(name || "").trim(), days: Number(days) } : { name: String(name || "").trim() };
+        return json("/api/v1/tokens", "POST", payload);
+      },
+      async revokeToken(id) {
+        await ready();
+        return json("/api/v1/tokens/" + encodeURIComponent(String(id)), "DELETE");
+      },
       async musicRead(path, ms) { await ready(); return bounded("/api/v1/music" + path, "GET", undefined, ms || config.readTimeout || 8000, "client_timeout"); },
       async musicCommand(path, value) {
         await ready();

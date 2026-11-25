@@ -16,7 +16,7 @@ import subprocess
 import unittest
 
 AREA = Path(__file__).resolve().parents[1]
-AIRPLAY = "Study cannot join Kitchen Sonos Amp: Sonos and WiiM speakers group only over AirPlay, and one of them has none."
+AIRPLAY = "Study cannot join Kitchen Sonos Amp: speakers from different providers cannot group without a shared protocol."
 LOCKED = "A locked room is using this device or route, so it cannot change now."
 BLIND = "Sign in to thermite to search, browse and see the queue."
 

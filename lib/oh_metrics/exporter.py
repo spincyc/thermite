@@ -706,6 +706,13 @@ def _things(mapping: dict, answer: list) -> list[Sample]:
             labels = {**device_labels(mapping, ident), "thing": uid}
             samples.append(("thermite_thing_online", labels, 1.0 if status == "ONLINE" else 0.0))
             samples.append(("thermite_thing_status_info", {**labels, "status": status}, 1.0))
+    for uid in mapping.get("bridges") or []:
+        status = status_of.get(uid)
+        if status is None:
+            continue
+        labels = {"device": "", "room": HOUSE_ROOM, "kind": "bridge", "thing": uid}
+        samples.append(("thermite_thing_online", labels, 1.0 if status == "ONLINE" else 0.0))
+        samples.append(("thermite_thing_status_info", {**labels, "status": status}, 1.0))
     return samples
 
 

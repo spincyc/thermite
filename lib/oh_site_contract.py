@@ -162,7 +162,7 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None, metrics
     def affected_device(ident):
         result = set(consumers.get(ident, ()))
         for room, spec in room_specs.items():
-            if any((spec.get(stage) or {}).get("device") == ident for stage in routing.STAGES):
+            if any(stage.get("device") == ident for _, stage in routing.room_stage_specs(spec)):
                 result.add(room)
         return result
 
@@ -222,8 +222,8 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None, metrics
             module, control = native[ident]
             if not module:
                 continue
-            zone = next((entry[stage].get("zone") for stage in routing.STAGES
-                         if stage in entry and entry[stage].get("device") == ident), None)
+            zone = next((stage.get("zone") for _, stage in routing.room_stage_specs(entry)
+                         if stage.get("device") == ident), None)
             if zone is not None:
                 # A zone stage supplies exact power/input; main-zone remote controls do not.
                 staged = module.stage(device, zone) if module.stage else None

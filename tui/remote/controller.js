@@ -126,6 +126,12 @@ function create(options) {
     if (options.access && options.access.watchLocks) options.access.watchLocks(ui.ready && ["home", "remote"].includes(ui.screen));
   }
 
+  // Firing alerts are polled only while Home is shown, and never in --native.
+  const alerts = options.alerts || null;
+  function syncAlerts() {
+    if (alerts && typeof alerts.setActive === "function") alerts.setActive(!stopped && ui.ready && ui.screen === "home");
+  }
+
   // Listen's sessions read the speakers, and Music Assistant's stream is
   // held, only while a room list can show what they play.
   function syncListen() {
@@ -160,7 +166,7 @@ function create(options) {
   function context() {
     return {
       session: session, Session: Session, Remote: options.Remote, layouts: options.layouts, house: options.house,
-      Pairing: Pairing, hints: hints, ui: ui, access, pairing: pairing, cameras: cameras, topology: topology, system, day, listen, music, look: options.look || null,
+      Pairing: Pairing, hints: hints, ui: ui, access, alerts, pairing: pairing, cameras: cameras, topology: topology, system, day, listen, music, look: options.look || null,
       now: now(), still: ui.still, animate: undefined
     };
   }
@@ -189,6 +195,7 @@ function create(options) {
     if (stopped) return Promise.resolve();
     session.subscribe(onSession);
     if (listen) listen.subscribe(onListen);
+    if (alerts && typeof alerts.subscribe === "function") alerts.subscribe(changed);
     timers.tick = (options.setInterval || setInterval)(() => {
       const nextClock = clock();
       let dirty = false;
@@ -214,6 +221,7 @@ function create(options) {
         ui.focusVisible = true;
         syncLocks();
         syncListen();
+        syncAlerts();
         if (ui.screen === "cameras") openCameras();
         if (ui.screen === "topology") openTopology();
         if (ui.screen === "system") system.backend?.open().then(changed);
@@ -239,6 +247,7 @@ function create(options) {
     if (cameras.backend) cameras.backend.stop();
     if (topology.backend) topology.backend.stop();
     if (day.backend) day.backend.stop();
+    if (alerts && typeof alerts.setActive === "function") alerts.setActive(false);
     syncListen();
     if (listen) listen.stop();
     system.backend?.close();
@@ -296,6 +305,7 @@ function create(options) {
       pairing.codes = {}; pairing.notes = {}; if (pairing.backend) pairing.backend.stop(); pairing.backend = null; pairing.loaded = false;
       if (cameras.backend) cameras.backend.stop();
       if (day.backend) day.backend.stop();
+      if (alerts && typeof alerts.setActive === "function") alerts.setActive(false);
       music.typed = null;
       system.backend?.close(); system.expanded = false; system.link = null;
       access.cancel(); access.state.users = []; access.state.policy = null;
@@ -790,6 +800,7 @@ function create(options) {
     syncDiagnostics();
     syncLocks();
     syncListen();
+    syncAlerts();
     if (name === "pairing") openPairing();
     if (name === "cameras") openCameras();
     if (name === "topology") openTopology();

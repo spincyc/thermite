@@ -229,24 +229,24 @@ class Control4Test(unittest.TestCase):
                                                                                      inventory)
 
     def test_a_c4_item_list_links_one_device_to_its_items_without_ambiguity(self):
-        result, found, text = self.summary([ROOM, TV, BUTTON], [{"id": "den_tv", "room": "den", "c4_item": [10, 11]}])
+        result, found, text = self.summary([ROOM, TV, BUTTON], [{"id": "den_tv", "room": "den", "control4_item": [10, 11]}])
         self.assertTrue(found[11]["virtual"])
         self.assertEqual((found[10]["matches"], found[11]["matches"]), (["den_tv"], ["den_tv"]))
         self.assertEqual(result["shared_matches"], {})
         self.assertNotIn("## Ambiguous matches", text)
-        result, found, text = self.summary([ROOM, TV, IR_TV], [{"id": "den_tv", "room": "den", "c4_item": [10, 12]}])
+        result, found, text = self.summary([ROOM, TV, IR_TV], [{"id": "den_tv", "room": "den", "control4_item": [10, 12]}])
         self.assertEqual(result["shared_matches"], {})
         self.assertNotIn("## Ambiguous matches", text)
 
     def test_markdown_names_a_software_driver_among_shared_matches(self):
-        result, _, _ = self.summary([ROOM, TV, BUTTON], [{"id": "den_tv", "room": "den", "c4_item": [10, 11]}])
+        result, _, _ = self.summary([ROOM, TV, BUTTON], [{"id": "den_tv", "room": "den", "control4_item": [10, 11]}])
         result["shared_matches"] = {"den_tv": [10, 11]}
         text = control4.markdown(Path("items-x.json"), result, {"rooms": {"den": {}}, "devices": []})
         self.assertIn("- den_tv is matched by 2 Control4 devices: TV [10] in Den; TV button [11] in Den", text)
 
     def test_two_devices_on_one_item_and_a_guess_shared_by_two_items_stay_ambiguous(self):
-        result, found, text = self.summary([ROOM, TV], [{"id": "den_tv", "room": "den", "c4_item": 10},
-                                                        {"id": "den_tv_2", "room": "den", "c4_item": [10]}])
+        result, found, text = self.summary([ROOM, TV], [{"id": "den_tv", "room": "den", "control4_item": 10},
+                                                        {"id": "den_tv_2", "room": "den", "control4_item": [10]}])
         self.assertEqual(found[10]["matches"], ["den_tv", "den_tv_2"])
         self.assertIn("- TV [10] in Den: den_tv, den_tv_2", text)
         result, found, text = self.summary([ROOM, TV, IR_TV], [{"id": "den_tv", "room": "den", "model": "X"}])

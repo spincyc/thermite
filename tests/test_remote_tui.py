@@ -23,6 +23,7 @@ from tests.test_listen_tui import DEN, LOUNGE, ROOM as EAST, model
 
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
+from oh_features import remote_model
 from oh_integrations import _commands
 
 WEST = "example_west"
@@ -36,6 +37,7 @@ def fixture():
     built["devices"]["example_tv"]["control"]["input"] = {"item": "example_tv_input", "options": [["hdmi1", "HDMI 1"], ["hdmi2", "HDMI 2"]]}
     west = next(room for room in built["rooms"] if room["id"] == WEST)
     west["controls"] = [{"id": "screen", "label": "Screen", "device": "example_matrix", "actions": [["up", "Raise"], ["down", "Lower"]]}]
+    built["layouts"] = {"remotes": remote_model.all_remote_layouts()}
     return built
 
 

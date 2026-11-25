@@ -73,7 +73,7 @@ class TerminalGrid(unittest.TestCase):
 
     def test_no_two_states_of_a_light_share_a_glyph_and_each_takes_one_column(self):
         lights = self.proof["lights"]
-        self.assertEqual(sorted(lights["glyphs"]), ["bad", "busy", "off", "ok", "stale", "unconfirmed"])
+        self.assertEqual(sorted(lights["glyphs"]), ["bad", "busy", "off", "ok", "partial", "stale", "unconfirmed"])
         glyphs = [glyph for state in lights["glyphs"].values() for glyph in state]
         self.assertEqual(len(set(glyphs)), len(glyphs), lights["glyphs"])
         self.assertEqual(set(lights["columns"]), {1})
