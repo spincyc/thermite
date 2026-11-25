@@ -105,6 +105,13 @@ class TerminalGrid(unittest.TestCase):
                 self.assertEqual(sorted(palette["grays"]), ["off", "stale"])
                 self.assertEqual(colors["stale"], colors["off"])
 
+    def test_blit_preserves_multi_row_hits_and_ignores_null_hits(self):
+        blit = self.proof["blitHits"]
+        self.assertEqual(blit["srcCount"], [1, 1], "null hit must not be stored")
+        self.assertEqual(blit["full"], [None, "card", "card", "card", None])
+        self.assertEqual(blit["topClip"], ["card", "card", None])
+        self.assertEqual(blit["bottomClip"], [None, "card", None])
+
     def test_random_frames_show_on_a_terminal_as_the_grid_holds_them(self):
         for run in self.proof["fuzz"]:
             self.assertEqual(run, {"diverged": 0, "faults": []})

@@ -120,21 +120,30 @@
       const speakers = listen.speakers();
       const box = $("[data-speakers]");
       box.parentNode.hidden = speakers.length < 2;
-      if (stale(box, speakers.map((speaker) => [speaker.id, speaker.name, speaker.label]))) {
+      const fresh = stale(box, speakers.map((speaker) => [speaker.id, speaker.name, speaker.label]));
+      if (fresh) {
         box.replaceChildren(...speakers.map((speaker) => node("button", {
           type: "button", class: "target", "data-speaker": speaker.id, "data-focus": "speaker:" + speaker.id,
           "aria-keyshortcuts": speaker.digit || null, title: speaker.label
         }, [node("span", { class: "led", "aria-hidden": "true" }), icon("i-lock", "target__lock"), node("span", { class: "target__label" }, speaker.name)])));
       }
+      let currentTab = null;
       all("[data-speakers] .target").forEach((bubble) => {
         const speaker = speakers.find((entry) => entry.id === bubble.dataset.speaker);
         if (!speaker) return;
         const locked = speaker.current && Boolean(view && view.locked);
         bubble.setAttribute("data-state", speaker.playing ? "current" : "idle");
         bubble.toggleAttribute("data-locked", locked);
-        if (speaker.current) bubble.setAttribute("aria-current", "true"); else bubble.removeAttribute("aria-current");
+        if (speaker.current) { bubble.setAttribute("aria-current", "true"); currentTab = bubble; }
+        else bubble.removeAttribute("aria-current");
         bubble.setAttribute("aria-label", speaker.name + (speaker.playing ? ", playing" : "") + (locked ? ". " + view.locked.text : ""));
       });
+      const currentId = currentTab ? currentTab.dataset.speaker : null;
+      if (ui.reveal && (fresh || box.lit !== currentId)) {
+        box.lit = currentId;
+        ui.reveal(box, currentTab, fresh);
+      }
+      if (ui.markOverflow) ui.markOverflow(box);
     }
 
     function drawNow(view) {
@@ -445,6 +454,7 @@
       if (!library) {
         $("[data-blind]").hidden = true;
         all("[data-panel]").forEach((panel) => { panel.hidden = true; });
+        $("[data-page]").hidden = true;
         if ($("#library-sheet").open) $("#library-sheet").close();
         return;
       }
@@ -913,13 +923,23 @@
       return null;
     }
 
-    // The alert line's words in Listen: the speaker not answering, Music
-    // Assistant away, then a lock.
+    // The alert line's words in Listen: connection loss, the speaker not
+    // answering, Music Assistant away, then a lock.
     function alert() {
       const view = listen.view();
-      if (!view) return "";
-      return [view.problem ? view.speaker.label + " " + view.problem : "", view.music, (view.locked || view.groupLocked || {}).text]
-        .filter(Boolean).join(" · ");
+      const away = music ? music.status() : null;
+      const musicDown = Boolean(away && away.state === "ready" && away.text);
+      const offline = !session.connected() || Boolean(view && view.connected === false) || musicDown;
+      const parts = [];
+      if (offline) parts.push(musicDown && session.connected() && (!view || view.connected !== false) ? away.text : global.RemoteSession.NOT_CONNECTED);
+      if (view) {
+        if (view.problem) parts.push(view.speaker.label + " " + view.problem);
+        if (view.music) parts.push(view.music);
+        if ((view.locked || view.groupLocked || {}).text) parts.push((view.locked || view.groupLocked).text);
+      } else if (away && ["failed", "unavailable"].includes(away.state) && away.text) {
+        parts.push(away.text);
+      }
+      return parts.filter((value, index, list) => value && list.indexOf(value) === index).join(" · ");
     }
 
     return { update: update, press: press, key: key, alert: alert, openInputs: openInputs };

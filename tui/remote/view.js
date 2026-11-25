@@ -230,17 +230,16 @@ function header(frame, ctx, width) {
   g.fill(0, 0, width, 1, "header");
   const remotes = ["remote", "pairing"].includes(ctx.ui.screen);
   let at = width >= 100 ? g.put(0, 0, " thermite ", "header.title") : 0;
-  const tabs = Navigation.pages.filter(page => page.top && Navigation.allowed(page, ctx.access)
-    && !(page.system && remotes && width < 100)).map(page => [page.screen, page.key, page.label]);
-  if (width < 48) {
-    const label = ctx.ui.screen === "pairing" ? "Remotes / Pair devices"
-      : tabs.find(tab => tab[0] === ctx.ui.screen)?.[2] || ({ settings: "Room settings", users: "Users", account: "Account" })[ctx.ui.screen] || "Home";
-    at = g.put(1, 0, fit("thermite · " + label, width - 2), "header.title");
-  } else tabs.forEach((tab) => {
+  const allTabs = Navigation.pages.filter(page => page.top && Navigation.allowed(page, ctx.access)
+    && !(page.system && remotes && width < 100)).map(page => [page.screen, page.key, page.label, Boolean(page.system)]);
+  const tabs = allTabs.filter(tab => !tab[3]);
+  const systemTabs = allTabs.filter(tab => tab[3]);
+  const tabLabel = (tab) => width >= 76 ? tab[2] : { home: "Home", remote: "AV", security: "Sec", cameras: "Cam", topology: "Site", system: "Sys", settings: "Set", users: "Users", account: "Me" }[tab[0]];
+  const drawTab = (tab) => {
     const current = ctx.ui.screen === tab[0] || tab[0] === "remote" && remotes;
     const key = "tab:" + tab[0];
     const style = focused(ctx, key) ? "key.focus" : current ? "tab.current" : "tab";
-    const label = width >= 76 ? tab[2] : { home: "Home", remote: "AV", security: "Sec", cameras: "Cam", topology: "Site", system: "Sys", settings: "Set", users: "Users", account: "Me" }[tab[0]];
+    const label = tabLabel(tab);
     const size = length(" " + tab[1] + " " + label + " ");
     if (at + size + 1 > width) return;
     at = g.put(at, 0, " ", "header");
@@ -249,13 +248,24 @@ function header(frame, ctx, width) {
       ? { kind: "open", sheet: "remotes-menu", key, focus: true, label: "Remotes menu: rooms and Pair devices" }
       : { kind: "screen", screen: tab[0], key, focus: true, label: tab[2] + " page (" + tab[1] + ")" };
     g.hit(at - size, 0, size, 1, hit);
-  });
-  if (["settings", "users", "account"].includes(ctx.ui.screen)) at = g.put(at + 1, 0, fit("› " + ({ settings: "Room settings", users: "Users", account: "Account" })[ctx.ui.screen], Math.max(0, width - at - 2)), "tab.current");
+  };
   // A narrow remote's sheets (its rooms, Info) before Pair devices, which F6 and the Remotes menu open; each whole or not at all.
   const sheets = ctx.ui.screen === "remote" && frame.layout.sheets ? frame.layout.sheets : [];
   const chips = sheets.reduce((sum, entry) => sum + length(entry[1]) + 3, 0);
-  if (remotes && width - at - chips >= 23 && Navigation.allowed(Navigation.pages.find(page => page.id === "pairing"), ctx.access)) at = g.put(at + 1, 0, ctx.ui.screen === "pairing" ? " › Pair devices " : " F6 Pair devices ",
-    focused(ctx, "remotes:pairing") ? "key.focus" : "tab", { kind: "screen", screen: "pairing", key: "remotes:pairing", focus: true, label: "Remotes / Pair devices (F6)" });
+  const sysSize = systemTabs.reduce((sum, tab) => sum + length(" " + tab[1] + " " + tabLabel(tab) + " ") + 1, 0);
+  if (width < 48) {
+    const label = ctx.ui.screen === "pairing" ? "Remotes / Pair devices"
+      : allTabs.find(tab => tab[0] === ctx.ui.screen)?.[2] || ({ settings: "Room settings", users: "Users", account: "Account" })[ctx.ui.screen] || "Home";
+    at = g.put(1, 0, fit("thermite · " + label, width - 2), "header.title");
+  } else {
+    tabs.forEach(drawTab);
+    if (remotes && width - at - chips - sysSize >= 23 && Navigation.allowed(Navigation.pages.find(page => page.id === "pairing"), ctx.access)) {
+      at = g.put(at + 1, 0, ctx.ui.screen === "pairing" ? " › Pair devices " : " F6 Pair devices ",
+        focused(ctx, "remotes:pairing") ? "key.focus" : "tab", { kind: "screen", screen: "pairing", key: "remotes:pairing", focus: true, label: "Remotes / Pair devices (F6)" });
+    }
+    systemTabs.forEach(drawTab);
+  }
+  if (["settings", "users", "account"].includes(ctx.ui.screen)) at = g.put(at + 1, 0, fit("› " + ({ settings: "Room settings", users: "Users", account: "Account" })[ctx.ui.screen], Math.max(0, width - at - 2)), "tab.current");
   if (sheets.length) {
     sheets.forEach((entry) => {
       const key = "open:" + entry[0];
@@ -269,7 +279,7 @@ function header(frame, ctx, width) {
   // The connection's own light: reading until the session can be drawn, then whether the house is heard.
   const connected = ctx.ui.target.mock ? "mock" : !ctx.ui.ready ? "busy" : heard(ctx) ? "ok" : "bad";
   const room = ctx.ui.screen === "remote" && current ? [current.label + "  ", "header.title"] : null;
-  const led = remotes ? (connected === "mock" ? [UNLIT, "header.dim"] : [ledChar(connected, ctx.ui.blink), "header+" + ledStyle(connected)]) : null;
+  const led = remotes ? (connected === "mock" ? [UNLIT, "header.dim"] : [ledChar(connected, !ctx.still && ctx.ui.blink), "header+" + ledStyle(connected)]) : null;
   const target = remotes ? [" " + ctx.ui.target.label + " ", "header.dim"] : null;
   const theme = [" \u25d0 ", focused(ctx, "theme") ? "key.focus" : "header.hotkey",
     { kind: "theme", key: "theme", focus: true, label: "Switch to the " + (ctx.ui.theme === "dark" ? "light" : "dark") + " theme (t)" }];
@@ -319,11 +329,9 @@ function paneHelp(ctx, frame) {
     const help = listenHelp(ctx);
     if (help) return help;
   }
-  if (ctx.ui.overlay && ctx.ui.overlay.kind === "topology") return ["Site topology", [["↑↓"], "room"], [["←→"], "preview source"], [["Enter"], "web map"], [["Esc"], "close"]];
-  if (ctx.ui.overlay && ctx.ui.overlay.kind === "cameras") return ["Cameras", [["↑↓"], "camera"], [["Enter"], "open web"], [["Esc"], "close"]];
   switch (ctx.ui.pane) {
     case "home": return ["Home", [["↑↓←→"], "choose"], [["Enter"], "open"], [["h"], "rooms through the day"], [["PgUp/PgDn"], "scroll"]];
-    case "security": return ["Security · Not connected", [["F1"], "Home"]];
+    case "security": return ["Security", [["F1"], "Home"]];
     case "system": return ["System", [["↑↓"], "choose"], [["Enter"], "open"], [["PgUp/PgDn"], "scroll"]];
     case "cameras": return ["Cameras", [["↑↓"], "camera"], [["Enter"], "open web"], [["F1"], "Home"]];
     case "topology": return ["Site", [["↑↓"], "room"], [["←→"], "preview"], [["Enter"], "web map"], [["s/S"], "sort/reverse"]];
@@ -577,7 +585,7 @@ function roomsContent(g, w, ctx) {
     const short = fit(shown.short, sourceWidth).trimEnd();
     g.put(ledAt - 1 - length(short), y, short, style === "row" ? "dim" : style);
     const led = lightOf(ctx, shown.led);
-    g.put(ledAt, y, ledChar(led, ctx.ui.blink), style === "row.focus" ? style : style + "+" + ledStyle(led));
+    g.put(ledAt, y, ledChar(led, !ctx.still && ctx.ui.blink), style === "row.focus" ? style : style + "+" + ledStyle(led));
     g.hit(0, y, w, 1, { kind: "room", room: room.id, key: key, focus: true,
       label: room.label + ", " + shown.spoken + (lock.locked ? ". " + lock.text : "") });
     y += 1;
@@ -642,8 +650,10 @@ function rounded(g, x, y, text, width, style, hit) {
   g.put(x, y + 1, "\u2502", edge);
   g.put(x + size - 1, y + 1, "\u2502", edge);
   g.put(x, y + 2, "\u2570" + "\u2500".repeat(size - 2) + "\u256f", edge);
-  g.hit(x, y, size, 1, hit, false);
-  g.hit(x, y + 2, size, 1, hit, false);
+  if (hit) {
+    g.hit(x, y, size, 1, hit, false);
+    g.hit(x, y + 2, size, 1, hit, false);
+  }
   return x + size;
 }
 
@@ -807,7 +817,7 @@ function bubbleRow(frame, g, w, ctx, list, state) {
     const lock = session.bubbleLock(item, shown);
     const unconfirmed = item.choose && unread === item.id;
     const led = lightOf(ctx, unconfirmed ? "unconfirmed" : shown === "current" ? "ok" : shown === "switching" ? "busy" : "off");
-    const mark = lock.locked ? LOCK : item.choose ? ledChar(led, ctx.ui.blink) : "";
+    const mark = lock.locked ? LOCK : item.choose ? ledChar(led, !ctx.still && ctx.ui.blink) : "";
     const text = " " + (item.digit ? item.digit + " " : "") + (mark ? mark + " " : "") + item.label + " ";
     parts.push({ item: item, shown: shown, lock: lock, led: led, unconfirmed: unconfirmed, text: text, width: length(text) });
   });
@@ -846,7 +856,7 @@ function bubbleRow(frame, g, w, ctx, list, state) {
       row.put(at, 0, part.text, style, hit);
     }
     if (item.choose && style !== "bubble.focus" && !part.lock.locked) {
-      row.put(at + 1, 0, ledChar(part.led, ctx.ui.blink), style.split("+")[0] + "+" + ledStyle(part.led));
+      row.put(at + 1, 0, ledChar(part.led, !ctx.still && ctx.ui.blink), style.split("+")[0] + "+" + ledStyle(part.led));
     }
     if ((focused(ctx, key) || cursor) && ctx.ui.revealFocus !== false) focus = { from: x, to: x + part.width, id: item.id };
     else if (part.shown !== "idle") lit = { from: x, to: x + part.width, id: item.id };
@@ -1123,7 +1133,9 @@ function infoContent(g, w, ctx, compact = false) {
       });
       y += 4;
     });
-    y = paragraph(g, 1, y, w - 2, "Not connected yet. Later, turning the room on and off will run them; these buttons stay as a backup.", "dim");
+    if (shown.controls.some((control) => !control.connected)) {
+      y = paragraph(g, 1, y, w - 2, "Not connected yet. Later, turning the room on and off will run them; these buttons stay as a backup.", "dim");
+    }
   }
   y = deviceRows(g, heading(g, y + 1, "Devices in the room"), w, shown.devices);
   if (session.demo) {
@@ -1165,8 +1177,8 @@ function logContent(g, w, ctx) {
 function sheet(frame, ctx, width, height) {
   const overlay = ctx.ui.overlay;
   frame.grid.hit(0, 0, width, height, { kind: "dismiss" });
-  const w = Math.min(width - 2, overlay.kind === "day" ? 160 : ["topology", "music-library"].includes(overlay.kind) ? 100 : overlay.kind === "signal" ? 76
-    : ["info", "help", "cameras"].includes(overlay.kind) ? 66 : ["lock-menu", "audio-choice", "audio-inputs"].includes(overlay.kind) ? 40
+  const w = Math.min(width - 2, overlay.kind === "day" ? 160 : overlay.kind === "music-library" ? 100 : overlay.kind === "signal" ? 76
+    : ["info", "help"].includes(overlay.kind) ? 66 : ["lock-menu", "audio-choice", "audio-inputs"].includes(overlay.kind) ? 40
       : overlay.kind === "music-group" ? 60 : 50);
   const content = {
     "access-form": (inner, iw) => ctx.access.formContent(inner, iw, ctx),
@@ -1191,8 +1203,6 @@ function sheet(frame, ctx, width, height) {
       const key = "lock-menu:" + index;
       button(inner, ctx, 1, index * 3, entry.label, key, { kind: "lock-menu", entry, key, focus: true, label: entry.label }, entry.disabled ? "key.off" : "key");
     }),
-    cameras: (inner, iw) => Cameras.content(inner, iw, ctx),
-    topology: (inner, iw) => Topology.content(inner, iw, ctx),
     day: (inner, iw) => Day.content(inner, iw, ctx)
   }[overlay.kind];
   const probe = new Grid(w - 2, null, "base");
@@ -1202,7 +1212,7 @@ function sheet(frame, ctx, width, height) {
   const y = Math.max(1, Math.floor((height - h) / 2));
   panel(frame, ctx, { x: x, y: y, w: w, h: h }, {
     key: "sheet:" + overlay.kind, color: "sheet", solid: true, footer: [["Esc", "close"]],
-    title: overlay.title || { rooms: "Rooms", info: "Info", help: "Keys", signal: "Signal & audio", cameras: "Cameras", topology: "Site topology", "remotes-menu": "Remotes", day: "Rooms through the day" }[overlay.kind],
+    title: overlay.title || { rooms: "Rooms", info: "Info", help: "Keys", signal: "Signal & audio", "remotes-menu": "Remotes", day: "Rooms through the day" }[overlay.kind],
     content: content
   });
 }
@@ -1448,7 +1458,7 @@ function pairCardContent(g, w, ctx, narrow) {
   y = paragraph(g, 1, y, w - 2, device.label, "strong");
   y = paragraph(g, 1, y, w - 2, [device.room, device.model].filter(Boolean).join(" · "), "dim") + 1;
   let x;
-  g.line(1, y, [[ledChar(view.tone || "off", ctx.ui.blink) + " ", ledStyle(view.tone || "off")], [view.label, "tone." + view.tone + "+bold"]]);
+  g.line(1, y, [[ledChar(view.tone || "off", !ctx.still && ctx.ui.blink) + " ", ledStyle(view.tone || "off")], [view.label, "tone." + view.tone + "+bold"]]);
   y += 2;
   if (view.note) y = paragraph(g, 1, y, w - 2, view.note, "tone." + (view.noteTone || "")) + 1;
   const busy = Boolean(view.busy);

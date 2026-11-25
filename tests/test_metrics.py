@@ -69,19 +69,17 @@ def items(**states):
 #: is a fact to join a check with (on(zone)); the Devices board reads the
 #: room's, to show a row while its room is chosen.
 #: A reading whose device is off is a fact to query, not a fault to show.
-#: The gateway's subscriptions opened and resyncs repeat its connects, which
-#: are routine (the first remote page opens it): its failures are what
-#: matters, and the gateway is to stop exporting both (handoff).
-UNREAD = {"thermite_zone_info", "thermite_item_device_off",
-          "thermite_gateway_upstream_connects_total", "thermite_gateway_upstream_resyncs_total"}
+UNREAD = {"thermite_zone_info", "thermite_item_device_off"}
 
 
 def read_families():
     """The text of every rule and board, in houses with and without the
     routing executor and the thingHandler pool telemetry."""
     from tests import test_zone_sync as zones
+    handler = {**MAP, "handler_pool": {"observed": "example_observed"}}
     texts = [*FILES.values(), *rendered(zones.house()).values(),
-             yaml.safe_dump(alerts.rules({**MAP, "handler_pool": {"observed": "example_observed"}})),
+             yaml.safe_dump(alerts.rules(handler)),
+             json.dumps(dashboards.openhab(handler)),
              json.dumps(dashboards.usage({**MAP, "playing": Playing.MAPPING["playing"]}))]
     return "\n".join(texts)
 
@@ -536,18 +534,29 @@ class Speakers(unittest.TestCase):
                       exporter._items(mapping, answer, online))
 
         # What it plays is its leader's, under its own device and room.
-        def played(**states):
+        def played(things=online, **states):
             answer = items(**{"example_amp_group_id": leader, "example_amp_leader": "",
                               "example_mini_group_id": follower, "example_mini_leader": leader,
                               "example_amp_playing_app": "Example App", "example_amp_playing_title": "Example Track",
                               "example_mini_playing_app": "UNDEF", "example_mini_playing_title": "UNDEF", **states})
             return {labels["device"]: (labels["room"], labels["app"], labels["title"])
-                    for _, labels, _ in exporter._playing(mapping, answer, now=1.0)}
+                    for _, labels, _ in exporter._playing(mapping, answer, things, now=1.0)}
         self.assertEqual(played(), {"example_amp": ("example_desk", "Example App", "Example Track"),
                                     "example_mini": ("example_nook", "Example App", "Example Track")})
         self.assertEqual(played(example_mini_leader="FF31F09E00000000C0FFEE09"),
                          {"example_amp": ("example_desk", "Example App", "Example Track")})
         self.assertEqual(played(example_mini_leader=""), {"example_amp": ("example_desk", "Example App", "Example Track")})
+        # An offline device is skipped, and when the leader is offline neither the leader nor its follower leaks stale state.
+        mini_offline = [{**thing, "statusInfo": {"status": "OFFLINE"}} if "example_mini" in thing["UID"] else thing
+                        for thing in online]
+        self.assertEqual(played(things=mini_offline), {"example_amp": ("example_desk", "Example App", "Example Track")})
+        amp_offline = [{**thing, "statusInfo": {"status": "OFFLINE"}} if "example_amp" in thing["UID"] else thing
+                       for thing in online]
+        self.assertEqual(played(things=amp_offline), {})
+        # When /rest/things failed (things is None), Thing-backed devices fail closed instead of reporting cached playback.
+        self.assertEqual(played(things=None), {})
+        self.assertEqual(mini_reads(things=None, example_amp_status="play", example_amp_title="Example Track"),
+                         ("thermite_item_unknown", mini, 1.0))
 
     def test_a_speaker_is_required_while_it_played_lately_or_was_playing_when_last_read(self):
         recorded = [rule for rule in yaml.safe_load(self.FILES["prometheus/alerts.yml"])["groups"][0]["rules"]
@@ -1167,12 +1176,66 @@ class Alerting(unittest.TestCase):
 
     def test_each_thing_that_never_started_alerts_on_its_own_but_not_one_asleep(self):
         rule = next(rule for rule in RULES["groups"][1]["rules"] if rule.get("alert") == "ThermiteThingStuck")
-        self.assertEqual(rule["expr"], 'thermite_thing_status_info{status=~"UNINITIALIZED|INITIALIZING|UNKNOWN"} == 1')
+        self.assertEqual(
+            rule["expr"],
+            '(thermite_thing_status_info{status=~"UNINITIALIZED|INITIALIZING|UNKNOWN"} == 1) '
+            'and on(device) thermite_device_info{required="true"}',
+        )
         self.assertEqual((rule["for"], rule["labels"]["severity"]), ("15m", "critical"))
         self.assertNotIn("OFFLINE", rule["expr"])
         self.assertNotIn("by", rule["expr"], "one series per Thing, so a second stuck Thing is not hidden")
         silenced = {source for source, targets in alerts.INHIBITS if "ThermiteThingStuck" in targets}
         self.assertEqual(silenced, {"ThermiteRuntimeUnavailable"})
+        # Optional devices carry required="false" in thermite_device_info so ThermiteThingStuck excludes them.
+        inventory = copy.deepcopy(INVENTORY)
+        next(device for device in inventory["devices"] if device["id"] == "example_tv")["monitor"] = "optional"
+        mapping = json.loads(rendered(inventory)[oh_metrics.EXPORTER_MAP])
+        samples = exporter.collect(mapping, lambda path, timeout: [])
+        required = {labels["device"]: labels["required"] for name, labels, _ in samples
+                    if name == "thermite_device_info"}
+        self.assertEqual(required["example_tv"], "false")
+        self.assertEqual(required["example_display"], "true")
+
+    def test_service_failed_is_critical_and_worker_disk_btrfs_flapping_and_cert_rules_are_guarded(self):
+        by_name = {rule["alert"]: rule for rule in RULES["groups"][1]["rules"] if "alert" in rule}
+        # ThermiteServiceFailed must be critical so a crashed daemon never downgrades from ThermiteServiceDown.
+        self.assertIn("ThermiteServiceFailed", alerts.CRITICAL)
+        self.assertEqual(by_name["ThermiteServiceFailed"]["labels"]["severity"], "critical")
+        # ThermitePolicyWorkerStalled only fires while the worker unit is active.
+        stalled = by_name["ThermitePolicyWorkerStalled"]["expr"]
+        self.assertIn(f'node_systemd_unit_state{{job="node",name="{oh_units.ACCESS_WORKER}",state="active"}} == 1',
+                      stalled)
+        # ThermiteHostDiskLow excludes EFI, FUSE and network mounts.
+        disk = by_name["ThermiteHostDiskLow"]["expr"]
+        for fs in ("vfat", r"fuse\\..*", "cifs", "nfs.*"):
+            self.assertIn(fs, disk)
+        # ThermiteBtrfsTrouble takes min by (uuid) on unused space so one full RAID member is not hidden.
+        btrfs = by_name["ThermiteBtrfsTrouble"]["expr"]
+        self.assertIn("min by (uuid) (node_btrfs_device_unused_bytes", btrfs)
+        self.assertNotIn("sum by (uuid) (node_btrfs_device_unused_bytes", btrfs)
+        # ThermiteServiceFlapping waits 1m to avoid startup partial-window extrapolation.
+        self.assertEqual(by_name["ThermiteServiceFlapping"]["for"], "1m")
+        # ThermiteGatewayCertExpiring warns 30 days ahead when the gateway is installed.
+        cert = by_name["ThermiteGatewayCertExpiring"]
+        self.assertEqual((cert["for"], cert["labels"]["severity"]), ("1h", "warning"))
+        self.assertIn(f'probe_ssl_earliest_cert_expiry{{job="{alerts.GATEWAY_JOB}"}} - time() < 30 * 86400', cert["expr"])
+        self.assertIn(alerts.GATEWAY_INSTALLED, cert["expr"])
+        # ThermiteRoutingQuarantined points to the boards that actually show quarantined devices.
+        quarantined_desc = by_name["ThermiteRoutingQuarantined"]["annotations"]["description"]
+        self.assertIn("Needs attention now", quarantined_desc)
+        self.assertIn("Quarantined now", quarantined_desc)
+
+    def test_handler_pool_is_not_emitted_when_items_rest_request_fails(self):
+        mapping = {**MAP, "handler_pool": {"observed": "example_observed", "active": "a", "core": "c",
+                                           "queued": "q", "overdue": "o"}}
+        def fail_items(path, timeout):
+            if "items" in path:
+                raise TimeoutError("items timed out")
+            return []
+        samples = exporter.collect(mapping, fail_items)
+        names = {name for name, _, _ in samples}
+        self.assertNotIn("thermite_handler_pool_up", names)
+        self.assertIn(("thermite_openhab_up", {}, 0.0), samples)
 
     def test_service_down_watches_every_daemon_with_escaped_names(self):
         rule = next(rule for rule in RULES["groups"][1]["rules"] if rule.get("alert") == "ThermiteServiceDown")
@@ -1540,12 +1603,94 @@ class Dashboards(unittest.TestCase):
         self.assertTrue(restarts["targets"][0]["expr"].endswith("> 0"))
         openhab = boards()[dashboards.OPENHAB]
         self.assertNotIn("Bundles not ACTIVE", [panel["title"] for panel in panels(openhab)])
-        self.assertIn("thingHandler pool", [panel["title"] for panel in panels(openhab)])
+        self.assertNotIn("thingHandler pool", [panel["title"] for panel in panels(openhab)])
+        openhab_with_pool = dashboards.openhab({**MAP, "handler_pool": {"observed": "example_observed"}})
+        self.assertIn("thingHandler pool", [panel["title"] for panel in panels(openhab_with_pool)])
+        self.assertIn("thingHandler busy", [panel["title"] for panel in panels(openhab_with_pool)])
+        self.assertIn("thingHandler probe", [panel["title"] for panel in panels(openhab_with_pool)])
+        storage = next(panel for panel in panels(board) if panel["title"] == "Metrics storage")
+        self.assertIn("prometheus_tsdb_head_chunks_storage_size_bytes", storage["targets"][0]["expr"])
+        self.assertEqual(storage["fieldConfig"]["defaults"]["thresholds"]["steps"],
+                         [{"color": dashboards.IN_USE, "value": None}])
         busiest = [panel["targets"][0]["expr"] for panel in panels(openhab) if panel["title"].startswith("Busiest")]
         self.assertEqual(len(busiest), 2)
         for expr in busiest:
             # One top set for the whole range, in a table: on a chart, those with one rate drew one line.
             self.assertRegex(expr, r"^topk\(6, sum by \(\w+\) \(increase\(.+\[\$__range\]\)\)\)$")
+
+    def test_topology_gating_for_zero_zone_non_executor_and_optional_speaker_houses(self):
+        from tests import test_wiim, test_zone_sync
+        # 1. Zero-zone speaker-only house (WiiM): no Rooms ready, no Switch time, no Switching sources.
+        wiim_files = rendered(test_wiim.house())
+        wiim_house = json.loads(wiim_files[f"{oh_metrics.GRAFANA_DASHBOARDS}/{dashboards.HOUSE}.json"])
+        wiim_switching = json.loads(wiim_files[f"{oh_metrics.GRAFANA_DASHBOARDS}/{dashboards.SWITCHING}.json"])
+        house_titles = [panel["title"] for panel in panels(wiim_house)]
+        self.assertNotIn("Rooms ready", house_titles)
+        self.assertNotIn("Switch time by room", house_titles)
+        self.assertIn("Speakers ready", house_titles)
+        since = next(panel for panel in panels(wiim_house) if panel["title"] == "Since yesterday evening")
+        self.assertEqual([target["legendFormat"] for target in since["targets"]], ["Remotes gave up", "Restarts"])
+        switching_titles = [panel["title"] for panel in panels(wiim_switching)]
+        self.assertNotIn("Switching sources", switching_titles)
+        self.assertNotIn("Time to switch", switching_titles)
+        self.assertNotIn("Routing executor", switching_titles)
+        self.assertIn("Remotes and the gateway", switching_titles)
+        # 2. Zero-zone, zero-speaker house (e.g. camera-only): Control + Remotes fill the 24-col row cleanly.
+        empty_house = dashboards.house({"rooms": {"entry": "Entry"}, "devices": {}, "items": {}}, [])
+        top_row = [panel for panel in empty_house["panels"] if panel["gridPos"]["y"] == 0]
+        self.assertEqual([panel["title"] for panel in top_row], ["Control", "Remotes"])
+        self.assertEqual(sum(panel["gridPos"]["w"] for panel in top_row), 24)
+        # 3. Routed non-executor house (example) vs executor house (zones): executor panels gated cleanly.
+        example_switching = [panel["title"] for panel in panels(boards()[dashboards.SWITCHING])]
+        for title in ("Routing executor", "Operations by outcome", "Device failures", "Quarantined now"):
+            self.assertNotIn(title, example_switching)
+        zones_files = rendered(test_zone_sync.house())
+        zones_switching = json.loads(zones_files[f"{oh_metrics.GRAFANA_DASHBOARDS}/{dashboards.SWITCHING}.json"])
+        zones_titles = [panel["title"] for panel in panels(zones_switching)]
+        for title in ("Routing executor", "Operations by outcome", "Device failures", "Quarantined now"):
+            self.assertIn(title, zones_titles)
+        # 4. House health tile correctness: infra in Rooms ready, optional speakers excluded, Remotes & Host fixes.
+        example_house = boards()[dashboards.HOUSE]
+        rooms_ready = next(panel for panel in panels(example_house) if panel["title"] == "Rooms ready")
+        self.assertIn('device=~"example_matrix"', rooms_ready["targets"][0]["expr"])
+        remotes = next(panel for panel in panels(example_house) if panel["title"] == "Remotes")
+        self.assertIn("count_over_time(", remotes["targets"][0]["expr"])
+        self.assertNotIn("or vector(0)", remotes["targets"][0]["expr"])
+        host_tile = next(panel for panel in panels(example_house) if panel["title"] == "Host")
+        host_expr = host_tile["targets"][0]["expr"]
+        self.assertIn("node_btrfs_device_unused_bytes", host_expr)
+        self.assertIn("node_textfile_mtime_seconds", host_expr)
+        self.assertIn('state="active"', host_expr)
+        self.assertIn("vfat", host_expr)
+        self.assertEqual(host_tile["fieldConfig"]["defaults"]["mappings"][0]["options"]["1"]["text"], "1 problem")
+        # 5. Optional speaker excluded from Speakers ready numerator and denominator.
+        inv = with_speakers()
+        next(d for d in inv["devices"] if d["id"] == "example_speaker")["monitor"] = "optional"
+        opt_house = json.loads(rendered(inv)[f"{oh_metrics.GRAFANA_DASHBOARDS}/{dashboards.HOUSE}.json"])
+        spk_tile = next(panel for panel in panels(opt_house) if panel["title"] == "Speakers ready")
+        self.assertEqual(spk_tile["fieldConfig"]["defaults"]["unit"], "suffix: of 1")
+        self.assertIn('device=~"example_amp"', spk_tile["targets"][0]["expr"])
+        self.assertIn('check!="power"', spk_tile["targets"][0]["expr"])
+        self.assertIn('thermite_device_info{required="true"}', spk_tile["targets"][0]["expr"])
+        self.assertNotIn("example_speaker", spk_tile["targets"][0]["expr"])
+        # 6. Needs attention now & Alerts firing strip room="house" and Alerts firing surfaces context labels.
+        attention = next(panel for panel in panels(example_house) if panel["title"] == "Needs attention now")
+        self.assertIn('label_replace(thermite:check{required="true"} != 0, "room", "", "room", "house")',
+                      attention["targets"][0]["expr"])
+        firing = next(panel for panel in panels(example_house) if panel["title"] == "Alerts firing"
+                      and panel["type"] == "table")
+        self.assertIn('label_replace(ALERTS{alertstate="firing"}, "room", "", "room", "house")',
+                      firing["targets"][0]["expr"])
+        org = firing["transformations"][-1]["options"]
+        for col in ("name", "job", "mountpoint", "file"):
+            self.assertIn(col, org["includeByName"])
+        self.assertFalse(org["excludeByName"]["job"])
+        # 7. Multi-room zones formatting in Usage -> What played maps comma-separated combinations cleanly.
+        usage_board = dashboards.usage({**MAP, "playing": Playing.MAPPING["playing"]})
+        played_tbl = next(panel for panel in panels(usage_board) if panel["title"] == "What played, where and for how long")
+        zones_ov = next(ov for ov in played_tbl["fieldConfig"]["overrides"] if ov["matcher"]["options"] == "zones")
+        zones_map = next(p["value"][0]["options"] for p in zones_ov["properties"] if p["id"] == "mappings")
+        self.assertEqual(zones_map["example_east,example_west"]["text"], "Example East, Example West")
 
     def test_every_exporter_family_is_read(self):
         read = read_families()

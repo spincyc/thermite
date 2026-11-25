@@ -68,7 +68,8 @@ def manifest(house: House, conf: Conf) -> dict:
             elif item.get("type") == "Dimmer":
                 kind = "volume"
         desc = {"label": item.get("label") or name, "device": house.label(device) if device else None,
-                "room": house.room_label(room or device.get("room")) if room or (device and device.get("room")) else None,
+                "room": routing.room_label(house, room) if room else (
+                    house.room_label(device["room"]) if device and device.get("room") else None),
                 "kind": kind, "states": kind != "key" and name != "house_all_off",
                 "commands": "_pairing" not in name and ("Control" in (item.get("tags") or [])
                                                           or item.get("autoupdate") is False)}

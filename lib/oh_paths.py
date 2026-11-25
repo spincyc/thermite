@@ -24,6 +24,8 @@ SCHEMA_1_READER = "8557d79cffa6859daa499843aa824b404fc37c25"
 REEXEC = "THERMITE_PINNED_RELEASE"
 #: The launcher's own arguments, when it handed select_args all of sys.argv.
 LAUNCHED: list[str] | None = None
+#: The directory explicitly selected by --config/--site in select_args(), or None.
+CONFIG_EXPLICIT: str | None = None
 #: The switches that select the private site, in every verb (select_args).
 #: --config is the switch. --site is its retired spelling: taken, and shown
 #: in no help, document or message. Releases before 2026-11-18 still send
@@ -38,6 +40,11 @@ class SiteError(ValueError):
     pass
 
 
+def explicit_config() -> bool:
+    """Whether --config/--site explicitly selected the active site."""
+    return CONFIG_EXPLICIT is not None and os.environ.get("THERMITE_SITE") == CONFIG_EXPLICIT
+
+
 def select_args(argv: list[str]) -> list[str]:
     """Select the site before importing any verb or its module-level paths.
 
@@ -46,7 +53,7 @@ def select_args(argv: list[str]) -> list[str]:
     spell a switch of its own like one (tests/test_config_parameter.py walks
     every parser).
     """
-    global SITE, LAUNCHED
+    global SITE, LAUNCHED, CONFIG_EXPLICIT
     if list(argv) == sys.argv[1:] and Path(sys.argv[0]).name == "thermite":
         LAUNCHED = list(argv)
     out, chosen, index = [], None, 0
@@ -67,6 +74,7 @@ def select_args(argv: list[str]) -> list[str]:
         if chosen is not None or not value: raise SiteError("pass --config exactly once")
         chosen = str(Path(value).expanduser().absolute())
         index += 1
+    CONFIG_EXPLICIT = chosen
     if chosen is not None: os.environ["THERMITE_SITE"] = chosen
     SITE = site_root()
     return out

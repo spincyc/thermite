@@ -232,6 +232,128 @@ static void stale_assembly(void)
           "session 2 message corrupted by stale assembly");
 }
 
+/* Up to TL_PARTS_MAX (16) parts, in order and out of order, up to TL_MESSAGE_MAX bytes. */
+static void sixteen_parts(void)
+{
+    CHECK(TL_PARTS_MAX == 16, "TL_PARTS_MAX must be 16");
+    static tl_assembler_t assembler;
+    tl_remote_t remote;
+    tl_remote_reset(&remote);
+    tl_assembler_reset(&assembler);
+
+    const char *status = "{\"have\":\"\"}";
+    const uint64_t nonce = 0x3333333333333333ull, sess = 0xccccccccccccccccull;
+    char hex[17], sync_plain[64];
+    const char *message = NULL;
+    size_t size = 0;
+
+    CHECK(tl_remote_hello(&remote, key, nonce, status, strlen(status), frame, sizeof frame) > 0, "hello 16");
+    tl_hex(nonce, hex);
+    snprintf(sync_plain, sizeof sync_plain, "{\"hello\":\"%s\"}", hex);
+    tl_header_t hdr = { .type = TL_SYNC, .count = 1, .session = sess };
+    size_t len = tl_seal(key, TL_FROM_BRIDGE, &hdr, (const uint8_t *)sync_plain, strlen(sync_plain), frame, sizeof frame);
+    CHECK(tl_remote_receive(&remote, &assembler, key, frame, len, &message, &size) == TL_SYNCED, "sync 16");
+
+    /* 16 equal parts of 512 bytes = 8192 bytes (TL_MESSAGE_MAX), in order. */
+    static uint8_t payload[TL_MESSAGE_MAX];
+    for (size_t i = 0; i < sizeof payload; i++) payload[i] = (uint8_t)('a' + (i % 26));
+    uint32_t counter = 0;
+    tl_event_t ev = TL_NOTHING;
+    for (uint8_t idx = 0; idx < TL_PARTS_MAX; idx++) {
+        tl_header_t dh = { .type = TL_DATA, .message = 1, .index = idx, .count = TL_PARTS_MAX,
+                           .session = sess, .counter = ++counter };
+        len = tl_seal(key, TL_FROM_BRIDGE, &dh, payload + (size_t)idx * 512, 512, frame, sizeof frame);
+        ev = tl_remote_receive(&remote, &assembler, key, frame, len, &message, &size);
+        CHECK(idx + 1 < TL_PARTS_MAX ? ev == TL_NOTHING : ev == TL_MESSAGE, "16-part in-order step %u", idx);
+    }
+    CHECK(size == TL_MESSAGE_MAX && memcmp(message, payload, TL_MESSAGE_MAX) == 0 && message[TL_MESSAGE_MAX] == '\0',
+          "16-part in-order payload mismatch");
+
+    /* 16 variable-length parts arriving out of order (interleaved reverse), plus a duplicate part ignored. */
+    static uint8_t var_payload[TL_MESSAGE_MAX];
+    size_t offsets[TL_PARTS_MAX], lengths[TL_PARTS_MAX], total = 0;
+    for (uint8_t i = 0; i < TL_PARTS_MAX; i++) {
+        offsets[i] = total;
+        lengths[i] = (size_t)(17 + i * 31); /* sum = 16*17 + 31*120 = 3992 <= TL_MESSAGE_MAX */
+        for (size_t k = 0; k < lengths[i]; k++) var_payload[total + k] = (uint8_t)('A' + ((i + k) % 26));
+        total += lengths[i];
+    }
+    const uint8_t order[TL_PARTS_MAX] = { 15, 0, 14, 1, 13, 2, 12, 3, 11, 4, 10, 5, 9, 6, 8, 7 };
+    for (size_t step = 0; step < TL_PARTS_MAX; step++) {
+        uint8_t idx = order[step];
+        tl_header_t dh = { .type = TL_DATA, .message = 2, .index = idx, .count = TL_PARTS_MAX,
+                           .session = sess, .counter = ++counter };
+        len = tl_seal(key, TL_FROM_BRIDGE, &dh, var_payload + offsets[idx], lengths[idx], frame, sizeof frame);
+        ev = tl_remote_receive(&remote, &assembler, key, frame, len, &message, &size);
+        if (step == 3) {
+            /* Duplicate of already-received part 15 with higher counter must be ignored cleanly. */
+            tl_header_t dup = { .type = TL_DATA, .message = 2, .index = 15, .count = TL_PARTS_MAX,
+                                .session = sess, .counter = ++counter };
+            size_t dlen = tl_seal(key, TL_FROM_BRIDGE, &dup, var_payload + offsets[15], lengths[15], frame, sizeof frame);
+            CHECK(tl_remote_receive(&remote, &assembler, key, frame, dlen, &message, &size) == TL_NOTHING,
+                  "duplicate part completed message");
+        }
+        CHECK(step + 1 < TL_PARTS_MAX ? ev == TL_NOTHING : ev == TL_MESSAGE, "16-part ooo step %zu", step);
+    }
+    CHECK(size == total && memcmp(message, var_payload, total) == 0 && message[total] == '\0',
+          "16-part out-of-order payload mismatch");
+
+    /* Total > TL_MESSAGE_MAX across parts must be rejected cleanly. */
+    static uint8_t big_part[TL_PART_MAX];
+    memset(big_part, 'Z', sizeof big_part);
+    for (uint8_t idx = 0; idx < 6; idx++) {
+        tl_header_t dh = { .type = TL_DATA, .message = 3, .index = idx, .count = 6,
+                           .session = sess, .counter = ++counter };
+        len = tl_seal(key, TL_FROM_BRIDGE, &dh, big_part, sizeof big_part, frame, sizeof frame);
+        CHECK(tl_remote_receive(&remote, &assembler, key, frame, len, &message, &size) == TL_NOTHING,
+              "oversized multi-part accepted at index %u", idx);
+    }
+}
+
+/* SYNC payload parsed via cJSON: whitespace & extra fields accepted, malformed/wrong rejected. */
+static void sync_json(void)
+{
+    static tl_assembler_t assembler;
+    tl_remote_t remote;
+    tl_remote_reset(&remote);
+    tl_assembler_reset(&assembler);
+
+    const char *status = "{\"have\":\"\"}";
+    const uint64_t nonce = 0x0123456789abcdefull, sess = 0xfeedfacecafebeefull;
+    const char *message = NULL;
+    size_t size = 0;
+
+    CHECK(tl_remote_hello(&remote, key, nonce, status, strlen(status), frame, sizeof frame) > 0, "hello sync_json");
+    tl_header_t hdr = { .type = TL_SYNC, .count = 1, .session = sess };
+
+    const char *bad[] = {
+        "{bad json",
+        "[\"0123456789abcdef\"]",
+        "{\"hello\":123}",
+        "{\"hello\":\"0123456789abcde0\"}",
+        "{}"
+    };
+    for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        size_t len = tl_seal(key, TL_FROM_BRIDGE, &hdr, (const uint8_t *)bad[i], strlen(bad[i]), frame, sizeof frame);
+        CHECK(tl_remote_receive(&remote, &assembler, key, frame, len, &message, &size) == TL_NOTHING,
+              "bad sync accepted: %s", bad[i]);
+        CHECK(remote.waiting == nonce && remote.session == 0, "bad sync mutated state: %s", bad[i]);
+    }
+
+    const char *good = "{ \"hello\" : \"0123456789abcdef\" , \"extra\" : 1 }";
+    size_t len = tl_seal(key, TL_FROM_BRIDGE, &hdr, (const uint8_t *)good, strlen(good), frame, sizeof frame);
+    CHECK(tl_remote_receive(&remote, &assembler, key, frame, len, &message, &size) == TL_SYNCED,
+          "valid spaced SYNC JSON rejected");
+    CHECK(remote.session == sess && remote.waiting == 0, "SYNC session not adopted");
+
+    uint8_t secret[32];
+    memset(secret, 0xab, sizeof secret);
+    tl_zeroize(secret, sizeof secret);
+    for (size_t i = 0; i < sizeof secret; i++) {
+        CHECK(secret[i] == 0, "tl_zeroize left byte %zu non-zero", i);
+    }
+}
+
 int main(int argc, char **argv)
 {
     char *json = argc > 1 ? slurp(argv[1]) : NULL;
@@ -245,6 +367,8 @@ int main(int argc, char **argv)
     rejects(cJSON_GetObjectItem(root, "rejects"));
     session(cJSON_GetObjectItem(root, "frames"));
     stale_assembly();
+    sixteen_parts();
+    sync_json();
     cJSON_Delete(root);
     free(json);
     if (failures) {

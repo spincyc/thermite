@@ -9,6 +9,7 @@ lib/oh_render.py runs them and writes the result. Things and Items are data
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import functools
 import json
 import re
@@ -287,25 +288,23 @@ def fill(source: str, constants: dict[str, object], origin: Path | str, *, part:
 #: House remembers its own (House.directory), and a build binds that for
 #: as long as it runs (oh_render.build), so it reads its own house's files
 #: whichever house file the process read last.
-_instance: Path | None = None
+_instance: contextvars.ContextVar[Path | None] = contextvars.ContextVar("thermite_instance", default=None)
 
 
 def instance() -> Path | None:
-    """The directory the house's own files are in; None when no house file
-    has been read."""
-    return _instance
+    """The directory the house's own files are in; None when none is bound."""
+    return _instance.get()
 
 
 @contextlib.contextmanager
 def instance_at(directory: Path | None):
     """For a block, the house's own files are in `directory`: for a house that
     is a mapping (House(data)), or one whose files are a copy elsewhere."""
-    global _instance
-    previous, _instance = _instance, directory
+    token = _instance.set(directory)
     try:
         yield
     finally:
-        _instance = previous
+        _instance.reset(token)
 
 
 class House:
@@ -320,54 +319,63 @@ class House:
     one. House.unchecked(data) checks nothing, and says so where it is used.
     """
 
-    def __init__(self, data: object) -> None:
+    def __init__(self, data: object, *, instance_dir: Path | None = None) -> None:
         # Imported here: oh_render imports this module.
         import oh_render
         problems = oh_render.validate(data)
         if problems:
             raise inventory.ConfigError(None, "not a valid house: " + "; ".join(problems), problems=problems)
         # Valid, so the shape the house file's types (oh_inventory) give it.
-        self._hold(cast(inventory.HouseFile, data))
+        self._hold(cast(inventory.HouseFile, data), instance_dir=instance_dir)
 
     @classmethod
-    def unchecked(cls, data: dict) -> House:
+    def unchecked(cls, data: dict, *, instance_dir: Path | None = None) -> House:
         """A House of a mapping that is not checked here: for a validator,
         which runs while the mapping is being checked and reads only what
         the checks before it passed, and for the gateway, whose contract
         carries the mapping of a house that was loaded when it was compiled."""
         house = cls.__new__(cls)
-        house._hold(cast(inventory.HouseFile, data))
+        house._hold(cast(inventory.HouseFile, data), instance_dir=instance_dir)
         return house
 
-    def _hold(self, data: inventory.HouseFile) -> None:
+    def _hold(self, data: inventory.HouseFile, *, instance_dir: Path | None = None) -> None:
         self.data = data
         self.rooms: dict[str, inventory.Room] = data.get("rooms") or {}
         self.devices: list[inventory.Device] = list(data.get("devices") or [])
         #: Device id -> device.
         self.by_id: dict[str, inventory.Device] = {device["id"]: device for device in self.devices}
-        #: Where the files this house names are, as of when it was made
-        #: (instance()); None for one made of a mapping outside any block.
-        self.directory: Path | None = _instance
+        #: Where the files this house names are, as of when it was loaded or
+        #: made (instance()); None for one made of a mapping outside any block.
+        self.instance_dir: Path | None = instance_dir if instance_dir is not None else _instance.get()
         self._counts: dict[str, int] = {}
         for device in self.devices:
             text = self._base_label(device)
             self._counts[text] = self._counts.get(text, 0) + 1
 
+    @property
+    def directory(self) -> Path | None:
+        """Alias for instance_dir."""
+        return self.instance_dir
+
+    @directory.setter
+    def directory(self, value: Path | None) -> None:
+        self.instance_dir = value
+
     @classmethod
     def load(cls, path: Path) -> House:
         """The house file at `path`, validated: the one reader of a house
         file. ConfigError when it cannot be read or parsed, or naming every
-        problem oh_render.validate finds in it. The files it names are read
-        from its own directory from here on (instance())."""
-        global _instance
+        problem oh_render.validate finds in it. Its directory is stored on
+        House.instance_dir without mutating process-global state."""
         data = inventory.load(path)
-        _instance = Path(path).parent
-        try:
-            return cls(data)
-        except inventory.ConfigError as error:
-            count = len(error.problems)
-            raise inventory.ConfigError(path, f"{count} problem{'s' if count != 1 else ''}; nothing done",
-                                        problems=error.problems) from None
+        directory = Path(path).parent
+        with instance_at(directory):
+            try:
+                return cls(data, instance_dir=directory)
+            except inventory.ConfigError as error:
+                count = len(error.problems)
+                raise inventory.ConfigError(path, f"{count} problem{'s' if count != 1 else ''}; nothing done",
+                                            problems=error.problems) from None
 
     @staticmethod
     def _base_label(device: inventory.Device) -> str:

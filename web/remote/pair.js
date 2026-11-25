@@ -342,15 +342,23 @@
 
   Backend.prototype.load = function () {
     const url = this.base + LIST_URL;
+    const sequence = (this.loadSequence = (this.loadSequence || 0) + 1);
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    const timeout = controller ? this.setTimeout(() => controller.abort(), this.postMs) : null;
+    const finish = () => { if (timeout !== null) this.clearTimeout(timeout); };
     return Promise.resolve()
-      .then(() => this.fetch(url, { method: "GET", headers: { Accept: "application/json" } }))
+      .then(() => this.fetch(url, Object.assign({ method: "GET", headers: { Accept: "application/json" } },
+        controller ? { signal: controller.signal } : {})))
       .then((response) => {
         if (!response.ok) throw new Error("Could not read the devices from thermite (HTTP " + response.status + ")");
         return response.text();
-      }, () => {
+      }, (error) => {
+        if (error && error.name === "AbortError") throw new Error("thermite did not answer in time. Try again in a moment.");
         throw new Error(MESSAGES.offline);
       })
       .then((body) => {
+        finish();
+        if (this.stopped || sequence !== this.loadSequence) return this.rooms;
         let items;
         try {
           items = JSON.parse(body);
@@ -361,6 +369,8 @@
         return this.rooms;
       })
       .catch((error) => {
+        finish();
+        if (this.stopped || sequence !== this.loadSequence) return this.rooms;
         this.emit({ type: "error", message: error.message });
         throw error;
       });
@@ -1222,6 +1232,8 @@
         const device = backend.device(event.device);
         // A status that comes with a note (Paired, not accepted) is announced by the note.
         if (device && !backend.view(event.device).note) announce(device.label + ", " + device.room + ": " + STATES[event.status] + ".");
+      } else if (event.type === "connection") {
+        showAlert(event.connected ? null : MESSAGES.offline);
       } else if (event.type === "error") {
         showAlert(event.message);
       }

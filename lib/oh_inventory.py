@@ -18,7 +18,7 @@ import yaml
 
 import oh_control4
 from oh_semantic import KINDS, LOCATION_TAGS
-from oh_shape import LIST, MAPPING, NUMBER, TEXT, Key, fits, of_kind, unknown, words
+from oh_shape import LIST, MAPPING, NUMBER, TEXT, Key, fits, mismatches, of_kind, unknown, words
 
 if TYPE_CHECKING:
     from oh_conf import House
@@ -111,7 +111,7 @@ Room = TypedDict("Room", {"label": str, "tag": NotRequired[str], "in": NotRequir
 
 
 class MatrixSettings(TypedDict, total=False):
-    edid: dict[str, str]
+    edid: dict[int | str, str]
     scaler: Literal["bypass", "8k-to-4k", "to-1080p", "auto", "audio-only"]
     hdr: Literal["bypass", "hdr-to-sdr", "auto"]
     hdcp: Literal["1.4", "2.2", "follow-sink", "follow-source"]
@@ -454,7 +454,28 @@ def shape() -> Key:
     return Key(MAPPING, "the house file", keys={**top, "devices": devices})
 
 
-def validate(data: object) -> list[str]:
+_CORE_TOP = frozenset({"version", "rooms", "devices", "later", "services", "control4_rooms", "control4_stale"})
+_CORE_DEVICE = frozenset(DEVICE) | {"c4_item"}
+
+
+def extension_mismatches(data: dict) -> list[str]:
+    """Shape mismatches for present declared top-level and device extension keys."""
+    top_keys, device_keys, _ = declarations()
+    problems: list[str] = []
+    for key, declaration in top_keys.items():
+        if key not in _CORE_TOP and data.get(key) is not None:
+            problems += mismatches(declaration, data[key], key)
+    for index, device in enumerate(data.get("devices") or []):
+        if not isinstance(device, dict):
+            continue
+        where = str(device.get("id") or f"devices[{index}]")
+        for key, declaration in device_keys.items():
+            if key not in _CORE_DEVICE and key in device:
+                problems += mismatches(declaration, device[key], f"{where}.{key}")
+    return problems
+
+
+def validate(data: object, *, check_extensions: bool = True) -> list[str]:
     """Every structural problem in a parsed devices.yaml.
 
     Problems that concern one integration's or one feature's fields are
@@ -555,10 +576,27 @@ def validate(data: object) -> list[str]:
                                     + (f"; it is a {other[0]} integration" if other else hint(name, allowed[phase])))
                 elif name in needs_mac and not device.get("mac"):
                     problems.append(f"{where}: {name} needs the device's mac")
+    by_id = {d["id"]: d for d in devices if isinstance(d, dict) and isinstance(d.get("id"), str) and d["id"]}
     for device in devices:
-        if isinstance(device, dict) and device.get("via") and device["via"] not in seen["id"]:
-            problems.append(f"{device.get('id')}: via '{device['via']}' is not a device id"
-                            f"{hint(device['via'], seen['id'])}")
+        if not isinstance(device, dict) or not device.get("via"):
+            continue
+        via = device["via"]
+        if not isinstance(via, str):
+            continue
+        ident = device.get("id")
+        if via == ident:
+            problems.append(f"{ident}: via '{via}' cannot refer to itself")
+        elif via not in seen["id"]:
+            problems.append(f"{ident}: via '{via}' is not a device id{hint(via, seen['id'])}")
+    for ident in by_id:
+        trail = [ident]
+        while isinstance(by_id[trail[-1]].get("via"), str) and by_id[trail[-1]]["via"] in by_id:
+            nxt = by_id[trail[-1]]["via"]
+            trail.append(nxt)
+            if nxt in trail[:-1]:
+                if nxt == ident and len(trail) > 2:
+                    problems.append(f"{ident}: via forms a cycle: {' -> '.join(trail)}")
+                break
     problems += oh_control4.validate(data)
     for index, entry in enumerate(data.get("later") or []):
         if not isinstance(entry, dict):
@@ -568,6 +606,8 @@ def validate(data: object) -> list[str]:
     for index, service in enumerate(data.get("services") or []):
         if not isinstance(service, str):
             problems.append(f"services[{index}]: {service!r} must be a service id")
+    if check_extensions:
+        problems += extension_mismatches(data)
     return problems
 
 
@@ -616,7 +656,9 @@ def cross_check(house: House, things: dict, items: dict) -> list[str]:
     devices = house.by_id
     house_items = HOUSE_ITEMS | frozenset(declared("HOUSE_ITEMS", (*REGISTRY, *oh_features.REGISTRY)))
     services = set(house.data.get("services") or [])
-    rooms = set(house.rooms)
+    routed = house.data.get("routing")
+    routed_rooms = routed.get("rooms") if isinstance(routed, dict) else None
+    rooms = set(house.rooms) | set(routed_rooms if isinstance(routed_rooms, dict) else {})
     problems: list[str] = []
     with_things: set[str] = set()
     for uid, thing in sorted(things.items()):

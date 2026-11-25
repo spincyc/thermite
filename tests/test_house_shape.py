@@ -162,6 +162,8 @@ class Reference(unittest.TestCase):
                 self.assertIn(key.doc[:1].upper() + key.doc[1:] + ".", page)
         self.assertIn("| `routing.rooms.<room id>.display.passive` | true or false |", page)
         self.assertNotIn("receiver.passive", page)
+        self.assertNotIn("display.zone", page)
+        self.assertNotIn("display.sync_with", page)
         self.assertIn("| `sonos_udn` | text |", page)
         self.assertIn("| sonos |", page)
         built = oh_site.build()["house-file.html"].decode()

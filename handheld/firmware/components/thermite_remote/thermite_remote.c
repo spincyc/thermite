@@ -333,6 +333,7 @@ void tr_destroy(tr_t *r)
     cJSON_Delete(r->audio);
     cJSON_Delete(r->toast);
     cJSON_Delete(r->inputs);
+    tl_zeroize(r->key, sizeof r->key);
     free(r);
 }
 

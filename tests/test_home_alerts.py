@@ -121,6 +121,40 @@ class Model(unittest.TestCase):
                     self.assertNotIn(name, catalogue.ABOUT)
 
 
+class Metadata(unittest.TestCase):
+    def test_house_wide_alerts_in_identity_about_expose_validated_service_labels(self):
+        try:
+            import oh_units
+            from oh_identity import alerts as feed
+        except ImportError as exc:  # httpx is a site requirement
+            self.skipTest(str(exc))
+        saved = set(feed._logged)
+        self.addCleanup(lambda: (feed._logged.clear(), feed._logged.update(saved)))
+        ids = {"room": frozenset({"example_west"}), "zone": frozenset({"example_west"}),
+               "device": frozenset({"example_matrix"}), "check": frozenset(catalogue.CHECK_WORDS)}
+        expected = {
+            "ThermiteServiceFailed": ({"name": oh_units.RUNTIME}, "critical", "service", oh_units.RUNTIME),
+            "ThermiteServiceDown": ({"name": oh_units.ACCESS}, "critical", "service", oh_units.ACCESS),
+            "ThermiteServiceFlapping": ({"name": oh_units.ATV}, "warning", "service", oh_units.ATV),
+            "ThermiteScrapeFailed": ({"job": "openhab"}, "warning", "service", "openhab"),
+            "ThermiteRoutingQuarantined": ({}, "critical", "service", "routing"),
+            "ThermiteGatewayCertExpiring": ({"service": "gateway"}, "warning", "service", "gateway"),
+        }
+        for name, (labels, severity, field, value) in expected.items():
+            with self.subTest(alert=name):
+                self.assertIn(name, feed.ABOUT)
+                self.assertIn(name, catalogue.CATALOG)
+                entry = feed.record(name, labels, 1000, ids)
+                self.assertEqual(entry["severity"], severity)
+                self.assertEqual(entry[field], value)
+                self.assertEqual((entry["title"], entry["text"]), catalogue.CATALOG[name])
+        # Unrecognized service/unit labels are dropped rather than passed through.
+        feed._logged.discard(("ThermiteServiceFailed", "name"))
+        with self.assertLogs("oh_identity.alerts", "WARNING"):
+            bogus = feed.record("ThermiteServiceFailed", {"name": "evil.service"}, 1000, ids)
+        self.assertNotIn("service", bogus)
+
+
 class Page(unittest.TestCase):
     def test_home_has_the_panel_above_its_rooms_and_loads_the_model_before_its_script(self):
         page = (REMOTE / "home.html").read_text()

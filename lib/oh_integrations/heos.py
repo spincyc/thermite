@@ -28,7 +28,6 @@ every zone is off (reboot(), oh_features.reboots).
 
 from __future__ import annotations
 
-import json
 import ipaddress
 import re
 from pathlib import Path
@@ -97,7 +96,8 @@ def reboot(device: dict) -> dict:
     """Nightly reboots (oh_features.reboots): the receiver answers while
     denonmarantz_http reads it, and is idle while each zone with a power
     Item is off."""
-    powers = [staged["power"] for zone in (None, 2) if (staged := denonmarantz_http.stage(device, zone))]
+    zones = (None, *range(2, device.get("zones", denonmarantz_http.DEFAULT_ZONES) + 1))
+    powers = [staged["power"] for zone in zones if (staged := denonmarantz_http.stage(device, zone))]
     return {"item": reboot_item(device), "answers": powers[:1], "things": [denonmarantz_http.thing_uid(device)],
             "idle": [{"item": power, "is": "OFF"} for power in powers]}
 
@@ -168,6 +168,5 @@ def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:
     host, _, port = address.rpartition(":")
     if not ipaddress.IPv4Address(host).is_loopback or not port.isdigit() or not 1 <= int(port) <= 65535:
         raise ValueError("HEOS fresh-read stand-in must use loopback HTTP")
-    original = json.dumps(f"http://{ipaddress.IPv4Address(device['ip'])}:8080/goform/AppCommand.xml")
-    replacement = json.dumps(f"http://{host}:{int(port)}/goform/AppCommand.xml")
-    return {**files, RULE: files[RULE].replace(original, replacement)}
+    return _script.aimed(files, (RULE,), device, lambda entry: entry.update(
+        host=host, readURL=f"http://{host}:{int(port)}/goform/AppCommand.xml"))

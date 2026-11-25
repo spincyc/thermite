@@ -201,6 +201,22 @@ test('every HEOS reboot ends in one record: what the receiver answered, or why n
   }
 });
 
+test('HEOS silently ignores non-HEOS keys on the shared receiver key Item', () => {
+  const requests = [];
+  const things = { 'heos:player:1': thing('ONLINE'), 'denon:avr:1': thing('ONLINE') };
+  const items = { avr_main_power: 'ON', avr_main_input: 'NET', avr_heos_playback: 'NULL', avr_problem: 'NULL', avr_heos_commands: 'NULL' };
+  const loaded = run(heosSource, { DEVICES: HEOS_DEVICES }, { things, items, java: heosJava(requests, () => ''), clock: { now: 0 } });
+  for (const key of ['up', 'down', 'sound_movie', 'menu']) {
+    loaded.rules.heos_avr_transport.execute({ itemName: 'avr_key', receivedCommand: key });
+  }
+  assert.deepEqual(requests, []);
+  assert.deepEqual(things['heos:player:1'].handled, []);
+  assert.deepEqual(loaded.recorded(), []);
+  assert.deepEqual(loaded.said(), []);
+  assert.equal(items.avr_problem, 'UNDEF');
+  assert.deepEqual(loaded.tally('avr_heos_commands'), {});
+});
+
 test('HEOS reads the receiver one verified AppCommand at a time before a transport press', () => {
   // Like the firmware: anything but the verified serialization gets <rx> empty.
   const firmware = (power, source) => body => body === VERIFIED('GetAllZonePowerStatus') ? `<rx><cmd><zone1>${power}</zone1><zone2>ON</zone2></cmd></rx>` :
@@ -751,6 +767,18 @@ test('a projector waking from standby is asked again: after err_cmd on the same 
   r.projector.close(); r.projector.wake = 1; r.poll(); r.poll();
   assert.deepEqual(r.projector.opened, [0, 2, 3, 3]);
   assert(!r.unread()); assert.deepEqual(r.warnings(), []);
+});
+
+test('a projector answering err_cmd twice on power_status fails the read instead of reporting healthy UNDEF, and SESSION_MS is 30000', () => {
+  const r = adcp();
+  assert.equal(vm.runInContext('SESSION_MS', r.context), 30000);
+  r.poll();
+  r.projector.errors = 2;
+  r.poll();
+  assert.equal(r.items.projector_power, 'UNDEF');
+  assert.equal(r.items.projector_problem, 'protocol');
+  assert(r.warnings().some(msg => msg.includes('answered power_status ? with err_cmd')), JSON.stringify(r.warnings()));
+  assert(r.projector.links[0].closed);
 });
 
 test('a projector that does not answer is UNDEF and tried after 15 and 30 s, then every minute; a command connects at once', () => {

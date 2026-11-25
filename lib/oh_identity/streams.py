@@ -59,8 +59,10 @@ class Slots:
 
     def acquire(self, peer):
         with self._guard:
-            if sum(self._peers.values()) >= self.total or self._peers.get(peer, 0) >= self.per_peer:
-                return None
+            if sum(self._peers.values()) >= self.total:
+                return None, "total"
+            if self._peers.get(peer, 0) >= self.per_peer:
+                return None, "peer"
             self._peers[peer] = self._peers.get(peer, 0) + 1
         released = False
 
@@ -73,7 +75,7 @@ class Slots:
                 self._peers[peer] -= 1
                 if not self._peers[peer]:
                     del self._peers[peer]
-        return release
+        return release, None
 
     def count(self):
         with self._guard:
@@ -142,8 +144,8 @@ async def stream(adapter, view, snapshot, release=None, meta=None, hub=None):
         if not await sync_to_async(valid)(snapshot):
             reason = "revoked"
             return
-        opened(meta)
         subscriber = (hub() if hub else hub_for(adapter)).join(view, meta)
+        opened(meta)
         checked = clock()
         while True:
             data = await subscriber.next(HEARTBEAT)
@@ -209,9 +211,9 @@ def respond(request, user, adapter, view, topics, hub=None):
             "http_version": scope.get("http_version") if isinstance(scope, dict) else None,
             "peer": user._identity_context.get("peer")}
     bucket = peer_bucket(request.META.get("REMOTE_ADDR"))
-    release = slots.acquire(bucket)
+    release, refused = slots.acquire(bucket)
     if release is None:
-        notify("stream_refused", meta)
+        notify("stream_refused", {**meta, "limit": refused})
         raise Problem("too_many_streams", 429, retry_after=HEARTBEAT)
     # One journal line when the stream opens and one when it ends, with
     # its duration, the number of topics its view carries and the peer's

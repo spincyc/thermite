@@ -646,6 +646,17 @@
       return choose(sourceId);
     }
 
+    function orderedOptions() {
+      if (!current) return [];
+      const rank = (choice) => {
+        if (choice.id === Remote.OFF) return -1;
+        const at = current.order.indexOf(choice.id);
+        return at < 0 ? current.order.length : at;
+      };
+      return current.options.map((choice, index) => [rank(choice), index, choice])
+        .sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((entry) => entry[2]);
+    }
+
     // 0 is Off, then the room's sources in order: the id chosen, or null.
     function chooseDigit(digit) {
       if (current && mode() === "listen") {
@@ -654,7 +665,7 @@
         listen.choose(speaker.id);
         return speaker.id;
       }
-      const choice = current && current.options[Number(digit)];
+      const choice = orderedOptions()[Number(digit)];
       if (!choice || refused()) return null;
       chooseSource(choice.id);
       return choice.id;
@@ -1004,7 +1015,7 @@
     // the room, in the room's order, then, set apart, its display and audio
     // device. Every bubble but Off brings up its buttons.
     function bubbles(list) {
-      const items = current.options.map((choice, index) => ({
+      const items = orderedOptions().map((choice, index) => ({
         id: choice.id, label: choice.label, kind: choice.kind, role: "source", choose: true,
         digit: index < 10 ? String(index) : "", remote: (house.sources[choice.id] || {}).remote || null
       }));
@@ -1012,14 +1023,7 @@
         if (items.some((item) => item.id === target.id)) return;
         items.push({ id: target.id, label: target.short, kind: target.kind, role: target.role, choose: false, digit: "", remote: target.remote });
       });
-      const rank = (item) => {
-        if (item.id === Remote.OFF) return -1;
-        if (DEVICE_ROLE[item.role]) return current.order.length + 1;
-        const at = current.order.indexOf(item.id);
-        return at < 0 ? current.order.length : at;
-      };
-      return items.map((item, index) => [rank(item), index, item])
-        .sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((entry) => entry[2]);
+      return items;
     }
 
     // A bubble lights for what the room shows, or blinks for a choice still switching.

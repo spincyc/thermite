@@ -237,6 +237,21 @@ class Plugin(Scratch):
 
     def test_hosts_line_and_terminal_fallback(self):
         self.assertEqual(plugin.hosts_line("hosts: files dns"), "hosts: mdns_minimal [NOTFOUND=return] files dns")
+
+    def test_write_creates_restricted_file_atomically_with_target_mode(self):
+        secret = self.root / "wifi.nmconnection"
+        seen_modes = []
+        real_open = os.open
+
+        def recording_open(path, flags, mode=0o777, *args, **kwargs):
+            seen_modes.append((str(path), mode))
+            return real_open(path, flags, mode, *args, **kwargs)
+
+        with patch.object(plugin.os, "open", side_effect=recording_open):
+            plugin.write(secret, "psk=secret\n", 0o600)
+        self.assertEqual(secret.read_text(), "psk=secret\n")
+        self.assertEqual(secret.stat().st_mode & 0o777, 0o600)
+        self.assertTrue(seen_modes and all(mode == 0o600 for _, mode in seen_modes))
         self.assertEqual(plugin.hosts_line("hosts: files mdns4_minimal dns"), "hosts: files mdns4_minimal dns")
         if not shutil.which("infocmp"): self.skipTest("needs ncurses' infocmp")
         script = self.root / "term.sh"; script.write_text(plugin.TERM_FALLBACK)

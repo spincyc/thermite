@@ -869,11 +869,14 @@ def retain(system: System, transaction: Transaction) -> None:
         return
     releases = oh_deploy.Installation(transaction.root).access / "releases"
     item = next((item for item in (installed or {}).get("items", []) if item["path"] == str(releases)), None)
-    names = system.directory_entries(releases) if item is not None else None
+    if item is None or not system.safe_directory(releases) or system.readlink(releases) is not None:
+        return
+    names = system.directory_entries(releases)
     if not names:
         return
     keep = {item.get("current"), item.get("previous")}
-    older = [releases / name for name in names if name not in keep]
+    older = [releases / name for name in names
+             if name not in keep and engine.ID.fullmatch(name) and system.readlink(releases / name) is None]
     if not older:
         return
     code = runner.staged(system, "Remove older gateway releases",

@@ -246,6 +246,21 @@ class Fetch(Case):
             status, _, _ = self.run_cli("--out", "here.tar.gz")
         self.assertEqual((status, self.called[2]), (0, "ssh://thermite.example"))
 
+    def test_out_dash_over_ssh_refuses_json_and_quiet(self):
+        for words, said in ((["--out", "-", "--json"], "--json prints a summary"),
+                            (["--out", "-", "-q"], "-q silences standard output"),
+                            (["--out", "-", "--quiet"], "-q silences standard output")):
+            with self.subTest(words=words), self.over():
+                status, _, err = self.run_cli("--url", "ssh://thermite.example", *words, stdout=Binary())
+                self.assertEqual(status, 2)
+                self.assertIn(said, err)
+
+    def test_fetch_measures_size_with_stat_not_read_bytes(self):
+        with self.over(), mock.patch.object(Path, "read_bytes", side_effect=AssertionError("must not load whole archive")):
+            status, out, _ = self.run_cli("--json", "--url=ssh://thermite.example", "--out", "here.tar.gz")
+        self.assertEqual(status, 0)
+        self.assertEqual(json.loads(out)["bytes"], 13)
+
 
 if __name__ == "__main__":
     unittest.main()

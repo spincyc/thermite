@@ -58,7 +58,10 @@
   const themeItem = node("button", "thermite-nav-link thermite-nav-theme"); themeItem.type = "button";
   const theme = node("button", "thermite-theme", "◐"); theme.type = "button";
   theme.setAttribute("aria-label", "Change color theme");
-  const showTheme = () => { themeItem.textContent = document.documentElement.dataset.theme === "light" ? "Dark theme" : "Light theme"; };
+  const showTheme = () => {
+    themeItem.textContent = document.documentElement.dataset.theme === "light" ? "Dark theme" : "Light theme";
+    global.ThermiteAppearance?.syncThemeColor?.();
+  };
   const switchTheme = () => {
     const mode = document.documentElement.dataset.theme === "light" ? "dark" : "light";
     document.documentElement.dataset.theme = mode;

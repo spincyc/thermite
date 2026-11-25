@@ -1,6 +1,5 @@
 """Create a separate private site, or explicitly select an installed upgrade."""
 from pathlib import Path
-import json
 import sys
 import oh_cli
 from oh_init import initialize
@@ -19,7 +18,7 @@ def main(argv=None):
     try: report = initialize(args.directory, upgrade=args.upgrade, empty=args.empty)
     except (OSError, ValueError) as exc:
         print(f"thermite init: {exc}", file=sys.stderr); return 2
-    if args.json: print(json.dumps(report, indent=2))
+    if args.json: oh_cli.emit(report)
     else:
         print(f"{'Updated' if args.upgrade else 'Created'} private site {args.directory} for thermite {report['application']}.")
         print("Review instance files, then generate and validate. Commit site inputs and the release pin to private Git before deployment. No service was activated.")

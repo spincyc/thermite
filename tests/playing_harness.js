@@ -172,13 +172,21 @@ test('a reload ends every timer', () => {
   assert.equal(p.pending(), 0);
 });
 
-test('a device that reads off plays nothing, whatever its last app', () => {
-  const p = load({ shield_android_app: 'com.netflix.ninja' });
+test('a device that reads off plays nothing immediately, cancelling any active hold', () => {
+  const p = load({ shield_android_app: 'com.netflix.ninja', shield_cast_title: 'Example' });
+  assert.deepEqual(p.shown(), ['Netflix', 'Example']);
   p.set({ shield_power: 'OFF' });
-  p.advance(15000);
   assert.deepEqual(p.shown(), ['UNDEF', 'UNDEF']);
+  assert.equal(p.pending(), 0);
   p.set({ shield_power: 'ON' });
-  assert.deepEqual(p.shown(), ['Netflix', 'UNDEF']);
+  assert.deepEqual(p.shown(), ['Netflix', 'Example']);
+  // An active hold from a brief drop also clears immediately when power goes OFF.
+  p.set({ shield_android_app: 'UNDEF' });
+  assert.equal(p.shown()[0], 'Netflix');
+  assert.equal(p.pending(), 1);
+  p.set({ shield_power: 'OFF' });
+  assert.deepEqual(p.shown(), ['UNDEF', 'UNDEF']);
+  assert.equal(p.pending(), 0);
 });
 
 test('a speaker plays its track and artist only while PLAYING; a blank title (TV audio) is nothing', () => {

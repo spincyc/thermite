@@ -133,7 +133,7 @@ class Fanout:
     def status(self):
         """Counters and gauges for metrics: client streams per view, whether
         the upstream is serving, connecting or closed, and running totals."""
-        state = "serving" if self.ready else "connecting" if (self.task and not self.task.done()) or self._closing else "closed"
+        state = "serving" if self.ready else "connecting" if self.task and not self.task.done() else "closed"
         streams = {}
         for name, each in self.subscribers.items():
             # A WITHOUT_TEXT variant's streams count as its view's.

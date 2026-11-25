@@ -492,7 +492,10 @@ class Packages(Step):
         return next((name for name in PACKAGES if system.which(name)), None)
 
     def names(self, system: System, manager: str) -> tuple[str, ...]:
+        btrfs = (("btrfs-progs",) if self.context is not None
+                 and system.fstype(self.context.installation.root.parent) == "btrfs" else ())
         return (*PACKAGES[manager], *(("apparmor",) if oh_apparmor.enabled(system) else ()),
+                *btrfs,
                 *(shares.packages(self.context.host, manager) if self.context is not None else ()))
 
     def missing(self, system: System, manager: str) -> list[str]:
@@ -526,8 +529,12 @@ class Packages(Step):
         if manager == "pacman":
             return [Command(("pacman", "-S", "--needed", *missing), root=True,
                             approved_argv=("pacman", "--noconfirm", "-S", "--needed", *missing), terminal=True)]
-        return [Command(("apt-get", "install", *missing), root=True,
-                        approved_argv=("apt-get", "--assume-yes", "install", *missing), terminal=True)]
+        return [
+            Command(("apt-get", "update"), root=True),
+            Command(("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", *missing), root=True,
+                    approved_argv=("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "--assume-yes", "install", *missing),
+                    terminal=True),
+        ]
 
 
 class NodeConfinement(Step):
@@ -575,7 +582,7 @@ class NodeConfinement(Step):
             raise ValueError("the required AppArmor parser is unavailable; confinement was not disabled")
         actions = []
         if self.stale(system, enabled):
-            actions.append(Command(("python3", "-I", "-B", str(PROGRAM / "lib/oh_apparmor.py")), root=True))
+            actions.append(Command(("/usr/bin/python3", "-I", "-B", str(PROGRAM / "lib/oh_apparmor.py")), root=True))
             if not enabled:
                 actions.append(Command(("touch", str(oh_apparmor.CONFIG)), root=True))
         if enabled:
@@ -585,7 +592,7 @@ class NodeConfinement(Step):
             # securityfs can deny the owner even when its mode is world-readable.
             # The helper verifies actual enforcement as root, and only repairs
             # and touches CONFIG when the loaded policy needs replacement.
-            actions.append(Command(("python3", "-I", "-B", str(PROGRAM / "lib/oh_apparmor.py"), "--verify", parser), root=True))
+            actions.append(Command(("/usr/bin/python3", "-I", "-B", str(PROGRAM / "lib/oh_apparmor.py"), "--verify", parser), root=True))
         return actions
 
     def desired(self, system: System) -> list[manifest.Item]:
@@ -702,7 +709,7 @@ class InstallationRoot(Step):
         if system.stat(top) is None:
             if system.stat(top.parent) is None:
                 actions.append(Command(("mkdir", "-p", str(top.parent)), root=True))
-            if system.fstype(top.parent) == "btrfs":
+            if system.fstype(top.parent) == "btrfs" and system.which("btrfs"):
                 actions.append(Command(("btrfs", "subvolume", "create", str(top)), root=True))
             else:
                 actions.append(Command(("mkdir", str(top)), root=True))
@@ -913,7 +920,7 @@ class NativeListeners(Step):
         actions: list[Action] = []
         if running:
             actions.append(Command(("systemctl", "stop", "thermite-openhab.service"), root=True))
-        actions.append(Command(("python3", "-I", "-B", str(PROGRAM / "lib/oh_ports.py"),
+        actions.append(Command(("/usr/bin/python3", "-I", "-B", str(PROGRAM / "lib/oh_ports.py"),
                                 str(self.context.layout.userdata), "--http-port", str(self.context.host["http_port"]),
                                 "--uid", str(self.context.host["uid"]), "--gid", str(self.context.host["gid"]),
                                 "--console-password", str(oh_ports.CONSOLE_PASSWORD)), root=True))
@@ -955,7 +962,7 @@ class PairingLogging(Step):
         if running:
             actions.append(Command(("systemctl", "stop", "thermite-openhab.service"), root=True))
         PROGRAM = self.context.program
-        actions.append(Command(("python3", "-I", "-B", str(PROGRAM / "lib" / "oh_logging.py"),
+        actions.append(Command(("/usr/bin/python3", "-I", "-B", str(PROGRAM / "lib" / "oh_logging.py"),
                                 str(self.context.layout.userdata), "--http-port", str(self.context.host["http_port"]),
                                 "--template", str(self.template), "--uid", str(self.context.host["uid"]),
                                 "--gid", str(self.context.host["gid"])), root=True))
@@ -1292,11 +1299,11 @@ class NativePreparation(Step):
         userdata = str(self.context.layout.userdata)
         return [Command(repair, root=True),
                 Command(deploy.prepare_openhab_argv(self.context.versions, host), root=True),
-                Command(("python3", "-I", "-B", str(PROGRAM / "lib/oh_logging.py"), userdata, "--http-port", str(host["http_port"])), root=True),
+                Command(("/usr/bin/python3", "-I", "-B", str(PROGRAM / "lib/oh_logging.py"), userdata, "--http-port", str(host["http_port"])), root=True),
                 # The listeners, and the console's own password in place of the
                 # distribution's: every transaction runs this, so the first
                 # upgrade of an older install makes the password.
-                Command(("python3", "-I", "-B", str(PROGRAM / "lib/oh_ports.py"), userdata, "--http-port", str(host["http_port"]),
+                Command(("/usr/bin/python3", "-I", "-B", str(PROGRAM / "lib/oh_ports.py"), userdata, "--http-port", str(host["http_port"]),
                          "--uid", str(host["uid"]), "--gid", str(host["gid"]),
                          "--console-password", str(oh_ports.CONSOLE_PASSWORD)), root=True),
                 Command((*helper, "--check-pairing-logging"), root=True),
@@ -1515,7 +1522,7 @@ class AddonRepository(Step):
 
     def helper(self, *options: str) -> tuple[str, ...]:
         host = self.context.host
-        return ("python3", "-I", "-B", str(self.context.program / "lib/oh_addons.py"), str(self.context.layout.userdata),
+        return ("/usr/bin/python3", "-I", "-B", str(self.context.program / "lib/oh_addons.py"), str(self.context.layout.userdata),
                 "--versions", str(self.context.configuration / "versions.json"),
                 "--store", str(addon_store(self.context)),
                 "--uid", str(host["uid"]), "--gid", str(host["gid"]), *options, *addon_uids(self.context))
@@ -1647,7 +1654,7 @@ UNSEEN = "verified by the administrative helper; private thermite service custod
 def _install_secret(context: Context, source: Path, target: Path, *, preserve=False) -> Command:
     PROGRAM = context.program
     host = context.host
-    return Command(("python3", "-I", "-B", str(PROGRAM / "lib/oh_install/secrets.py"), str(context.layout.root),
+    return Command(("/usr/bin/python3", "-I", "-B", str(PROGRAM / "lib/oh_install/secrets.py"), str(context.layout.root),
                     "--name", target.name, "--source", str(context.area / source),
                     "--uid", str(host["uid"]), "--gid", str(host["gid"]),
                     *(("--preserve-existing", "--generate-if-missing") if preserve else ())), root=True)
@@ -1834,7 +1841,7 @@ class ShareCredentials(Step):
         return Check(True, f"{count} installed, root's alone (0600)" if count else "no SMB share")
 
     def actions(self, system: System) -> list[Action]:
-        return [Command(("python3", "-I", "-B", str(self.context.program / "lib/oh_install/secrets.py"), "--share", share.name,
+        return [Command(("/usr/bin/python3", "-I", "-B", str(self.context.program / "lib/oh_install/secrets.py"), "--share", share.name,
                          "--source", str(self.context.area / self.context.share_login(share.name))), root=True)
                 for share in self.stale(system)]
 
@@ -2141,7 +2148,7 @@ class Token(Step):
         """Reuse the finite installed credential under this run's approval."""
         from oh_install import runner
         system.say("   Reconnecting this configuration directory to the existing runtime account.")
-        action = Command(("python3", "-I", "-B", str(self.context.program / "lib/oh_install/secrets.py"),
+        action = Command(("/usr/bin/python3", "-I", "-B", str(self.context.program / "lib/oh_install/secrets.py"),
                           str(self.context.layout.root), "--name", metrics.OPENHAB_TOKEN,
                           "--source", str(self.context.area / self.context.token_file),
                           "--uid", str(self.context.host["uid"]), "--gid", str(self.context.host["gid"]),
@@ -2474,6 +2481,7 @@ class Commissioning:
             house = Path(self.gateway.options.get("house", self.context.configuration / "instance/devices.yaml"))
             result = configure(self.context.url, self.context.area / self.context.token_file,
                                House.load(house).data, self.context.address, existing_callbacks=callback,
+                               callback_port=oh_ports.effective(self.context.host)["callbacks"],
                                timeout=min(remaining, MAX_DEADLINE), clock=system.clock, sleep=system.sleep)
         finally:
             self.native.stop(system)

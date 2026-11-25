@@ -34,7 +34,7 @@ UPNP_CFG = "services/upnp.cfg"
 
 def validate(data: object) -> list[str]:
     """Every problem that stops a render: inventory, integrations, features."""
-    problems = inventory.validate(data)
+    problems = inventory.validate(data, check_extensions=False)
     if problems:
         # The per-module checks below assume a well-formed inventory.
         return problems
@@ -60,6 +60,8 @@ def validate(data: object) -> list[str]:
         return problems
     for module in integrations.defining("validate_house"):
         problems += module.validate_house(data)
+    if not problems:
+        problems += inventory.extension_mismatches(data)
     return problems
 
 
@@ -108,7 +110,7 @@ def build(house: House, *, host: dict | None = None, versions: dict | None = Non
     build runs, whichever house file the process read last. What it
     returns agrees with the house (inventory.cross_check), or it raises
     Disagreement."""
-    with instance_at(house.directory if house.directory is not None else instance()):
+    with instance_at(house.instance_dir if house.instance_dir is not None else instance()):
         return _build(house, host, versions)
 
 

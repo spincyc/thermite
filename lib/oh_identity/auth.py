@@ -10,6 +10,7 @@ from functools import wraps
 from django.conf import settings
 from django.contrib.auth import authenticate, login
 from django.contrib.sessions.models import Session
+from django.core.exceptions import RequestDataTooBig
 from django.http import JsonResponse
 from django.middleware.csrf import CsrfViewMiddleware
 from django.db import transaction
@@ -58,7 +59,7 @@ class Guest:
 #: failure() to it). thermite_gateway_problems_total counts each by code;
 #: anything outside it counts as other.
 PROBLEMS = frozenset({
-    "already_initialized", "authorization_changed", "credential_expired",
+    "already_initialized", "authorization_changed", "body_too_large", "credential_expired",
     "csrf_failed", "device_locked", "forbidden", "history_unavailable", "invalid_active", "invalid_admin", "invalid_command",
     "invalid_contract", "invalid_host", "invalid_json", "invalid_lock", "invalid_login", "invalid_origin",
     "invalid_pairing_command", "invalid_password", "invalid_policy", "invalid_sdp", "invalid_security",
@@ -139,7 +140,10 @@ class IdentityCSRF(CsrfViewMiddleware):
                     return None
                 return problem_response(exc)
             return None
-        return super().process_view(request, callback, callback_args, callback_kwargs)
+        try:
+            return super().process_view(request, callback, callback_args, callback_kwargs)
+        except RequestDataTooBig:
+            return failure("body_too_large", 413)
 
 
 def principal(request):
@@ -223,6 +227,8 @@ def api(permission=None, methods=("GET",), *, account=False, admin=False, item_m
                 if "Cache-Control" not in response:
                     response["Cache-Control"] = "no-store"
                 return response
+            except RequestDataTooBig:
+                return failure("body_too_large", 413)
             except (User.DoesNotExist, PersonalToken.DoesNotExist, RoomPolicy.DoesNotExist):
                 return failure("not_found", 404)
             except Problem as exc:
@@ -286,14 +292,16 @@ def login_user(request, data, create_session=True):
         if wait:
             raise Problem("login_throttled", 429, retry_after=wait)
         user = authenticate(request, username=username, password=secret)
+        account = None
         if user is None:
-            _failed(keys, timezone.now(), User.objects.filter(username__iexact=username).exists())
+            account = (User.objects.filter(username=username).values_list("pk", flat=True).first()
+                       or User.objects.filter(username__iexact=username).order_by("pk").values_list("pk", flat=True).first())
+            _failed(keys, timezone.now(), account is not None)
     finally:
         HASHING.release()
     if user is None:
         # The account tried, by ID, when it exists; never the attempted name,
         # which may be a mistyped password.
-        account = User.objects.filter(username=username).values_list("pk", flat=True).first()
         audit(None, "login", account or "", outcome="denied", request=request)
         raise Problem("invalid_login", 401)
     if create_session:

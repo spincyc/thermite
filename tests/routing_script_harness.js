@@ -52,13 +52,16 @@ function load(options = {}) {
       postUpdate(value) { posted.push([name, String(value)]); this.state = String(value); } });
     return items.get(name);
   };
+  const init = (name, fallback = 'NULL') =>
+    item(name, options.initial && Object.prototype.hasOwnProperty.call(options.initial, name) ? options.initial[name] : fallback);
   for (const id of Object.keys(table.rooms)) {
     const r = table.rooms[id];
-    for (const name of [r.item, r.diagnosis.item, `${id}_tv_power`, `${id}_tv_input`, `${id}_lights`]) item(name);
-    item(r.hdmi, '9');
+    for (const name of [r.item, r.diagnosis.item, `${id}_tv_power`, `${id}_tv_input`, `${id}_lights`]) init(name);
+    init(r.hdmi, '9');
   }
   item('matrix_input1_edid', '5');
-  for (const name of Object.keys(table.lifecycle.resources)) item(name);
+  if (table.lifecycle) for (const name of Object.keys(table.lifecycle.resources)) item(name);
+  const hooks = [];
   const lifecycle = {
     request(id, choice, route) {
       calls.push(`request ${id} ${choice}`);
@@ -88,7 +91,7 @@ function load(options = {}) {
         if (options.real) real = planner.createCoordinator(descriptor, dependencies);
         return real || lifecycle;
       } },
-    '@runtime': { lifecycleTracker: { addDisposeHook() {} } },
+    '@runtime': { lifecycleTracker: { addDisposeHook(fn) { hooks.push(fn); } } },
   };
   const context = vm.createContext({
     require: name => modules[name] || assert.fail('unexpected module ' + name),
@@ -110,8 +113,16 @@ function load(options = {}) {
     }
     options.clock.now = end;
   };
-  return { sent, posted, logs, calls, routes, observed, command, context, item, rules, advance, pending: () => timers.length,
-    deps: () => deps, legacy: event => onLegacy(event), planner: () => real };
+  const dispose = () => { for (const fn of hooks) fn(); };
+  const fireNextEarly = beforeMs => {
+    const due = timers.sort((a, b) => a.at - b.at)[0];
+    assert(due, 'expected a pending timer');
+    timers = timers.filter(other => other !== due);
+    options.clock.now = due.at - beforeMs;
+    due.fn();
+  };
+  return { sent, posted, logs, calls, routes, observed, command, context, item, rules, advance, dispose, fireNextEarly,
+    pending: () => timers.length, deps: () => deps, legacy: event => onLegacy(event), planner: () => real };
 }
 
 // Sources a command can carry: what openHAB's REST API makes of the
@@ -453,11 +464,42 @@ test('two missed reads in a row, or a hold that ends unread, make the Source unk
   assert.equal(quiet.source(), 'tv');
   quiet.r.advance(1);
   assert.deepEqual([quiet.source(), JSON.parse(quiet.problem())], ['UNDEF', quiet.unknown]);
-  // Nothing is held before a first read: right after a reload, a miss shows at once.
-  const fresh = load({ clock: { now: 0 }, table: { ...TABLE, reads: { matrix_output1_input: 15000 } } });
+  // Nothing is held before a first read: when an Item is NULL at load, a miss shows at once.
+  const fresh = load({ clock: { now: 0 }, initial: { matrix_output1_input: 'NULL' },
+    table: { ...TABLE, reads: { matrix_output1_input: 15000 } } });
   fresh.item('matrix_output1_input').state = 'UNDEF';
   fresh.rules.routing_den_readback.execute({ itemName: 'matrix_output1_input', newState: 'UNDEF' });
   assert.equal(fresh.item('loc_den_source').state, 'UNDEF');
+});
+
+test('reads are seeded from existing Item states on reload, and early hold timers reschedule instead of stranding', () => {
+  const clock = { now: 0 };
+  const r = load({ clock, initial: { matrix_output1_input: '1', den_tv_power: 'ON', den_tv_input: 'hdmi1' },
+    table: { ...TABLE, reads: { matrix_output1_input: 15000 } } });
+  assert.equal(r.item('loc_den_source').state, 'tv');
+  r.item('matrix_output1_input').state = 'UNDEF';
+  r.rules.routing_reads.execute({ itemName: 'matrix_output1_input', newState: 'UNDEF' });
+  r.rules.routing_den_readback.execute({ itemName: 'matrix_output1_input', newState: 'UNDEF' });
+  assert.equal(r.item('loc_den_source').state, 'tv');
+  // Simulate timer jitter firing 5 ms early: must reschedule and expire at deadline, never strand.
+  r.fireNextEarly(5);
+  assert.equal(r.item('loc_den_source').state, 'tv');
+  assert.equal(r.pending(), 1);
+  r.advance(5);
+  assert.equal(r.item('loc_den_source').state, 'UNDEF');
+});
+
+test('dispose clears resends, holds, and reads timers even without lifecycle', () => {
+  const clock = { now: 0 };
+  const plain = { ...TABLE, lifecycle: null, reads: { matrix_output1_input: 15000 } };
+  const r = load({ clock, initial: { matrix_output1_input: '1' }, table: plain });
+  r.item('den_tv_power').state = 'OFF';
+  r.command('den', 'tv');
+  assert(r.pending() > 0, 'expected hold/resend timers');
+  r.item('matrix_output1_input').state = 'UNDEF';
+  r.rules.routing_reads.execute({ itemName: 'matrix_output1_input', newState: 'UNDEF' });
+  r.dispose();
+  assert.equal(r.pending(), 0);
 });
 
 test('an input read before the room\'s last choice is never held for it, and nothing else sees a held input', () => {

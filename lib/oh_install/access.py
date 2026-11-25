@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
 import socket
 import ssl
 
@@ -425,9 +426,13 @@ class Gateway(Step):
 
     def _replace_leaf(self, system, hosts, authority):
         """Issue a leaf for `hosts` and put it in access/inputs, key first."""
-        fresh = self._issue(system, self.directory / ("tls-" + secrets.token_hex(6)), hosts, authority)
-        for source, name in zip(reversed(fresh), ("tls-key.pem", "tls-cert.pem"), strict=True):
-            os.replace(source, self.inputs / name)
+        work = self.directory / ("tls-" + secrets.token_hex(6))
+        try:
+            fresh = self._issue(system, work, hosts, authority)
+            for source, name in zip(reversed(fresh), ("tls-key.pem", "tls-cert.pem"), strict=True):
+                atomic_private(self.inputs / name, read_private(source, 65536))
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
 
     def _certificate(self, system, metadata):
         """Serve only a current leaf of the private authority for this host's
@@ -516,7 +521,8 @@ class Gateway(Step):
             house = Path(self.options.get("house", self.context.configuration / "instance/devices.yaml"))
             result = configure(self.context.url, self.context.area / self.context.token_file,
                                House.load(house).data, self.context.address,
-                               existing_callbacks=Path(callback) if callback else None)
+                               existing_callbacks=Path(callback) if callback else None,
+                               callback_port=oh_ports.effective(self.context.host)["callbacks"])
             selected = None
             if result["callbacks"] is not None:
                 selected = self.inputs / "callbacks.json"

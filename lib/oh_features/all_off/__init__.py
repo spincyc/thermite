@@ -41,14 +41,17 @@ def commands(house: House) -> list[list[str]]:
     out = [[routing.item_name(room), routing.OFF] for room in (house.data.get("routing") or {}).get("rooms") or {}]
     for device in house.devices:
         stager = routing.stager(device)
-        staged = stager.stage(device, None) if stager else None
-        if staged:
-            out.append([staged["power"], "OFF"])
-            continue
+        if stager:
+            powers = [staged["power"] for zone in (None, *range(2, device.get("zones", 2) + 1))
+                      if (staged := stager.stage(device, zone))]
+            if powers:
+                out.extend([power, "OFF"] for power in dict.fromkeys(powers))
+                continue
         for module in integrations.defining("remote"):
             control = module.remote(device)
             if control and control.get("power"):
                 out.append([control["power"], "OFF"])
+                break
     return out
 
 

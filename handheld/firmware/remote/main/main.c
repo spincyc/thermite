@@ -156,6 +156,7 @@ static bool enrolment_erase(void)
 /* A new or no enrolment: restart clean, with no session from the old key. */
 static void restart(void)
 {
+    tl_zeroize(s_enrolment.key, sizeof s_enrolment.key);
     memset(&s_persist, 0, sizeof s_persist);
     s_slept.magic = 0;
     vTaskDelay(pdMS_TO_TICKS(50)); /* let the answer leave */
@@ -185,6 +186,10 @@ static void test_input(const cp_command_t *command)
     if (command->up) key_repeat_up(&s_repeat, command->input);
 }
 
+#ifndef CONFIG_THERMITE_CONSOLE_UNRESTRICTED
+#define CONFIG_THERMITE_CONSOLE_UNRESTRICTED 0
+#endif
+
 static void handle_line(const char *text)
 {
     static cp_command_t command;
@@ -202,20 +207,35 @@ static void handle_line(const char *text)
                              s_enrolment.valid))
             console_put(out);
         return;
-    case CP_ENROLL:
-        if (!enrolment_store(&command)) {
+    case CP_ENROLL: {
+        const char *reason = NULL;
+        if (!cp_allowed(command.kind, s_enrolment.valid, CONFIG_THERMITE_CONSOLE_UNRESTRICTED, &reason)) {
+            tl_zeroize(command.key, sizeof command.key);
+            snprintf(out, sizeof out, "thermite error %s\n", reason);
+            console_put(out);
+            return;
+        }
+        bool ok = enrolment_store(&command);
+        tl_zeroize(command.key, sizeof command.key);
+        if (!ok) {
             console_put("thermite error not stored\n");
             return;
         }
-        memset(&command.key, 0, sizeof command.key);
         console_put("thermite enrolled\n");
         restart();
         return;
+    }
     case CP_KEY:
     case CP_TOUCH:
         test_input(&command);
         return;
-    case CP_FORGET:
+    case CP_FORGET: {
+        const char *reason = NULL;
+        if (!cp_allowed(command.kind, s_enrolment.valid, CONFIG_THERMITE_CONSOLE_UNRESTRICTED, &reason)) {
+            snprintf(out, sizeof out, "thermite error %s\n", reason);
+            console_put(out);
+            return;
+        }
         if (!enrolment_erase()) {
             console_put("thermite error not erased\n");
             return;
@@ -224,12 +244,16 @@ static void handle_line(const char *text)
         restart();
         return;
     }
+    }
 }
 
 static void drain_lines(void)
 {
     static console_line_t line;
-    while (xQueueReceive(s_lines, &line, 0) == pdTRUE) handle_line(line.text);
+    while (xQueueReceive(s_lines, &line, 0) == pdTRUE) {
+        handle_line(line.text);
+        tl_zeroize(&line, sizeof line);
+    }
 }
 
 /* ---- platform for thermite_remote ---- */

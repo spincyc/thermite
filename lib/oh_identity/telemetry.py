@@ -33,7 +33,7 @@ import time
 from urllib.parse import urlsplit
 
 from django.conf import settings
-from django.core.exceptions import DisallowedHost
+from django.core.exceptions import DisallowedHost, RequestDataTooBig
 from django.http import HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 
@@ -141,8 +141,20 @@ def _same_origin(request):
         host = request.get_host()
     except DisallowedHost:
         return False
-    parsed = urlsplit(origin)
-    return parsed.scheme in ("http", "https") and parsed.netloc.lower() == host.lower()
+    try:
+        parsed = urlsplit(origin)
+    except ValueError:
+        return False
+    scheme = "https" if request.is_secure() else "http"
+    return (parsed.scheme == scheme
+            and not parsed.path
+            and not parsed.query
+            and not parsed.fragment
+            and "?" not in origin
+            and "#" not in origin
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.netloc.lower() == host.lower())
 
 
 def _peer_label(bucket):
@@ -167,6 +179,8 @@ def report(request):
         return failure("telemetry_throttled", 429, retry_after=wait)
     try:
         client, protocol, events = parse(request.body)
+    except RequestDataTooBig:
+        return failure("body_too_large", 413)
     except Invalid:
         return failure("invalid_telemetry", 400)
     metrics.client_report(client, protocol, events)

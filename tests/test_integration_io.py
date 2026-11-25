@@ -184,6 +184,11 @@ class DeviceContexts(unittest.TestCase):
                 aimed = module.aim(files, original, "127.0.0.1:40123")
                 self.assertEqual(aimed[module.rule_path(second)], files[module.rule_path(second)])
                 self.assertNotEqual(aimed[module.rule_path(original)], files[module.rule_path(original)])
+                if module is avpro_telnet:
+                    line = next(line for line in aimed[module.rule_path(original)].splitlines()
+                                if line.startswith("const DEVICES = "))
+                    entry = json.loads(line[len("const DEVICES = "):-1])[0]
+                    self.assertEqual((entry["host"], entry["port"], entry["webPort"]), ("127.0.0.1", 40123, 40123))
 
 
 @unittest.skipUnless(all(os.environ.get(name) for name in ("THERMITE_JAVA", "THERMITE_ECJ", "THERMITE_RUNTIME", "THERMITE_GRAAL")),

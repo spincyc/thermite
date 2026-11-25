@@ -863,6 +863,130 @@ class Gateway(Stand_in, Requests, TestCase):
         self.assertEqual(self.post("/api/v1/music/tidal/finish", {}).json()["sign_in"]["state"], "cancelled")
         self.assertEqual(self.sim.flows, {})
 
+    def test_concurrent_tidal_flow_operations_do_not_race_or_resurrect_cleared_flows(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from oh_music import tidal as tidal_mod
+
+        # 1) tidal_status() polling while tidal_finish() clears self.flow must not crash or resurrect self.flow.
+        self.music.tidal_start()
+        in_poll, allow_poll = threading.Event(), threading.Event()
+        real_poll = tidal_mod.poll
+        first_poll = True
+
+        def gated_poll(client, flow_id):
+            nonlocal first_poll
+            if first_poll:
+                first_poll = False
+                in_poll.set()
+                allow_poll.wait(5)
+            return real_poll(client, flow_id)
+
+        with patch.object(tidal_mod, "poll", side_effect=gated_poll), ThreadPoolExecutor(max_workers=2) as pool:
+            status_future = pool.submit(self.music.tidal_status)
+            self.assertTrue(in_poll.wait(5))
+            finished = self.music.tidal_finish()
+            self.assertEqual(finished["sign_in"]["state"], "cancelled")
+            allow_poll.set()
+            status_result = status_future.result(timeout=5)
+        self.assertIsNone(self.music.flow)
+        self.assertIsNone(status_result["sign_in"])
+
+        # 2) Two concurrent tidal_finish() calls: one cancels cleanly, the other gets tidal_not_started (409).
+        self.music.tidal_start()
+        barrier = threading.Barrier(2)
+        real_status = self.music.tidal_status
+
+        def synced_status():
+            answer = real_status()
+            barrier.wait(timeout=5)
+            return answer
+
+        def do_finish():
+            try:
+                return ("ok", self.music.tidal_finish()["sign_in"]["state"])
+            except Problem as exc:
+                return ("problem", exc.code, exc.status)
+
+        with patch.object(self.music, "tidal_status", side_effect=synced_status), ThreadPoolExecutor(max_workers=2) as pool:
+            f1, f2 = pool.submit(do_finish), pool.submit(do_finish)
+            outcomes = [f1.result(timeout=5), f2.result(timeout=5)]
+        self.assertCountEqual(outcomes, [("ok", "cancelled"), ("problem", "tidal_not_started", 409)])
+        self.assertIsNone(self.music.flow)
+        self.assertEqual(self.sim.flows, {})
+
+        # 3) Two concurrent tidal_start() calls abort the superseded flow so only one active flow remains.
+        start_barrier = threading.Barrier(2)
+        real_start = tidal_mod.start
+
+        def synced_start(client):
+            started = real_start(client)
+            start_barrier.wait(timeout=5)
+            return started
+
+        with patch.object(tidal_mod, "start", side_effect=synced_start), ThreadPoolExecutor(max_workers=2) as pool:
+            s1, s2 = pool.submit(self.music.tidal_start), pool.submit(self.music.tidal_start)
+            self.assertEqual(s1.result(timeout=5)["sign_in"]["state"], "waiting")
+            self.assertEqual(s2.result(timeout=5)["sign_in"]["state"], "waiting")
+        self.assertEqual(len(self.sim.flows), 1)
+        self.music.tidal_finish()
+        self.assertEqual(self.sim.flows, {})
+
+    def test_music_for_returns_one_singleton_under_concurrent_access(self):
+        from concurrent.futures import ThreadPoolExecutor
+        fresh = FakeAdapter(self.authority)
+        barrier = threading.Barrier(6)
+
+        def get_instance():
+            barrier.wait(timeout=5)
+            return music.music_for(fresh)
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            instances = [f.result(timeout=5) for f in [pool.submit(get_instance) for _ in range(6)]]
+        self.assertEqual(len({id(instance) for instance in instances}), 1)
+
+    def test_details_cancels_sibling_futures_without_blocking_when_primary_lookup_fails(self):
+        from concurrent.futures import ThreadPoolExecutor
+        tidal_id = self.tidal()
+        artist = f"{tidal_id}://artist/10"
+        release_sibling = threading.Event()
+        sibling_started = threading.Event()
+        submitted = []
+        real_call = self.music.call
+
+        def slow_siblings(command, timeout=None, /, **args):
+            if command == "music/item_by_uri":
+                sibling_started.wait(2)
+                raise Problem("music_failed", 502)
+            if command.startswith("music/artists/"):
+                sibling_started.set()
+                release_sibling.wait(5)
+                return []
+            return real_call(command, timeout, **args)
+
+        class TrackingPool(ThreadPoolExecutor):
+            def submit(self, fn, *args, **kwargs):
+                future = super().submit(fn, *args, **kwargs)
+                submitted.append(future)
+                return future
+
+        pool = TrackingPool(max_workers=1)
+        try:
+            started = time.monotonic()
+            with patch.object(music, "_readers", return_value=pool), \
+                    patch.object(self.music, "call", side_effect=slow_siblings):
+                with self.assertRaises(Problem) as caught:
+                    self.music.details(artist)
+            elapsed = time.monotonic() - started
+            self.assertEqual(caught.exception.code, "music_failed")
+            # Returned immediately without waiting 5s for the blocked sibling future.
+            self.assertLess(elapsed, 2.0)
+            self.assertEqual(len(submitted), 3)
+            # The two queued futures behind the 1 running worker were cancelled.
+            self.assertEqual(sum(future.cancelled() for future in submitted), 2)
+        finally:
+            release_sibling.set()
+            pool.shutdown(wait=True)
+
     def test_the_event_stream_joins_the_view_a_principal_may_see(self):
         views = []
 
@@ -1183,3 +1307,64 @@ class Events(Stand_in, TransactionTestCase):
             self.assertEqual((await self.next(subscriber, "snapshot"))["type"], "snapshot")
             hub.leave(subscriber)
         self.check(body)
+
+    def test_player_removed_cleans_up_its_queue(self):
+        async def body(hub):
+            player = self.music.players()[AMP]
+            pid = player["player_id"]
+            self.assertTrue(hub.event({"event": "player_added", "object_id": pid, "data": player}))
+            self.assertTrue(hub.event({"event": "queue_added", "object_id": pid, "data": {"queue_id": pid, "shuffle_enabled": True}}))
+            self.assertIn(AMP, hub.players)
+            self.assertIn(pid, hub.queues)
+            self.assertTrue(hub.event({"event": "player_removed", "object_id": pid, "data": None}))
+            self.assertNotIn(AMP, hub.players)
+            self.assertNotIn(pid, hub.queues)
+            # Non-string object_id is ignored safely without raising TypeError.
+            self.assertFalse(hub.event({"event": "player_removed", "object_id": {"bad": 1}, "data": None}))
+        self.check(body)
+
+    def test_oversize_partial_chunks_are_refused(self):
+        from oh_music.client import Unavailable
+
+        async def run_case(messages, *, max_items=4, max_chunks=3):
+            closed = []
+
+            class MisbehavingSocket:
+                def __init__(self):
+                    self.index = 0
+                    self.next_id = 0
+
+                async def command(self, name):
+                    self.next_id += 1
+                    return str(self.next_id)
+
+                async def receive(self):
+                    if self.index < len(messages):
+                        msg = messages[self.index]
+                        self.index += 1
+                        return msg
+                    raise AssertionError("receive should not be called past bound")
+
+                async def close(self):
+                    closed.append(True)
+
+            hub = music_hub.MusicHub(self.music)
+            hub.task = asyncio.current_task()
+            with patch.object(music_hub, "MAX_ANSWER_ITEMS", max_items), \
+                    patch.object(music_hub, "MAX_PARTIAL_CHUNKS", max_chunks), \
+                    patch.object(music_hub.Socket, "open", return_value=MisbehavingSocket()):
+                with self.assertRaises(Unavailable):
+                    await hub._connected()
+            self.assertEqual(closed, [True])
+
+        # Exceeding item count bound across partial chunks.
+        async_to_sync(run_case)([
+            {"message_id": "1", "result": [{}, {}, {}], "partial": True},
+            {"message_id": "1", "result": [{}, {}], "partial": True},
+        ], max_items=4, max_chunks=10)
+        # Exceeding partial chunk count bound with empty partial chunks.
+        async_to_sync(run_case)([
+            {"message_id": "1", "result": [], "partial": True},
+            {"message_id": "1", "result": [], "partial": True},
+            {"message_id": "1", "result": [], "partial": True},
+        ], max_items=100, max_chunks=2)

@@ -320,7 +320,22 @@ class Rule(unittest.TestCase):
                                  str(_io.SOURCE)],
                                 capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(json.loads(result.stdout)["passed"], 14)
+        self.assertEqual(json.loads(result.stdout)["passed"], 16)
+
+    def test_rooms_off_includes_hdmi_matrix_and_unread_idle_guards_vrroom(self):
+        entry = next(entry for entry in reboots.table(House(copy.deepcopy(VRROOM_HOUSE)))["devices"]
+                     if entry["id"] == "example_switch")
+        self.assertEqual(entry["unreadIdle"], [{"item": "loc_example_desk_source", "is": "off"}])
+        data = copy.deepcopy(VRROOM_HOUSE)
+        matrix = {"id": "example_matrix", "room": "example_west", "kind": "hdmi_matrix", "ip": "192.0.2.88",
+                  "controls": {"control": ["avpro_telnet"]}, "reboot": "nightly"}
+        data["devices"].append(matrix)
+        data["routing"]["hdmi_matrix"] = "example_matrix"
+        data["routing"]["rooms"]["example_desk"]["hdmi_output"] = 1
+        data["routing"]["rooms"]["example_east"] = {"hdmi_audio_output": 2, "hdmi_output": 3}
+        self.assertEqual(reboots.rooms_off(data, matrix, {"rooms": True}),
+                         [{"item": "loc_example_desk_source", "is": "off"},
+                          {"item": "loc_example_east_source", "is": "off"}])
 
 
 class FakeOpenHAB:

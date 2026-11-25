@@ -275,9 +275,25 @@ class RemoteTUI(unittest.TestCase):
 
     def test_a_room_switching_and_a_source_that_cannot_be_read_have_glyphs_of_their_own(self):
         states = self.proof["failure"]["states"]
-        # Switching goes between its two glyphs; neither is on's or off's.
+        # With --still on, switching stays on its steady glyph even when blink ticks.
+        self.assertEqual(states["stillSwitching"], ["\u25d0", " 2 \u25d0 Computer "])
+        # Switching goes between its two glyphs when motion is on; neither is on's or off's.
         self.assertEqual(states["switching"], ["\u25d0", " 2 \u25d0 Computer ", "\u25d1"])
         self.assertEqual(states["unread"], ["!", "led.bad"])
+
+    def test_tui_regressions_lock_button_still_env_header_order_and_forms(self):
+        reg = self.proof["regressions"]
+        self.assertEqual(reg["stillEnv"], {
+            "0": False, "false": False, "FALSE": False, "no": False, "off": False,
+            "1": True, "true": True, "": True,
+        })
+        self.assertTrue(reg["f6BeforeF10"], "F6 Pair devices should appear before F10 System")
+        self.assertTrue(reg["disabledLockOk"], "disabled Lock button must render cleanly without null hits")
+        self.assertEqual(reg["infoTabFocus"], ["signal-open", "signal-open"], "Tab in Info sheet must not wipe focus")
+        self.assertTrue(reg["securityStatusClean"], "Security status bar must not hardcode Not connected")
+        self.assertTrue(reg["formSwallowedQL"], "q and l must be swallowed inside access-form")
+        self.assertTrue(reg["lockedRepeatBlocked"], "mouse hold repeat must check controlBlock()")
+        self.assertTrue(reg["emptySettingsOk"], "empty house settings must not call loadPolicy")
 
     def test_not_heard_home_shows_no_source_and_listen_no_speaker_as_playing(self):
         failure = self.proof["failure"]

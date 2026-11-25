@@ -123,20 +123,43 @@ test('VRROOM rejects route and processing-mode transitions during signal collect
   }
 });
 
-test('VRROOM rotates unsupported queries, clears stale values, and closes timed-out sessions', () => {
+test('VRROOM rotates unsupported queries, clears stale values, and keeps its telnet link while fenced', () => {
   const r = device('vrroom_telnet'); r.poll(); assert(r.collect().values.RX0);
   r.requests.length = 0;
   r.state.override = request => request.startsWith('get status ') ? [] : undefined;
   for (let cycle = 0; cycle < 5; cycle += 1) {
     const value = r.collect(); assert.equal(value.reason, 'no_response'); assert.deepEqual(value.values, {});
-    assert(r.opened.at(-1).closed); r.poll();
+    assert(!r.opened.at(-1).closed);
   }
+  assert.equal(r.opened.length, 1);
   for (const target of ['rx0', 'tx0', 'aud0', 'audout', 'tx1', 'aud1', 'tx0sink', 'tx1sink', 'spd0']) {
     assert(r.requests.includes(`get status ${target}`), `starved ${target}`);
   }
   r.state.override = request => request === 'get status rx0' ? ['TX0: late wrong port', 'get status rx0'] : undefined;
   const result = r.collect(); assert(!('RX0' in result.values));
-  assert(r.opened.at(-1).closed);
+  assert(!r.opened.at(-1).closed);
+  assert.equal(r.opened.length, 1);
+});
+
+test('VRROOM tolerates a dropped leading character on status and opmode replies, and drops only if fencing fails', () => {
+  const r = device('vrroom_telnet'); r.poll();
+  r.state.override = request => {
+    if (request === 'get opmode') return ['pmode 0'];
+    if (request === 'get status rx0') return ['X0: 4K60 444'];
+    if (request === 'get status aud0') return ['UD0: LPCM 2ch'];
+    return undefined;
+  };
+  const ok = r.collect();
+  assert.equal(ok.values.RX0, '4K60 444');
+  assert.equal(ok.values.AUD0, 'LPCM 2ch');
+  assert.equal(ok.values.opmode, '0');
+  assert(!r.opened[0].closed);
+  // Only when the fence (get opmode / get insel) also stops answering does the link close.
+  r.state.override = () => [];
+  assert.equal(r.collect().reason, 'no_response');
+  assert(r.opened[0].closed);
+  r.state.override = null; r.poll();
+  assert.equal(r.opened.length, 2);
 });
 
 test('VRROOM sanitizes status strings and fails closed for unknown opmode', () => {
@@ -256,19 +279,22 @@ test('each AVPro HPD reply is its output\'s hot-plug Item at every read: ON, OFF
   assert.equal(r.opened.length, 1);
 });
 
-test('the next control reconnects and confirms its result after an optional timeout', () => {
-  for (const [name, item, value, optional] of [
-    ['vrroom_telnet', 'example_input', '2', request => request.startsWith('get status ')],
-    ['sony_adcp', 'example_input', 'hdmi2', request => request === 'signal ?'],
-  ]) {
-    const r = device(name); r.poll();
-    r.state.override = request => optional(request) ? [] : undefined;
-    assert.equal(r.collect().status, 'unavailable'); assert(r.opened[0].closed);
-    r.state.override = null;
-    const result = r.context.routingProvider().execute(item, value);
-    assert.equal(result.outcome, 'applied'); assert.equal(result.sample.value, value);
-    assert.equal(r.opened.length, 2); assert.equal(r.items[item], value);
-  }
+test('the next control keeps VRROOM on one session and reconnects Sony after an optional timeout', () => {
+  const vr = device('vrroom_telnet'); vr.poll();
+  vr.state.override = request => request.startsWith('get status ') ? [] : undefined;
+  assert.equal(vr.collect().status, 'unavailable'); assert(!vr.opened[0].closed);
+  vr.state.override = null;
+  const vrRes = vr.context.routingProvider().execute('example_input', '2');
+  assert.equal(vrRes.outcome, 'applied'); assert.equal(vrRes.sample.value, '2');
+  assert.equal(vr.opened.length, 1); assert.equal(vr.items.example_input, '2');
+
+  const r = device('sony_adcp'); r.poll();
+  r.state.override = request => request === 'signal ?' ? [] : undefined;
+  assert.equal(r.collect().status, 'unavailable'); assert(r.opened[0].closed);
+  r.state.override = null;
+  const result = r.context.routingProvider().execute('example_input', 'hdmi2');
+  assert.equal(result.outcome, 'applied'); assert.equal(result.sample.value, 'hdmi2');
+  assert.equal(r.opened.length, 2); assert.equal(r.items.example_input, 'hdmi2');
 });
 
 test('an I/O exception advances rotating work before the next collection', () => {

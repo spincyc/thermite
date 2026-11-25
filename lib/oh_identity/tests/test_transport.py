@@ -138,6 +138,26 @@ class NativeTransport(SimpleTestCase):
                          ["thermite.web:1a2b3c4d", None, "thermite.repair:0a1b2c3d"])
         self.assertEqual({request.headers["Content-Type"] for request in sent}, {"text/plain"})
 
+    def test_media_sets_sdp_content_type_only_when_body_is_present(self):
+        sent = []
+        original = httpx.Client
+
+        def reply(request):
+            sent.append(request)
+            if request.method == "POST":
+                return httpx.Response(200, headers={"content-type": "application/sdp"}, content=b"v=0\r\n")
+            return httpx.Response(200, headers={"content-type": "image/jpeg"}, content=b"img")
+
+        with patch("oh_identity.transport.httpx.Client",
+                   side_effect=lambda **options: original(transport=httpx.MockTransport(reply), **options)):
+            transport = self.transport()
+            self.assertEqual(transport.media("/media/image", "GET", None, 20), ("image/jpeg", b"img"))
+            self.assertEqual(transport.media("/media/image", "GET", b"", 20), ("image/jpeg", b"img"))
+            self.assertEqual(transport.media("/media/sdp", "POST", b"v=0\r\n", 1024), ("application/sdp", b"v=0\r\n"))
+        self.assertIsNone(sent[0].headers.get("content-type"))
+        self.assertIsNone(sent[1].headers.get("content-type"))
+        self.assertEqual(sent[2].headers.get("content-type"), "application/sdp")
+
     def test_a_slow_snapshot_does_not_hold_command_pool_or_client_creation_lock(self):
         entered, release = threading.Event(), threading.Event()
         original = httpx.Client

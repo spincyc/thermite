@@ -152,11 +152,21 @@ class OwnFiles(unittest.TestCase):
     def test_reading_a_house_file_says_where_its_files_are(self):
         self.assertIsNone(oh_conf.instance())
         house = oh_conf.House.load(self.house(theme="mine.json"))
-        self.assertEqual(oh_conf.instance(), self.instance)
-        self.assertEqual(remote.palette(house.data).name, "mine")
+        self.assertEqual(house.instance_dir, self.instance)
+        self.assertEqual(house.directory, self.instance)
+        self.assertIsNone(oh_conf.instance())
+        with oh_conf.instance_at(house.instance_dir):
+            self.assertEqual(remote.palette(house.data).name, "mine")
+            self.assertEqual(globalcache_ir.commissioned(self.player)["commands"], {"play": "38000,1,1,24,24"})
+        self.assertIsNone(oh_conf.instance())
         self.assertEqual(oh_render.render(house)["html/remote/theme.css"],
                          oh_brand.css(oh_brand.load(self.instance / "mine.json")).encode("utf-8"))
-        self.assertEqual(globalcache_ir.commissioned(self.player)["commands"], {"play": "38000,1,1,24,24"})
+        # A failed House.load() leaves no process-global directory behind either.
+        bad = self.instance / "bad.yaml"
+        bad.write_text(json.dumps({**mapping(), "version": 2}), encoding="utf-8")
+        with self.assertRaises(oh_inventory.ConfigError):
+            oh_conf.House.load(bad)
+        self.assertIsNone(oh_conf.instance())
 
     def test_a_build_reads_its_own_houses_files_whichever_house_was_read_last(self):
         house = oh_conf.House.load(self.house(theme="mine.json"))
@@ -164,11 +174,12 @@ class OwnFiles(unittest.TestCase):
             elsewhere = Path(other) / "instance"
             elsewhere.mkdir()
             (elsewhere / "devices.yaml").write_text(json.dumps(mapping()), encoding="utf-8")
-            oh_conf.House.load(elsewhere / "devices.yaml")
-            self.assertEqual((oh_conf.instance(), house.directory), (elsewhere, self.instance))
+            other_house = oh_conf.House.load(elsewhere / "devices.yaml")
+            self.assertEqual((oh_conf.instance(), house.instance_dir, other_house.instance_dir),
+                             (None, self.instance, elsewhere))
             self.assertEqual(oh_render.render(house)["html/remote/theme.css"],
                              oh_brand.css(oh_brand.load(self.instance / "mine.json")).encode("utf-8"))
-            self.assertEqual(oh_conf.instance(), elsewhere)
+            self.assertIsNone(oh_conf.instance())
 
     def test_a_block_binds_them_for_a_house_that_is_a_mapping_and_gives_them_back(self):
         with oh_conf.instance_at(self.instance):

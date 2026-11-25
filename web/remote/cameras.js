@@ -388,12 +388,19 @@
 
     function render() {
       const cameras = model.list(), state = model.state();
-      if (!model.camera(selected) && cameras.length) selected = cameras[0].id;
+      const visible = filter === "doorbells" ? cameras.filter((camera) => camera.doorbell) : cameras;
+      if (!visible.some((camera) => camera.id === selected)) {
+        if (selected !== null) viewer.stop();
+        selected = visible.length ? visible[0].id : null;
+      }
       find("[data-camera-count]").textContent = cameras.length + " cameras · " + cameras.filter((camera) => camera.doorbell).length + " doorbells";
       find("[data-camera-preview]").hidden = !mock;
-      find("[data-camera-alert]").textContent = state.error || (!state.loaded ? "Reading cameras…"
-        : !state.connected ? "Waiting for camera status…" : "");
-      find("[data-camera-alert]").hidden = state.loaded && state.connected && !state.error;
+      const empty = state.loaded && !state.error && !visible.length
+        ? (filter === "doorbells" ? "No doorbells configured." : "No cameras configured.") : "";
+      const alertText = state.error || (!state.loaded ? "Reading cameras…"
+        : empty || (!state.connected ? "Waiting for camera status…" : ""));
+      find("[data-camera-alert]").textContent = alertText;
+      find("[data-camera-alert]").hidden = !alertText;
       cameras.forEach((camera) => {
         let card = cards.get(camera.id);
         if (!card) {
@@ -417,7 +424,7 @@
         card.querySelector(".camera-card__motion").textContent = camera.ringing === true ? "Ringing"
           : camera.motion === true ? "Motion reported" : camera.motion === false ? "No motion reported" : "Motion unknown";
       });
-      const camera = model.camera(selected);
+      const camera = selected ? visible.find((entry) => entry.id === selected) || null : null;
       find("[data-camera-viewer]").hidden = !camera;
       if (!camera) return;
       if (camera.online === false && mediaKind !== "idle") viewer.stop("Camera is offline.");
@@ -458,6 +465,7 @@
       if (filter === "doorbells" && current() && !current().doorbell) {
         const first = model.list().find((camera) => camera.doorbell);
         if (first) choose(first.id);
+        else { viewer.stop(); selected = null; }
       }
       render();
     });

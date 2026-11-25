@@ -72,7 +72,7 @@ class Host(System):
         return Group("thermite", 9001, ("operator",)) if key in ("thermite", 9001) else None
 
     def which(self, name):
-        return "/usr/bin/nologin" if name == "nologin" else None
+        return {"nologin": "/usr/bin/nologin", "btrfs": "/usr/bin/btrfs"}.get(name)
 
 
 def directory(uid=9001, gid=9001, mode=0o750):

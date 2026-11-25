@@ -137,6 +137,296 @@ class Bridge(unittest.TestCase):
         failed = {name: result["error"] for name, result in self.cases.items() if not result["ok"]}
         self.assertEqual(failed, {})
 
+    def _run_node(self, script, *args, timeout=20):
+        return subprocess.run([NODE, "-e", script, str(AREA), *args],
+                              text=True, capture_output=True, timeout=timeout)
+
+    def test_hello_replay_protection(self):
+        script = r"""
+const assert = require("assert/strict");
+const path = require("path");
+const area = process.argv[1];
+const Shared = require(path.join(area, "tui/remote/shared"));
+const Link = require(path.join(area, "handheld/link"));
+const Bridge = require(path.join(area, "handheld/bridge"));
+
+console.info = console.log = () => {};
+const shared = Shared.load();
+Shared.mocks();
+
+(async () => {
+  const key = Buffer.alloc(32, 0xc3);
+  const mac = "02:00:00:00:00:" + "c3";
+  const backend = shared.Remote.create(shared.house, { backend: "mock", latency: 2 });
+  const remoteEnd = new Link.RemoteEnd({ key });
+  const inbox = [];
+  let failNext = 0;
+  let sentFrames = 0;
+  const bridge = Bridge.create({
+    shared: { Session: shared.Session, house: shared.house, layouts: shared.layouts },
+    backend,
+    send: (to, frame, done) => {
+      sentFrames += 1;
+      const fail = failNext > 0;
+      if (fail) failNext -= 1;
+      setImmediate(() => {
+        done(!fail);
+        if (!fail) {
+          const r = remoteEnd.receive(frame);
+          if (r && r.message) inbox.push(r.message);
+        }
+      });
+    }
+  });
+  bridge.add({ name: "living", mac, key, store: { get: () => null, set: () => {} } });
+  await new Promise((r) => setTimeout(r, 30));
+
+  // 1. Cold start HELLO adopts immediately and pushes screen.
+  const firstHello = remoteEnd.hello({ have: "", battery: 80, charging: false, board: "sim", fw: "1.0", w: 240, h: 320 });
+  assert.equal(bridge.receive(mac, firstHello), true);
+  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(inbox.some((m) => m.screen), "cold start should push screen");
+  const activeSession = bridge.remote(mac).end.session;
+  assert.ok(activeSession !== null);
+  assert.equal(bridge.remote(mac).status.battery, 80);
+
+  // 2. Immediate replay of the exact same HELLO nonce is dropped outright.
+  const framesBeforeReplay = sentFrames;
+  assert.equal(bridge.receive(mac, firstHello), false);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(sentFrames, framesBeforeReplay, "seen HELLO replay must send no SYNC");
+  assert.equal(bridge.remote(mac).end.session, activeSession);
+
+  // 3. Captured HELLO with an unseen nonce (from a prior run) with poisoned status
+  //    stays pending, never tears down activeSession, never poisons status, and even
+  //    a failed pending SYNC does not mark the active session asleep.
+  const attacker = new Link.RemoteEnd({ key });
+  const capturedHello = attacker.hello({ have: "poison", battery: 1, charging: true, board: "evil", fw: "0.0", w: 240, h: 320 });
+  failNext = 1; // simulate pending SYNC failing delivery
+  assert.equal(bridge.receive(mac, capturedHello), true);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(bridge.remote(mac).end.session, activeSession, "active session overwritten by pending HELLO");
+  assert.ok(bridge.remote(mac).end.pending !== null, "pending session should exist");
+  assert.equal(bridge.remote(mac).status.battery, 80, "status poisoned by unpromoted HELLO");
+  assert.equal(bridge.remote(mac).awake, true, "failed pending SYNC marked active session asleep");
+
+  // Replaying that same captured HELLO a second time is now dropped by seenHellos.
+  const framesBeforeSecond = sentFrames;
+  assert.equal(bridge.receive(mac, capturedHello), false);
+  assert.equal(sentFrames, framesBeforeSecond);
+
+  // Active session continues working undisturbed.
+  inbox.length = 0;
+  remoteEnd.send({ op: 501, key: ["volume_up"] }).forEach((f) => assert.equal(bridge.receive(mac, f), true));
+  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(inbox.some((m) => m.ack === 501), "active session DATA not acked after HELLO replay");
+  assert.equal(bridge.remote(mac).end.session, activeSession);
+
+  // 4. Legitimate remote re-HELLO + authenticated DATA promotes pending atomically.
+  inbox.length = 0;
+  const freshHello = remoteEnd.hello({ have: "", battery: 42, charging: true, board: "sim", fw: "1.1", w: 240, h: 320 });
+  assert.equal(bridge.receive(mac, freshHello), true);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(bridge.remote(mac).end.session, activeSession, "should not promote before authenticated DATA");
+  assert.equal(bridge.remote(mac).status.battery, 80, "status should not commit before authenticated DATA");
+
+  remoteEnd.send({ op: 502 }).forEach((f) => assert.equal(bridge.receive(mac, f), true));
+  await new Promise((r) => setTimeout(r, 30));
+  assert.notEqual(bridge.remote(mac).end.session, activeSession, "pending session not promoted on authenticated DATA");
+  assert.equal(bridge.remote(mac).end.pending, null, "pending should clear after promotion");
+  assert.equal(bridge.remote(mac).status.battery, 42, "HELLO status not committed on promotion");
+  assert.ok(inbox.some((m) => m.ack === 502 && m.screen), "promoted session did not ack and send screen");
+  process.exit(0);
+})().catch((err) => { console.error(err); process.exit(1); });
+"""
+        run = self._run_node(script)
+        self.assertEqual(run.returncode, 0, run.stderr or run.stdout)
+
+    def test_empty_routed_house_is_guarded(self):
+        script = r"""
+const assert = require("assert/strict");
+const path = require("path");
+const area = process.argv[1];
+const Shared = require(path.join(area, "tui/remote/shared"));
+const Link = require(path.join(area, "handheld/link"));
+const Bridge = require(path.join(area, "handheld/bridge"));
+const Screen = require(path.join(area, "handheld/screen"));
+
+console.info = console.log = () => {};
+const shared = Shared.load();
+Shared.mocks();
+
+(async () => {
+  const house = { version: 1, rooms: [], sources: {}, devices: {}, initial: {} };
+  const key = Buffer.alloc(32, 0xd4);
+  const mac = "02:00:00:00:00:" + "d4";
+  const backend = shared.Remote.create(house, { backend: "mock", latency: 2 });
+  const remoteEnd = new Link.RemoteEnd({ key });
+  const inbox = [];
+  const logs = [];
+  const errors = [];
+  const bridge = Bridge.create({
+    shared: { Session: shared.Session, house, layouts: shared.layouts },
+    backend,
+    log: (line) => logs.push(line),
+    onError: (err) => errors.push(err),
+    send: (to, frame, done) => {
+      setImmediate(() => {
+        done(true);
+        const r = remoteEnd.receive(frame);
+        if (r && r.message) inbox.push(r.message);
+      });
+    }
+  });
+  bridge.add({ name: "empty-remote", mac, key, store: { get: () => null, set: () => {} } });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(errors.length, 0, errors.map(String).join("\n"));
+  assert.equal(bridge.remote(mac).ready, true);
+  assert.ok(logs.some((line) => line.includes("no routed rooms")), logs.join("\n"));
+
+  assert.equal(bridge.receive(mac, remoteEnd.hello({ have: "", battery: 50, charging: false, board: "sim", fw: "1.0", w: 240, h: 320 })), true);
+  await new Promise((r) => setTimeout(r, 30));
+  const msg = inbox.find((m) => m.screen);
+  assert.ok(msg, "expected empty-house screen");
+  assert.equal(msg.screen.room, "");
+  assert.deepEqual(msg.screen.rooms, []);
+  assert.deepEqual(msg.screen.bubbles, []);
+  assert.equal(msg.screen.hidden, true);
+  assert.equal(msg.screen.short, "No rooms");
+  assert.equal(msg.audio, null);
+  const fields = Object.assign({}, msg.screen);
+  delete fields.id;
+  assert.equal(msg.screen.id, Screen.digest(JSON.stringify(fields)));
+
+  // Operations on an empty house must ack without throwing TypeError.
+  inbox.length = 0;
+  remoteEnd.send({ op: 1, key: ["volume_up"], bubble: "off", room: "missing", input: "hdmi1" })
+    .forEach((f) => bridge.receive(mac, f));
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(errors.length, 0, errors.map(String).join("\n"));
+  assert.ok(inbox.some((m) => m.ack === 1), "op on empty house was not acked");
+  process.exit(0);
+})().catch((err) => { console.error(err); process.exit(1); });
+"""
+        run = self._run_node(script)
+        self.assertEqual(run.returncode, 0, run.stderr or run.stdout)
+
+    def test_unauthorized_exits_nonzero_and_access_ready_precedes_session_start(self):
+        with tempfile.TemporaryDirectory(prefix="handheld-auth-", dir=os.environ.get("TMPDIR") or str(AREA / ".scratch")) as tmp:
+            root = Path(tmp)
+            os.chmod(root, 0o700)
+            state_dir = root / "state"
+            state_dir.mkdir(mode=0o700)
+            state_file = state_dir / "state.json"
+            handheld.save(state_file, {
+                "version": 1, "base": None,
+                "remotes": [{"name": "r1", "mac": REMOTE_MAC, "key": "aa" * 32, "board": "sim", "store": {}, "status": {}}]
+            })
+            house_file = root / "house.js"
+            model = {"version": 1,
+                     "rooms": [{"id": "synthetic_room", "label": "Synthetic room", "sources": [], "devices": []}],
+                     "sources": {}, "devices": {}, "initial": {}}
+            house_file.write_text("globalThis.REMOTE_HOUSE = " + json.dumps(model) + ";\n", encoding="utf-8")
+
+            # Case A: startup 401 on /api/v1/me exits non-zero and logs unauthorized.
+            script_startup = r"""
+const path = require("path");
+const [area, stateFile, sockFile, houseFile] = process.argv.slice(1);
+process.env.THERMITE_REMOTE_HOUSE_FILE = houseFile;
+const reply = (value, status) => {
+  const body = JSON.stringify(value);
+  return { ok: status < 300, status, headers: { get: () => "application/json", getSetCookie: () => [] },
+    text: async () => body, json: async () => JSON.parse(body), clone: () => reply(value, status) };
+};
+globalThis.fetch = async (url) => {
+  const route = new URL(url).pathname;
+  if (route === "/api/v1/security") return reply({ bootstrap_required: false, setup_available: false, guest_text: true, guest_cameras: false, csrf: "C".repeat(32) }, 200);
+  if (route === "/api/v1/session") return reply({ csrf: "C".repeat(32) }, 200);
+  if (route === "/api/v1/me") return reply({ error: "invalid_token" }, 401);
+  return reply({ error: "not_found" }, 404);
+};
+const Main = require(path.join(area, "handheld/main"));
+Main.main(["--url", "http://127.0.0.1:9", "--state", stateFile, "--listen", sockFile]);
+"""
+            run = self._run_node(script_startup, str(state_file), str(root / "a.sock"), str(house_file))
+            self.assertEqual(run.returncode, 1, run.stderr)
+            self.assertIn("unauthorized", run.stderr.lower())
+
+            # Case B: access.ready() completes before session.start(), and mid-run 401 exits 1 & flushes telemetry.
+            script_midrun = r"""
+const path = require("path");
+const [area, stateFile, sockFile, houseFile] = process.argv.slice(1);
+process.env.THERMITE_REMOTE_HOUSE_FILE = houseFile;
+const order = [];
+let telemetryPosted = false;
+const reply = (value, status) => {
+  const body = JSON.stringify(value);
+  return { ok: status < 300, status, headers: { get: () => "application/json", getSetCookie: () => [] },
+    text: async () => body, json: async () => JSON.parse(body), clone: () => reply(value, status) };
+};
+const Events = require(path.join(area, "tui/remote/events"));
+let activeEs = null;
+Events.EventSource = class {
+  constructor(url) {
+    this.readyState = 0;
+    activeEs = this;
+    setImmediate(() => {
+      if (this.readyState === 2) return;
+      this.readyState = 1;
+      if (this.onopen) this.onopen({});
+      if (this.onmessage && url.endsWith("/api/v1/events/remote")) {
+        this.onmessage({ data: JSON.stringify({ type: "snapshot", view: "remote", states: { loc_synthetic_room_source: "off" } }) });
+      }
+    });
+  }
+  close() { this.readyState = 2; }
+};
+let meDone = false;
+let policyBeforeReady = false;
+globalThis.fetch = async (url, init) => {
+  const route = new URL(url).pathname;
+  order.push(route);
+  if (route === "/api/v1/security") return reply({ bootstrap_required: false, setup_available: false, guest_text: true, guest_cameras: false, csrf: "C".repeat(32) }, 200);
+  if (route === "/api/v1/session") return reply({ csrf: "C".repeat(32) }, 200);
+  if (route === "/api/v1/me") {
+    await new Promise((r) => setTimeout(r, 20));
+    meDone = true;
+    return reply({ id: 1, username: "example", admin: false, can_edit: true, is_guest: false, permissions: ["site.read", "room.control"] }, 200);
+  }
+  if (route === "/api/v1/telemetry" && init && init.method === "POST") {
+    telemetryPosted = true;
+    return reply({ ok: true }, 200);
+  }
+  if (route.endsWith("/policy")) {
+    if (!meDone) policyBeforeReady = true;
+    // Policy succeeded after access.ready(); now revoke credentials on the event stream
+    // so stream_error telemetry is queued and lost() fires unauthorized -> finish(1) flushes it.
+    setImmediate(() => {
+      if (activeEs && activeEs.onerror) activeEs.onerror({ status: 401 });
+    });
+    return reply({ room: "synthetic_room", revision: 1, manual_lock: false, can_lock: true, can_edit: true,
+      effective: { allowed: true, locked: false, until: null, reason: "" }, enforcement: "enforced" }, 200);
+  }
+  return reply({ error: "not_found" }, 404);
+};
+const origExit = process.exit.bind(process);
+process.exit = (code) => {
+  process.stdout.write(JSON.stringify({ code, meDone, policyBeforeReady, telemetryPosted, order }) + "\n");
+  origExit(code);
+};
+const Main = require(path.join(area, "handheld/main"));
+Main.main(["--url", "http://127.0.0.1:9", "--state", stateFile, "--listen", sockFile]);
+"""
+            run = self._run_node(script_midrun, str(state_file), str(root / "b.sock"), str(house_file))
+            self.assertEqual(run.returncode, 1, run.stderr)
+            self.assertIn("unauthorized", run.stderr.lower())
+            info = json.loads(run.stdout.strip().splitlines()[-1])
+            self.assertTrue(info["meDone"])
+            self.assertFalse(info["policyBeforeReady"], info)
+            self.assertIn("/api/v1/me", info["order"])
+            self.assertLess(info["order"].index("/api/v1/me"), info["order"].index("/api/v1/rooms/synthetic_room/policy"))
+            self.assertTrue(info["telemetryPosted"], info)
+
 
 class Scratch(unittest.TestCase):
     def setUp(self):
@@ -297,6 +587,91 @@ class Simulator(Scratch):
         status, _, err = self.run_main("list")
         self.assertEqual(status, 2)
         self.assertIn("mode 0600", err)
+
+    @unittest.skipUnless(NODE, "Node runs handheld/state.js")
+    def test_state_lock_serializes_python_and_node_and_recovers_stale(self):
+        self.assertEqual(self.run_main("enroll", "--simulator", "--name", "first", "--mac", mac("11"))[0], 0)
+        lock = handheld.lock_path(self.state)
+        self.assertFalse(lock.exists())
+
+        # 1. Python holds .state.lock while Node state.open().flush() writes base:
+        #    Node must wait and preserve Python's concurrent remote addition.
+        held = threading.Event()
+        errors = []
+
+        def hold_python():
+            try:
+                with handheld.state_lock(self.state):
+                    held.set()
+                    time.sleep(0.15)
+                    data = handheld.load(self.state)
+                    handheld.add(data, {"name": "second", "mac": mac("22"), "key": "bb" * 32,
+                                        "board": "simulator", "simulated": True, "store": {}, "status": {}})
+                    handheld.save(self.state, data)
+            except BaseException as exc:
+                errors.append(exc)
+
+        thread = threading.Thread(target=hold_python)
+        thread.start()
+        self.assertTrue(held.wait(2))
+        started = time.monotonic()
+        node_save = subprocess.run([
+            NODE, "-e",
+            "const State = require(process.argv[1]); const s = State.open(process.argv[2]); "
+            "s.setBase({mac: process.argv[3], channel: 9, fw: '1.0'}); s.flush(); s.close();",
+            str(AREA / "handheld/state.js"), str(self.state), BASE_MAC
+        ], text=True, capture_output=True, timeout=15)
+        elapsed = time.monotonic() - started
+        thread.join(5)
+        self.assertEqual(errors, [])
+        self.assertEqual(node_save.returncode, 0, node_save.stderr)
+        self.assertGreaterEqual(elapsed, 0.1)
+        data = self.data()
+        self.assertEqual({r["name"] for r in data["remotes"]}, {"first", "second"})
+        self.assertEqual(data["base"], {"mac": BASE_MAC, "channel": 9, "fw": "1.0"})
+        self.assertFalse(lock.exists())
+
+        # 2. Node holds .state.lock while Python enrolls a third remote:
+        #    Python must wait and preserve Node's write.
+        node_holder = subprocess.Popen([
+            NODE, "-e",
+            "const State = require(process.argv[1]); "
+            "State.withLock(process.argv[2], () => { "
+            "  process.stdout.write('LOCKED\\n'); "
+            "  const cell = new Int32Array(new SharedArrayBuffer(4)); Atomics.wait(cell, 0, 0, 150); "
+            "  const d = State.read(process.argv[2]); d.base = {mac: process.argv[3], channel: 11, fw: '2.0'}; "
+            "  State.write(process.argv[2], d); "
+            "});",
+            str(AREA / "handheld/state.js"), str(self.state), BASE_MAC
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(node_holder.stdout.readline().strip(), "LOCKED")
+        status, _, err = self.run_main("enroll", "--simulator", "--name", "third", "--mac", mac("33"))
+        _, node_err = node_holder.communicate(timeout=15)
+        self.assertEqual(node_holder.returncode, 0, node_err)
+        self.assertEqual(status, 0, err)
+        data = self.data()
+        self.assertEqual({r["name"] for r in data["remotes"]}, {"first", "second", "third"})
+        self.assertEqual(data["base"], {"mac": BASE_MAC, "channel": 11, "fw": "2.0"})
+        self.assertFalse(lock.exists())
+
+        # 3. Stale .state.lock (dead PID) is recovered cleanly by both Python and Node.
+        dead = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead.wait(timeout=5)
+        lock.write_text(f"{dead.pid}\n", encoding="ascii")
+        os.chmod(lock, 0o600)
+        with handheld.state_lock(self.state, timeout=1.0):
+            self.assertTrue(lock.exists())
+        self.assertFalse(lock.exists())
+
+        lock.write_text(f"{dead.pid}\n", encoding="ascii")
+        os.chmod(lock, 0o600)
+        node_recover = subprocess.run([
+            NODE, "-e",
+            "const State = require(process.argv[1]); State.withLock(process.argv[2], () => {}, {timeoutMs: 1000});",
+            str(AREA / "handheld/state.js"), str(self.state)
+        ], text=True, capture_output=True, timeout=10)
+        self.assertEqual(node_recover.returncode, 0, node_recover.stderr)
+        self.assertFalse(lock.exists())
 
 
 class FakeDevice:

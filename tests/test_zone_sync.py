@@ -515,7 +515,7 @@ class Runtime(unittest.TestCase):
                                 input=json.dumps(tables), capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         report = json.loads(result.stdout)
-        self.assertEqual((report["passed"], report["failed"]), (29, 0))
+        self.assertEqual((report["passed"], report["failed"]), (30, 0))
 
 
 if __name__ == "__main__":

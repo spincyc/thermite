@@ -230,6 +230,10 @@ def fetch(words: Sequence[str], url: str) -> int:
     # The archive comes back on standard output: the server must print it,
     # and nothing else there.
     rest = [unquiet(word) for word in rest if word not in ("--json", "--quiet") and unquiet(word) != "-"]
+    if out == "-" and as_json:
+        return oh_cli.usage_error("--json prints a summary on standard output, where --out - writes the archive")
+    if out == "-" and quiet:
+        return oh_cli.usage_error("-q silences standard output, where --out - writes the archive")
     if out == "-" and sys.stdout.isatty():
         return oh_cli.usage_error("--out - writes a compressed archive: send standard output to a file or a pipe")
     try:
@@ -255,11 +259,11 @@ def fetch(words: Sequence[str], url: str) -> int:
         temporary.unlink(missing_ok=True)
     if status != 0:
         return status
-    data = path.read_bytes()
+    size = path.stat().st_size
     if as_json:
-        oh_cli.emit({"archive": str(path), "bytes": len(data), "url": url})
+        oh_cli.emit({"archive": str(path), "bytes": size, "url": url})
     elif not quiet:
-        print(f"wrote {path} ({_size(len(data))}) from {target[-1]}; review it before sharing: addresses, host "
+        print(f"wrote {path} ({_size(size)}) from {target[-1]}; review it before sharing: addresses, host "
               "names and device names stay in it")
     return 0
 

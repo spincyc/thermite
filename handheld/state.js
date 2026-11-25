@@ -26,6 +26,113 @@ const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
 // What the bridge keeps of a remote's own report.
 const KEPT = ["battery", "charging", "fw", "board"];
 const WRITE_DELAY_MS = 500;
+const LOCK_TIMEOUT_MS = 5000;
+const LOCK_POLL_MS = 10;
+const LOCK_STALE_MS = 30000;
+const LOCK_EMPTY_GRACE_MS = 2000;
+const SLEEP_CELL = new Int32Array(new SharedArrayBuffer(4));
+
+function sleepSync(ms) {
+  Atomics.wait(SLEEP_CELL, 0, 0, ms);
+}
+
+function lockPath(file) {
+  return path.join(path.dirname(file), ".state.lock");
+}
+
+function ensureDir(file) {
+  const directory = path.dirname(file);
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const stat = fs.lstatSync(directory);
+  if (!stat.isDirectory() || (stat.mode & 0o077) || (process.getuid && stat.uid !== process.getuid())) {
+    throw new Error(directory + " must be a directory of this user's, mode 0700");
+  }
+  return directory;
+}
+
+function pidGone(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return error.code === "ESRCH";
+  }
+}
+
+/* Removes a stale sibling lockfile whose owner PID is gone or whose age exceeded the stale cap. */
+function breakStaleLock(lock) {
+  let fd;
+  try {
+    fd = fs.openSync(lock, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  } catch (_) {
+    return;
+  }
+  let stale = false;
+  let ino = null;
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || (process.getuid && stat.uid !== process.getuid())) return;
+    ino = stat.ino;
+    const age = Date.now() - stat.mtimeMs;
+    const text = fs.readFileSync(fd, "utf8").trim();
+    const pid = /^[1-9][0-9]*$/.test(text) ? Number(text) : 0;
+    if (pid > 0) stale = pidGone(pid) || age > LOCK_STALE_MS;
+    else stale = age > LOCK_EMPTY_GRACE_MS;
+  } catch (_) {
+    return;
+  } finally {
+    try { fs.closeSync(fd); } catch (_) { /* closed */ }
+  }
+  if (!stale) return;
+  try {
+    if (fs.lstatSync(lock).ino === ino) fs.unlinkSync(lock);
+  } catch (_) {
+    // already replaced or removed
+  }
+}
+
+/* Runs fn while holding the exclusive sibling .state.lock, matching lib/oh_cli/handheld.py. */
+function withLock(file, fn, options) {
+  ensureDir(file);
+  const lock = lockPath(file);
+  const timeout = options && options.timeoutMs != null ? options.timeoutMs : LOCK_TIMEOUT_MS;
+  const deadline = Date.now() + timeout;
+  let myIno = null;
+  for (;;) {
+    let fd;
+    try {
+      fd = fs.openSync(lock, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      breakStaleLock(lock);
+      if (Date.now() >= deadline) throw new Error("timed out waiting for " + lock);
+      sleepSync(LOCK_POLL_MS);
+      continue;
+    }
+    try {
+      myIno = fs.fstatSync(fd).ino;
+      fs.writeSync(fd, String(process.pid) + "\n");
+    } catch (error) {
+      try { fs.closeSync(fd); } catch (_) { /* closed */ }
+      try {
+        if (myIno !== null && fs.lstatSync(lock).ino === myIno) fs.unlinkSync(lock);
+      } catch (_) { /* gone */ }
+      throw error;
+    }
+    try { fs.closeSync(fd); } catch (_) { /* closed */ }
+    break;
+  }
+  try {
+    return fn();
+  } finally {
+    try {
+      if (fs.lstatSync(lock).ino === myIno) fs.unlinkSync(lock);
+    } catch (_) {
+      // already gone
+    }
+  }
+}
 
 function empty() {
   return { version: VERSION, base: null, remotes: [] };
@@ -69,12 +176,7 @@ function remotes(data) {
 
 /* Replaces file with data, privately: a 0600 file in a 0700 directory, never half written. */
 function write(file, data) {
-  const directory = path.dirname(file);
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const stat = fs.lstatSync(directory);
-  if (!stat.isDirectory() || (stat.mode & 0o077) || (process.getuid && stat.uid !== process.getuid())) {
-    throw new Error(directory + " must be a directory of this user's, mode 0700");
-  }
+  const directory = ensureDir(file);
   const next = path.join(directory, "." + path.basename(file) + "." + crypto.randomBytes(6).toString("hex"));
   const fd = fs.openSync(next, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
   try {
@@ -144,14 +246,16 @@ function open(file, options) {
   function save() {
     timer = null;
     try {
-      const current = read(file);
-      current.base = base;
-      current.remotes.forEach((entry) => {
-        if (!entry || typeof entry.mac !== "string") return;
-        if (stores.has(entry.mac)) entry.store = Object.assign({}, stores.get(entry.mac));
-        if (statuses.has(entry.mac)) entry.status = Object.assign({}, entry.status, statuses.get(entry.mac));
+      withLock(file, () => {
+        const current = read(file);
+        current.base = base;
+        current.remotes.forEach((entry) => {
+          if (!entry || typeof entry.mac !== "string") return;
+          if (stores.has(entry.mac)) entry.store = Object.assign({}, stores.get(entry.mac));
+          if (statuses.has(entry.mac)) entry.status = Object.assign({}, entry.status, statuses.get(entry.mac));
+        });
+        write(file, current);
       });
-      write(file, current);
       failed = false;
     } catch (error) {
       if (!failed) log("cannot save " + file + ": " + error.message + "; keeping it in memory");
@@ -205,4 +309,4 @@ function open(file, options) {
   };
 }
 
-module.exports = { read, write, remotes, open, empty, VERSION, MAC, KEY, NAME };
+module.exports = { read, write, remotes, open, empty, withLock, lockPath, VERSION, MAC, KEY, NAME };

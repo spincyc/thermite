@@ -358,7 +358,7 @@ class EventHub(TransactionTestCase):
                 self.assertEqual(hub.status()["upstream"], "serving")
                 await frames.aclose()
                 for _ in range(100):
-                    if hub.status()["upstream"] == "closed":
+                    if hub.status()["upstream"] == "closed" and not hub._closing:
                         break
                     await asyncio.sleep(.01)
                 self.assertTrue(upstream.connections[0].closed)
@@ -411,7 +411,9 @@ class EventHub(TransactionTestCase):
             await asyncio.wait_for(close_entered.wait(), 2)
             self.assertFalse(first_task.done())
             self.assertIsNone(hub.task)
-            self.assertEqual(hub.status()["upstream"], "connecting")
+            self.assertIn(first_task, hub._closing)
+            # Idle teardown with no subscribers reports closed so it never fires ThermiteGatewayFeedDown.
+            self.assertEqual(hub.status()["upstream"], "closed")
 
             # A new subscriber joins while the cancelled task is still unwinding cleanup.
             upstream.values["loc_den_source"] = "off"
@@ -419,6 +421,7 @@ class EventHub(TransactionTestCase):
             second_task = hub.task
             self.assertIsNotNone(second_task)
             self.assertIsNot(second_task, first_task)
+            self.assertEqual(hub.status()["upstream"], "connecting")
             snap2 = decode(await asyncio.wait_for(s2.next(2), 2))
             self.assertEqual((snap2["type"], snap2["states"]["loc_den_source"]), ("snapshot", "off"))
 
@@ -436,7 +439,7 @@ class EventHub(TransactionTestCase):
 
             hub.leave(s2)
             for _ in range(100):
-                if hub.status()["upstream"] == "closed":
+                if hub.status()["upstream"] == "closed" and not hub._closing:
                     break
                 await asyncio.sleep(0.01)
             self.assertTrue(upstream.connections[1].closed)
@@ -509,12 +512,14 @@ class EventHub(TransactionTestCase):
                 await asyncio.wait_for(close_entered.wait(), 2)
                 self.assertFalse(first_task.done())
                 self.assertIsNone(hub.task)
-                self.assertEqual(hub.status()["upstream"], "connecting")
+                self.assertIn(first_task, hub._closing)
+                self.assertEqual(hub.status()["upstream"], "closed")
 
                 s2 = hub.join(music_hub.VIEW)
                 second_task = hub.task
                 self.assertIsNotNone(second_task)
                 self.assertIsNot(second_task, first_task)
+                self.assertEqual(hub.status()["upstream"], "connecting")
                 snap2 = decode(await asyncio.wait_for(s2.next(2), 2))
                 self.assertEqual((snap2["type"], snap2["music"]["speakers"][0]["volume"]), ("snapshot", 55))
 
@@ -536,7 +541,7 @@ class EventHub(TransactionTestCase):
 
                 hub.leave(s2)
                 for _ in range(100):
-                    if hub.status()["upstream"] == "closed":
+                    if hub.status()["upstream"] == "closed" and not hub._closing:
                         break
                     await asyncio.sleep(0.01)
                 self.assertTrue(sockets[1].closed)
@@ -627,7 +632,8 @@ class EventEndpoints(TransactionTestCase):
             for response in (*first, other):
                 response.close()
             self.assertEqual(slots.count(), 0)
-            release = slots.acquire("peer")
+            release, refused_reason = slots.acquire("peer")
+            self.assertIsNone(refused_reason)
             release()
             release()
             self.assertEqual(slots.count(), 0)

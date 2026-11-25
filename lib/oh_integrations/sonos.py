@@ -153,15 +153,16 @@ def render(device: dict, house: House, out: YamlFile) -> None:
     items[f"{ident}_title"] = point(ident, "String", "Title", ["Status", "Info"], f"{uid}:currenttitle")
     items[f"{ident}_artist"] = point(ident, "String", "Artist", ["Status", "Info"], f"{uid}:currentartist")
     items[f"{ident}_album"] = point(ident, "String", "Album", ["Status", "Info"], f"{uid}:currentalbum")
-    items[f"{ident}_volume"] = point(ident, "Dimmer", "Volume", ["Status", "SoundVolume"], f"{uid}:volume",
+    volume_tag = "Control" if controlled else "Status"
+    items[f"{ident}_volume"] = point(ident, "Dimmer", "Volume", [volume_tag, "SoundVolume"], f"{uid}:volume",
                                      guarded=not controlled, icon="soundvolume")
-    items[f"{ident}_mute"] = point(ident, "Switch", "Mute", ["Status", "SoundVolume"], f"{uid}:mute",
+    items[f"{ident}_mute"] = point(ident, "Switch", "Mute", [volume_tag, "SoundVolume"], f"{uid}:mute",
                                    guarded=not controlled, icon="soundvolume_mute")
     if controlled:
         volume = items[f"{ident}_volume"]
         del volume["channel"]
         volume["channels"] = {f"{uid}:volume": {"profile": GUARD_PROFILE, "toItemScript": "|input",
-                                                   "toHandlerScript": volume_js(VOLUME)}}
+                                                   "commandFromItemScript": volume_js(VOLUME)}}
         volume["autoupdate"] = False
         volume["metadata"] = {"stateDescription": {"config": dict(VOLUME)}}
         items[f"{ident}_mute"]["autoupdate"] = False
@@ -174,7 +175,7 @@ def render(device: dict, house: House, out: YamlFile) -> None:
             del items[f"{ident}_tv"]["channel"]
             expected = json.dumps(device["sonos_udn"])
             items[f"{ident}_tv"]["channels"] = {f"{uid}:playlinein": {"profile": GUARD_PROFILE,
-                "toHandlerScript": f"|input === {expected} ? input : null"}}
+                "commandFromItemScript": f"|input === {expected} ? input : null"}}
             items[f"{ident}_tv"]["autoupdate"] = False
         items[f"{ident}_key"] = {"type": "String", "label": "Remote Key", "groups": [ident],
                                  "tags": ["Control"], "autoupdate": False}
@@ -209,7 +210,7 @@ def setting(ident: str, suffix: str, kind: str, label: str, channel: str, values
         item["metadata"] = {"stateDescription": {"config": {"options": options_text(values)}},
                             "commandDescription": {"config": {"options": options_text(values)}}}
     del item["channel"]
-    item["channels"] = {channel: {"profile": GUARD_PROFILE, "toItemScript": "|input", "toHandlerScript": script}}
+    item["channels"] = {channel: {"profile": GUARD_PROFILE, "toItemScript": "|input", "commandFromItemScript": script}}
     return item
 
 

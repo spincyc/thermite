@@ -17,7 +17,6 @@ runtime state owned by thermite:thermite.
 
 from __future__ import annotations
 
-import contextlib
 import dataclasses
 import datetime
 import getpass
@@ -32,7 +31,6 @@ import socket
 import stat
 import subprocess
 import tarfile
-import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -48,6 +46,7 @@ import oh_units
 import oh_metrics as metrics
 import oh_music as music
 import oh_shares as shares
+from oh_access import files as oh_access_files
 
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 QUADLET = f"deploy/{oh_units.CONTAINERS[oh_units.RUNTIME]}.container"
@@ -963,7 +962,7 @@ def render_share_gate() -> str:
         "RemainAfterExit=yes",
         f"TimeoutStartSec={shares.GATE_TIMEOUT}",
         "# %i is a checked host name (oh_shares): letters, digits, dots and hyphens.",
-        "ExecStart=/usr/bin/sh -c 'until /usr/bin/getent ahosts %i >/dev/null; do /usr/bin/sleep 1; done'",
+        "ExecStart=/usr/bin/sh -c 'until /usr/bin/getent ahosts \"$1\" >/dev/null; do /usr/bin/sleep 1; done' thermite-share-gate %i",
         f"SyslogIdentifier={oh_units.SHARE_GATE.removesuffix('@.service')}",
         "",
     ])
@@ -1291,20 +1290,38 @@ def _relative(path: str) -> str:
     return path
 
 
-def _same(target: Path, blob: Blob) -> bool:
-    if target.is_symlink() or not target.is_file():
+def _same_at(dir_fd: int, name: str, blob: Blob) -> bool:
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dir_fd)
+    except OSError:
         return False
-    return bool(target.stat().st_mode & 0o111) == blob.program and target.read_bytes() == blob.data
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or bool(info.st_mode & 0o111) != blob.program:
+            return False
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            return stream.read() == blob.data
+    finally:
+        os.close(fd)
+
+
+def _same(target: Path, blob: Blob) -> bool:
+    try:
+        dfd = oh_access_files.open_directory(target.parent)
+    except OSError:
+        return False
+    try:
+        return _same_at(dfd, target.name, blob)
+    finally:
+        os.close(dfd)
 
 
 def _make_dirs(root: Path, directory: Path) -> None:
-    missing = []
-    while directory != root and not directory.exists():
-        missing.append(directory)
-        directory = directory.parent
-    for path in reversed(missing):
-        path.mkdir()
-        os.chmod(path, DIR_MODE)
+    try:
+        dfd = oh_access_files.open_directory(root, directory.relative_to(root), create=True, mode=DIR_MODE)
+    except OSError as exc:
+        raise DeployError(f"refusing non-directory or symlink deployment parent {directory}: {exc}") from exc
+    os.close(dfd)
 
 
 def _safe_parents(root: Path, directory: Path) -> None:
@@ -1327,40 +1344,45 @@ def _safe_parents(root: Path, directory: Path) -> None:
 
 
 def _fsync_directory(directory: Path) -> None:
-    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    descriptor = oh_service._open_root(directory)
     try:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
 
 
-def _replace(target: Path, data: bytes, mode: int) -> None:
+def _replace(target: Path, data: bytes, mode: int, *, dir_fd: int | None = None) -> None:
     """Write target by renaming a new file over it: needs only the right to
     write its directory, whoever owns the old file. Both the contents and the
     rename are durable before this returns."""
-    handle, temp = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".deploy", dir=target.parent)
+    if dir_fd is not None:
+        oh_access_files.replace_at(dir_fd, target.name, data, mode, suffix=".deploy")
+        return
     try:
-        with os.fdopen(handle, "wb") as out:
-            out.write(data)
-            out.flush()
-            os.fchmod(out.fileno(), mode)
-            os.fsync(out.fileno())
-        os.replace(temp, target)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(temp)
-        raise
-    _fsync_directory(target.parent)
+        dfd = oh_access_files.open_directory(target.parent)
+    except OSError as exc:
+        raise DeployError(f"refusing non-directory or symlink deployment parent {target.parent}: {exc}") from exc
+    try:
+        oh_access_files.replace_at(dfd, target.name, data, mode, suffix=".deploy")
+    finally:
+        os.close(dfd)
 
 
 def _shared_write(target: Path, data: str, *, append: bool = False) -> None:
     """Keep path-unit close events and give a newly created record mode0660."""
     try:
-        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, FILE_MODE)
-    except FileExistsError:
-        descriptor = os.open(target, os.O_WRONLY | os.O_NONBLOCK | os.O_NOFOLLOW | (os.O_APPEND if append else 0))
-    else:
-        os.fchmod(descriptor, FILE_MODE)
+        dfd = oh_access_files.open_directory(target.parent)
+    except OSError as exc:
+        raise DeployError(f"refusing non-directory or symlink deployment parent {target.parent}: {exc}") from exc
+    try:
+        try:
+            descriptor = os.open(target.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, FILE_MODE, dir_fd=dfd)
+        except FileExistsError:
+            descriptor = os.open(target.name, os.O_WRONLY | os.O_NONBLOCK | os.O_NOFOLLOW | (os.O_APPEND if append else 0), dir_fd=dfd)
+        else:
+            os.fchmod(descriptor, FILE_MODE)
+    finally:
+        os.close(dfd)
     with os.fdopen(descriptor, "a" if append else "w", encoding="utf-8") as output:
         info = os.fstat(output.fileno())
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
@@ -1372,12 +1394,16 @@ def _shared_write(target: Path, data: str, *, append: bool = False) -> None:
 
 def _prune(root: Path, directory: Path) -> None:
     """Remove directories a removal left empty, up to (not including) root."""
-    while directory != root and root in directory.parents:
-        try:
-            directory.rmdir()
-        except OSError:
-            return
-        directory = directory.parent
+    if directory == root or root not in directory.parents:
+        return
+    try:
+        root_fd = oh_service._open_root(root)
+    except OSError:
+        return
+    try:
+        oh_access_files.prune_at(root_fd, directory.relative_to(root).parts)
+    finally:
+        os.close(root_fd)
 
 
 def sync(files: dict[str, Blob], target: Path, previous: Iterable[str] = (), dry_run: bool = False) -> Changes:
@@ -1387,37 +1413,85 @@ def sync(files: dict[str, Blob], target: Path, previous: Iterable[str] = (), dry
     target = Path(target)
     changes = Changes()
     obsolete = sorted(set(previous) - set(files))
+    if not files and not obsolete:
+        return changes
+    try:
+        root_fd = oh_service._open_root(target)
+    except OSError as exc:
+        raise DeployError(f"refusing non-directory or symlink deployment parent {target}: {exc}") from exc
+
+    def open_parent(parts: tuple[str, ...], directory: Path, *, create: bool = False) -> int | None:
+        try:
+            return oh_access_files.open_tree_dir(root_fd, parts, create=create, mode=DIR_MODE)
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise DeployError(f"refusing non-directory or symlink deployment parent {directory}: {exc}") from exc
 
     def remove(path: str) -> None:
-        destination = target / _relative(path)
-        _safe_parents(target, destination.parent)
-        if destination.is_symlink() or destination.is_file():
-            changes.removed.append(path)
-            if not dry_run:
-                destination.unlink()
-                _prune(target, destination.parent)
+        relative = _relative(path)
+        parts = tuple(relative.split("/"))
+        parent_parts, name = parts[:-1], parts[-1]
+        destination = target / relative
+        parent_fd = open_parent(parent_parts, destination.parent)
+        if parent_fd is None:
+            return
+        removed = False
+        try:
+            try:
+                info = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                return
+            if stat.S_ISLNK(info.st_mode) or stat.S_ISREG(info.st_mode):
+                changes.removed.append(path)
+                if not dry_run:
+                    removed = oh_access_files.unlink_at(parent_fd, name)
+        finally:
+            os.close(parent_fd)
+        if removed and parent_parts:
+            oh_access_files.prune_at(root_fd, parent_parts)
 
-    # A renamed/split script must not coexist on disk with its replacement:
-    # both define command rules. This also orders the reverse rollback safely.
-    scripts = {path for path in obsolete if path.startswith("automation/js/") and path.endswith(".js")}
-    for path in sorted(scripts):
-        remove(path)
-    for path in sorted(files):
-        destination = target / _relative(path)
-        _safe_parents(target, destination.parent)
-        blob = files[path]
-        if _same(destination, blob):
-            changes.unchanged += 1
-            continue
-        if destination.is_dir() and not destination.is_symlink():
-            raise DeployError(f"{destination} is a directory; the commit has a file there")
-        (changes.changed if destination.exists() or destination.is_symlink() else changes.added).append(path)
-        if not dry_run:
-            _make_dirs(target, destination.parent)
-            _replace(destination, blob.data, PROGRAM_MODE if blob.program else FILE_MODE)
-    for path in obsolete:
-        if path not in scripts:
+    try:
+        # A renamed/split script must not coexist on disk with its replacement:
+        # both define command rules. This also orders the reverse rollback safely.
+        scripts = {path for path in obsolete if path.startswith("automation/js/") and path.endswith(".js")}
+        for path in sorted(scripts):
             remove(path)
+        for path in sorted(files):
+            relative = _relative(path)
+            parts = tuple(relative.split("/"))
+            parent_parts, name = parts[:-1], parts[-1]
+            destination = target / relative
+            blob = files[path]
+            parent_fd = open_parent(parent_parts, destination.parent)
+            try:
+                if parent_fd is None:
+                    changes.added.append(path)
+                    if not dry_run:
+                        parent_fd = open_parent(parent_parts, destination.parent, create=True)
+                        assert parent_fd is not None
+                        _replace(destination, blob.data, PROGRAM_MODE if blob.program else FILE_MODE, dir_fd=parent_fd)
+                    continue
+                if _same_at(parent_fd, name, blob):
+                    changes.unchanged += 1
+                    continue
+                try:
+                    info = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    info = None
+                if info is not None and stat.S_ISDIR(info.st_mode):
+                    raise DeployError(f"{destination} is a directory; the commit has a file there")
+                (changes.changed if info is not None else changes.added).append(path)
+                if not dry_run:
+                    _replace(destination, blob.data, PROGRAM_MODE if blob.program else FILE_MODE, dir_fd=parent_fd)
+            finally:
+                if parent_fd is not None:
+                    os.close(parent_fd)
+        for path in obsolete:
+            if path not in scripts:
+                remove(path)
+    finally:
+        os.close(root_fd)
     changes.removed.sort()
     return changes
 
@@ -1491,9 +1565,15 @@ def _settle_pending(layout: State, commit: str, remaining: dict[str, list[str]])
     if remaining:
         _write_pending(layout, commit, remaining)
         return
-    with contextlib.suppress(FileNotFoundError):
-        layout.pending.unlink()
-        _fsync_directory(layout.records)
+    try:
+        dfd = oh_access_files.open_directory(layout.records)
+    except OSError as exc:
+        raise DeployError(f"refusing non-directory or symlink deployment parent {layout.records}: {exc}") from exc
+    try:
+        if oh_access_files.unlink_at(dfd, layout.pending.name):
+            os.fsync(dfd)
+    finally:
+        os.close(dfd)
 
 
 def preflight(layout: State) -> None:
@@ -1680,19 +1760,17 @@ def deploy_metrics(layout: State, how: str, clock=time.time) -> bool:
             "# TYPE thermite_deploy_timestamp_seconds gauge\n"
             f'thermite_deploy_timestamp_seconds{{how="{"rollback" if how == "rollback" else "deploy"}"}} '
             f"{clock():.3f}\n")
-    temporary = directory / f".{DEPLOY_TEXTFILE}.{os.getpid()}.tmp"
     try:
-        if not directory.is_dir() or directory.is_symlink():
-            return False
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, TEXTFILE_FILE_MODE)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-            os.fchmod(output.fileno(), TEXTFILE_FILE_MODE)
-            output.write(text)
-        os.replace(temporary, directory / DEPLOY_TEXTFILE)
+        dfd = oh_service._open_root(directory)
+    except OSError:
+        return False
+    try:
+        oh_access_files.replace_at(dfd, DEPLOY_TEXTFILE, text.encode("utf-8"), TEXTFILE_FILE_MODE, sync=False)
         return True
     except OSError:
-        temporary.unlink(missing_ok=True)
         return False
+    finally:
+        os.close(dfd)
 
 
 #: The gateway's public trust certificate in its root (oh_install.access).

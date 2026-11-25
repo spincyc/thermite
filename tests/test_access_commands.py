@@ -131,5 +131,66 @@ class Installer(Accepted, deployment.GatewayFixture):
         self.assertEqual(ran, {"verify": gateway.release / "config.json", "migrate": gateway.release / "config.json"})
 
 
+class CliBehavior(unittest.TestCase):
+    def test_login_prints_every_tui_problem_line(self):
+        from oh_cli import access as access_cli, tui
+        err = io.StringIO()
+        with patch.object(tui, "resolve", return_value="https://thermite.example:13601"), \
+                patch.object(tui, "trust", side_effect=tui.Problem("first diagnostic", "second hint")), \
+                contextlib.redirect_stderr(err):
+            code = access_cli.main(["login", "--url", "https://thermite.example:13601", "--user", "operator"])
+        self.assertEqual(code, 2)
+        self.assertIn("thermite access: first diagnostic", err.getvalue())
+        self.assertIn("thermite access: second hint", err.getvalue())
+
+    def test_terminal_subcommands_honor_json_flag_and_emit_human_output_without_it(self):
+        import json
+        from oh_access import client
+        from oh_cli import access as access_cli, tui
+        sample = {"origin": "https://thermite.example:13601",
+                  "user": {"username": "operator", "admin": False, "can_edit": True}, "policies": {}}
+        with patch.object(tui, "resolve", return_value="https://thermite.example:13601"), \
+                patch.object(client, "status", return_value=sample):
+            out_json = io.StringIO()
+            with contextlib.redirect_stdout(out_json):
+                self.assertEqual(access_cli.main(["status", "--url", "https://thermite.example:13601", "--json"]), 0)
+            lines = out_json.getvalue().splitlines()
+            self.assertEqual(len(lines), 1, "--json emits one canonical line via oh_cli.emit()")
+            self.assertEqual(json.loads(lines[0]), sample)
+            out_human = io.StringIO()
+            with contextlib.redirect_stdout(out_human):
+                self.assertEqual(access_cli.main(["status", "--url", "https://thermite.example:13601"]), 0)
+            self.assertIn("operator (editor)", out_human.getvalue())
+
+    def test_logout_removes_locally_expired_credential(self):
+        from oh_access import client
+        from oh_access.files import json_private
+        with tempfile.TemporaryDirectory() as home:
+            url = "https://thermite.example:13601"
+            cred = client.credential_path(url, home)
+            ca = client.ca_path(cred)
+            fake_token = "thm_" + "a" * 40  # lint: allow (fictional)
+            json_private(cred, {"version": 1, "origin": url, "token": fake_token,
+                                "id": "tok-1", "expires_at": "2020-01-01T00:00:00Z"})
+            json_private(ca, {"version": 1, "ca_file": "/nonexistent/ca.pem"})
+            called = []
+            result = client.logout(url, config_home=home, http=lambda *a, **kw: called.append(a))
+            self.assertEqual(result, {"origin": url, "logged_out": True})
+            self.assertEqual(called, [])
+            self.assertFalse(cred.exists())
+            self.assertFalse(ca.exists())
+
+    def test_init_json_emits_single_canonical_line(self):
+        import json
+        from oh_cli import init as init_cli
+        out = io.StringIO()
+        with patch.object(init_cli, "initialize", return_value={"application": "0.1.0", "site": "/tmp/x"}), \
+                contextlib.redirect_stdout(out):
+            self.assertEqual(init_cli.main(["--json", "/tmp/x"]), 0)
+        lines = out.getvalue().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(json.loads(lines[0]), {"application": "0.1.0", "site": "/tmp/x"})
+
+
 if __name__ == "__main__":
     unittest.main()

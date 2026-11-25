@@ -269,6 +269,57 @@ class PeerBudget(SimpleTestCase):
         self.assertEqual(statuses, [None, None, 429, None, None, None, 429, None])
         self.assertEqual(left, (0, {}))
 
+    def test_http2_refusals_omit_connection_close_while_http11_keeps_it(self):
+        async def exercise():
+            async def refused_headers(http_version, kind):
+                sent = []
+
+                async def send(message):
+                    sent.append(message)
+
+                if kind == "gateway_busy":
+                    admission = service.Admission(held, limit=0)
+                    scope = {"type": "http", "http_version": http_version, "client": ("192.0.2.10", 40000), "path": "/"}
+                    await admission(scope, lambda: asyncio.sleep(0, {"type": "http.request", "body": b"", "more_body": False}), send)
+                elif kind == "peer_busy":
+                    admission = service.Admission(held, limit=10, peer_limit=1)
+                    first = Call(admission, "192.0.2.10")
+                    await asyncio.sleep(0)
+                    try:
+                        scope = {"type": "http", "http_version": http_version, "client": ("192.0.2.10", 40000), "path": "/"}
+                        await admission(scope, lambda: asyncio.sleep(0, {"type": "http.request", "body": b"", "more_body": False}), send)
+                    finally:
+                        await first.leave()
+                else:
+                    async def reader(scope, receive, send):
+                        while (await receive())["type"] == "http.request":
+                            pass
+
+                    async def slow_receive():
+                        await asyncio.sleep(5)
+                        return {"type": "http.request", "body": b"", "more_body": False}
+
+                    admission = service.Admission(reader, body_seconds=0.05)
+                    scope = {"type": "http", "http_version": http_version, "client": ("192.0.2.10", 40000), "path": "/"}
+                    await admission(scope, slow_receive, send)
+                start = next(msg for msg in sent if msg["type"] == "http.response.start")
+                return start["status"], dict(start["headers"])
+
+            results = {}
+            for version in ("1.1", "2"):
+                for kind in ("gateway_busy", "peer_busy", "body_overdue"):
+                    results[(version, kind)] = await refused_headers(version, kind)
+            return results
+
+        with patch.object(trail, "warnings", trail.Limited()), self.assertLogs("oh_identity.trail", "WARNING"):
+            results = asyncio.run(exercise())
+        expected_status = {"gateway_busy": 503, "peer_busy": 429, "body_overdue": 408}
+        for kind, status in expected_status.items():
+            self.assertEqual(results[("1.1", kind)][0], status)
+            self.assertEqual(results[("1.1", kind)][1].get(b"connection"), b"close")
+            self.assertEqual(results[("2", kind)][0], status)
+            self.assertNotIn(b"connection", results[("2", kind)][1])
+
     def test_a_peer_keeps_its_event_streams_and_a_full_connection_beside_them(self):
         config = service.listener(HOST, 13601)
         admission = service.Admission(None)

@@ -1,8 +1,8 @@
 /*
  * The handheld remote's radio frames and its end of a session
- * (handheld/PROTOCOL.md). The bridge's end is handheld/link.js. No I/O and
- * no allocation: tl_remote_t is plain data, so it can live in RTC memory
- * across deep sleep, and the key is passed to each call.
+ * (handheld/PROTOCOL.md). The bridge's end is handheld/link.js. No I/O:
+ * tl_remote_t is plain data, so it can live in RTC memory across deep sleep,
+ * and the key is passed to each call.
  */
 #pragma once
 
@@ -19,6 +19,7 @@ extern "C" {
 #define TL_TAG 16
 #define TL_FRAME_MAX 1470
 #define TL_PART_MAX (TL_FRAME_MAX - TL_HEADER - TL_TAG)
+#define TL_PARTS_MAX 16
 #define TL_MESSAGE_MAX 8192
 #define TL_KEY_LEN 32
 
@@ -54,7 +55,9 @@ typedef struct {
 /* Gathers one incoming message. Keep it in ordinary memory. */
 typedef struct {
     uint8_t data[TL_MESSAGE_MAX + 1]; /* NUL-terminated once complete */
-    size_t last_length;
+    uint16_t offsets[TL_PARTS_MAX];
+    uint16_t lengths[TL_PARTS_MAX];
+    size_t used;
     uint16_t received;
     uint8_t message;
     uint8_t count;
@@ -86,6 +89,9 @@ tl_event_t tl_remote_receive(tl_remote_t *remote, tl_assembler_t *assembler, con
 
 /* The nonce as the SYNC prints it: 16 lower-case hex digits and a NUL. */
 void tl_hex(uint64_t value, char out[17]);
+
+/* Scrubs sensitive memory (keys, console buffers) in a way the compiler will not elide. */
+void tl_zeroize(void *buf, size_t len);
 
 #ifdef __cplusplus
 }

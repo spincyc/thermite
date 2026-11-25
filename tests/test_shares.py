@@ -181,8 +181,8 @@ class Rendered(unittest.TestCase):
         for line in ("PartOf=thermite.target", "Wants=network-online.target",
                      "After=network-online.target nss-lookup.target", "Slice=thermite.slice", "Type=oneshot",
                      "RemainAfterExit=yes", "TimeoutStartSec=60",
-                     "ExecStart=/usr/bin/sh -c 'until /usr/bin/getent ahosts %i >/dev/null; "
-                     "do /usr/bin/sleep 1; done'"):
+                     "ExecStart=/usr/bin/sh -c 'until /usr/bin/getent ahosts \"$1\" >/dev/null; "
+                     "do /usr/bin/sleep 1; done' thermite-share-gate %i"):
             self.assertIn(line, lines)
         self.assertFalse([line for line in lines if line.startswith("WantedBy=")])
 
@@ -472,7 +472,7 @@ class Credentials(unittest.TestCase):
         found = mock_system(stats={copy: Stat(1000, 1000, 0o600, False, 10.0)})
         self.assertEqual(step.check(found).detail, f"to install: {target}")
         self.assertEqual([action.argv for action in step.actions(found)], [
-            ("python3", "-I", "-B", str(ctx.program / "lib/oh_install/secrets.py"), "--share", "music", "--source", str(copy))])
+            ("/usr/bin/python3", "-I", "-B", str(ctx.program / "lib/oh_install/secrets.py"), "--share", "music", "--source", str(copy))])
         self.assertTrue(all(action.root for action in step.actions(found)))
         found = mock_system(stats={copy: Stat(1000, 1000, 0o600, False, 10.0), target: Stat(0, 0, 0o600, False, 20.0)})
         self.assertTrue(step.check(found).done)

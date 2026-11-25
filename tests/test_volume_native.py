@@ -108,7 +108,7 @@ def profiles(conf):
     on_scale = re.search(r"^function onScale\(scale, command\) \{\n.*?^\}$", rule, re.M | re.S).group()
     return {
         "fixture_avr": next(iter(avr["channels"].values()))["commandFromItemScript"][1:],
-        "fixture_arc": next(iter(arc["channels"].values()))["toHandlerScript"][1:],
+        "fixture_arc": next(iter(arc["channels"].values()))["commandFromItemScript"][1:],
         "fixture_wiim": re.fullmatch(r"JS\(\|(.*)\)", wiim["commandTransformation"][0], re.S).group(1),
         # The Sony rule sends setAudioVolume only for a command onScale() passes.
         "example_tv": ("(function () { " + number + "\n" + on_scale + "\nreturn onScale("

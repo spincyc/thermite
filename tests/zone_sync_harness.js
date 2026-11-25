@@ -678,6 +678,33 @@ test('compatible independent watchers keep the override until the last of them l
   }
 });
 
+test('moved() sends an unmanaged synced zone input even when lifecycle is enabled', () => {
+  const custom = JSON.parse(JSON.stringify(TABLES.lifecycle));
+  delete custom.lifecycle.resources[ZONE2];
+  for (const res of Object.values(custom.lifecycle.resources)) {
+    for (const deps of Object.values(res.requires || {})) delete deps[ZONE2];
+  }
+  for (const endpoint of Object.values(custom.lifecycle.endpoints)) {
+    for (const choice of Object.values(endpoint.choices)) {
+      delete choice.requirements[ZONE2];
+      delete choice.release[ZONE2];
+      delete choice.deactivate[ZONE2];
+      if (choice.leases) delete choice.leases[ZONE2];
+      choice.preserve = (choice.preserve || []).filter(name => name !== ZONE2);
+    }
+  }
+  custom.lifecycle.consumers = (custom.lifecycle.consumers || []).map(c => {
+    const req = { ...c.requirements }; delete req[ZONE2]; return { ...c, requirements: req };
+  }).filter(c => Object.keys(c.requirements).length > 0);
+  const w = load(custom);
+  w.command(CINEMA, COMPUTER); w.settle();
+  w.command(LOUNGE, COMPUTER); w.settle();
+  assert(w.sent.some(([name, value]) => name === ZONE2 && value === 'BD'), JSON.stringify(w.sent));
+  w.sent.length = 0;
+  w.command(CINEMA, DISC); w.settle();
+  assert(w.sent.some(([name, value]) => name === ZONE2 && value === 'AUX2'), JSON.stringify(w.sent));
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
   try { fn(); } catch (error) { failed += 1; process.stderr.write(`${name}\n${error.stack}\n`); }

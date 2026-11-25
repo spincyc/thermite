@@ -33,9 +33,10 @@ class StreamCapAndStarvedAlert(SimpleTestCase):
         self.assertEqual(slots.per_peer, streams.PEER_STREAMS)
         releases = []
         try:
-            while (release := slots.acquire("192.0.2.1")) is not None:
-                releases.append(release)
+            while (acquired := slots.acquire("192.0.2.1"))[0] is not None:
+                releases.append(acquired[0])
                 metrics.observe("stream_open", fields)
+            self.assertEqual(acquired, (None, "peer"))
             metrics.refresh_streams()
             held = metrics.SSE_PEER_MAX.labels("1.1")._value.get()
         finally:

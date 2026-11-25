@@ -81,10 +81,17 @@ function create(options) {
     };
     remotes.set(entry.mac, remote);
     remote.unsubscribe = session.subscribe((event) => heard(remote, event));
-    session.start().then(() => {
+    const prepare = backend.access && !backend.access.native && backend.access.ready
+      ? Promise.resolve().then(() => backend.access.ready())
+      : Promise.resolve();
+    prepare.then(() => {
+      if (remote.removed) return;
+      return session.start();
+    }).then(() => {
       if (remote.removed) return;
       remote.ready = true;
-      log(remote.name + ": in " + session.current().label);
+      const room = session.current();
+      log(remote.name + ": " + (room ? "in " + room.label : "no routed rooms"));
       mark(remote);
     }, (error) => onError(error));
     return remote;
@@ -134,16 +141,27 @@ function create(options) {
     const result = remote.end.receive(frame);
     if (!result) return false;
     if (result.hello) {
-      result.frames.forEach((sync) => send(remote.mac, sync, (ok) => delivered(remote, ok)));
-      // The new session's DATA starts over; what the remote shows does not.
-      status(remote, result.hello);
+      // A pending HELLO keeps the active session alive; a failed pending SYNC must not disturb it.
+      const done = result.pending ? () => {} : (ok) => delivered(remote, ok);
+      result.frames.forEach((sync) => send(remote.mac, sync, done));
+      if (!result.pending) {
+        // Cold start: the new session's DATA starts over; what the remote shows does not.
+        status(remote, result.hello);
+        remote.awake = true;
+        remote.sleeping = false;
+        remote.ack = null;
+        mark(remote);
+      }
+      return true;
+    }
+    if (result.promoted) {
+      status(remote, result.promoted);
       remote.awake = true;
       remote.sleeping = false;
       remote.ack = null;
       mark(remote);
-      return true;
     }
-    message(remote, result.message);
+    if (result.message) message(remote, result.message);
     return true;
   }
 
@@ -194,18 +212,21 @@ function create(options) {
   // The operations, in PROTOCOL.md's order; a value of the wrong shape does nothing.
   function apply(remote, fields) {
     const session = remote.session;
-    const key = fields.key;
-    if (Array.isArray(key) && key.length && key.length <= KEYS_MAX
-        && key.every((id) => typeof id === "string" && Object.prototype.hasOwnProperty.call(shared.layouts.buttons, id))) {
-      session.pressKey(key);
-    }
-    if (typeof fields.bubble === "string") {
-      const item = session.bubbles(session.controls()).find((candidate) => candidate.id === fields.bubble);
-      if (item) session.tapBubble(item);
+    const current = session.current();
+    if (current) {
+      const key = fields.key;
+      if (Array.isArray(key) && key.length && key.length <= KEYS_MAX
+          && key.every((id) => typeof id === "string" && Object.prototype.hasOwnProperty.call(shared.layouts.buttons, id))) {
+        session.pressKey(key);
+      }
+      if (typeof fields.bubble === "string") {
+        const item = session.bubbles(session.controls()).find((candidate) => candidate.id === fields.bubble);
+        if (item) session.tapBubble(item);
+      }
     }
     if (typeof fields.room === "string" && session.room(fields.room)) session.selectRoom(fields.room);
     if (fields.allOff === true) session.allOff();
-    if (fields.input !== undefined && session.inputsOf()
+    if (current && fields.input !== undefined && session.inputsOf()
         && session.inputOptions().some((option) => option.value === fields.input)) {
       session.chooseInput(fields.input);
     }

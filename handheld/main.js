@@ -100,12 +100,47 @@ function main(argv) {
     return 2;
   }
   const parts = assemble(args);
+  const access = parts.access;
   let base = null;
+  let policies = null;
+  let finishing = false;
+  let stopAccess = () => {};
   const bridge = Bridge.create({
     shared: parts.shared, backend: parts.backend, log,
-    send: (mac, frame, done) => base.send(mac, frame, done),
+    send: (mac, frame, done) => (base ? base.send(mac, frame, done) : setImmediate(() => (done || (() => {}))(false))),
     onStatus: (mac, status) => state.status(mac, status)
   });
+  const finish = (status) => {
+    if (finishing) process.exit(status);
+    finishing = true;
+    clearInterval(policies);
+    stopAccess();
+    bridge.remotes().map((remote) => remote.mac).forEach((mac) => bridge.remove(mac));
+    if (base) base.close();
+    state.close();
+    if (parts.backend.stop) parts.backend.stop();
+    const report = access && access.flushTelemetry ? access.flushTelemetry(true).catch(() => null) : null;
+    if (!report) {
+      process.exit(status);
+      return;
+    }
+    const timer = setTimeout(() => process.exit(status), 1000);
+    if (timer.unref) timer.unref();
+    Promise.resolve(report).finally(() => {
+      clearTimeout(timer);
+      process.exit(status);
+    });
+  };
+  ["SIGTERM", "SIGINT", "SIGHUP"].forEach((signal) => process.on(signal, () => finish(0)));
+  if (access && !access.native && access.subscribe) {
+    stopAccess = access.subscribe((event) => {
+      if (event.type !== "unauthorized") return;
+      log(event.guest
+        ? "access settings changed on the gateway (unauthorized); exiting"
+        : "sign-in ended or credential rejected (unauthorized); exiting");
+      finish(1);
+    });
+  }
   const enrolled = new Map();
   const load = (list) => {
     const wanted = new Map(list.map((entry) => [entry.mac, entry]));
@@ -123,45 +158,53 @@ function main(argv) {
       log(entry.name + " (" + mac + ") enrolled");
     });
   };
-  load(state.remotes());
-  if (!enrolled.size) log("no remote is enrolled yet: thermite handheld enroll --name NAME");
-  state.watch(load);
-  // The shared access client follows one room's lock; the others a remote shows are read too.
-  const access = parts.access;
-  const policies = setInterval(() => {
-    if (!access || access.native || access.mock || !access.accountsExist()) return;
-    const rooms = new Set(bridge.remotes().filter((remote) => remote.ready && remote.awake)
-      .map((remote) => remote.session.current().id));
-    rooms.forEach((room) => access.loadPolicy(room).catch(() => {}));
-  }, POLICY_EVERY_MS);
-  policies.unref();
-  let unknown = 0;
-  let said = "";
-  base = Base.connect({
-    port: args.port, listen: args.listen, byId: args.byId, log,
-    onBase: (entry) => {
-      state.setBase(entry);
-      const text = "base " + entry.mac + " on channel " + entry.channel + ", firmware " + entry.fw;
-      if (text !== said) log(text);
-      said = text;
-    },
-    onFrame: (mac, frame) => {
-      if (bridge.receive(mac, frame) || bridge.remote(mac)) return;
-      // A frame from a remote not enrolled: said once in a while, not for each frame.
-      if (unknown++ % 50 === 0) log("dropped a frame from " + mac + ", which is not enrolled");
-    }
-  });
-  let finishing = false;
-  const finish = (status) => {
-    if (finishing) process.exit(status);
-    finishing = true;
-    base.close();
-    state.close();
-    if (parts.backend.stop) parts.backend.stop();
-    process.exit(status);
+  const start = () => {
+    if (finishing) return;
+    load(state.remotes());
+    if (!enrolled.size) log("no remote is enrolled yet: thermite handheld enroll --name NAME");
+    state.watch(load);
+    // The shared access client follows one room's lock; the others a remote shows are read too.
+    policies = setInterval(() => {
+      if (!access || access.native || access.mock || !access.accountsExist()) return;
+      const rooms = new Set(bridge.remotes().filter((remote) => remote.ready && remote.awake)
+        .map((remote) => remote.session.current())
+        .filter(Boolean)
+        .map((room) => room.id));
+      rooms.forEach((room) => access.loadPolicy(room).catch(() => {}));
+    }, POLICY_EVERY_MS);
+    policies.unref();
+    let unknown = 0;
+    let said = "";
+    base = Base.connect({
+      port: args.port, listen: args.listen, byId: args.byId, log,
+      onBase: (entry) => {
+        state.setBase(entry);
+        const text = "base " + entry.mac + " on channel " + entry.channel + ", firmware " + entry.fw;
+        if (text !== said) log(text);
+        said = text;
+      },
+      onFrame: (mac, frame) => {
+        if (bridge.receive(mac, frame) || bridge.remote(mac)) return;
+        // A frame from a remote not enrolled: said once in a while, not for each frame.
+        if (unknown++ % 50 === 0) log("dropped a frame from " + mac + ", which is not enrolled");
+      }
+    });
+    log("serving " + (args.mock ? "the mock house" : args.url) + " to " + enrolled.size + " remote" + (enrolled.size === 1 ? "" : "s"));
   };
-  ["SIGTERM", "SIGINT", "SIGHUP"].forEach((signal) => process.on(signal, () => finish(0)));
-  log("serving " + (args.mock ? "the mock house" : args.url) + " to " + enrolled.size + " remote" + (enrolled.size === 1 ? "" : "s"));
+  if (access && !access.native && access.ready) {
+    access.ready().then(start, (error) => {
+      if (finishing) return;
+      if (error && error.status === 401) {
+        log("authorization failed: " + error.message);
+        finish(1);
+        return;
+      }
+      log("gateway access check failed (" + ((error && error.message) || error) + "); continuing");
+      start();
+    });
+  } else {
+    start();
+  }
   return null;
 }
 

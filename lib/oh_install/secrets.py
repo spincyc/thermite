@@ -428,8 +428,12 @@ def main(argv=None):
             values.pop("runtime_url")
             values.pop("share")
             result = install(**values)
-    except (OSError, SecretError):
-        print("thermite credential: operation refused; check finite paths, file custody and service identity", file=sys.stderr)
+    except SecretError as exc:
+        print(f"thermite credential: operation refused: {exc}", file=sys.stderr)
+        return 2
+    except OSError as exc:
+        detail = exc.strerror or type(exc).__name__
+        print(f"thermite credential: operation refused: {detail}", file=sys.stderr)
         return 2
     print(json.dumps(result, sort_keys=True))
     return 0

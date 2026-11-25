@@ -201,8 +201,18 @@ def main(argv=None):
             return 0
         artifacts = expected(value == b"Y")
         changed = [str(path) for path, content in artifacts.items() if _write(path, content)]
-    except (OSError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        print("node confinement: operation refused; check administrative file custody and kernel status", file=sys.stderr)
+    except ValueError as exc:
+        print(f"node confinement: operation refused: {exc}", file=sys.stderr)
+        return 2
+    except OSError as exc:
+        detail = exc.strerror or type(exc).__name__
+        print(f"node confinement: operation refused: {detail}", file=sys.stderr)
+        return 2
+    except subprocess.CalledProcessError as exc:
+        print(f"node confinement: operation refused: parser exited with status {exc.returncode}", file=sys.stderr)
+        return 2
+    except subprocess.TimeoutExpired:
+        print("node confinement: operation refused: parser timed out", file=sys.stderr)
         return 2
     print(json.dumps({"installed": True, "apparmor": value == b"Y", "changed": changed}))
     return 0

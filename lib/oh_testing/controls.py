@@ -398,6 +398,7 @@ class Check:
                             offered = {**offered, "input": {"item": stage["input"],
                                                            "options": [[value, value] for value in stage["inputs"]]}}
                     self.controls[device["id"]] = (module, offered)
+                    break
         if not self.controls:
             raise lib.SandboxError("no device in instance/devices.yaml is under control")
         missing = sorted({m.NAME for m, _ in self.controls.values()} - set(STAND_INS))

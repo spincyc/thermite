@@ -679,6 +679,29 @@ class RootHelperBytecodeIsolation(unittest.TestCase):
         self.assertFalse(self.marker.exists())
         self.assertEqual(self.tree(program), before)
 
+    def test_secrets_and_apparmor_preserve_safe_diagnostics_without_leaking_secrets(self):
+        import io
+        from contextlib import redirect_stderr
+        import oh_apparmor
+        from oh_install import secrets as install_secrets
+
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code = install_secrets.main(["--share", "photos", "--uid", "9001", "--source", "/tmp/unused"])
+        self.assertEqual(code, 2)
+        self.assertIn("operation refused", err.getvalue())
+        self.assertIn("invalid share credential arguments", err.getvalue())
+
+        err2 = io.StringIO()
+        missing = self.root / "missing-apparmor"
+        with patch.object(oh_apparmor.os, "geteuid", return_value=0), \
+                patch.object(oh_apparmor, "MODULE_ENABLED", missing), \
+                redirect_stderr(err2):
+            code2 = oh_apparmor.main(["--verify", oh_apparmor.PARSERS[0]])
+        self.assertEqual(code2, 2)
+        self.assertIn("operation refused", err2.getvalue())
+        self.assertIn("verification requires an enabled AppArmor kernel", err2.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

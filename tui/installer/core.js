@@ -25,6 +25,7 @@ function create(child) {
   };
   child.on("exit", () => fail(new Error("the installer core stopped")));
   child.on("error", fail);
+  if (child.stdin) child.stdin.on("error", fail);
 
   function receive(line) {
     let message;

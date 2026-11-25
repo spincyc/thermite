@@ -196,6 +196,19 @@ class Core(TestCase):
             self.assertEqual(response.status_code, 405)
             self.assertEqual(response["Allow"], "PATCH, DELETE" if path.endswith(str(ident)) else "GET, POST")
 
+    def test_patch_and_delete_user_zero_return_not_found_without_creating_an_account(self):
+        self.signin()
+        before = set(User.objects.values_list("pk", flat=True))
+        patched = self.request("patch", "/api/v1/users/0", {"username": "ghost", "password": PASSPHRASE})
+        self.assertEqual((patched.status_code, patched.json(), patched["Cache-Control"]),
+                         (404, {"error": "not_found"}, "no-store"))
+        deleted = self.request("delete", "/api/v1/users/0")
+        self.assertEqual((deleted.status_code, deleted.json(), deleted["Cache-Control"]),
+                         (404, {"error": "not_found"}, "no-store"))
+        self.assertEqual(set(User.objects.values_list("pk", flat=True)), before)
+        with self.assertRaises(User.DoesNotExist):
+            save_user(self.admin, {"username": "ghost", "password": PASSPHRASE}, 0)
+
     def test_last_admin_and_stale_mutation_actor(self):
         with self.assertRaises(Problem) as caught:
             save_user(self.admin, {"active": False}, self.admin.pk)

@@ -646,7 +646,8 @@ def exporter_map(house: House, conf=None) -> dict:
     for device in house.devices:
         ident = device["id"]
         devices[ident] = {"room": device["room"], "kind": device["kind"], "label": house.label(device),
-                          "things": sorted(things.get(ident, []))}
+                          "things": sorted(things.get(ident, [])),
+                          **({"optional": True} if device.get("monitor") == "optional" else {})}
         kept: dict[str, dict] = {}
         for name, item in conf.points(ident):
             chosen = select_point(name, item)

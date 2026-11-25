@@ -79,6 +79,8 @@ class Host:
         self.system.unit_file.return_value = None
         self.system.unit_origins.side_effect = lambda names: {name: UnitOrigin() for name in names}
         self.system.unit.side_effect = lambda name: Unit("inactive", "disabled", None)
+        self.system.readlink.return_value = None
+        self.system.safe_directory.return_value = True
         self.system.run.side_effect = self.run
         self.system.capture.side_effect = self.capture
         # The started runtime, as the step that switches thermite's rules on reads it: none disabled.
@@ -942,13 +944,34 @@ class Kinds(Fixture):
         releases = self.context.installation.access / "releases"
         installed = {**INSTALLED, "items": [{"path": str(releases), "class": "versioned",
                                              "current": txn_fakes.ID, "previous": txn_fakes.OLD}]}
-        self.host.system.directory_entries.return_value = [txn_fakes.OLD, txn_fakes.ID, "20250101-staged"]
+        stale = "20250101T000000Z-abcdef"
+        self.host.system.directory_entries.return_value = [txn_fakes.OLD, txn_fakes.ID, stale, "20250101-staged", "escape"]
         transaction = changeover.Transaction(self.site / "var", txn_fakes.ID, {
             "root": "/srv/thermite-fixture", "site": str(self.site)})
         with patch.object(manifest, "installed", return_value=installed):
             changeover.retain(self.host.system, transaction)
-        self.assertEqual(self.log, [f"sudo rm -rf --one-file-system -- {releases}/20250101-staged"],
-                         "only the one no manifest records")
+        self.assertEqual(self.log, [f"sudo rm -rf --one-file-system -- {releases}/{stale}"],
+                         "only valid transaction IDs that no manifest records are removed")
+
+    def test_retain_skips_symlinked_releases_directory_or_symlinked_entries(self):
+        self.host = Host(self)
+        releases = self.context.installation.access / "releases"
+        stale = "20250101T000000Z-abcdef"
+        installed = {**INSTALLED, "items": [{"path": str(releases), "class": "versioned",
+                                             "current": txn_fakes.ID, "previous": txn_fakes.OLD}]}
+        self.host.system.directory_entries.return_value = [stale]
+        transaction = changeover.Transaction(self.site / "var", txn_fakes.ID, {
+            "root": "/srv/thermite-fixture", "site": str(self.site)})
+        # Symlinked entry is skipped.
+        self.host.system.readlink.side_effect = lambda p: "/elsewhere" if Path(p) == releases / stale else None
+        with patch.object(manifest, "installed", return_value=installed):
+            changeover.retain(self.host.system, transaction)
+        self.assertEqual(self.log, [])
+        # Symlinked releases directory is refused.
+        self.host.system.readlink.side_effect = lambda p: "/elsewhere" if Path(p) == releases else None
+        with patch.object(manifest, "installed", return_value=installed):
+            changeover.retain(self.host.system, transaction)
+        self.assertEqual(self.log, [])
 
     def test_a_transaction_that_rolled_back_before_its_deploy_is_shown_under_the_one_that_ran(self):
         from oh_cli import history

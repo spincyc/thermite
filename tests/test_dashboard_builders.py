@@ -194,12 +194,13 @@ class Builders(unittest.TestCase):
                 continue
             bars += 1
             self.assertEqual(panel["fieldConfig"]["defaults"]["custom"]["drawStyle"], "bars", where)
-            self.assertEqual(panel["fieldConfig"]["defaults"]["custom"]["barAlignment"], 1, where)
+            self.assertEqual(panel["fieldConfig"]["defaults"]["custom"]["barAlignment"], -1, where)
             for query in panel["targets"]:
-                self.assertTrue(counts_a_bucket(query["expr"], EVENT_BAR, ahead=True), (where, query["expr"]))
+                self.assertTrue(counts_a_bucket(query["expr"], EVENT_BAR, ahead=False), (where, query["expr"]))
                 self.assertEqual(query["interval"], dashboards.EVENT_BUCKET, where)
-        # Seven on Switching & remotes, the commands on Devices and btrfs errors on Host, in each of four houses.
-        self.assertEqual(bars, 4 * 9)
+        # Switching & remotes (6 on example/speakers without executor, 7 on zones with executor, 4 on 0-zone wiim),
+        # plus Commands by outcome on Devices and btrfs errors on Host in each of the four houses.
+        self.assertEqual(bars, 8 + 8 + 9 + 6)
         for _, panel in drawn():
             for config in configs(panel):
                 self.assertNotIn("custom.drawStyle", config, panel["title"])
@@ -214,22 +215,23 @@ class Builders(unittest.TestCase):
                 self.assertTrue(query["interval"], name)
                 # A cell that counts one is drawn where no cell counts less.
                 self.assertEqual(panel["options"]["color"]["min"], 0, name)
-        self.assertEqual(cells, 4)  # Time to switch, in each of four houses
+        self.assertEqual(cells, 3)  # Time to switch, in the three routed houses (0-zone wiim omits it)
 
     def test_events_take_a_counters_name_not_a_query(self):
         self.assertEqual(
-            dashboards._grown("a_total", ahead=True),
-            "((max_over_time(a_total[$__interval] offset -$__interval) - ((last_over_time(a_total[$__interval]) <= "
-            "min_over_time(a_total[$__interval] offset -$__interval)) or (last_over_time(a_total[$__interval]) * 0))) "
-            "and (resets(a_total[$__interval] offset -$__interval) == 0)) "
-            "or increase(a_total[$__interval] offset -$__interval)")
+            dashboards._grown("a_total", ahead=False),
+            "((max_over_time(a_total[$__interval]) - ((last_over_time(a_total[$__interval] offset $__interval) <= "
+            "min_over_time(a_total[$__interval])) or (last_over_time(a_total[$__interval] offset $__interval) * 0))) "
+            "and (resets(a_total[$__interval]) == 0)) "
+            "or increase(a_total[$__interval])")
         self.assertEqual(Count("thermite_route_seconds_count", "{{outcome}}", dashboards.OK, by="outcome").expr(),
                          "round(sum by (outcome) ("
-                         + dashboards._grown("thermite_route_seconds_count", ahead=True) + ")) > 0")
+                         + dashboards._grown("thermite_route_seconds_count", ahead=False) + ")) > 0")
         self.assertEqual(Count("thermite_callbacks_total", "Refused", dashboards.WARN,
                                where='outcome!="forwarded"').expr(),
                          "round(sum ("
-                         + dashboards._grown('thermite_callbacks_total{outcome!="forwarded"}', ahead=True) + ")) > 0")
+                         + dashboards._grown('thermite_callbacks_total{outcome!="forwarded"}', ahead=False) + ")) > 0")
+        self.assertNotIn("offset -$__interval", Count("thermite_callbacks_total", "Calls", dashboards.OK).expr())
         for count in (Count("increase(thermite_callbacks_total[1h])", "Calls", dashboards.OK),
                       Count("thermite_callbacks_total[1h]", "Calls", dashboards.OK),
                       Count("thermite_item_value", "A gauge", dashboards.OK),
@@ -292,7 +294,7 @@ class Words(unittest.TestCase):
         """Every name a legend can make for a client event, a protocol, a
         stream's end, a lock or a worker outcome has words and a colour."""
         from oh_access import metrics
-        switching = BOARDS["example switching.json"]
+        switching = BOARDS["zones switching.json"]
         named = {panel["title"]: {override["matcher"]["options"] for override in panel["fieldConfig"]["overrides"]
                                   if override["matcher"]["id"] == "byName"}
                  for panel in test_metrics.panels(switching) if panel["type"] == "timeseries"}
@@ -474,20 +476,20 @@ class OnSeries(unittest.TestCase):
             f'{changes}{{zone="example_west",outcome="superseded"}}': counter([10, 130, 241, 250], 400,
                                                                              begins_again=241)}
         bars = query("switching", "Source changes by outcome")
-        plain = f"round(sum by (outcome) (increase({changes}[1h] offset -1h))) > 0"
+        plain = f"round(sum by (outcome) (increase({changes}[1h]))) > 0"
         self.shows(inputs, [
-            ("0s", bars, [('{outcome="superseded"}', 1)]),
-            ("1h", bars, [('{outcome="confirmed"}', 15), ('{outcome="superseded"}', 1)]),
-            ("2h", bars, [('{outcome="confirmed"}', 1), ('{outcome="deadline"}', 1), ('{outcome="superseded"}', 2)]),
-            ("1h", plain, [('{outcome="confirmed"}', 15), ('{outcome="superseded"}', 1)]),
-            ("2h", plain, [('{outcome="deadline"}', 2), ('{outcome="superseded"}', 1)]),
+            ("1h", bars, [('{outcome="superseded"}', 1)]),
+            ("2h", bars, [('{outcome="confirmed"}', 15), ('{outcome="superseded"}', 1)]),
+            ("3h", bars, [('{outcome="confirmed"}', 1), ('{outcome="deadline"}', 1), ('{outcome="superseded"}', 2)]),
+            ("2h", plain, [('{outcome="confirmed"}', 15), ('{outcome="superseded"}', 1)]),
+            ("3h", plain, [('{outcome="deadline"}', 2), ('{outcome="superseded"}', 1)]),
         ], last="200m")
 
     def test_an_event_bar_counts_what_a_restarted_service_counted_before_and_after(self):
         # Two events, the counter begins again inside the hour, one more: increase() knows a reset.
         inputs = {'thermite_routing_resends_total{zone="example_west"}': counter([130, 140, 200], 400,
                                                                                 begins_again=150)}
-        self.shows(inputs, [("1h", query("switching", "Resends by room"), [('{zone="example_west"}', 3)])],
+        self.shows(inputs, [("2h", query("switching", "Resends by room"), [('{zone="example_west"}', 3)])],
                    last="200m")
 
     def test_a_heatmap_cell_counts_the_change_between_two_cells(self):
@@ -583,7 +585,7 @@ class OnSeries(unittest.TestCase):
             ("1h", query("devices", "Commands by device", 1), [(tv, 2), (display, 0)]),
             ("1h", query("devices", "Commands by device", 2), [(tv, 20 / 12), (display, 0)]),
             ("1h", query("devices", "Commands by device", 0, device="example_display"), [(display, 1)]),
-            ("0s", query("devices", "Commands by outcome"), [('{outcome="applied"}', 10), ('{outcome="dropped"}', 1),
+            ("1h", query("devices", "Commands by outcome"), [('{outcome="applied"}', 10), ('{outcome="dropped"}', 1),
                                                            ('{outcome="unsent"}', 2)])],
             last="1h")
 

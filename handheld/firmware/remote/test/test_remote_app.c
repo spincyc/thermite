@@ -184,6 +184,22 @@ static void test_console(void)
         }
     }
     CHECK(ready == 2 && too_long == 1, "lines %d/%d", ready, too_long);
+
+    /* Destructive console commands are gated when enrolled unless unrestricted (QEMU). */
+    const char *reason = NULL;
+    CHECK(cp_allowed(CP_ENROLL, false, false, &reason), "enroll allowed when unenrolled");
+    CHECK(cp_allowed(CP_FORGET, false, false, &reason), "forget allowed when unenrolled");
+    CHECK(cp_allowed(CP_HELLO, true, false, &reason), "hello allowed when enrolled");
+    CHECK(cp_allowed(CP_KEY, true, false, &reason), "key allowed when enrolled");
+    CHECK(cp_allowed(CP_TOUCH, true, false, &reason), "touch allowed when enrolled");
+    reason = NULL;
+    CHECK(!cp_allowed(CP_ENROLL, true, false, &reason) && reason && strcmp(reason, "already enrolled") == 0,
+          "enroll refused when enrolled on restricted build");
+    reason = NULL;
+    CHECK(!cp_allowed(CP_FORGET, true, false, &reason) && reason && strcmp(reason, "already enrolled") == 0,
+          "forget refused when enrolled on restricted build");
+    CHECK(cp_allowed(CP_ENROLL, true, true, &reason), "enroll allowed when unrestricted");
+    CHECK(cp_allowed(CP_FORGET, true, true, &reason), "forget allowed when unrestricted");
 }
 
 static void test_power(void)

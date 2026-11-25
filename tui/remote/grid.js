@@ -72,6 +72,7 @@ class Grid {
 
   // A place a click reaches; mark false keeps it out of the focus order.
   hit(x, y, w, h, hit, mark) {
+    if (!hit) return;
     if (mark !== false && hit.focus) this.order.push(hit);
     const left = Math.max(0, x);
     const right = Math.min(this.width, x + w);
@@ -100,10 +101,12 @@ class Grid {
       mend(this.rows[y + row], x, x + Math.min(w, src.width));
     }
     src.hits.forEach((entry) => {
-      if (entry.y < from || entry.y >= from + h) return;
+      const top = Math.max(from, entry.y);
+      const bottom = Math.min(from + h, entry.y + entry.h);
+      if (bottom <= top) return;
       const left = Math.max(0, entry.x);
       const right = Math.min(w, entry.x + entry.w);
-      if (right > left) this.hit(x + left, y + entry.y - from, right - left, 1, entry.hit, false);
+      if (right > left) this.hit(x + left, y + top - from, right - left, bottom - top, entry.hit, false);
     });
   }
 

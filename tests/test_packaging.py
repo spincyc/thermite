@@ -568,3 +568,42 @@ class Packaging(unittest.TestCase):
         command("--config", site, "generate", expected=2)
         self.assertEqual(hashes(site), current)
         self.assertEqual(hashes(program), before, "installed program files must not receive configuration, cache or state")
+
+
+class SymlinkAncestors(unittest.TestCase):
+    def test_public_files_and_export_target_allow_symlinked_ancestors_above_root_and_reject_inside_root(self):
+        import oh_public
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            real_parent = root / "real-parent"
+            real_parent.mkdir()
+            linked_parent = root / "linked-parent"
+            linked_parent.symlink_to(real_parent, target_is_directory=True)
+            # Symlink ancestor two levels above root (not root.parent): must succeed.
+            nested = linked_parent / "sub" / "export"
+            nested.mkdir(parents=True)
+            (nested / "docs").mkdir()
+            (nested / "docs/guide.md").write_text("# guide\n")
+            (nested / oh_public.MANIFEST).write_text(json.dumps({"version": 1, "paths": ["docs/guide.md"]}) + "\n")
+            self.assertEqual(oh_public._target(nested, "docs/guide.md"), nested / "docs/guide.md")
+            with patch.object(oh_public, "guard", return_value=[]):
+                files = oh_package.public_files(nested)
+            self.assertEqual(files, {"docs/guide.md": b"# guide\n"})
+            # Symlink strictly inside root (file or intermediate dir): must fail in both.
+            outside = root / "outside.md"
+            outside.write_text("secret\n")
+            (nested / "docs/link.md").symlink_to(outside)
+            with self.assertRaises(oh_public.PublicError):
+                oh_public._target(nested, "docs/link.md")
+            (nested / oh_public.MANIFEST).write_text(json.dumps({"version": 1, "paths": ["docs/link.md"]}) + "\n")
+            with self.assertRaisesRegex(ValueError, "regular file"):
+                oh_package.public_files(nested)
+            linked_dir = root / "outside-dir"
+            linked_dir.mkdir()
+            (linked_dir / "x.md").write_text("x\n")
+            (nested / "docs/sub").symlink_to(linked_dir, target_is_directory=True)
+            with self.assertRaises(oh_public.PublicError):
+                oh_public._target(nested, "docs/sub/x.md")
+            (nested / oh_public.MANIFEST).write_text(json.dumps({"version": 1, "paths": ["docs/sub/x.md"]}) + "\n")
+            with self.assertRaisesRegex(ValueError, "regular file"):
+                oh_package.public_files(nested)

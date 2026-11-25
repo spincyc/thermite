@@ -67,8 +67,10 @@ A remote whose operation is not acknowledged in time sends HELLO and repeats
 the operation in the new session (see [Operations](#operations)).
 
 Replay protection needs no durable writes. Old frames carry an old session or
-a counter already passed. A replayed HELLO only makes the bridge start a
-session the real remote never adopts. That costs one retry.
+a counter already passed. Recently seen HELLO nonces are dropped outright, and
+while a session is active any fresh HELLO stays pending (without replacing the
+active session or overwriting status) until the remote sends an authenticated
+DATA frame in the new session.
 
 ## Messages
 

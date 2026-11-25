@@ -131,7 +131,7 @@ class Installed(Fixture):
         self.assertTrue(command.root)
         from oh_paths import PROGRAM
         self.assertEqual(command.argv, (
-            "python3", "-I", "-B", str(PROGRAM / "lib/oh_addons.py"), str(self.context.layout.userdata),
+            "/usr/bin/python3", "-I", "-B", str(PROGRAM / "lib/oh_addons.py"), str(self.context.layout.userdata),
             "--versions", str(self.site / "versions.json"), "--store", str(self.store),
             "--uid", str(self.context.host["uid"]), "--gid", str(self.context.host["gid"]),
             "automation-jsscripting", "binding-http"))

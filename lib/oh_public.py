@@ -354,10 +354,12 @@ def _target(root: Path, name: str) -> Path:
                ".github/workflows/pages.yml", ".github/workflows/ci.yml"}
     if name not in allowed and path.parts[0] not in {"docs", "bin", "lib", "site", "web", "tui", "handheld", "tests", "instance", "iso"}:
         raise PublicError("path is outside the managed public source trees")
-    target = root / name
-    if any(p.is_symlink() for p in [target, *target.parents] if p != root.parent):
-        raise PublicError("export refuses symlink targets")
-    return target
+    current = Path(root)
+    for part in path.parts:
+        current = current / part
+        if current.is_symlink():
+            raise PublicError("export refuses symlink targets")
+    return current
 
 
 def compare(root: Path, files: dict[str, bytes]) -> tuple[list[str], list[str]]:

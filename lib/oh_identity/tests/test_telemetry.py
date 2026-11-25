@@ -2,12 +2,16 @@
 wrapper, its event-stream metrics and its finite problem catalogue."""
 
 import json
+import os
 import re
+import stat
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 from asgiref.sync import async_to_sync
-from django.test import Client, SimpleTestCase, TestCase, TransactionTestCase, override_settings
+from django.conf import settings
+from django.test import Client, RequestFactory, SimpleTestCase, TestCase, TransactionTestCase, override_settings
 
 from oh_access import metrics
 from oh_identity import auth, streams, telemetry
@@ -131,6 +135,40 @@ class Endpoint(TestCase):
         response = post(Client(), "x" * (telemetry.REPORT_BYTES + 1))
         self.assertEqual((response.status_code, json.loads(response.content)["error"]), (400, "invalid_telemetry"))
 
+    def test_oversized_body_without_content_length_returns_json_413_with_no_store(self):
+        oversize = b"{" + (b" " * (settings.DATA_UPLOAD_MAX_MEMORY_SIZE + 64)) + b"}"
+        request = RequestFactory().post("/api/v1/telemetry", data=oversize, content_type="application/json", secure=True)
+        request.META["CONTENT_LENGTH"] = ""
+        response = telemetry.report(request)
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(response["Content-Type"], "application/json")
+        self.assertEqual(json.loads(response.content), {"error": "body_too_large"})
+        self.assertEqual(response["Cache-Control"], "no-store")
+
+    def test_same_origin_rejects_scheme_downgrade_and_extra_origin_components(self):
+        client = Client(enforce_csrf_checks=True)
+        bad_origins = (
+            "http://testserver",
+            "https://testserver/extra",
+            "https://testserver/",
+            "https://testserver?a=1",
+            "https://testserver?",
+            "https://testserver#frag",
+            "https://testserver#",
+            "https://user:pass@testserver",
+            "https://user@testserver",
+            "https://[::1",
+        )
+        for origin in bad_origins:
+            with self.subTest(origin=origin):
+                response = post(client, REPORT, Origin=origin)
+                self.assertEqual((response.status_code, json.loads(response.content)["error"]), (403, "invalid_origin"))
+                self.assertEqual(response["Cache-Control"], "no-store")
+        plain = RequestFactory().post("/api/v1/telemetry", HTTP_ORIGIN="https://testserver", secure=False)
+        self.assertFalse(telemetry._same_origin(plain))
+        plain_ok = RequestFactory().post("/api/v1/telemetry", HTTP_ORIGIN="http://testserver", secure=False)
+        self.assertTrue(telemetry._same_origin(plain_ok))
+
 
 async def _receive():
     return {"type": "http.request", "body": b"", "more_body": False}
@@ -210,8 +248,8 @@ class StreamMetering(TransactionTestCase):
             during = hub_samples()
             self.assertEqual(during[("thermite_gateway_upstream_state", (("state", "serving"),))], 1)
             self.assertEqual(during[("thermite_gateway_upstream_state", (("state", "closed"),))], 0)
-            self.assertEqual(during[("thermite_gateway_upstream_connects_total", ())],
-                             before[2][("thermite_gateway_upstream_connects_total", ())] + 1)
+            self.assertNotIn(("thermite_gateway_upstream_connects_total", ()), during)
+            self.assertNotIn(("thermite_gateway_upstream_resyncs_total", ()), during)
             self.assertGreater(during[("thermite_gateway_sse_frames_total", ())],
                                before[2][("thermite_gateway_sse_frames_total", ())])
             for page in pages:
@@ -242,6 +280,70 @@ class StreamMetering(TransactionTestCase):
             samples = hub_samples()
         self.assertEqual(samples[("thermite_gateway_upstream_state", (("state", "closed"),))], 1)
         self.assertEqual(samples[("thermite_gateway_upstream_failures_total", ())], 0)
+
+    def test_hub_join_failure_does_not_leak_open_stream_gauges(self):
+        meta = {"view": "home", "origin": "https", "principal": "guest", "http_version": "2", "peer": "leak-test"}
+        open_streams = metrics.SSE_STREAMS.labels("home", "2")
+        metrics.refresh_streams()
+        before = open_streams._value.get()
+        released = []
+
+        class FailingHub:
+            def join(self, view, m):
+                raise RuntimeError("synthetic join failure")
+
+        async def body():
+            adapter = RuntimeAdapter(contract(), Upstream())
+            gen = streams.stream(adapter, "home", {"guest": True}, release=lambda: released.append(True),
+                                 meta=meta, hub=FailingHub)
+            output = [chunk async for chunk in gen]
+            self.assertEqual(output, [streams.ERROR])
+        async_to_sync(body)()
+        metrics.refresh_streams()
+        self.assertEqual(open_streams._value.get(), before)
+        self.assertEqual(released, [True])
+        self.assertNotIn(("leak-test", "home", "2"), metrics._streams)
+
+    def test_stream_refusal_reason_is_atomic_without_toctou(self):
+        peer, total = metrics.SSE_REFUSED.labels("peer"), metrics.SSE_REFUSED.labels("total")
+        before = (peer._value.get(), total._value.get())
+        slots = streams.Slots(per_peer=2, total=2)
+        rel1, reason1 = slots.acquire("192.0.2.1")
+        rel2, reason2 = slots.acquire("192.0.2.2")
+        self.assertEqual((reason1, reason2), (None, None))
+        # Total limit is full; peer 3 is refused with "total".
+        rel3, refused = slots.acquire("192.0.2.3")
+        self.assertEqual((rel3, refused), (None, "total"))
+        # Another stream closes before the observer runs: the recorded reason must stay "total".
+        rel1()
+        with patch("oh_identity.streams.slots", slots):
+            metrics.observe("stream_refused", {"limit": refused})
+        rel2()
+        self.assertEqual((peer._value.get(), total._value.get()), (before[0], before[1] + 1))
+
+    def test_textfile_write_completes_short_writes_and_handles_zero_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            textfile = metrics.Textfile(metrics.CALLBACKS, "short", directory, every=60)
+            expected = metrics.prometheus_client.generate_latest(metrics.CALLBACKS)
+            real_write = os.write
+            calls = []
+
+            def short_write(fd, chunk):
+                piece = bytes(chunk[:17])
+                calls.append(len(piece))
+                return real_write(fd, piece)
+
+            with patch("oh_access.metrics.os.write", side_effect=short_write):
+                self.assertTrue(textfile.write())
+            self.assertGreater(len(calls), 1)
+            written = directory / "short.prom"
+            self.assertEqual(written.read_bytes(), expected)
+            self.assertEqual(stat.S_IMODE(written.stat().st_mode), 0o644)
+
+            with patch("oh_access.metrics.os.write", return_value=0), self.assertLogs(metrics.LOG, "WARNING"):
+                self.assertFalse(textfile.write())
+            self.assertEqual([p.name for p in directory.iterdir()], ["short.prom"])
 
 
 class ProblemCatalogue(SimpleTestCase):

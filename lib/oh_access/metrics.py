@@ -3,7 +3,7 @@
 No access service opens a metrics listener, and the gateway never serves
 /metrics on its LAN-facing TLS listener. Each service keeps its own
 registry and, while it runs, rewrites <THERMITE_TEXTFILE_DIR>/<file>.prom
-every WRITE_SECONDS: a new file renamed over the old one, mode 0640, so a
+every WRITE_SECONDS: a new file renamed over the old one, mode 0644, so a
 scrape never reads half a file. node_exporter's textfile collector serves
 them (oh_metrics.services()); node_textfile_mtime_seconds shows a writer
 that stopped. Without THERMITE_TEXTFILE_DIR (tests, a hand-run service)
@@ -233,9 +233,12 @@ def observe(kind, fields):
         end = fields.get("reason")
         SSE_SECONDS.labels(end if end in SSE_ENDS else "error").observe(max(0.0, float(fields.get("seconds") or 0)))
     elif kind == "stream_refused":
-        from oh_identity import streams
-        slots = streams.slots
-        SSE_REFUSED.labels("total" if slots.count() >= slots.total else "peer").inc()
+        limit = fields.get("limit")
+        if limit not in SSE_LIMITS:
+            from oh_identity import streams
+            slots = streams.slots
+            limit = "total" if slots.count() >= slots.total else "peer"
+        SSE_REFUSED.labels(limit).inc()
 
 
 def watch_streams():
@@ -264,14 +267,11 @@ def refresh_streams():
 class Hub:
     """oh_identity.hub's own state and running totals (EventHub.status()),
     read at each write: whether the one runtime subscription is serving,
-    connecting or closed, its connections, failures and resyncs, the runtime
-    events it took and the frames and overflow resyncs of client streams."""
+    connecting or closed, its failures, the runtime events it took and the
+    frames and overflow resyncs of client streams."""
 
-    COUNTERS = (("upstream_connects", "thermite_gateway_upstream_connects", "Runtime event subscriptions opened."),
-                ("upstream_failures", "thermite_gateway_upstream_failures", "Runtime event subscriptions that failed "
+    COUNTERS = (("upstream_failures", "thermite_gateway_upstream_failures", "Runtime event subscriptions that failed "
                  "or ended."),
-                ("resyncs", "thermite_gateway_upstream_resyncs", "Full reads of the streamed Items after the runtime "
-                 "subscription (re)connected."),
                 ("events", "thermite_gateway_upstream_events", "Public runtime events the gateway took."),
                 ("frames", "thermite_gateway_sse_frames", "Frames sent on client event streams."),
                 ("overflows", "thermite_gateway_sse_overflows", "Client event streams that fell too far behind and "
@@ -413,7 +413,13 @@ class Textfile:
                 # node_exporter reads it as an account of its own, through the
                 # one mount of this directory (oh_deploy.TEXTFILE_FILE_MODE).
                 os.fchmod(descriptor, 0o644)
-                os.write(descriptor, data)
+                view = memoryview(data)
+                written = 0
+                while written < len(view):
+                    count = os.write(descriptor, view[written:])
+                    if count <= 0:
+                        raise OSError("Short write to metrics textfile")
+                    written += count
             finally:
                 os.close(descriptor)
             os.replace(temporary, self.path)

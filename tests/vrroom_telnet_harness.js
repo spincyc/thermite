@@ -383,4 +383,14 @@ test('listening keeps the bytes of a line not yet complete and the connection; a
   hooks.forEach(hook => hook());
 });
 
+test('shows() resolves TX0 COPY=4 to TX1 and treats a follow cycle as unread', () => {
+  const r = vrroom({ interrupts: true });
+  r.vr.insel = [4, 2];
+  r.tick();
+  assert.equal(r.items.switch_input, '2');
+  r.vr.insel = [4, 4];
+  r.tick();
+  assert.equal(r.items.switch_input, 'UNDEF');
+});
+
 process.stdout.write(JSON.stringify({ passed: tests.length, tests }));

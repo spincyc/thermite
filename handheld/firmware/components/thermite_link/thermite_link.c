@@ -1,12 +1,18 @@
 #include "thermite_link.h"
 
-#include <stdio.h>
 #include <string.h>
 
+#include "cJSON.h"
 #include "mbedtls/ccm.h"
+#include "mbedtls/platform_util.h"
 
 #define NONCE_LEN 13
-#define PARTS_MAX ((TL_MESSAGE_MAX + TL_PART_MAX - 1) / TL_PART_MAX)
+#define PARTS_MAX TL_PARTS_MAX
+
+void tl_zeroize(void *buf, size_t len)
+{
+    if (buf && len) mbedtls_platform_zeroize(buf, len);
+}
 
 static void put64(uint8_t *at, uint64_t value)
 {
@@ -79,7 +85,7 @@ int tl_open(const uint8_t key[TL_KEY_LEN], tl_direction_t direction, const uint8
                                     frame + TL_HEADER + body, TL_TAG);
     mbedtls_ccm_free(&ccm);
     if (failed) {
-        memset(out, 0, body);
+        tl_zeroize(out, body);
         return -1;
     }
     header->type = frame[1];
@@ -105,7 +111,9 @@ void tl_remote_reset(tl_remote_t *remote)
 
 void tl_assembler_reset(tl_assembler_t *assembler)
 {
-    assembler->last_length = 0;
+    memset(assembler->offsets, 0, sizeof assembler->offsets);
+    memset(assembler->lengths, 0, sizeof assembler->lengths);
+    assembler->used = 0;
     assembler->received = 0;
     assembler->message = 0;
     assembler->count = 0;
@@ -152,24 +160,61 @@ int tl_remote_send(tl_remote_t *remote, const uint8_t key[TL_KEY_LEN], const cha
     return (int)parts;
 }
 
+static void reverse_bytes(uint8_t *buf, size_t len)
+{
+    for (size_t i = 0, j = len; i + 1 < j; i++, j--) {
+        uint8_t tmp = buf[i];
+        buf[i] = buf[j - 1];
+        buf[j - 1] = tmp;
+    }
+}
+
 static bool gather(tl_assembler_t *assembler, const tl_header_t *header, const uint8_t *part, size_t length,
                    size_t *whole)
 {
-    if (header->count > PARTS_MAX || (header->index + 1 < header->count && length != TL_PART_MAX)) return false;
+    if (header->count < 1 || header->count > PARTS_MAX || header->index >= header->count || length == 0) {
+        return false;
+    }
     if (assembler->received == 0 || assembler->message != header->message || assembler->count != header->count) {
-        assembler->last_length = 0;
-        assembler->received = 0;
+        tl_assembler_reset(assembler);
         assembler->message = header->message;
         assembler->count = header->count;
     }
-    size_t at = (size_t)header->index * TL_PART_MAX;
-    if (at + length > TL_MESSAGE_MAX) return false;
-    memmove(assembler->data + at, part, length);
-    if (header->index + 1 == header->count) assembler->last_length = length;
-    assembler->received |= (uint16_t)(1u << header->index);
-    if (assembler->received != (uint16_t)((1u << header->count) - 1)) return false;
-    *whole = (size_t)(header->count - 1) * TL_PART_MAX + assembler->last_length;
+    uint16_t bit = (uint16_t)(1u << header->index);
+    if (assembler->received & bit) return false;
+    if (assembler->used + length > TL_MESSAGE_MAX) {
+        tl_assembler_reset(assembler);
+        return false;
+    }
+    memcpy(assembler->data + assembler->used, part, length);
+    assembler->offsets[header->index] = (uint16_t)assembler->used;
+    assembler->lengths[header->index] = (uint16_t)length;
+    assembler->used += length;
+    assembler->received |= bit;
+    uint16_t expected = (uint16_t)(((uint32_t)1u << header->count) - 1u);
+    if (assembler->received != expected) return false;
+    /* Reorder variable-length parts in place if they arrived out of order. */
+    size_t dest = 0;
+    for (uint8_t i = 0; i < header->count; i++) {
+        size_t at = assembler->offsets[i];
+        size_t len = assembler->lengths[i];
+        if (at > dest) {
+            size_t prefix = at - dest;
+            reverse_bytes(assembler->data + dest, prefix);
+            reverse_bytes(assembler->data + at, len);
+            reverse_bytes(assembler->data + dest, prefix + len);
+            for (uint8_t j = (uint8_t)(i + 1); j < header->count; j++) {
+                if (assembler->offsets[j] >= dest && assembler->offsets[j] < at) {
+                    assembler->offsets[j] = (uint16_t)(assembler->offsets[j] + len);
+                }
+            }
+            assembler->offsets[i] = (uint16_t)dest;
+        }
+        dest += len;
+    }
+    *whole = assembler->used;
     assembler->data[*whole] = '\0';
+    assembler->used = 0;
     assembler->received = 0;
     return true;
 }
@@ -182,14 +227,14 @@ tl_event_t tl_remote_receive(tl_remote_t *remote, tl_assembler_t *assembler, con
     int opened = tl_open(key, TL_FROM_BRIDGE, frame, length, &header, part, sizeof part);
     if (opened < 0) return TL_NOTHING;
     if (header.type == TL_SYNC) {
-        char expected[64];
-        char hex[17];
         if (remote->waiting == 0 || header.counter != 0 || header.session == 0) return TL_NOTHING;
+        cJSON *sync = cJSON_ParseWithLength((const char *)part, (size_t)opened);
+        const cJSON *hello = cJSON_IsObject(sync) ? cJSON_GetObjectItemCaseSensitive(sync, "hello") : NULL;
+        char hex[17];
         tl_hex(remote->waiting, hex);
-        int written = snprintf(expected, sizeof expected, "{\"hello\":\"%s\"}", hex);
-        if (written < 0 || (size_t)opened != (size_t)written || memcmp(part, expected, (size_t)opened) != 0) {
-            return TL_NOTHING;
-        }
+        bool matched = cJSON_IsString(hello) && strcmp(hello->valuestring, hex) == 0;
+        cJSON_Delete(sync);
+        if (!matched) return TL_NOTHING;
         adopt(remote, header.session);
         tl_assembler_reset(assembler);
         return TL_SYNCED;

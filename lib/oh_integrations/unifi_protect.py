@@ -125,7 +125,7 @@ for (const camera of CAMERAS) {
   rules.JSRule({id: camera.item, name: 'Camera motion received',
     description: 'Timestamp an observed native Protect motion event; no camera commands.',
     triggers: [triggers.ChannelEventTrigger(camera.channel)],
-    execute: () => items.getItem(camera.item).postUpdate(time.ZonedDateTime.now().toString())});
+    execute: () => { const item = items.getItem(camera.item, true); if (item !== null) item.postUpdate(time.ZonedDateTime.now().toString()); }});
   rules.JSRule({id: camera.online + '_observer', name: 'Camera availability received',
     description: 'Combine native connection and bridge availability; no camera commands.',
     triggers: [triggers.ItemStateUpdateTrigger(camera.connection), triggers.ThingStatusUpdateTrigger(camera.thing),
@@ -137,11 +137,13 @@ for (const camera of CAMERAS) {
         const bridge = things.getThing('unifi:nvr:protect').status;
         if (status === 'OFFLINE' || bridge === 'OFFLINE') state = 'OFF';
         else if (status === 'ONLINE' && bridge === 'ONLINE') {
-          const reported = items.getItem(camera.connection).state;
+          const conn = items.getItem(camera.connection, true);
+          const reported = conn === null ? 'NULL' : conn.state;
           state = reported === 'CONNECTED' ? 'ON' : reported === 'DISCONNECTED' ? 'OFF' : 'UNDEF';
         }
       } catch (_) { /* the managed Things may not have been configured yet */ }
-      items.getItem(camera.online).postUpdate(state);
+      const online = items.getItem(camera.online, true);
+      if (online !== null) online.postUpdate(state);
     }});
 }
 """ % json.dumps(table, separators=(",", ":"))

@@ -1055,9 +1055,9 @@ class Sync(unittest.TestCase):
         for before, after in ((aggregate, split), (split, aggregate)):
             obsolete = set(before) - set(after)
 
-            def checked_replace(destination, data, mode):
+            def checked_replace(destination, data, mode, **kwargs):
                 self.assertTrue(all(not (self.target / path).exists() for path in obsolete))  # noqa: B023 (called in this iteration)
-                return replace(destination, data, mode)
+                return replace(destination, data, mode, **kwargs)
 
             with mock.patch.object(deploy, "_replace", side_effect=checked_replace):
                 changes = deploy.sync(after, self.target, previous=before)
@@ -1092,6 +1092,27 @@ class Sync(unittest.TestCase):
                 deploy.sync(files, self.target, previous)
         self.assertEqual(sorted(p.name for p in outside.iterdir()), ["existing"])
         self.assertEqual((outside / "existing").read_text(), "keep")
+
+    def test_deploy_metrics_uses_random_temp_name_and_refuses_symlink_dir(self):
+        layout = deploy.State(Path(self.tmp.name, "state"))
+        outside = Path(self.tmp.name, "outside-metrics")
+        outside.mkdir()
+        layout.textfile.parent.mkdir(parents=True)
+        layout.textfile.symlink_to(outside, target_is_directory=True)
+        self.assertFalse(deploy.deploy_metrics(layout, "deploy", clock=lambda: 1234.5))
+        self.assertEqual(list(outside.iterdir()), [])
+        layout.textfile.unlink()
+        layout.textfile.mkdir()
+        predictable = layout.textfile / f".{deploy.DEPLOY_TEXTFILE}.{os.getpid()}.tmp"
+        predictable.symlink_to(outside / "victim")
+        self.assertTrue(deploy.deploy_metrics(layout, "deploy", clock=lambda: 1234.5))
+        self.assertFalse((outside / "victim").exists())
+        self.assertIn('how="deploy"', (layout.textfile / deploy.DEPLOY_TEXTFILE).read_text())
+
+    def test_render_share_gate_passes_instance_as_positional_argument(self):
+        unit = deploy.render_share_gate()
+        self.assertIn("ExecStart=/usr/bin/sh -c 'until /usr/bin/getent ahosts \"$1\" >/dev/null; do /usr/bin/sleep 1; done' thermite-share-gate %i",
+                      unit.splitlines())
 
     def test_drift(self):
         deploy.sync({"a": blob("1"), "b": blob("2")}, self.target)

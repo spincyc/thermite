@@ -272,6 +272,37 @@ class HttpSemantics(Requests, TestCase):
         names = {token["name"] for token in self.bearer("get", "/api/v1/tokens").json()["tokens"]}
         self.assertEqual(names, {"http", "live"})
 
+    def test_oversize_request_bodies_return_json_413_with_no_store_and_security_headers(self):
+        oversize_json = '{"pad":"' + ("a" * (settings.DATA_UPLOAD_MAX_MEMORY_SIZE + 64)) + '"}'
+        oversize_text = "x" * (settings.DATA_UPLOAD_MAX_MEMORY_SIZE + 64)
+        browser = self.browser()
+        csrf = browser.cookies[settings.CSRF_COOKIE_NAME].value
+        browser_headers = {"HTTP_ORIGIN": "https://testserver", "HTTP_X_CSRFTOKEN": csrf}
+        responses = [
+            ("command", browser.post("/api/v1/rooms/den/commands", oversize_json, content_type="application/json",
+                                     secure=True, **browser_headers)),
+            ("session", browser.post("/api/v1/session", oversize_json, content_type="application/json",
+                                     secure=True, **browser_headers)),
+            ("security", browser.post("/api/v1/security", oversize_json, content_type="application/json",
+                                      secure=True, **browser_headers)),
+            ("token_login", Client().post("/api/v1/token-login", oversize_json, content_type="application/json",
+                                          secure=True)),
+            ("pairing", Client().post("/rest/items/tv_pairing", oversize_text, content_type="text/plain", secure=True,
+                                      HTTP_AUTHORIZATION="Bearer " + self.token)),
+            ("media", Client().post("/unifi/media/camera/sdp", oversize_text, content_type="application/sdp",
+                                    secure=True, HTTP_AUTHORIZATION="Bearer " + self.token)),
+            ("csrf_form", browser.post("/api/v1/session", "a=" + oversize_text,
+                                       content_type="application/x-www-form-urlencoded", secure=True,
+                                       HTTP_ORIGIN="https://testserver")),
+        ]
+        for label, response in responses:
+            with self.subTest(endpoint=label):
+                self.assertEqual(response.status_code, 413)
+                self.assertEqual(response["Content-Type"], "application/json")
+                self.assertEqual(response.json(), {"error": "body_too_large"})
+                self.assertEqual(response["Cache-Control"], "no-store")
+                self.assertEqual(response["Content-Security-Policy"], CONTENT_SECURITY_POLICY)
+
 
 class RetiredTargets(TestCase):
     """A stored hold or rule naming a source the house no longer offers."""
@@ -501,6 +532,26 @@ class LostAdminPassword(Requests, TestCase):
         with self.assertRaisesRegex(AccessError, "no account to reset: create the first administrator with thermite access setup"):
             self.service("owner", self.NEW)
         self.assertFalse(User.objects.exists())
+
+    def test_service_bootstrap_requires_service_account_and_avoids_duplicate_setup(self):
+        User.objects.all().delete()
+        config = {"timezone": settings.TIME_ZONE, "state": "/unused/state", "allowed_hosts": ["testserver"]}
+        with patch.object(service, "require_service_account", side_effect=AccessError("Run as thermite")), \
+                patch.object(service, "load_config") as load:
+            with self.assertRaisesRegex(AccessError, "Run as thermite"):
+                service.bootstrap("/unused/config.json", "owner", PASSPHRASE)
+        self.assertFalse(load.called)
+        self.assertFalse(User.objects.exists())
+
+        with patch.dict(os.environ), patch.object(service, "require_service_account") as req_account, \
+                patch.object(service, "load_config", return_value=config), \
+                patch.object(service, "setup") as svc_setup, \
+                patch("django.core.management.call_command") as call_cmd, \
+                patch("oh_identity.composition.initialize", side_effect=AssertionError("duplicate django.setup")):
+            result = service.bootstrap("/unused/config.json", "owner", PASSPHRASE)
+        self.assertEqual(result, {"initialized": True, "username": "owner", "state": "/unused/state"})
+        self.assertEqual((req_account.call_count, svc_setup.call_count, call_cmd.call_count), (1, 1, 1))
+        self.assertTrue(User.objects.get(username="owner").admin)
 
 
 class PolicyPredicates(TestCase):

@@ -7,6 +7,7 @@ from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib.auth import logout
+from django.core.exceptions import RequestDataTooBig
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
 from django.middleware.csrf import get_token
 from django.db import close_old_connections, connection, connections, transaction
@@ -31,6 +32,8 @@ def body(request):
         raise Problem("json_required", 415)
     try:
         data = json.loads(request.body)
+    except RequestDataTooBig:
+        raise Problem("body_too_large", 413) from None
     except (ValueError, UnicodeError, RecursionError):
         raise Problem("invalid_json") from None
     if not isinstance(data, dict):
@@ -199,7 +202,7 @@ def users(request, ident=None):
         user = save_user(request.identity_user, {"active": False}, ident)
     else:
         user = save_user(request.identity_user, body(request), ident)
-    return JsonResponse(user_data(user), status=200 if ident else 201)
+    return JsonResponse(user_data(user), status=200 if ident is not None else 201)
 
 
 def effective_lock(adapter, room, saved, now):
@@ -611,10 +614,16 @@ def item_resource(request, item):
     user = request.identity_user
     require_admin(user)
     adapter = get_adapter()
-    if request.content_type != "text/plain" or len(request.body) > 64:
+    if request.content_type != "text/plain":
         raise Problem("invalid_pairing_command")
     try:
-        value = request.body.decode("ascii")
+        raw = request.body
+    except RequestDataTooBig:
+        raise Problem("body_too_large", 413) from None
+    if len(raw) > 64:
+        raise Problem("invalid_pairing_command")
+    try:
+        value = raw.decode("ascii")
     except UnicodeError:
         raise Problem("invalid_pairing_command") from None
     from .trail import origin

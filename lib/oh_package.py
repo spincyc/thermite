@@ -215,10 +215,14 @@ def public_files(area: Path | None = None) -> dict[str, bytes]:
     files = {}
     for name in data["paths"]:
         relative = safe(name)
-        path = root / relative
-        if not path.is_file() or any(parent.is_symlink() for parent in (path, *path.parents) if parent != root.parent):
+        current = root
+        for part in relative.split("/"):
+            current = current / part
+            if current.is_symlink():
+                raise ValueError(f"application source must be a regular file: {relative}")
+        if not current.is_file():
             raise ValueError(f"application source must be a regular file: {relative}")
-        files[relative] = path.read_bytes()
+        files[relative] = current.read_bytes()
     problems = oh_public.guard(files, root)
     if problems:
         raise ValueError("public package privacy checks failed:\n" + "\n".join(problems))

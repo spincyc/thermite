@@ -50,7 +50,7 @@ function content(g, width, ctx, height) {
   accessLinks.forEach(([screen, label]) => {
     if (accessX + label.length > width - 2) { y++; accessX = 2; }
     const key = "home:" + screen;
-    g.put(accessX, y, label, ctx.ui.focus === key ? "row.focus" : "link", { kind: "screen", screen, key, focus: true, label }); accessX += label.length + 3;
+    g.put(accessX, y, label, ctx.ui.focusVisible && ctx.ui.focus === key ? "row.focus" : "link", { kind: "screen", screen, key, focus: true, label }); accessX += label.length + 3;
   }); if (accessLinks.length) y += 2;
   const caption = "Rooms · " + (ctx.ui.ready && ctx.session.mode() === "listen" ? "what plays" : "reported sources");
   g.put(2, y, fit(caption, width - 4), "section");
@@ -112,7 +112,7 @@ function system(g, width, ctx) {
   const line = (value, style = "dim") => wrap(value, Math.max(4, width - 4)).forEach(part => g.put(2, y++, part, style));
   const action = (label, id, tool) => {
     const key = "system:" + id + (tool ? ":" + tool.id : "");
-    g.put(2, y++, fit(label, width - 4), ctx.ui.focus === key ? "row.focus" : "link",
+    g.put(2, y++, fit(label, width - 4), ctx.ui.focusVisible && ctx.ui.focus === key ? "row.focus" : "link",
       { kind: "system-action", action: id, tool: tool?.id, key, focus: true, label });
   };
   line("Runtime " + (state?.manifest?.runtime.version || "unavailable") + " · configured", "strong");

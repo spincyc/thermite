@@ -48,8 +48,8 @@
       if (user && !user.is_guest) {
         // The bar says Account: on a phone this heading would only say it again (shell.css).
         $(".access-login h1").textContent = "Your account"; $(".access-login h1").dataset.thermiteTitled = ""; form.replaceChildren();
-        form.append(node("p", "Signed in as " + user.username), node("p", "To elevate access, switch to an administrator account. An administrator can make your account an administrator in Users; then sign in again."),
-          button("Switch account", signOut), button("Sign out", signOut));
+        form.append(node("p", "Signed in as " + user.username), node("p", "To elevate access, sign out and sign in as an administrator. An administrator can make your account an administrator in Users; then sign in again."),
+          button("Sign out", signOut));
         status(user.can_edit ? "Administrator" : "Account · unlocked rooms and camera media"); return;
       }
     } catch (error) {
@@ -142,7 +142,8 @@
       form.querySelectorAll('input[type="password"]').forEach((field) => { field.value = ""; }); status("Creating the administrator…");
       try {
         await client.setSecurity(value);
-        location.replace("/account/?next=%2Fsecurity%2F");
+        const account = global.ThermiteNavigation.href("access", location.search);
+        location.replace(account + (account.includes("?") ? "&" : "?") + "next=%2Fsecurity%2F");
       } catch (error) {
         if (error.code === "already_initialized") await security();
         status(error.message, true);
@@ -164,6 +165,13 @@
   let turn = 0, revision = 0, currentRoom = null, serial = 0;
   async function policy() {
     const selector = $("[data-policy-room]");
+    if (!house?.rooms?.length) {
+      selector.replaceChildren(); selector.disabled = true;
+      $("[data-policy]").replaceChildren();
+      status("No rooms configured.");
+      return;
+    }
+    selector.disabled = false;
     house.rooms.forEach((room) => selector.appendChild(node("option", room.label, { value: room.id })));
     let requested = new URLSearchParams(location.search).get("room");
     if (!requested) { try { requested = localStorage.getItem("remote.room"); } catch (_) {} }
@@ -175,7 +183,9 @@
     await readPolicy();
   }
   async function readPolicy() {
-    const current = ++turn, room = $("[data-policy-room]").value; currentRoom = room; status("Reading schedule…");
+    const current = ++turn, room = $("[data-policy-room]").value; currentRoom = room;
+    if (!room) { $("[data-policy]").replaceChildren(); status("No rooms configured."); return; }
+    status("Reading schedule…");
     try { const answer = await client.loadPolicy(room); if (current !== turn) return; revision = answer.revision; drawPolicy(answer); status(""); }
     catch (error) { if (current === turn) { $("[data-policy]").replaceChildren(); status(error.message, true); } }
   }
@@ -203,7 +213,7 @@
     const enabled = input("Use a schedule", "enabled", "checkbox", config.enabled); enabled.className = "access-check access-switch";
     enabled.firstElementChild.setAttribute("role", "switch");
     fields.append(enabled, node("p", "Times use " + (config.timezone || "the site's timezone") + ". A lock that ends earlier than it starts runs overnight.", { class: "access-note" }));
-    const sources = [["off", "Off"], ...room.sources.map((id) => [id, house.sources[id]?.label || id])];
+    const sources = [["off", "Off"], ...(room?.sources || []).map((id) => [id, house.sources[id]?.label || id])];
     const ruleIds = new Set([...(config.daily_off || []), ...(config.locks || [])].map((rule) => rule.id));
     const groups = {};
     function group(kind, title, addLabel) {
@@ -239,7 +249,15 @@
         (kind === "locks" ? ["start", "end", "desired", "unlock"] : ["time"]).forEach((key) => { rule[key] = row.querySelector('[name="' + key + '"]').value; }); value[kind].push(rule);
       });
       save.disabled = true; const roomId = currentRoom, generation = turn;
-      try { const saved = await client.savePolicy(roomId, revision, value); if (turn === generation) { revision = saved.revision; status("Schedule saved."); } }
+      try {
+        const saved = await client.savePolicy(roomId, revision, value);
+        if (turn === generation) {
+          revision = saved.revision;
+          const box = host.querySelector(".policy-status");
+          if (box) box.replaceWith(policyStatus(saved, saved.config || value));
+          status("Schedule saved.");
+        }
+      }
       catch (error) {
         if (turn !== generation) return;
         // Someone else changed it: show the current schedule, then say why.

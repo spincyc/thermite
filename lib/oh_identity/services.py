@@ -132,10 +132,10 @@ def reset_admin(username, secret):
 def save_user(actor, data, ident=None):
     """Create or update an account: {username, password, active, admin}."""
     admin_actor(actor)
-    user = User.objects.get(pk=ident) if ident else User()
+    user = User.objects.get(pk=ident) if ident is not None else User()
     if set(data) - {"username", "active", "admin", "password"}:
         raise Problem("unknown_field")
-    if not ident and not {"username", "password"} <= set(data):
+    if ident is None and not {"username", "password"} <= set(data):
         raise Problem("missing_field")
     was_admin = is_admin(user)
     if "username" in data:
@@ -155,11 +155,11 @@ def save_user(actor, data, ident=None):
         user.full_clean()
     except ValidationError:
         raise Problem("invalid_user") from None
-    if ident:
+    if ident is not None:
         # Any account change ends that account's sessions and tokens.
         user.auth_revision += 1
     user.save()
-    audit(actor, "user.update" if ident else "user.create", user.pk)
+    audit(actor, "user.update" if ident is not None else "user.create", user.pk)
     return user
 
 

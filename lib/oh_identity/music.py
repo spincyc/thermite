@@ -26,6 +26,7 @@ it plays to out of its group), so play and transport on a member reach its
 leader, and the answer says which speaker's queue it was.
 """
 
+import atexit
 import math
 import re
 import threading
@@ -136,8 +137,19 @@ KEPT_FORMATS = frozenset("\u200c\u200d\u200e\u200f\u061c\u0600\u0601\u0602\u0603
 #: A subdivision flag (England, Scotland, Wales): the black flag, its tags,
 #: and the cancel tag.
 _FLAG = re.compile("(\U0001f3f4[\U000e0020-\U000e007e]+\U000e007f)")
-_music = weakref.WeakKeyDictionary()
+_music, _music_guard = weakref.WeakKeyDictionary(), threading.Lock()
 _pool, _pool_guard = None, threading.Lock()
+
+
+def _shutdown_readers():
+    global _pool
+    with _pool_guard:
+        pool, _pool = _pool, None
+    if pool is not None:
+        pool.shutdown(wait=True, cancel_futures=True)
+
+
+atexit.register(_shutdown_readers)
 
 
 def _readers():
@@ -575,9 +587,13 @@ class Music:
         later = {name: pool.submit(self.call, command, SLOW, **args) for name, (command, args) in reads.items()}
         try:
             entry = self.item(self.call("music/item_by_uri", SLOW, uri=ref), sources)
-        finally:
-            # Each section's items, or None when its read failed.
-            read = {}
+        except BaseException:
+            for future in later.values():
+                future.cancel()
+            raise
+        # Each section's items, or None when its read failed.
+        read = {}
+        try:
             for name, future in later.items():
                 try:
                     found = future.result()
@@ -586,6 +602,10 @@ class Music:
                 else:
                     read[name] = [listed for raw in (found if isinstance(found, list) else [])[:SECTION_LIMIT]
                                   if (listed := self.item(raw, sources))]
+        except BaseException:
+            for future in later.values():
+                future.cancel()
+            raise
         answer = {"ref": ref, "item": entry if entry and entry["kind"] == kind else None, "sections": []}
         if kind != "artist":
             return answer
@@ -829,33 +849,79 @@ class Music:
 
     def tidal_status(self):
         """Whether TIDAL is signed in, and the sign-in this gateway started."""
+        with self._guard:
+            flow = self.flow
         with self.connected() as client:
-            if self.flow is not None and self.flow["state"] == "waiting":
-                self.flow = {**tidal.poll(client, self.flow["flow"]), "started": self.flow["started"]}
+            if flow is not None and flow["state"] == "waiting":
+                polled = {**tidal.poll(client, flow["flow"]), "started": flow["started"]}
+                with self._guard:
+                    if self.flow is flow or (
+                        self.flow is not None
+                        and self.flow.get("state") == "waiting"
+                        and self.flow.get("flow") == flow.get("flow")
+                    ):
+                        self.flow = polled
+                        flow = polled
+                    else:
+                        flow = self.flow
             signed_in = tidal.signed_in(client)
         sign_in = None
-        if self.flow is not None:
-            sign_in = {key: self.flow.get(key) for key in ("state", "code", "url", "expires_at")}
+        if flow is not None:
+            sign_in = {key: flow.get(key) for key in ("state", "code", "url", "expires_at")}
         return {"signed_in": signed_in, "sign_in": sign_in}
 
     def tidal_start(self):
+        with self._guard:
+            previous = self.flow
         with self.connected() as client:
-            if self.flow is not None and self.flow["state"] == "waiting":
-                tidal.cancel(client, self.flow["flow"])
-            self.flow = {**tidal.start(client), "started": time.time()}
+            cancelled = None
+            if previous is not None and previous["state"] == "waiting":
+                cancelled = previous["flow"]
+                tidal.cancel(client, cancelled)
+                with self._guard:
+                    if self.flow is previous:
+                        self.flow = None
+            started = {**tidal.start(client), "started": time.time()}
+            replaced = None
+            with self._guard:
+                if (
+                    self.flow is not None
+                    and self.flow["state"] == "waiting"
+                    and self.flow.get("flow") != cancelled
+                ):
+                    replaced = self.flow["flow"]
+                self.flow = started
+            if replaced is not None:
+                tidal.cancel(client, replaced)
         return self.tidal_status()
 
     def tidal_finish(self):
         """End this gateway's sign-in: cancelled in Music Assistant while it
         still waits. The answer is the status it ended with."""
-        if self.flow is None:
+        with self._guard:
+            flow = self.flow
+        if flow is None:
             raise Problem("tidal_not_started", 409)
         answer = self.tidal_status()
-        if self.flow["state"] == "waiting":
-            with self.connected() as client:
-                tidal.cancel(client, self.flow["flow"])
-            answer["sign_in"]["state"] = "cancelled"
-        self.flow = None
+        with self._guard:
+            current = self.flow
+            if current is None:
+                raise Problem("tidal_not_started", 409)
+            self.flow = None
+        if current["state"] == "waiting":
+            try:
+                with self.connected() as client:
+                    tidal.cancel(client, current["flow"])
+            except BaseException:
+                with self._guard:
+                    if self.flow is None:
+                        self.flow = current
+                raise
+            sign_in = {key: current.get(key) for key in ("state", "code", "url", "expires_at")}
+            sign_in["state"] = "cancelled"
+            answer["sign_in"] = sign_in
+        else:
+            answer["sign_in"] = {key: current.get(key) for key in ("state", "code", "url", "expires_at")}
         return answer
 
 
@@ -863,13 +929,15 @@ def music_for(adapter):
     """The adapter's music; music_not_configured for a host without it."""
     if adapter.contract.music is None:
         raise Problem("music_not_configured", 404)
-    music = _music.get(adapter)
-    if music is None:
-        from django.conf import settings
-        music = _music[adapter] = Music(adapter, settings.STATE)
-    return music
+    with _music_guard:
+        music = _music.get(adapter)
+        if music is None:
+            from django.conf import settings
+            music = _music[adapter] = Music(adapter, settings.STATE)
+        return music
 
 
 def install(adapter, music):
     """Use this music for the adapter (tests)."""
-    _music[adapter] = music
+    with _music_guard:
+        _music[adapter] = music

@@ -309,6 +309,16 @@ class Auditing(Requests, TestCase):
         self.assertNotIn("sentinel", "\n".join(logs.output) + str(list(Audit.objects.values())))
         self.assertNotIn("wrong-", "\n".join(logs.output))
 
+    def test_denied_login_audit_matches_existing_account_case_insensitively(self):
+        with self.assertLogs("oh_identity.trail", "INFO") as logs, self.captureOnCommitCallbacks(execute=True):
+            self.request("get", "/api/v1/session")
+            guess = "wrong-" + "operator"
+            response = self.request("post", "/api/v1/session", {"username": "OPERATOR", "password": guess})
+        self.assertEqual(response.status_code, 401)
+        [line] = lines(logs, "audit")
+        self.assertEqual((line["action"], line["target"], line["outcome"]), ("login", str(self.operator.pk), "denied"))
+        self.assertNotIn("OPERATOR", "\n".join(logs.output))
+
     def test_token_login_is_attributed_to_the_password_and_peer_and_keeps_the_name(self):
         with self.assertLogs("oh_identity.trail", "INFO") as logs, self.captureOnCommitCallbacks(execute=True):
             response = Client().post("/api/v1/token-login", json.dumps({"username": "operator", "password": PASSPHRASE,

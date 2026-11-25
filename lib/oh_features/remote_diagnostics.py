@@ -137,8 +137,9 @@ def _rooms(house: House) -> dict:
             path = _path(house, room, source_id)
             if source_id in synced:
                 leader = config["rooms"][room["receiver"]["sync_with"]]
-                alternate = {**room, "hdmi_output": leader["hdmi_output"],
-                             "receiver": {**room["receiver"], "input": synced[source_id], "input_by_source": {}}}
+                alternate = {k: v for k, v in room.items() if k != "hdmi_switch"}
+                alternate.update(hdmi_output=leader["hdmi_output"],
+                                 receiver={**room["receiver"], "input": synced[source_id], "input_by_source": {}})
                 path["variants"] = {"synced": _path(house, alternate, source_id)}
             paths[source_id] = path
         rooms[room_id] = {"label": routing.room_label(house, room_id), "sources": paths}

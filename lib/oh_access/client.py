@@ -80,18 +80,29 @@ def ca_path(path):
     return path.with_suffix(".ca.json")
 
 
-def load(url, config_home=None):
+def _load(url, config_home=None, *, allow_expired=False):
     canonical = origin(url)
     path = credential_path(canonical, config_home)
     try:
         value = json.loads(read_private(path, 4096))
-        if not isinstance(value, dict) or set(value) != {"version", "origin", "token", "id", "expires_at"} or value["version"] != 1 or value["origin"] != canonical or not isinstance(value["token"], str) or not TOKEN.fullmatch(value["token"]) or not isinstance(value["id"], str):
+        if (not isinstance(value, dict) or set(value) != {"version", "origin", "token", "id", "expires_at"}
+                or value["version"] != 1 or value["origin"] != canonical
+                or not isinstance(value["token"], str) or not TOKEN.fullmatch(value["token"])
+                or not isinstance(value["id"], str)):
             raise ValueError()
         expiry = datetime.fromisoformat(value["expires_at"].replace("Z", "+00:00"))
-        if expiry.tzinfo is None or expiry <= datetime.now(timezone.utc):
+        if expiry.tzinfo is None:
+            raise ValueError()
+        expired = expiry <= datetime.now(timezone.utc)
+        if expired and not allow_expired:
             raise ValueError()
     except (ValueError, TypeError, KeyError, OSError):
         raise AccessError("No valid site credential; run thermite access login") from None
+    return path, value, expired
+
+
+def load(url, config_home=None):
+    path, value, _ = _load(url, config_home, allow_expired=False)
     return path, value
 
 
@@ -183,15 +194,16 @@ def login(url, username, password, *, ca_file=None, config_home=None, http=reque
 
 
 def logout(url, *, config_home=None, http=request):
-    path, value = load(url, config_home)
+    path, value, expired = _load(url, config_home, allow_expired=True)
     before = read_private(path, 4096)
     identity = path.stat()
-    try:
-        http(value["origin"], "/api/v1/logout", method="POST", data={}, token=value["token"], ca_file=saved_ca(path))
-    except Refused as exc:
-        # The site no longer accepts this credential; it is already signed out.
-        if exc.status != 401:
-            raise
+    if not expired:
+        try:
+            http(value["origin"], "/api/v1/logout", method="POST", data={}, token=value["token"], ca_file=saved_ca(path))
+        except Refused as exc:
+            # The site no longer accepts this credential; it is already signed out.
+            if exc.status != 401:
+                raise
     # Another login could have replaced the file while the request was in flight.
     current = path.lstat()
     if (current.st_dev, current.st_ino) == (identity.st_dev, identity.st_ino) and read_private(path, 4096) == before:

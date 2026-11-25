@@ -217,11 +217,14 @@ def compile_contract(house_file, asset_root, destination, *, metrics_port=None, 
 
 def bootstrap(config_path, username, secret):
     """Only a trusted local CLI calls this with a hidden terminal password."""
+    require_service_account()
     config = load_config(config_path, tls=False)
     os.environ["THERMITE_TIME_ZONE"] = config["timezone"]
-    from oh_identity import composition
     setup(config)
-    user = composition.initialize(config["state"], username, secret, config["allowed_hosts"])
+    from django.core.management import call_command
+    from oh_identity.services import bootstrap as create_admin
+    call_command("migrate", interactive=False, verbosity=0)
+    user = create_admin(username, secret)
     return {"initialized": True, "username": user.username, "state": config["state"]}
 
 
@@ -334,10 +337,10 @@ class Admission:
             address = (scope.get("client") or (None,))[0]
             peer = peer_bucket(address)
             if self.active >= self.limit:
-                await self._refuse(send, 503, self.UNAVAILABLE, "gateway_busy", active=self.active, limit=self.limit)
+                await self._refuse(scope, send, 503, self.UNAVAILABLE, "gateway_busy", active=self.active, limit=self.limit)
                 return
             if self.peers.get(peer, 0) >= self.peer_limit:
-                await self._refuse(send, 429, self.PEER_BUSY, "peer_busy", address, active=self.peers[peer],
+                await self._refuse(scope, send, 429, self.PEER_BUSY, "peer_busy", address, active=self.peers.get(peer, 0),
                                    limit=self.peer_limit)
                 return
             self.active += 1
@@ -387,10 +390,10 @@ class Admission:
 
         await self.application(scope, receiving, sending)
         if overdue and not answered:
-            await self._refuse(send, 408, self.BODY_OVERDUE, "body_overdue", address, seconds=self.body_seconds)
+            await self._refuse(scope, send, 408, self.BODY_OVERDUE, "body_overdue", address, seconds=self.body_seconds)
 
     @staticmethod
-    async def _refuse(send, status, text, kind, address=None, **fields):
+    async def _refuse(scope, send, status, text, kind, address=None, **fields):
         """Answer a request the site never answers, and close its HTTP/1.1
         connection. One rate-limited warning per kind: the request has no
         request line in the trail. peer is the trail's digest, never the
@@ -399,10 +402,16 @@ class Admission:
         if address is not None:
             fields["peer"] = trail.short(trail.peer_digest(address))
         trail.warnings.warning((kind,), kind, status=status, **fields)
-        await send({"type": "http.response.start", "status": status, "headers": [
+        headers = [
             (b"content-type", b"text/plain; charset=utf-8"),
-            (b"content-length", b"%d" % len(text)), (b"connection", b"close"),
-            *([(b"retry-after", b"1")] if status == 429 else [])]})
+            (b"content-length", b"%d" % len(text)),
+        ]
+        # RFC 9113 §8.2.2 forbids connection-specific headers on HTTP/2 responses.
+        if scope.get("http_version") not in ("2", "2.0", "3"):
+            headers.append((b"connection", b"close"))
+        if status == 429:
+            headers.append((b"retry-after", b"1"))
+        await send({"type": "http.response.start", "status": status, "headers": headers})
         await send({"type": "http.response.body", "body": text})
 
 

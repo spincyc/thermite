@@ -30,6 +30,15 @@ config THERMITE_RADIO_LINES
         The remote speaks the base station's lines on UART1 (remote/main/radio_lines.c)
         instead of ESP-NOW.
 
+config THERMITE_CONSOLE_UNRESTRICTED
+    bool "Allow console enroll and forget while already enrolled"
+    default y if THERMITE_BOARD_QEMU
+    default n
+    help
+        Allows destructive console enroll and forget commands even when the remote
+        is already enrolled. Enabled on the QEMU test board; disabled on production
+        boards so an enrolled remote refuses unauthenticated USB wipe or re-enroll.
+
 config THERMITE_BOARD_OMOTE_FAMILY
     bool
     default y if THERMITE_BOARD_OMOTE_REV5 || THERMITE_BOARD_OPENREMOTE_REV6

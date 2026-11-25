@@ -170,6 +170,14 @@ def files(devices: list[dict], house: House) -> dict[str, str]:
             for direction in ("input", "output")}
 
 
+def _edid_port(key: object) -> int | None:
+    if isinstance(key, int) and not isinstance(key, bool) and 1 <= key <= INPUTS:
+        return key
+    if isinstance(key, str) and key in {str(n) for n in range(1, INPUTS + 1)}:
+        return int(key)
+    return None
+
+
 def validate(device: dict) -> list[str]:
     if not uses(device, PHASE, NAME):
         return []
@@ -186,9 +194,16 @@ def validate(device: dict) -> list[str]:
     if not isinstance(edid, dict):
         problems.append(f"{where}.settings.edid: must map inputs (or default) to EDID names")
         edid = {}
+    seen_ports: dict[int, object] = {}
     for key, name in edid.items():
-        if key != "default" and not (isinstance(key, int) and not isinstance(key, bool) and 1 <= key <= INPUTS):
+        port = None if key == "default" else _edid_port(key)
+        if key != "default" and port is None:
             problems.append(f"{where}.settings.edid: {key!r} is neither default nor an input 1-{INPUTS}")
+        elif port is not None:
+            if port in seen_ports:
+                problems.append(f"{where}.settings.edid: input {port} is set more than once")
+            else:
+                seen_ports[port] = key
         if name not in EDID:
             problems.append(f"{where}.settings.edid.{key}: {name!r} is not an EDID name "
                             f"(such as 4k60-444-hdr-2ch or copy-output-1)")
@@ -267,7 +282,7 @@ def desired(device: dict) -> dict:
     edid = settings.get("edid") or {}
     out: dict = {"edid": {}}
     for port in range(1, INPUTS + 1):
-        name = edid.get(port, edid.get("default"))
+        name = edid.get(port, edid.get(str(port), edid.get("default")))
         if name is not None:
             out["edid"][port] = EDID[name]
     for setting, (codes, *_) in OUTPUT_SETTINGS.items():

@@ -192,5 +192,26 @@ class Metrics(unittest.TestCase):
             self.assertFalse(str(check["labels"].get("thing", "")).startswith("heos:"), check)
 
 
+    def test_aim_rewrites_both_host_and_read_url(self):
+        data = two()
+        east = next(d for d in data["devices"] if d["id"] == EAST)
+        rendered = heos.files(data["devices"], House(data))
+        aimed = heos.aim(rendered, east, "127.0.0.1:41234")[heos.RULE]
+        line = next(line for line in aimed.splitlines() if line.startswith("const DEVICES = "))
+        entries = {entry["id"]: entry for entry in json.loads(line[len("const DEVICES = "):-1])}
+        self.assertEqual(entries[EAST]["host"], "127.0.0.1")
+        self.assertEqual(entries[EAST]["readURL"], "http://127.0.0.1:41234/goform/AppCommand.xml")
+        self.assertNotIn(east["ip"], json.dumps(entries[EAST]))
+
+    def test_reboot_follows_receiver_zone_count(self):
+        one = receiver(WEST, "example_west")
+        one["zones"] = 1
+        three = receiver(EAST, "example_east")
+        three["zones"] = 3
+        self.assertEqual([check["item"] for check in heos.reboot(one)["idle"]], [f"{WEST}_main_power"])
+        self.assertEqual([check["item"] for check in heos.reboot(three)["idle"]],
+                         [f"{EAST}_main_power", f"{EAST}_zone2_power", f"{EAST}_zone3_power"])
+
+
 if __name__ == "__main__":
     unittest.main()

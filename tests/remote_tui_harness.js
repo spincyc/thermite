@@ -768,16 +768,22 @@ async function failure(proof) {
   site.send("loc_" + WEST + "_source", "off");
   await until(parts, () => session.state(WEST).value === "off", "the room read off");
   proof.failure.confirmed = [said("bubble:example_computer"), alert()];
-  // Each state its own glyph: switching (two, where motion is on), and a source that cannot be read.
+  // Each state its own glyph: switching (steady while --still, two where motion is on), and a source that cannot be read.
   parts.backend.timeout = 60000;
   key(parts, "2");
   await until(parts, () => session.state(WEST).pending === "example_computer", "the room switching");
+  ui.blink = true;
+  const stillSwitching = [light(WEST)[0], said("bubble:example_computer")];
+  ui.still = false;
+  ui.blink = false;
   const switching = [light(WEST)[0], said("bubble:example_computer")];
-  ui.blink = !ui.blink;
+  ui.blink = true;
   switching.push(light(WEST)[0]);
+  ui.still = true;
+  ui.blink = false;
   site.send("loc_" + EAST + "_source", "UNDEF");
   await until(parts, () => session.state(EAST).status === "unavailable", "a source that cannot be read");
-  proof.failure.states = { switching, unread: light(EAST) };
+  proof.failure.states = { stillSwitching, switching, unread: light(EAST) };
   site.send("loc_" + EAST + "_source", "off");
   site.send("loc_" + WEST + "_source", "example_player");
   await until(parts, () => session.state(WEST).value === "example_player", "the player again");
@@ -936,6 +942,79 @@ async function terminal(proof) {
   parts.controller.stop();
 }
 
+async function regressions(proof) {
+  size = [120, 45];
+  const Administration = require("../tui/remote/administration");
+  const { Grid } = require("../tui/remote/grid");
+  // THERMITE_REMOTE_STILL parsing: falsy values disable still, empty falls back to store.
+  const storeStill = { get: (k) => (k === "remote.still" ? true : null), set() {} };
+  const stillEnv = {};
+  for (const val of ["0", "false", "FALSE", "no", "off", "1", "true", ""]) {
+    const p = Main.assemble(Main.parse(["--mock"]), { shared: Shared.load(), setInterval: () => 0, clearInterval() {},
+      store: storeStill, environ: { THERMITE_REMOTE_STILL: val } });
+    stillEnv[val] = p.controller.ui.still;
+    p.controller.stop();
+  }
+  // Gateway admin: disabled Lock button renders without crashing, F6 before F10, Security status, Tab in Info sheet, q/l in access-form, mouse repeat blocked when locked.
+  const parts = await open({ gateway: true }, WEST);
+  const { controller, session } = parts;
+  const ui = controller.ui;
+  const headerLine = text(parts).split("\n")[0];
+  const f6BeforeF10 = headerLine.includes("F6 Pair devices") && headerLine.includes("F10 System")
+    && headerLine.indexOf("F6 Pair devices") < headerLine.indexOf("F10 System");
+  const origRoomLock = session.roomLock;
+  session.roomLock = () => ({ canManage: true, disabled: true, busy: false, locked: false, label: "Lock room", text: "Wait until source is read", room: WEST });
+  key(parts, "i");
+  const infoFrame = draw(parts);
+  const disabledLockOk = infoFrame.grid.text().includes("Lock room (K)") && infoFrame.grid.hits.every((entry) => entry.hit != null);
+  const infoFocusBeforeTab = ui.focus;
+  key(parts, null, { name: "tab" });
+  const infoFocusAfterTab = ui.focus;
+  key(parts, null, { name: "escape" });
+  session.roomLock = origRoomLock;
+  // Security status bar does not hardcode "Not connected".
+  key(parts, null, { name: "f3" });
+  const securityLines = text(parts).split("\n");
+  const securityStatusClean = !securityLines[securityLines.length - 2].includes("Not connected");
+  // q and l are swallowed inside access-form even on a button field.
+  key(parts, null, { name: "f8" });
+  await until(parts, () => text(parts).includes("+ Add user"), "users loaded");
+  focusOn(parts, "access:edit-user:2");
+  key(parts, null, { name: "enter" });
+  focusOn(parts, "access:save");
+  const logBefore = ui.logVisible;
+  key(parts, "l");
+  key(parts, "q");
+  const formSwallowedQL = ui.logVisible === logBefore && !parts.quit && ui.overlay && ui.overlay.kind === "access-form";
+  key(parts, null, { name: "escape" });
+  // Mouse repeat checks session.controlBlock() before firing.
+  key(parts, null, { name: "f2" });
+  key(parts, "1");
+  parts.site.send("loc_" + WEST + "_source", "example_player");
+  await until(parts, () => session.state(WEST).value === "example_player", "player active");
+  const origBlock = session.controlBlock;
+  session.controlBlock = () => "Locked by schedule";
+  const sentBefore = parts.sent.length;
+  const volHit = draw(parts).grid.hits.find((entry) => entry.hit.key === "key:volume_up");
+  controller.mouse({ action: "mousedown", button: "left", x: volHit.x, y: volHit.y });
+  controller.mouse({ action: "mouseup", button: "left", x: volHit.x, y: volHit.y });
+  const lockedRepeatBlocked = parts.sent.length === sentBefore && toast(parts) && toast(parts)[0] === "Read-only";
+  session.controlBlock = origBlock;
+  controller.stop();
+  // Empty house in administration.js settings does not call loadPolicy or crash.
+  let policyCalls = 0;
+  const fakeClient = { native: false, security: () => ({ enabled: true }), accountsExist: () => true, canEdit: () => true,
+    ready: async () => ({ id: 1, admin: true, can_edit: true }), loadPolicy: async () => { policyCalls += 1; return {}; } };
+  const adminEmpty = Administration.create(fakeClient, { rooms: [], sources: {} }, () => {});
+  await adminEmpty.open("settings");
+  const emptyGrid = new Grid(80, null, "base");
+  adminEmpty.content(emptyGrid, 80, { ui: {} });
+  const emptySettingsOk = policyCalls === 0 && emptyGrid.text().includes("No rooms configured.");
+  proof.regressions = { stillEnv, f6BeforeF10, disabledLockOk, infoTabFocus: [infoFocusBeforeTab, infoFocusAfterTab],
+    securityStatusClean, formSwallowedQL, lockedRepeatBlocked, emptySettingsOk };
+  size = [110, 50];
+}
+
 (async () => {
   const proof = {};
   await watch(proof);
@@ -952,5 +1031,6 @@ async function terminal(proof) {
   await terminal(proof);
   await signal(proof, true);
   await settings(proof);
+  await regressions(proof);
   process.stdout.write(JSON.stringify(proof) + "\n");
 })().then(() => process.exit(0), (error) => { process.stderr.write(error.stack + "\n"); process.exit(1); });

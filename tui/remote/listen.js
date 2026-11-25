@@ -153,7 +153,7 @@ function face(g, w, ctx, kit) {
   // As Watch's: the lock in words, then what is wrong.
   if (view.locked) say("Read-only · " + view.locked.text, "dim");
   else if (view.groupLocked) say(view.groupLocked.text, "dim");
-  if (!kit.heard(ctx)) say("⚠ " + ctx.Session.NOT_CONNECTED, "alert");
+  if (!kit.heard(ctx) || view.connected === false) say("⚠ " + ctx.Session.NOT_CONNECTED, "alert");
   if (view.problem) say("⚠ " + view.speaker.label + " " + view.problem, "alert");
   if (view.music) say("⚠ " + view.music, "alert");
   // Its name where no bubble says it.

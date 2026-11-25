@@ -363,7 +363,7 @@
         tbody.appendChild(tr);
       }
       if (!rows[kind].length) {
-        const tr = element("tr"), td = element("td", { colspan: kind === "video" ? "8" : "5", class: "empty-panel" }, "No configured " + (kind === "video" ? "video paths" : "USB assignments") + " for this selection.");
+        const tr = element("tr"), td = element("td", { colspan: String((kind === "video" ? VIDEO_COLUMNS : DATA_COLUMNS).length), class: "empty-panel" }, "No configured " + (kind === "video" ? "video paths" : "USB assignments") + " for this selection.");
         tr.appendChild(td); tbody.appendChild(tr);
       }
       document.querySelectorAll("[data-" + kind + "-head] th").forEach(th => {

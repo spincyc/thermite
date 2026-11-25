@@ -19,6 +19,28 @@ const PARTS_MAX = 16;
 const MESSAGE_MAX = 8192;
 const KEY_LENGTH = 32;
 const COUNTER_MAX = 0xffffffff;
+// Recently seen HELLO nonces kept per remote to drop immediate replays.
+const HELLO_REMEMBERED = 64;
+
+class Seen {
+  constructor(limit) {
+    this.limit = limit;
+    this.ring = new Array(limit).fill(null);
+    this.at = 0;
+    this.set = new Set();
+  }
+
+  has(value) { return this.set.has(value); }
+
+  add(value) {
+    if (this.set.has(value)) return;
+    const old = this.ring[this.at];
+    if (old !== null) this.set.delete(old);
+    this.ring[this.at] = value;
+    this.at = (this.at + 1) % this.limit;
+    this.set.add(value);
+  }
+}
 
 function nonce(direction, header) {
   return Buffer.concat([Buffer.of(direction), header.subarray(4, HEADER)]);
@@ -158,26 +180,65 @@ class End {
 }
 
 class BridgeEnd extends End {
+  constructor(options) {
+    super(options);
+    this.pending = null;
+    this.seenHellos = new Seen(HELLO_REMEMBERED);
+  }
+
   get outward() { return DIRECTION.BRIDGE; }
 
+  restart(session) {
+    super.restart(session);
+    this.pending = null;
+  }
+
   /*
-   * One frame from the remote: {hello: status, frames: [SYNC]} for a HELLO,
-   * {message} for a complete DATA message, else null.
+   * One frame from the remote: {hello: status, frames: [SYNC], pending} for a
+   * HELLO, {message, promoted?} or {promoted} for DATA, else null.
+   *
+   * When a session is already active, a HELLO never tears it down: the new
+   * session stays pending until the remote proves it adopted SYNC by sending
+   * an authenticated DATA frame under it. Recently seen HELLO nonces are
+   * dropped outright. On a cold start (no active session yet) the session is
+   * adopted immediately so a remote waiting for its first screen receives it.
    */
   receive(frame) {
     const opened = open(this.key, DIRECTION.REMOTE, frame);
     if (!opened) return null;
     if (opened.type === TYPE.HELLO) {
-      const status = opened.counter === 0 ? json(opened.plaintext) : null;
-      if (!status) return null;
-      this.restart(randomSession(this.random));
+      const status = opened.counter === 0 && opened.session !== 0n ? json(opened.plaintext) : null;
+      if (!status || this.seenHellos.has(opened.session)) return null;
+      this.seenHellos.add(opened.session);
+      let next = randomSession(this.random);
+      while (next === this.session) next = randomSession(this.random);
       const sync = seal(this.key, DIRECTION.BRIDGE, {
-        type: TYPE.SYNC, session: this.session, counter: 0,
+        type: TYPE.SYNC, session: next, counter: 0,
         plaintext: Buffer.from(JSON.stringify({ hello: hex(opened.session) }), "utf8")
       });
-      return { hello: status, frames: [sync] };
+      if (this.session === null) {
+        this.restart(next);
+        return { hello: status, frames: [sync], pending: false };
+      }
+      this.pending = {
+        session: next, sent: 0, heard: 0, message: 0,
+        assembler: new Assembler(), helloStatus: status, helloNonce: opened.session
+      };
+      return { hello: status, frames: [sync], pending: true };
     }
     if (opened.type !== TYPE.DATA) return null;
+    if (this.pending && opened.session === this.pending.session) {
+      if (opened.counter <= this.pending.heard) return null;
+      const candidate = this.pending;
+      this.session = candidate.session;
+      this.sent = candidate.sent;
+      this.heard = candidate.heard;
+      this.message = candidate.message;
+      this.assembler = candidate.assembler;
+      this.pending = null;
+      const message = this.data(opened);
+      return message ? { message, promoted: candidate.helloStatus } : { promoted: candidate.helloStatus };
+    }
     const message = this.data(opened);
     return message ? { message } : null;
   }
@@ -216,6 +277,6 @@ class RemoteEnd extends End {
 }
 
 module.exports = {
-  VERSION, TYPE, DIRECTION, HEADER, TAG, FRAME_MAX, PART_MAX, PARTS_MAX, MESSAGE_MAX, KEY_LENGTH,
+  VERSION, TYPE, DIRECTION, HEADER, TAG, FRAME_MAX, PART_MAX, PARTS_MAX, MESSAGE_MAX, KEY_LENGTH, HELLO_REMEMBERED,
   seal, open, split, hex, Assembler, BridgeEnd, RemoteEnd
 };

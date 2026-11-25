@@ -131,8 +131,8 @@ body.thermite-app::before { content: ""; position: fixed; inset: 0 0 auto; z-ind
 .thermite-rooms a { color: var(--th-text); text-decoration: none; }
 .thermite-room-state { color: var(--th-muted); }
 .thermite-content :is(button,select,input,table) { font-family: inherit; }
-.thermite-content :is(a,button,select,input):focus-visible { outline: 2px solid var(--th-focus); outline-offset: 3px; }
-.thermite-content :is(summary,textarea):focus-visible { outline: 2px solid var(--th-focus); outline-offset: 3px; }
+:where(.thermite-content) :where(a,button,select,input):focus-visible { outline: 2px solid var(--th-focus); outline-offset: 3px; }
+:where(.thermite-content) :where(summary,textarea):focus-visible { outline: 2px solid var(--th-focus); outline-offset: 3px; }
 .thermite-content > :is(.thermite-system,.thermite-security) { max-width: 960px; padding-top: 24px; }
 .thermite-system::before { display: none; }
 .system-runtime { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 24px; padding: 18px 0; border-block: 1px solid var(--th-line); }

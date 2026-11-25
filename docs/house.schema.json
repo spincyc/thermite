@@ -697,10 +697,6 @@
                     "description": "its device id",
                     "type": "string"
                   },
-                  "zone": {
-                    "description": "the receiver's zone this room listens to: 2 or more, and left out for the main zone",
-                    "type": "number"
-                  },
                   "input": {
                     "description": "the input the signal before it arrives on: from the HDMI matrix, the room's switch or its receiver",
                     "type": "string"
@@ -720,10 +716,6 @@
                       "description": "an input of the device, by the name its integration gives it",
                       "type": "string"
                     }
-                  },
-                  "sync_with": {
-                    "description": "the room whose receiver is another zone of this one: while both show the same matrix source, this zone takes that room's input, so both screens show one picture",
-                    "type": "string"
                   },
                   "passive": {
                     "description": "whether thermite leaves the display alone: true for one it sends nothing to and reads nothing from, which then has only its device here",

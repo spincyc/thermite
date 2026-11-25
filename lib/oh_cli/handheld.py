@@ -14,6 +14,8 @@ handheld/main.js; enroll and forget speak the remote's console lines
 from __future__ import annotations
 
 import argparse
+import contextlib
+import errno
 import glob
 import os
 import re
@@ -25,7 +27,9 @@ import sys
 import termios
 import time
 import tty
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import oh_cli
 import oh_trace
@@ -46,6 +50,10 @@ ANSWER = 3.0
 PROBE = 1.5
 LINE_MAX = 4096
 STATE_LIMIT = 1024 * 1024
+LOCK_TIMEOUT = 5.0
+LOCK_POLL = 0.01
+LOCK_STALE = 30.0
+LOCK_EMPTY_GRACE = 2.0
 
 DESCRIPTION = f"""\
 Handheld remotes: ESP32-S3 remotes that reach the house by radio (ESP-NOW)
@@ -144,6 +152,96 @@ def private_parent(path: Path) -> None:
         private_directory(path.parent)
     except (AccessError, OSError) as exc:
         raise Problem(f"cannot use {path.parent}: {exc}", "it must be this user's directory, mode 0700") from None
+
+
+def lock_path(path: Path) -> Path:
+    return path.parent / ".state.lock"
+
+
+def _pid_gone(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+    return False
+
+
+def _break_stale_lock(lock: Path) -> None:
+    try:
+        fd = os.open(lock, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return
+    stale = False
+    ino = None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+            return
+        ino = info.st_ino
+        age = time.time() - info.st_mtime
+        text = os.read(fd, 64).decode("ascii", "replace").strip()
+        pid = int(text) if re.fullmatch(r"[1-9][0-9]*", text) else 0
+        if pid > 0:
+            stale = _pid_gone(pid) or age > LOCK_STALE
+        else:
+            stale = age > LOCK_EMPTY_GRACE
+    except OSError:
+        return
+    finally:
+        os.close(fd)
+    if not stale:
+        return
+    try:
+        if os.lstat(lock).st_ino == ino:
+            os.unlink(lock)
+    except OSError:
+        pass
+
+
+@contextlib.contextmanager
+def state_lock(path: Path, timeout: float = LOCK_TIMEOUT) -> Iterator[None]:
+    """Hold the exclusive sibling .state.lock around a state.json read-modify-write,
+    matching handheld/state.js so live enrollment never races serve."""
+    private_parent(path)
+    lock = lock_path(path)
+    deadline = time.monotonic() + timeout
+    my_ino: int | None = None
+    while True:
+        try:
+            fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        except OSError as exc:
+            if exc.errno != errno.EEXIST:
+                raise Problem(f"cannot lock {path}: {exc}") from None
+            _break_stale_lock(lock)
+            if time.monotonic() >= deadline:
+                raise Problem(f"cannot lock {path}: {lock} is held by another process") from None
+            time.sleep(LOCK_POLL)
+            continue
+        try:
+            my_ino = os.fstat(fd).st_ino
+            os.write(fd, f"{os.getpid()}\n".encode("ascii"))
+        except BaseException:
+            os.close(fd)
+            try:
+                if my_ino is not None and os.lstat(lock).st_ino == my_ino:
+                    os.unlink(lock)
+            except OSError:
+                pass
+            raise
+        os.close(fd)
+        break
+    try:
+        yield
+    finally:
+        try:
+            if my_ino is not None and os.lstat(lock).st_ino == my_ino:
+                os.unlink(lock)
+        except OSError:
+            pass
 
 
 def save(path: Path, data: dict) -> None:
@@ -415,26 +513,29 @@ def checked_name(name: str) -> str:
 def cmd_enroll(arguments) -> int:
     name = checked_name(arguments.name)
     path = arguments.state_file or state_file()
-    data = load(path)
     key = secrets.token_bytes(32)
     if arguments.simulator:
         mac = (arguments.mac or SIMULATED_MAC).lower()
         if not MAC.fullmatch(mac):
             raise Problem(f"--mac {arguments.mac}: a MAC is six pairs of hex digits joined by colons")
         key_file = Path(arguments.key_file or path.parent / f"{name}.key").expanduser().absolute()
-        entry = {"name": name, "mac": mac, "key": key.hex(), "board": "simulator", "simulated": True,
-                 "key_file": str(key_file), "store": {}, "status": {}}
-        replaced = add(data, entry)
-        private_parent(path)
-        write_key(key_file, key)
-        try:
-            save(path, data)
-        except Problem:
-            key_file.unlink(missing_ok=True)
-            raise
+        entry: dict[str, Any] = {
+            "name": name, "mac": mac, "key": key.hex(), "board": "simulator", "simulated": True,
+            "key_file": str(key_file), "store": {}, "status": {},
+        }
+        with state_lock(path):
+            data = load(path)
+            replaced = add(data, entry)
+            write_key(key_file, key)
+            try:
+                save(path, data)
+            except Problem:
+                key_file.unlink(missing_ok=True)
+                raise
         print(f"enrolled {name} ({mac}), a simulated remote{' again' if replaced else ''}")
         print(f"its key is in {key_file}; give that file to the simulator")
         return 0
+    data = load(path)
     base = None
     if arguments.base_port:
         with Console(arguments.base_port) as console:
@@ -456,9 +557,10 @@ def cmd_enroll(arguments) -> int:
     if words is None:
         raise Problem(f"{device} did not confirm the enrolment", "try again; the remote keeps its old one until it does")
     # The device holds the key; the bridge learns it from the state file.
-    data = load(path)
-    add(data, entry)
-    save(path, data)
+    with state_lock(path):
+        data = load(path)
+        add(data, entry)
+        save(path, data)
     print(f"enrolled {name} ({answer['mac']}, {answer['board']}) on base {base['mac']}, channel {channel}")
     return 0
 
@@ -466,12 +568,14 @@ def cmd_enroll(arguments) -> int:
 def cmd_list(arguments) -> int:
     path = arguments.state_file or state_file()
     data = load(path)
-    rows = []
+    rows: list[dict[str, Any]] = []
     for entry in data["remotes"]:
         if not isinstance(entry, dict):
             continue
-        status = entry.get("status") if isinstance(entry.get("status"), dict) else {}
-        store = entry.get("store") if isinstance(entry.get("store"), dict) else {}
+        raw_status = entry.get("status")
+        status: dict[str, Any] = raw_status if isinstance(raw_status, dict) else {}
+        raw_store = entry.get("store")
+        store: dict[str, Any] = raw_store if isinstance(raw_store, dict) else {}
         rows.append({"name": entry.get("name"), "mac": entry.get("mac"), "board": entry.get("board") or "",
                      "simulated": entry.get("simulated") is True, "fw": status.get("fw"),
                      "battery": status.get("battery"), "charging": status.get("charging"),
@@ -487,11 +591,11 @@ def cmd_list(arguments) -> int:
     if not rows:
         print(f"no remote is enrolled in {path}")
         return 0
-    table = [("NAME", "MAC", "BOARD", "BATTERY", "ROOM")]
+    table: list[tuple[str, str, str, str, str]] = [("NAME", "MAC", "BOARD", "BATTERY", "ROOM")]
     for row in rows:
         battery = "" if row["battery"] is None else f"{row['battery']}%" + (" charging" if row["charging"] else "")
-        table.append((row["name"], row["mac"], row["board"],
-                      battery, row["room"] or ""))
+        table.append((str(row["name"] or ""), str(row["mac"] or ""), str(row["board"] or ""),
+                      battery, str(row["room"] or "")))
     widths = [max(len(str(line[column])) for line in table) for column in range(len(table[0]))]
     for line in table:
         print("  ".join(str(value).ljust(width) for value, width in zip(line, widths, strict=True)).rstrip())
@@ -513,9 +617,10 @@ def cmd_forget(arguments) -> int:
                 raise Problem(f"{arguments.port} is {answer['mac']}, not {arguments.name} ({entry.get('mac')})")
             if console.ask("thermite forget", ("forgotten",)) is None:
                 raise Problem(f"{arguments.port} did not confirm that it forgot its enrolment")
-    data = load(path)
-    data["remotes"] = [other for other in data["remotes"] if not (isinstance(other, dict) and other.get("name") == arguments.name)]
-    save(path, data)
+    with state_lock(path):
+        data = load(path)
+        data["remotes"] = [other for other in data["remotes"] if not (isinstance(other, dict) and other.get("name") == arguments.name)]
+        save(path, data)
     key_file = entry.get("key_file")
     if entry.get("simulated") and isinstance(key_file, str):
         try:

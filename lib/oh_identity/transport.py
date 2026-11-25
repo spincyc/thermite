@@ -182,8 +182,10 @@ class LoopbackTransport:
 
     @timed("media")
     def media(self, resource, method, body, maximum):
-        with self._client("media").stream(method, self.base + resource, content=body or None,
-                                          headers={**self.headers, "Content-Type": "application/sdp"}) as response:
+        content = body or None
+        headers = {**self.headers, "Content-Type": "application/sdp"} if content is not None else dict(self.headers)
+        with self._client("media").stream(method, self.base + resource, content=content,
+                                          headers=headers) as response:
             response.raise_for_status()
             data = bytearray()
             for chunk in response.iter_bytes():

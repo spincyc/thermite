@@ -157,15 +157,18 @@ def rooms_off(data: dict, device: dict, spec: dict | None = None) -> list[dict]:
     """Idle readings for a matrix with none of its own: each room whose
     device ports it switches (routing `usb`) is Off, and, when its reboot()
     `spec` says `rooms`, each room that shows one of its outputs (routing
-    `hdmi_switch`). Ports and outputs no room lists are not read."""
+    `hdmi_switch` or `routing.hdmi_matrix`). Ports and outputs no room lists
+    are not read."""
     routed = data.get("routing")
     rooms = routed.get("rooms") if isinstance(routed, dict) else None
     shown = bool(spec and spec.get("rooms"))
+    hdmi_matrix = shown and isinstance(routed, dict) and device["id"] == routed.get("hdmi_matrix")
 
     def serves(room: dict) -> bool:
         usb, switch = room.get("usb"), room.get("hdmi_switch")
         return (isinstance(usb, dict) and device["id"] in usb) or \
-            (shown and isinstance(switch, dict) and switch.get("device") == device["id"])
+            (shown and isinstance(switch, dict) and switch.get("device") == device["id"]) or \
+            (hdmi_matrix and ("hdmi_output" in room or "hdmi_audio_output" in room))
     return [{"item": routing.item_name(room), "is": routing.OFF}
             for room, entry in (rooms if isinstance(rooms, dict) else {}).items()
             if isinstance(entry, dict) and serves(entry)]
@@ -173,12 +176,15 @@ def rooms_off(data: dict, device: dict, spec: dict | None = None) -> list[dict]:
 
 def entry(house: House, device: dict) -> dict:
     spec = provider(device).reboot(device)
+    unread_rooms = (rooms_off(house.data, device, HUNG_ROOMS)
+                    if any(check.get("unreadIsIdle") for check in spec["idle"]) else [])
     hung = {"hung": {"things": list(spec["hung"]["things"]), "seconds": spec["hung"]["seconds"],
                      "idle": rooms_off(house.data, device, HUNG_ROOMS)}} if when_hung(device) and "hung" in spec else {}
     return {"id": device["id"], "nightly": nightly(device),
             "item": spec["item"], "answers": list(spec["answers"]), "things": list(spec.get("things", ())),
             "signs": list(spec.get("signs", ())),
             "idle": [dict(check) for check in spec["idle"]] + rooms_off(house.data, device, spec),
+            **({"unreadIdle": unread_rooms} if unread_rooms else {}),
             **({"console": dict(spec["console"])} if "console" in spec else {}), **hung}
 
 

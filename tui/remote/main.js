@@ -48,6 +48,14 @@ const FLAGS = { mock: "mock", pair: "pair", "matrix-down": "matrixDown", still: 
 const STILL = "THERMITE_REMOTE_STILL";
 const CHOICES = { mode: ["dark", "light"], volume: ["slider", "buttons"] };
 
+function parseStill(value) {
+  if (value == null) return null;
+  const text = String(value).trim().toLowerCase();
+  if (!text) return null;
+  if (["0", "false", "no", "off"].includes(text)) return false;
+  return true;
+}
+
 function parse(argv) {
   const args = { mock: false, pair: false, matrixDown: false, still: false };
   for (let index = 0; index < argv.length; index += 1) {
@@ -167,7 +175,7 @@ function assemble(args, env) {
     screen: args.pair ? "pairing" : options.screen || (args.room || args.choose ? "remote" : "home"),
     theme: args.mode,
     // For this run, as --mode is; otherwise the a key's choice, kept in the store.
-    still: args.still || Boolean((options.environ || process.env)[STILL]) || null,
+    still: args.still ? true : parseStill(environ[STILL]),
     logVisible: args.logVisible,
     look: options.look || Theme.load(),
     onChange: options.onChange,

@@ -29,6 +29,10 @@ from .music import Sources
 from .topics import WITHOUT_TEXT
 
 VIEW = "music"
+#: Upper bounds on accumulated partial-result reads (players/all,
+#: player_queues/all, providers) so a misbehaving server cannot OOM the gateway.
+MAX_ANSWER_ITEMS = 4096
+MAX_PARTIAL_CHUNKS = 64
 _hubs = weakref.WeakKeyDictionary()
 
 
@@ -116,6 +120,8 @@ class MusicHub(Fanout):
             gone = [speaker for speaker, player in self.players.items() if player["player_id"] == ident]
             for speaker in gone:
                 del self.players[speaker]
+            if isinstance(ident, str):
+                self.queues.pop(ident, None)
             return bool(gone)
         if kind in ("queue_added", "queue_updated"):
             return self.keep_queue(data)
@@ -163,7 +169,7 @@ class MusicHub(Fanout):
             self.counters["upstream_connects"] += 1
             asked = {await socket.command("players/all"): "players", await socket.command("player_queues/all"): "queues",
                      await socket.command("providers"): "providers"}
-            answers = {}
+            answers, partials = {}, {}
             while True:
                 message = await socket.receive()
                 if self.task is not owner:
@@ -179,8 +185,15 @@ class MusicHub(Fanout):
                 if "error_code" in message:
                     raise Unavailable("Music Assistant refused a read")
                 result = message.get("result")
-                answers.setdefault(name, []).extend(result if isinstance(result, list) else [])
+                chunk = result if isinstance(result, list) else []
+                collected = answers.setdefault(name, [])
+                if len(collected) + len(chunk) > MAX_ANSWER_ITEMS:
+                    raise Unavailable("Music Assistant answer too large")
+                collected.extend(chunk)
                 if message.get("partial"):
+                    partials[name] = partials.get(name, 0) + 1
+                    if partials[name] > MAX_PARTIAL_CHUNKS:
+                        raise Unavailable("Music Assistant answer too large")
                     continue
                 del asked[message["message_id"]]
                 if name == "players":

@@ -106,8 +106,9 @@ FAMILIES = {
     "thermite_scrape_duration_seconds": ("gauge", "Seconds the last REST round took; at ROUND_SECONDS openHAB "
                                          "counts as not answering."),
     "thermite_items_missing": ("gauge", "Mapped Items openHAB does not have."),
-    "thermite_device_info": ("gauge", "Each device of the house file, with its own room, kind and label. A "
-                             "check's room is the room using the device: join device facts on(device)."),
+    "thermite_device_info": ("gauge", "Each device of the house file, with its own room, kind, label and whether it "
+                             "is required (not monitor: optional). A check's room is the room using the device: join "
+                             "device facts on(device)."),
     "thermite_room_info": ("gauge", "Each room of the house file, and house for house-wide checks, with its label."),
     "thermite_zone_info": ("gauge", "Each routing zone (a room's source selector), with the room it is in and its "
                            "label."),
@@ -363,7 +364,8 @@ def collect(mapping: dict, fetch: Fetch, clock: Callable[[], float] = time.monot
     for ident in sorted(devices):
         device = devices[ident]
         samples.append(("thermite_device_info", {**device_labels(mapping, ident),
-                                                 "label": str(device.get("label", ident))}, 1.0))
+                                                 "label": str(device.get("label", ident)),
+                                                 "required": "false" if device.get("optional") else "true"}, 1.0))
     rooms = {HOUSE_ROOM: HOUSE_LABEL, **(mapping.get("rooms") or {})}
     samples += [("thermite_room_info", {"room": room, "label": str(rooms[room])}, 1.0) for room in sorted(rooms)]
     zones = (mapping.get("routing") or {}).get("zones") or {}
@@ -373,9 +375,8 @@ def collect(mapping: dict, fetch: Fetch, clock: Callable[[], float] = time.monot
         samples += _things(mapping, answers["things"])
     if "items" in answers:
         samples += _items(mapping, answers["items"], answers.get("things"))
-        samples += _playing(mapping, answers["items"])
-    samples += _handler_pool(mapping, answers.get("items", []))
-    if "items" in answers:
+        samples += _playing(mapping, answers["items"], answers.get("things"))
+        samples += _handler_pool(mapping, answers["items"])
         samples += _routing(mapping, answers["items"])
         samples += _commands(mapping, answers["items"])
     return samples
@@ -611,8 +612,13 @@ def sounding(spec: dict, state_of: dict) -> float | None:
 
 
 def _offline(mapping: dict, things: list | None) -> set[str]:
-    """The devices with a Thing the runtime reports and not ONLINE."""
-    status_of = {thing["UID"]: (thing.get("statusInfo") or {}).get("status") for thing in things or []
+    """The devices with a Thing not known to be ONLINE. When /rest/things did
+    not answer (`things is None`), every Thing-backed device is treated as
+    offline so stale cached playing states are not reported as live."""
+    if things is None:
+        return {ident for ident, device in (mapping.get("devices") or {}).items()
+                if device.get("things")}
+    status_of = {thing["UID"]: (thing.get("statusInfo") or {}).get("status") for thing in things
                  if isinstance(thing, dict) and isinstance(thing.get("UID"), str)}
     return {ident for ident, device in (mapping.get("devices") or {}).items()
             if any(status_of.get(uid, "ONLINE") != "ONLINE" for uid in device.get("things") or [])}
@@ -712,15 +718,23 @@ def _items(mapping: dict, answer: list, things: list | None = None) -> list[Samp
     return samples
 
 
-def _playing(mapping: dict, answer: list, now: float | None = None) -> list[Sample]:
+def _playing(mapping: dict, answer: list, things: list | None = None, now: float | None = None) -> list[Sample]:
     """thermite_playing_timestamp_seconds for each device playing something,
     with the zones whose source Item names it. A speaker that follows another
     in a multiroom group plays what its leader plays, and nothing known
-    while its leader is not known (_leaders())."""
+    while its leader is not known (_leaders()). Devices whose own Thing or
+    multiroom leader's Thing is not ONLINE are skipped so stale cached
+    binding states are not exported as live playback.
+
+    Owner decision (2026-11-25): free-text `app` and `title` labels remain in
+    Prometheus on this metric; TSDB cardinality and anonymous LAN Grafana
+    visibility of play history are explicitly accepted.
+    """
     now = time.time() if now is None else now
     spec = mapping.get("playing") or {}
     state_of = {item["name"]: item.get("state") for item in answer
                 if isinstance(item, dict) and isinstance(item.get("name"), str)}
+    offline = _offline(mapping, things)
     kept = mapping.get("items") or {}
     follows = {kept[name].get("device"): kept[lead].get("device") if lead else None
                for name, lead in _leaders(mapping, state_of).items()}
@@ -731,14 +745,15 @@ def _playing(mapping: dict, answer: list, now: float | None = None) -> list[Samp
     samples: list[Sample] = []
     for ident in sorted(spec):
         source = follows.get(ident, ident)
-        if source not in spec:
+        if source not in spec or ident in offline or source in offline:
             continue
         app, title = (to_text(state_of.get(spec[source].get(key))) for key in ("app", "title"))
         if app is None and title is None:
             continue
         samples.append(("thermite_playing_timestamp_seconds", {**device_labels(mapping, ident), "app": app or "",
                                                                "title": title or "",
-                                                               "zones": ",".join(sorted(zones.get(ident, [])))}, now))
+                                                               "zones": ",".join(sorted(set(zones.get(ident, []))))},
+                        now))
     return samples
 
 

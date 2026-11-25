@@ -268,3 +268,50 @@ class GatewayReadinessLifecycle(unittest.TestCase):
         self.assertFalse(any(event[-1] == "final-verification" for event in events))
         system.run.assert_called_once()
         self.assertEqual(system.run.call_args.args[0], ("sudo", "systemctl", "--no-block", "restart", "thermite-openhab.service"))
+
+    def test_apt_packages_run_update_first_with_noninteractive_and_btrfs_progs(self):
+        context = steps.Context(AREA, {"openhab": {"version": "5.2.3"}},
+                                {"root": "/srv/fictional", "uid": 9001, "gid": 9001},
+                                "1" * 40, "a" * 64, "fixture", None)
+        system = Mock(spec=System)
+        system.which.side_effect = lambda name: "/usr/bin/apt-get" if name == "apt-get" else None
+        system.fstype.return_value = "btrfs"
+        system.capture.return_value = (1, "")
+        system.read_bytes.return_value = b"N\n"
+        pkg = steps.Packages(context)
+        self.assertIn("btrfs-progs", pkg.names(system, "apt-get"))
+        actions = pkg.actions(system)
+        self.assertEqual(len(actions), 2)
+        self.assertEqual(actions[0].argv, ("apt-get", "update"))
+        self.assertEqual(actions[1].argv[:4], ("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install"))
+        self.assertEqual(actions[1].approved_argv[:5],
+                         ("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "--assume-yes", "install"))
+        # Without btrfs binary, InstallationRoot falls back to mkdir instead of failing.
+        system.stat.return_value = None
+        root_actions = steps.InstallationRoot(context).actions(system)
+        self.assertIn(("mkdir", "/srv/fictional"), [a.argv for a in root_actions])
+        system.which.side_effect = lambda name: "/usr/bin/btrfs" if name == "btrfs" else None
+        root_actions_btrfs = steps.InstallationRoot(context).actions(system)
+        self.assertIn(("btrfs", "subvolume", "create", "/srv/fictional"), [a.argv for a in root_actions_btrfs])
+
+    def test_commissioning_passes_effective_sonos_callback_port(self):
+        import oh_ports
+        with tempfile.TemporaryDirectory() as tmp:
+            site = Path(tmp) / "site"
+            site.mkdir()
+            context = steps.Context(site, {"openhab": {"version": "5.2.3"}},
+                                    {"root": str(Path(tmp) / "inst"), "uid": 9001, "gid": 9001,
+                                     "http_port": 13602},
+                                    "1" * 40, "a" * 64, "fixture", "192.0.2.10")
+            gateway = Gateway(context, transaction=TRANSACTION)
+            native = steps.NativeDeadline(60)
+            commissioning = steps.Commissioning(context, native)
+            commissioning.gateway = gateway
+            system = Mock(spec=System)
+            system.clock.return_value = 0.0
+            with patch.object(oh_ports, "effective", return_value={**oh_ports.DEFAULTS, "callbacks": 14605}) as effective, \
+                    patch("oh_access.native_boundary.configure", return_value={"callbacks": None}) as configure, \
+                    patch("oh_conf.House.load", return_value=type("H", (), {"data": {}})()):
+                self.assertIsNone(commissioning(system, {}, None))
+            effective.assert_called_once_with(context.host)
+            self.assertEqual(configure.call_args.kwargs["callback_port"], 14605)

@@ -23,6 +23,9 @@ class ConfigParameter(unittest.TestCase):
         self.selected = patch.object(oh_paths, "SITE", oh_paths.PROGRAM)
         self.selected.start()
         self.addCleanup(self.selected.stop)
+        self.explicit = patch.object(oh_paths, "CONFIG_EXPLICIT", None)
+        self.explicit.start()
+        self.addCleanup(self.explicit.stop)
 
     def test_config_before_or_after_verb_selects_the_same_directory(self):
         for args in (["--config", "config with spaces", "install", "--dry-run"],

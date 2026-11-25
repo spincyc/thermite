@@ -196,6 +196,7 @@ function create(options) {
     } else if (field.kind === "text" || field.kind === "masked") {
       const store = name.startsWith("wifi_") ? ui.wifi : ui.answers;
       store[name] = all ? "" : Array.from(store[name] || "").slice(0, -1).join("");
+      delete ui.errors[field.check || name];
     }
   }
 
@@ -341,6 +342,7 @@ function create(options) {
       return check(Object.keys(FIELDS).filter((name) => isAnswer(name)).concat(["wifi_ssid", "confirm"]))
         .then((ok) => (ok ? install() : changed())).catch(() => {});
     }
+    if (!step.fields) return;
     const names = step.fields.filter((name) => !FIELDS[name].check);
     return check(names).then((ok) => {
       if (!ok) return changed();
@@ -430,6 +432,7 @@ function create(options) {
     }
     if (ui.busy) return;
     const step = STEPS[ui.step];
+    if (step.id === "install") return;
     if (step.id === "done" && ui.result && (name === "enter" || name === "return")) {
       return busy("Restarting", core.request("reboot")).catch(() => {});
     }
@@ -453,7 +456,7 @@ function create(options) {
       if (current) erase(current, false);
     } else if (full === "C-u") {
       if (current) erase(current, true);
-    } else if (ch && current && ch.length === 1 && ch >= " " && ch !== "\x7f" && !(info && info.ctrl)) {
+    } else if (ch && current && ch.length === 1 && ch >= " " && ch !== "\x7f" && !(info && (info.ctrl || info.meta))) {
       type(current, ch);
     } else return;
     changed();

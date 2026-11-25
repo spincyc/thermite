@@ -13,11 +13,12 @@ Finite text. A client is given only words this release wrote and ids the
 generated house defines: an alert's title and text are
 oh_metrics.alerts.CATALOG's and its check's words CHECK_WORDS'; its room
 and device are the house file's ids, its zone a room of the compiled
-contract, its service the name of a house-wide check. Only the labels
-oh_metrics.alerts.ABOUT lists for an alert are read at all. No label value
-or annotation Prometheus returns is passed on as text, or logged. A label
-that is not such an id is left out, an alert the catalogue does not name
-is only counted, and each is logged once, by alert and label name.
+contract, its service the name of a house-wide check, core job or known
+thermite unit. Only the labels oh_metrics.alerts.ABOUT and this module's
+ABOUT list for an alert are read at all. No label value or annotation
+Prometheus returns is passed on as text, or logged. A label that is not
+such an id is left out, an alert the catalogue does not name is only
+counted, and each is logged once, by alert and label name.
 
 A silent answer is never a healthy one. `monitoring` says which of three
 things an empty list means:
@@ -53,10 +54,9 @@ from datetime import datetime
 
 import httpx
 
+import oh_units
 from oh_metrics import alerts as catalogue
 from oh_metrics.exporter import HOUSE_ROOM
-
-from . import history
 
 LOG = logging.getLogger(__name__)
 PATH = "/api/v1/rules"
@@ -71,6 +71,20 @@ MAX_RECORDS = 50
 OK, STALLED, UNREACHABLE = "ok", "stalled", "unreachable"
 #: What a house-wide check names in its device label: a job or a service.
 SERVICES = frozenset((*catalogue.CORE_JOBS, *catalogue.SERVICES))
+#: Known systemd daemon units a service alert may name in its `name` label.
+UNITS = frozenset(oh_units.DAEMONS)
+#: House-wide alerts whose identifying subject comes from a Prometheus label
+#: outside catalogue.ABOUT's house places and checks: alert -> (label,
+#: finite allowlist or None for house devices, fallback service label or None).
+ABOUT = {
+    "ThermiteServiceFailed": ("name", UNITS, None),
+    "ThermiteServiceDown": ("name", UNITS, None),
+    "ThermiteServiceFlapping": ("name", UNITS, None),
+    "ThermiteScrapeFailed": ("job", frozenset(catalogue.CORE_JOBS), None),
+    "ThermiteRoutingQuarantined": ("device", None, "routing"),
+    "ThermiteGatewayCertExpiring": ("service", frozenset({"gateway"}), "gateway"),
+    "ThermiteServiceMetricsStale": ("name", UNITS, None),
+}
 #: The labels that make an alert one of a part of the house.
 PLACES = ("room", "zone", "device")
 
@@ -167,6 +181,18 @@ def record(name, labels, since, ids):
             out[field] = value
         else:
             dropped(name, label)
+    if name in ABOUT:
+        label, allowed, fallback = ABOUT[name]
+        value = labels.get(label, "")
+        if value:
+            field = label if allowed is None else "service"
+            permitted = ids[label] if allowed is None else allowed
+            if value in permitted:
+                out[field] = value
+            else:
+                dropped(name, label)
+        elif fallback:
+            out["service"] = fallback
     if "check" in out:
         out["check_text"] = catalogue.CHECK_WORDS[out["check"]]
     return out
@@ -189,7 +215,11 @@ def feed(contract, fetch=None):
         try:
             if not contract.history:
                 raise ValueError("The contract names no Prometheus")
-            monitoring, evaluated, firing = read((fetch or history.ask)(contract.history["port"], "GET", PATH), now)
+            ask = fetch
+            if ask is None:
+                from . import history
+                ask = history.ask
+            monitoring, evaluated, firing = read(ask(contract.history["port"], "GET", PATH), now)
         except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError):
             answer = {"monitoring": UNREACHABLE, "evaluated": None, "firing": None, "records": ()}
         else:

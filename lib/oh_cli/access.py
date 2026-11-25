@@ -114,7 +114,9 @@ as user.reset_admin by a local principal.""",
                 try:
                     ca, _ = tui.trust(args.url, args.ca_file)
                 except tui.Problem as exc:
-                    raise AccessError("; ".join(exc.args)) from None
+                    for line in exc.lines:
+                        print("thermite access: " + line, file=sys.stderr)
+                    return 2
                 result = client.login(args.url, args.user, hidden_password(), ca_file=ca)
             elif args.command == "logout":
                 result = client.logout(args.url)
@@ -170,6 +172,26 @@ as user.reset_admin by a local principal.""",
         elif args.command == "callbacks":
             from oh_access.callback_service import serve
             serve(args.descriptor)
+            return 0
+        if getattr(args, "json", False):
+            oh_cli.emit(result)
+            return 0
+        if args.command == "login":
+            expires = result.get("expires_at")
+            print(f"Logged in to {result.get('origin', args.url)}" + (f" (expires {expires})" if expires else ""))
+            return 0
+        if args.command == "logout":
+            print(f"Logged out of {result.get('origin', args.url)}")
+            return 0
+        if args.command == "status":
+            user = result.get("user") if isinstance(result.get("user"), dict) else {}
+            username = user.get("username")
+            role = "admin" if user.get("admin") else "editor" if user.get("can_edit") else "viewer"
+            site = result.get("origin", args.url)
+            print(f"{site}: {username} ({role})" if username else f"{site}: signed in")
+            policies = result.get("policies") if isinstance(result.get("policies"), dict) else {}
+            for room, policy in sorted(policies.items()):
+                print(f"  {room}: {json.dumps(policy, sort_keys=True)}")
             return 0
         print(json.dumps(result, indent=2))
         return 0

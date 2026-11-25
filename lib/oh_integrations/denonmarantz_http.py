@@ -322,6 +322,7 @@ def render(device: dict, house: House, out: YamlFile) -> None:
         },
     }
     items = out.items
+    zones = device.get("zones", DEFAULT_ZONES)
     _render_signal(device, house, out)
     if not uses(device, "control", NAME):
         items[f"{ident}_main_power"] = point(ident, "Switch", "Main Zone Power", ["Status", "Power"],
@@ -330,10 +331,11 @@ def render(device: dict, house: House, out: YamlFile) -> None:
                                               f"{uid}:mainZone#volume", guarded=True, icon="soundvolume")
         items[f"{ident}_main_input"] = point(ident, "String", "Main Zone Input", ["Status", "Channel"],
                                              f"{uid}:mainZone#input", guarded=True)
-        items[f"{ident}_zone2_power"] = point(ident, "Switch", "Zone 2 Power", ["Status", "Power"],
-                                              f"{uid}:zone2#power", guarded=True, icon="receiver")
-        items[f"{ident}_zone2_input"] = point(ident, "String", "Zone 2 Input", ["Status", "Channel"],
-                                              f"{uid}:zone2#input", guarded=True)
+        for zone in range(2, zones + 1):
+            items[f"{ident}_zone{zone}_power"] = point(ident, "Switch", f"Zone {zone} Power", ["Status", "Power"],
+                                                       f"{uid}:zone{zone}#power", guarded=True, icon="receiver")
+            items[f"{ident}_zone{zone}_input"] = point(ident, "String", f"Zone {zone} Input", ["Status", "Channel"],
+                                                       f"{uid}:zone{zone}#input", guarded=True)
         return
     items[f"{ident}_main_power"] = _control(ident, "Switch", "Main Zone Power", ["Control", "Power"],
                                             f"{uid}:mainZone#power", icon="receiver")
@@ -347,37 +349,41 @@ def render(device: dict, house: House, out: YamlFile) -> None:
         ident, "String", "Main Zone Input", ["Control", "Channel"], f"{uid}:mainZone#input",
         link={"toItemScript": input_state_js(), "commandFromItemScript": input_js(device)},
         options=options_text(inputs(device)))
-    items[f"{ident}_zone2_power"] = _control(ident, "Switch", "Zone 2 Power", ["Control", "Power"],
-                                             f"{uid}:zone2#power", icon="receiver")
-    items[f"{ident}_zone2_input"] = _control(
-        ident, "String", "Zone 2 Input", ["Control", "Channel"], f"{uid}:zone2#input",
-        link={"toItemScript": input_state_js(), "commandFromItemScript": input_js(device, 2)},
-        options=options_text(inputs(device, 2)))
+    for zone in range(2, zones + 1):
+        items[f"{ident}_zone{zone}_power"] = _control(ident, "Switch", f"Zone {zone} Power", ["Control", "Power"],
+                                                      f"{uid}:zone{zone}#power", icon="receiver")
+        items[f"{ident}_zone{zone}_input"] = _control(
+            ident, "String", f"Zone {zone} Input", ["Control", "Channel"], f"{uid}:zone{zone}#input",
+            link={"toItemScript": input_state_js(), "commandFromItemScript": input_js(device, zone)},
+            options=options_text(inputs(device, zone)))
     # No toItemScript: the command channel's state never reaches the Item.
     items[f"{ident}_key"] = _control(ident, "String", "Remote Key", ["Control"], f"{uid}:general#command",
                                      link={"commandFromItemScript": key_js()})
 
 
 def powered_by(device: dict) -> dict[str, str]:
-    """Each zone's readings and the power Item of their own zone: zone 2's
-    input has no value while zone 2 is off, whatever the main zone does."""
+    """Each zone's readings and the power Item of their own zone: a secondary
+    zone's input has no value while that zone is off, whatever the main zone does."""
     ident = device["id"]
-    main, zone2 = f"{ident}_main_power", f"{ident}_zone2_power"
-    return {f"{ident}_main_volume": main, f"{ident}_main_mute": main, f"{ident}_main_input": main,
-            f"{ident}_zone2_input": zone2}
+    main = f"{ident}_main_power"
+    out = {f"{ident}_main_volume": main, f"{ident}_main_mute": main, f"{ident}_main_input": main}
+    for zone in range(2, device.get("zones", DEFAULT_ZONES) + 1):
+        out[f"{ident}_zone{zone}_input"] = f"{ident}_zone{zone}_power"
+    return out
 
 
 def stage(device: dict, zone: int | None) -> dict | None:
     """The power and input Items of one zone (None: the main zone) and the
     inputs it takes, for a room whose receiver it is (oh_features.routing);
-    None for a zone the receiver lacks. Zone 2 `follows` the main zone's
-    input on ZONE_SOURCE."""
+    None for a zone the receiver lacks. Secondary zones `follow` the main
+    zone's input on ZONE_SOURCE."""
     ident = device["id"]
     if zone is None:
         return {"power": f"{ident}_main_power", "input": f"{ident}_main_input",
                 "inputs": [value for value, _ in inputs(device)]}
-    if zone == 2 and device.get("zones", DEFAULT_ZONES) >= 2:
-        return {"power": f"{ident}_zone2_power", "input": f"{ident}_zone2_input",
+    zones = device.get("zones", DEFAULT_ZONES)
+    if isinstance(zone, int) and not isinstance(zone, bool) and 2 <= zone <= zones:
+        return {"power": f"{ident}_zone{zone}_power", "input": f"{ident}_zone{zone}_input",
                 "inputs": [value for value, _ in inputs(device, zone)], "follows": ZONE_SOURCE[0]}
     return None
 
@@ -387,7 +393,7 @@ def fields(device: dict) -> dict[str, dict]:
     and input (stage()), which the receiver's own rule (rule_path()) writes
     and reads back over the HTTP API at the Thing's current address."""
     out = {}
-    for zone in (None, 2):
+    for zone in (None, *range(2, device.get("zones", DEFAULT_ZONES) + 1)):
         staged = stage(device, zone)
         if staged:
             for point, values in (("power", ["ON", "OFF"]), ("input", staged["inputs"])):

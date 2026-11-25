@@ -792,8 +792,9 @@
     this.playingItems = remote ? playingItems(house) : Object.create(null);
     this.audioItems = remote ? audioItems(house) : Object.create(null);
     this.audio = unheard(this.audioItems);
+    this.unsubscribeAccess = null;
     if (this.access && !this.access.native) {
-      this.access.subscribe((event) => {
+      this.unsubscribeAccess = this.access.subscribe((event) => {
         if (event.type === "unauthorized") {
           this.stop(); this.connected = false; this.devices = unread(house); this.problems = {}; this.playing = {}; this.aims = {}; this.activity = null;
           this.audio = unheard(this.audioItems);
@@ -1197,7 +1198,10 @@
   };
 
   OpenHabBackend.prototype.stop = function () {
-    if (this.access) this.access.stop();
+    if (typeof this.unsubscribeAccess === "function") {
+      this.unsubscribeAccess();
+      this.unsubscribeAccess = null;
+    }
     this.stopped = true;
     this.cancelDiagnostics();
     this.cancelReads();

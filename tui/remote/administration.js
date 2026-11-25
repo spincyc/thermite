@@ -11,14 +11,19 @@ function create(client, house, changed) {
   // Only a routed room has a schedule: from a room of speakers alone, the one shown last, else the first.
   const routed = (id) => house.rooms.some((entry) => entry.id === id);
   async function open(kind, room) {
-    state.kind = kind; state.room = [room, state.room].find(routed) || house.rooms[0]?.id; state.form = null;
+    state.kind = kind; state.room = [room, state.room].find(routed) || house.rooms[0]?.id || null; state.form = null;
     state.loading = true; state.error = ""; const turn = ++generation; changed();
     try {
       if (!client || client.native) return;
       if (kind === "security") { await client.loadSecurity(); return; }
       await client.ready();
       if (!client.accountsExist()) return;
-      if (kind === "settings") { const value = await client.loadPolicy(state.room); if (turn === generation) state.policy = value; }
+      if (kind === "settings") {
+        state.policy = null;
+        if (!state.room) return;
+        const value = await client.loadPolicy(state.room);
+        if (turn === generation) state.policy = value;
+      }
       else if (kind === "users" && canEdit()) {
         const users = await client.json("/api/v1/users");
         if (turn === generation) state.users = users.users;
@@ -78,6 +83,7 @@ function create(client, house, changed) {
       item("Sign out this terminal", "logout"); return y;
     }
     if (state.kind === "settings") {
+      if (!house.rooms.length) { line("No rooms configured."); return y; }
       const room = house.rooms.find((room) => room.id === state.room), saved = state.policy, policy = saved?.config;
       line(room?.label || "Room", "strong");
       line(saved?.effective ? saved.effective.locked ? saved.manual_lock ? "Locked · until unlocked" : "Locked by schedule" : "Unlocked" : "Current policy not reported");
@@ -92,7 +98,7 @@ function create(client, house, changed) {
         line(rule.start + "–" + rule.end + " · " + rule.days.map((day) => DAYS[day]).join(" "));
         line("  Hold " + sourceLabel(rule.desired) + " · unlock: " + (rule.unlock === "leave" ? "leave as is" : sourceLabel(rule.unlock)));
       });
-      y++; item("Edit schedule", "edit-policy", null, !canEdit()); item("Reload schedule", "settings");
+      y++; item("Edit schedule", "edit-policy", null, !canEdit() || !saved || !room); item("Reload schedule", "settings");
       y++; line("Choose a room", "strong"); house.rooms.forEach((room) => item(room.label, "room", room.id)); return y;
     }
     if (!canEdit()) { line("Only administrators can manage users."); return y; }
@@ -111,7 +117,7 @@ function create(client, house, changed) {
         field("admin", "Administrator", data, "admin", "boolean"), field("active", "Active", data, "active", "boolean"));
     } else {
       rows.push(field("enabled", "Schedule enabled", data, "enabled", "boolean"));
-      const room = house.rooms.find((room) => room.id === state.room), sources = [["off", "Off"], ...room.sources.map((id) => [id, sourceLabel(id)])];
+      const room = house.rooms.find((room) => room.id === state.room), sources = [["off", "Off"], ...(room?.sources || []).map((id) => [id, sourceLabel(id)])];
       for (const kind of ["daily_off", "locks"]) data[kind].forEach((rule, index) => {
         for (const key of kind === "daily_off" ? ["time"] : ["start", "end", "desired", "unlock"]) rows.push(field(kind + ":" + index + ":" + key,
           (kind === "daily_off" ? "Off " : "Lock ") + (index + 1) + " · " + ({ time: "time", start: "start", end: "end", desired: "hold", unlock: "after unlock" })[key], rule, key,
@@ -137,20 +143,22 @@ function create(client, house, changed) {
       g.hit(0, y - 1, width, 1, { kind: "access-field", key, field: entry.key, focus: true, label: entry.label });
     });
     if (state.error) line(state.error, "alert");
-    const action = (label, id) => { const key = "access:" + id; g.put(1, y++, label, ctx.ui.focus === key ? "row.focus" : "link", { kind: "access-action", action: id, key, focus: true, label }); };
+    const action = (label, id) => { const key = "access:" + id; g.put(1, y++, label, ctx.ui.focusVisible && ctx.ui.focus === key ? "row.focus" : "link", { kind: "access-action", action: id, key, focus: true, label }); };
     if (form.kind === "policy") { action("+ Add daily off", "add-off"); action("+ Add lock window", "add-lock"); }
     action(state.loading ? "Saving…" : "Save", "save"); action("Cancel", "cancel"); return y;
   }
   function edit(kind, existing) {
     if (!canEdit()) return;
+    if (kind === "policy" && (!state.room || !state.policy)) return;
     state.error = "";
-    const data = kind === "user" ? { username: "", password: "", admin: false, active: true, ...existing, password: "" }
+    const data = kind === "user" ? { username: "", admin: false, active: true, ...existing, password: "" }
       : { version: 1, enabled: false, daily_off: [], locks: [], ...state.policy?.config };
     state.form = { kind, id: existing?.id, data: JSON.parse(JSON.stringify(data)) }; changed();
   }
   async function save() {
     if (!state.form || state.loading || !canEdit()) return;
     const form = state.form, value = JSON.parse(JSON.stringify(form.data)), turn = generation;
+    if (form.kind === "policy" && (!state.room || !state.policy)) return;
     delete value.id;
     if (form.kind === "user") { if (!value.password) delete value.password; form.data.password = ""; }
     state.loading = true; changed();

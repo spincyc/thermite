@@ -22,9 +22,11 @@ so.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import hashlib
 import json
 import re
+from typing import Any
 
 import oh_access_mode
 import oh_brand as brand
@@ -107,7 +109,7 @@ def built(page: str | bytes) -> str | None:
     return found[1] if found else None
 
 
-def palette(data: dict) -> brand.Palette:
+def palette(data: Mapping[str, Any]) -> brand.Palette:
     """The house's theme; raises brand.PaletteError."""
     spec = data.get("theme")
     if spec is None:
@@ -136,11 +138,11 @@ def validate(data: dict) -> list[str]:
     if spec is None:
         return camera_problems
     if not isinstance(spec, str) or not spec.strip():
-        return ["theme: must be a built-in theme's name or a theme file under instance/"]
+        return camera_problems + ["theme: must be a built-in theme's name or a theme file under instance/"]
     try:
         chosen = palette(data)
     except brand.PaletteError as exc:
-        return [f"theme: {exc}"]
+        return camera_problems + [f"theme: {exc}"]
     return camera_problems + [f"theme: {spec}: {problem} (thermite theme check)" for problem in brand.contrast_problems(chosen)]
 
 

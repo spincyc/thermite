@@ -246,6 +246,23 @@ fs.readdirSync(palettes).filter((name) => name.endsWith(".json")).sort().forEach
     };
   });
 });
+// Multi-row hits preserved and clipped across Grid.blit(), and null hits safely ignored.
+const src = new Grid.Grid(10, 5);
+src.hit(1, 1, 6, 3, { key: "card", focus: true });
+src.hit(0, 0, 5, 1, null);
+const full = new Grid.Grid(12, 8);
+full.blit(src, 0, 1, 2, 10, 5);
+const topClip = new Grid.Grid(12, 5);
+topClip.blit(src, 2, 1, 0, 10, 3);
+const bottomClip = new Grid.Grid(12, 5);
+bottomClip.blit(src, 0, 1, 0, 10, 2);
+const hitKey = (g, x, y) => { const found = g.hitAt(x, y); return found ? found.hit.key : null; };
+proof.blitHits = {
+  srcCount: [src.hits.length, src.order.length],
+  full: [2, 3, 4, 5, 6].map((y) => hitKey(full, 3, y)),
+  topClip: [0, 1, 2].map((y) => hitKey(topClip, 3, y)),
+  bottomClip: [0, 1, 2].map((y) => hitKey(bottomClip, 3, y))
+};
 // Random frames, in color and without.
 proof.fuzz = [[1, 1], [2, 1], [3, 0], [4, 1], [5, 0]].map(([seed, depth]) => fuzz(seed, 200, depth));
 process.stdout.write(JSON.stringify(proof) + "\n");

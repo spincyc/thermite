@@ -213,7 +213,7 @@ rule_path, files = _script.per_device(RULE, rule)
 
 def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:
     """`files` with the rule talking to `device` at HOST:PORT instead; a
-    reboot's web request goes to that HOST too, never to the matrix."""
+    reboot's web request goes to that HOST:PORT too, never to the matrix."""
     host, _, port = address.rpartition(":")
     return _script.aimed(files, (rule_path(device), RULE), device,
-                         lambda entry: entry.update(host=host, port=int(port)))
+                         lambda entry: entry.update(host=host, port=int(port), webPort=int(port)))

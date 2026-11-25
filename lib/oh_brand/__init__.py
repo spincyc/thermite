@@ -108,9 +108,19 @@ def _read(path: Path) -> dict:
     if path.suffix in (".yaml", ".yml"):
         try:
             import yaml
+            import oh_inventory
         except ImportError:
             raise PaletteError(str(path), ["YAML themes need PyYAML; write it as JSON instead"]) from None
-        data = yaml.safe_load(text)
+        try:
+            data, refused = oh_inventory.read(text)
+        except yaml.MarkedYAMLError as exc:
+            mark = exc.problem_mark or exc.context_mark
+            where = f"line {mark.line + 1}, column {mark.column + 1}: " if mark else ""
+            raise PaletteError(str(path), [f"not YAML: {where}{exc.problem or exc.context}"]) from None
+        except yaml.YAMLError as exc:
+            raise PaletteError(str(path), [f"not YAML: {exc}"]) from None
+        if refused:
+            raise PaletteError(str(path), [f"line {line}: {sentence}" for line, _, _, sentence in refused])
     else:
         try:
             data = json.loads(text)

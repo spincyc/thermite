@@ -250,6 +250,7 @@
         return { id: key, label: label, icon: icon, disabled: !played.canSkip };
       }).concat(extra) : own.transport.map((key) => Object.assign({ play: key.id === "play_pause" }, key));
       const away = music ? music.status() : null;
+      const musicDown = Boolean(played && played.connected === false) || Boolean(away && away.state === "ready" && away.text);
       return {
         room: room,
         speaker: { id: id, name: nameOf(id, ids), label: own.device.label, model: own.device.model, place: own.device.place },
@@ -277,7 +278,7 @@
         library: Boolean(played),
         locked: played ? played.locked : own.locked,
         groupLocked: played ? played.groupLocked : null,
-        connected: own.connected,
+        connected: own.connected === false || musicDown ? false : own.connected,
         problem: own.problem,
         // Why Music Assistant does not play it, when that is worth a line.
         music: away && ["failed", "unavailable"].includes(away.state) ? away.text : null

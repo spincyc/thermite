@@ -491,12 +491,17 @@ class Scenarios(unittest.TestCase):
                              ("ThermiteCheckFailing", check(WEST, "port", TV, WEST))):
             self.assertLessEqual(set(alerts.ABOUT[name]), set(labels))
         inputs = {series("thermite_thing_status_info", **thing): "1x20",
+                  series("thermite_device_info", device=TV, room=WEST, kind="tv", label="Example Tv", required="true"): "1x20",
                   series("thermite_policy_room_state", **lock): "1x20"}
         self.run_rules(inputs, firing=[
             ("14m", "ThermiteThingStuck", []),
             ("15m", "ThermiteThingStuck", [thing]),
             ("10m", "ThermitePolicyUnenforced", [lock]),
         ])
+        # An optional device's stuck Thing never fires ThermiteThingStuck.
+        optional_inputs = {series("thermite_thing_status_info", **thing): "1x20",
+                           series("thermite_device_info", device=TV, room=WEST, kind="tv", label="Example Tv", required="false"): "1x20"}
+        self.run_rules(optional_inputs, firing=[("15m", "ThermiteThingStuck", [])])
 
     def test_a_healthy_house_fires_nothing_and_no_alert_watches_a_delivery(self):
         # No watchdog fires for somebody to receive, and what the removed
@@ -570,7 +575,7 @@ class Rules(unittest.TestCase):
     def test_the_zone_sources_are_recorded_before_the_checks_that_read_them(self):
         first = self.groups[0]["rules"][0]
         self.assertEqual((first["record"], first["expr"]), (alerts.ZONE_SOURCE, alerts.zone_source()))
-        self.assertIn(f"[{alerts.HELD}:]", first["expr"])
+        self.assertIn(f"[{alerts.HELD}:2m]", first["expr"])
         self.assertEqual(alerts.OFF, routing.OFF)
         zoned = [rule for rule in self.recorded if rule["labels"].get("zone")]
         self.assertTrue(zoned)

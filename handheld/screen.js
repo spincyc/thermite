@@ -64,6 +64,30 @@ function screen(session, layouts) {
   // Not heard: on, off, switching and a problem are claims about now that nothing backs.
   const heard = session.connected();
   const current = session.current();
+  if (!current) {
+    const buttons = {};
+    ALWAYS.forEach((id) => { buttons[id] = spec(layouts, id); });
+    return {
+      room: "",
+      label: "",
+      rooms: [],
+      led: heard ? "off" : "stale",
+      short: "No rooms",
+      problem: heard ? "" : "Not connected to thermite. Reconnecting\u2026",
+      notice: "",
+      locked: false,
+      bubbles: [],
+      selected: null,
+      hidden: true,
+      remote: null,
+      pad: null,
+      rows: [],
+      beside: [],
+      channel: false,
+      buttons: buttons,
+      allOff: session.allOffArmed()
+    };
+  }
   const list = session.controls();
   const state = session.state(current.id);
   const shown = session.view(current, state);

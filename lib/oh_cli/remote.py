@@ -218,10 +218,12 @@ def palette(spec: str | None, house: Path = oh_cli.HOUSE):
 
     if spec:
         return brand.load(spec)
-    from oh_conf import House
+    from oh_conf import House, instance_at
     from oh_features import remote as page
 
-    return page.palette(House.load(house).data)
+    loaded = House.load(house)
+    with instance_at(loaded.instance_dir):
+        return page.palette(loaded.data)
 
 
 def look(chosen) -> str:

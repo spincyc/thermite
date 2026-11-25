@@ -446,4 +446,63 @@ test('a restart within the hour, for any reason and across a reload, holds a han
   load({ hung: false });
 });
 
+test('unreadIsIdle enforces unreadIdle rooms on schedule and command, not only hung', () => {
+  for (const trigger of ['nightly', 'command']) {
+    const r = load();
+    // Attach unreadIdle room check to sw (and test hv which already carries hung.idle).
+    r.items.hv_signal = 'UNDEF';
+    r.items.loc_study_source = 'apple_tv';
+    if (trigger === 'command') {
+      r.command('hv');
+      assert.deepEqual(r.commands, []);
+      assert.equal(r.report().hv.outcome, 'skipped');
+      assert.equal(r.report().hv.detail, 'loc_study_source is apple_tv, not off');
+      r.items.loc_study_source = 'off';
+      r.command('hv');
+      assert.deepEqual(r.commands, [['hv_reboot', 'reboot', 0]]);
+    } else {
+      // Schedule on a nightly switch with unreadIdle.
+      const table = JSON.parse(JSON.stringify(TABLE));
+      table.devices[1].unreadIdle = [{ item: 'loc_study_source', is: 'off' }];
+      const items = { house_reboot: 'NULL', rx_main_power: 'ON', rx_zone2_power: 'OFF', sw_input: '1', sw_signal: 'UNDEF',
+        sw_reboot: 'NULL', loc_study_source: 'apple_tv' };
+      const commands = [], rules = {};
+      const openhab = {
+        items: { getItem: name => (name in items ? { get state() { return items[name]; },
+          postUpdate: v => { items[name] = String(v); }, sendCommand: v => commands.push([name, String(v)]) } : null) },
+        things: { getThing: () => ({ status: 'ONLINE' }) },
+        rules: { JSRule(rule) { rules[rule.id] = rule; } },
+        triggers: { GenericCronTrigger: c => ({ c }), ItemCommandTrigger: i => ({ i }) },
+      };
+      const ctx = vm.createContext({
+        require: n => ({ openhab, '@runtime': { lifecycleTracker: { addDisposeHook() {} } } })[n],
+        thermiteIO: { deadline: ms => START + ms }, console: { info() {}, warn() {} },
+        setTimeout: () => 1, clearTimeout() {}, Date, JSON, Map, Object, String, Number, Math, Array,
+      });
+      vm.runInContext(source.replace('const TABLE = null;', `const TABLE = ${JSON.stringify(table)};`).replace('// THERMITE_BOUNDED_IO', ''), ctx);
+      rules.reboots_nightly.execute();
+      assert.deepEqual(commands, []);
+      assert.equal(JSON.parse(items.house_reboot).devices.sw.detail, 'loc_study_source is apple_tv, not off');
+      items.loc_study_source = 'off';
+      rules.reboots_nightly.execute();
+      assert.deepEqual(commands, [['sw_reboot', 'reboot']]);
+    }
+  }
+});
+
+test('said() bounds console reading instead of looping forever on chatty output, and dispose stops future work', () => {
+  const r = load();
+  r.command('usb');
+  assert.equal(r.consoles.length, 1);
+  for (let i = 0; i < 600; i += 1) r.consoles[0].lines.push(`noise ${i}`);
+  r.advance(2000);
+  // Bounded at 256 lines per poll; still leaves remaining chatter unread and does not hang.
+  assert.equal(r.consoles[0].lines.length, 600 - 256);
+  r.dispose();
+  assert(r.consoles[0].closed);
+  assert.equal(r.pending(), 0);
+  r.command('other');
+  assert.deepEqual(r.commands, [['usb_reboot', 'reboot', 0]]);
+});
+
 process.stdout.write(JSON.stringify({ passed: tests.length, tests }));

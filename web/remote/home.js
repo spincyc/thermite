@@ -90,9 +90,22 @@
     row.status.textContent = shown.connected === false ? "Not connected" : WORDS[state];
     row.element.dataset.state = state;
   }
+  function listenConnected() {
+    if (!heard) return true;
+    if (heard.backend.connected === false) return false;
+    const away = heard.sessions.music ? heard.sessions.music.status() : null;
+    if (away && away.state === "ready" && away.text) return false;
+    return true;
+  }
   // What a room's speakers play (listen-session.js status): its title, else nothing or not known.
   function hear(id) {
     const row = rows.get(id); if (!row || mode !== "listen" || !heard) return;
+    if (!listenConnected()) {
+      row.source.textContent = "Unknown";
+      row.status.textContent = "Not connected";
+      row.element.dataset.state = "unavailable";
+      return;
+    }
     const shown = heard.sessions.listen.status(id), state = stateOf(shown);
     row.source.textContent = shown.playing ? shown.playing.replace(/^♪ /, "") : shown.input || (state === "unknown" || state === "unavailable" ? "Unknown" : "Nothing playing");
     row.status.textContent = state === "unknown" ? WORDS.unknown : shown.input ? "Input selected" : shown.short;
@@ -107,7 +120,12 @@
     const active = document.visibilityState !== "hidden";
     const speakers = global.RemoteBackend.create(house, { backend: mock ? "mock" : undefined, active });
     heard = { backend: speakers, sessions: global.RemoteListen.sessions({ backend: speakers, house, store, access, mock, active }) };
-    heard.sessions.listen.subscribe(event => { if (event.type === "change") rows.forEach((row, id) => hear(id)); });
+    heard.backend.subscribe(event => {
+      if (event.type === "connection" && mode === "listen") { rows.forEach((row, id) => hear(id)); say(); }
+    });
+    heard.sessions.listen.subscribe(event => {
+      if (event.type === "change") { rows.forEach((row, id) => hear(id)); if (mode === "listen") say(); }
+    });
     heard.sessions.start().catch(console.warn);
     return heard;
   }
@@ -145,7 +163,8 @@
   }
   // The line above the rooms: that the house is not heard, else what the table is.
   function say() {
-    notice.textContent = mode === "watch" && !session.connected() ? global.RemoteSession.NOT_CONNECTED : words();
+    const offline = mode === "watch" ? !session.connected() : !listenConnected();
+    notice.textContent = offline ? global.RemoteSession.NOT_CONNECTED : words();
   }
   // Watch or Listen: its rooms, its column and note, and the switch.
   function show(next, focus) {

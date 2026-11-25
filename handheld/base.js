@@ -194,7 +194,7 @@ function openTty(device) {
   try {
     if (!tty.isatty(fd)) throw new Error(device + " is not a serial port");
     const stream = new tty.ReadStream(fd);
-    const stty = spawnSync("stty", ["-F", device, "raw", "-echo"], { stdio: "ignore", timeout: 5000 });
+    const stty = spawnSync("stty", ["-F", device, "115200", "raw", "-echo"], { stdio: "ignore", timeout: 5000 });
     if (stty.status !== 0) stream.setRawMode(true);
     return stream;
   } catch (error) {

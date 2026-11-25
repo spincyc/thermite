@@ -251,7 +251,18 @@ function network(g, ctx) {
     g.put(2, y++, "Wi-Fi", "section");
     const active = ctx.focused === "wifi";
     if (!ui.wifi.networks.length) g.put(4, y++, ui.wifi.scanned ? "No networks found" : "Ctrl-R looks for networks", "dim");
-    const shown = 8;
+    const errorRows = (name) => {
+      const key = ctx.fields[name].check || name;
+      const message = ui.errors[key];
+      return message ? wrap("! " + message, Math.max(8, g.width - 4)).length : 0;
+    };
+    const wifi = state.wifi;
+    const wifiNote = wifi ? (wifi.carried ? "The installed system joins " + wifi.ssid + " (" + security(wifi) + ") too."
+      : "Joined to " + wifi.ssid + " without its passphrase saved here: choose it and enter it.") : "";
+    let reserved = 1 + 1 + errorRows("wifi_passphrase") + 2;
+    if (ctx.current.includes("wifi_name")) reserved += 1 + errorRows("wifi_name");
+    if (wifiNote) reserved += wrap(wifiNote, Math.max(8, g.width - 4)).length;
+    const shown = Math.max(1, Math.min(8, g.height - y - reserved));
     const first = Math.max(0, Math.min(ui.wifi.cursor - shown + 1, ctx.networks.length - shown));
     ctx.networks.slice(first, first + shown).forEach((entry, index) => {
       const on = first + index === ui.wifi.cursor;
@@ -263,12 +274,7 @@ function network(g, ctx) {
     y += 1;
     if (ctx.current.includes("wifi_name")) y = field(g, y, ctx, "wifi_name");
     y = field(g, y, ctx, "wifi_passphrase");
-    const wifi = state.wifi;
-    if (wifi) {
-      y = paragraph(g, y, wifi.carried ? "The installed system joins " + wifi.ssid + " (" + security(wifi) + ") too."
-        : "Joined to " + wifi.ssid + " without its passphrase saved here: choose it and enter it.",
-      wifi.carried ? "dim" : "alert");
-    }
+    if (wifiNote) y = paragraph(g, y, wifiNote, wifi.carried ? "dim" : "alert");
   }
   const active = ctx.focused === "continue";
   g.put(2, y + 1, " Continue ", active ? "key.focus" : state.online ? "key" : "key.off");

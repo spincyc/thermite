@@ -26,6 +26,17 @@
     invalid_security: "Check the access settings and try again.",
     setup_required: "Generate a setup code on the thermite host before creating the first administrator.",
     invalid_setup_code: "The setup code was not accepted or has expired. Generate a new code on the thermite host.",
+    already_initialized: "An administrator already exists for this site. Sign in as an administrator instead.",
+    credential_expired: "Your terminal credential has expired. Run thermite access login again.",
+    too_many_streams: "Too many live sessions are open right now. Close another tab or terminal and try again.",
+    invalid_lock: "The lock request was not accepted. Reload and try again.",
+    invalid_active: "Check whether the account is active and try again.",
+    invalid_admin: "Check the account's administrator setting and try again.",
+    history_unavailable: "Room history is unavailable right now.",
+    media_unavailable: "Camera media is unavailable right now.",
+    runtime_not_configured: "The runtime is not configured on this thermite host.",
+    unknown_room: "thermite does not know that room.",
+    body_too_large: "That request was too large for thermite to accept.",
     access_not_configured: "Access is not configured at this address.", invalid_response: "The access service could not answer.",
     client_timeout: "thermite did not answer in time. Try again in a moment.",
     command_unconfirmed: "thermite did not answer in time. The command may still take effect; check before trying again.",
@@ -71,8 +82,9 @@
   // The gateway's front door refuses with a status and no code (oh_access.service Admission).
   const REFUSALS = { 408: "request_overdue", 429: "too_many_requests" };
   function problem(code, status) {
-    const error = new Error(MESSAGES[code] || "The action could not be completed.");
-    error.code = Object.prototype.hasOwnProperty.call(MESSAGES, code) ? code : "access_unavailable";
+    const known = typeof code === "string" && Object.prototype.hasOwnProperty.call(MESSAGES, code);
+    const error = new Error(known ? MESSAGES[code] : "The action could not be completed.");
+    error.code = typeof code === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(code) ? code : "access_unavailable";
     error.status = status || 0;
     return error;
   }

@@ -396,6 +396,36 @@ class InstallerCore(unittest.TestCase):
                 self.assertNotIn(creds["users"][0]["enc_password"], log)
             self.assertIn("Removed archinstall's copy of the password hashes", (self.state / "installer.log").read_text())
 
+    def test_interrupt_during_install_still_scrubs_password_hashes(self):
+        host = self.host()
+        host.archinstall_target.append(self.target / "var/log/archinstall")
+        real_spawn = host.spawn
+
+        class InterruptedProcess:
+            def __init__(self, inner):
+                self.inner = inner
+                self.stdout = self._lines()
+
+            def _lines(self):
+                for line in self.inner.stdout:
+                    yield line
+                    raise KeyboardInterrupt()
+
+            def wait(self):
+                return 0
+
+        host.spawn = lambda argv, env: InterruptedProcess(real_spawn(argv, env))
+        with self.assertRaises(KeyboardInterrupt):
+            installer.install(ANSWERS, host, media=self.media, state=self.state, target=self.target)
+        creds = host.spawned[-1]["creds"]
+        self.assertFalse((self.state / "creds.json").exists())
+        self.assertFalse((self.state / "wifi.json").exists())
+        for directory in (self.live / "var/log/archinstall", self.target / "var/log/archinstall"):
+            self.assertFalse((directory / "user_credentials.json").exists())
+            log = (directory / "install.log").read_text()
+            self.assertNotIn(creds["users"][0]["enc_password"], log)
+            self.assertIn("[password hash removed]", log)
+
     def test_failed_preflight_or_wrong_archinstall_never_reaches_the_disk(self):
         for host in (self.host(fail={"pacman"}), self.host(archinstall="4.6.0")):
             events = []

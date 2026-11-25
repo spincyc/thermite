@@ -400,6 +400,10 @@ def command(verb: str, description: str, examples: Examples, notes: str = "") ->
     # The bootstrap consumes this before importing modules with site paths.
     # Keep it in each parser so help and shell completion expose the option.
     parser.add_argument("--config", metavar="DIR", help="use this private configuration directory")
+    if verb in VERBS and VERBS[verb].reach == SSH:
+        # reached() intercepts --url ssh://... before the verb runs.
+        # Keep it in each SSH verb's parser so help and completion expose it.
+        parser.add_argument("--url", metavar="URL", help=TARGETS[SSH])
     add_global(parser)
     return parser
 
@@ -535,6 +539,13 @@ def add_target(parser: argparse.ArgumentParser, *where: str, default: str | None
     for name in where:
         known = TARGETS[VERBS[verb].reach if name == "url" and verb in VERBS else name]
         text = (meaning or {}).get(name, known) + (" (default)" if name == default else "")
+        if name == "url":
+            existing = parser._option_string_actions.pop("--url", None)
+            if existing is not None:
+                parser._actions.remove(existing)
+                for action_group in parser._action_groups:
+                    if existing in action_group._group_actions:
+                        action_group._group_actions.remove(existing)
         if name in ("url", "runtime-url"):
             group.add_argument(f"--{name}", metavar="URL", help=text)
         else:
@@ -736,6 +747,7 @@ def reached(verb: str, words: Sequence[str]) -> tuple[int | None, list[str]]:
     """(the exit status of `thermite VERB WORDS` where --url, or
     THERMITE_URL, sends it to another server, else None; the words to run
     it with here). A URL that its reach cannot use is refused."""
+    import oh_paths
     words = list(words)
     switches = _switches(words)
     if "-h" in switches or "--help" in switches:
@@ -743,10 +755,19 @@ def reached(verb: str, words: Sequence[str]) -> tuple[int | None, list[str]]:
     retired = verb not in VERBS
     reach = (RETIRED[verb] if retired else VERBS[verb]).reach
     url, rest = named_url(words)
+    explicit_config = (oh_paths.explicit_config()
+                       or any(word in oh_paths.SELECTORS
+                              or word.startswith(tuple(selector + "=" for selector in oh_paths.SELECTORS))
+                              for word in switches))
+    if explicit_config and reach == SSH and url is not None and url.startswith("ssh://"):
+        print(f"{PROGRAM} {verb}: --config selects a local site and cannot be combined with --url {url}; "
+              "name the remote site in the URL path instead (ssh://[USER@]HOST[:PORT]/SITE)", file=sys.stderr)
+        return 2, words
     if retired:
         # Unchanged for its last release: only ssh:// is new to it.
         return (over_ssh(verb, rest, url) if url and url.startswith("ssh://") and reach == SSH else None), words
-    if url is None and reach == SSH and not any(word.split("=", 1)[0] in TARGET_SWITCHES for word in switches):
+    if (url is None and reach == SSH and not explicit_config
+            and not any(word.split("=", 1)[0] in TARGET_SWITCHES for word in switches)):
         variable = os.environ.get(URL_VARIABLE, "").strip()
         if variable.startswith("ssh://"):
             url = variable

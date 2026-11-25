@@ -16,6 +16,7 @@
 #include "driver/uart.h"
 #include "esp_app_desc.h"
 #include "esp_log.h"
+#include "freertos/semphr.h"
 #include "radio.h"
 
 static const char *TAG = "radio";
@@ -23,6 +24,7 @@ static const char *TAG = "radio";
 #define UART UART_NUM_1
 #define RSSI (-40)
 
+static SemaphoreHandle_t s_out;
 static uint8_t s_mac[RADIO_MAC_LEN], s_base[RADIO_MAC_LEN];
 static uint8_t s_channel = 1;
 static QueueHandle_t s_frames;
@@ -31,7 +33,10 @@ static uint32_t s_bit;
 
 static void put(const char *line, size_t length)
 {
-    if (length) uart_write_bytes(UART, line, length);
+    if (!length) return;
+    if (s_out) xSemaphoreTake(s_out, portMAX_DELAY);
+    uart_write_bytes(UART, line, length);
+    if (s_out) xSemaphoreGive(s_out);
 }
 
 static void announce(void)
@@ -96,6 +101,8 @@ static void reader(void *argument)
 
 void radio_init(const uint8_t mac[RADIO_MAC_LEN])
 {
+    s_out = xSemaphoreCreateMutex();
+    configASSERT(s_out);
     memcpy(s_mac, mac, RADIO_MAC_LEN);
     memcpy(s_base, mac, RADIO_MAC_LEN);
     s_base[0] |= 0x02; /* locally administered */

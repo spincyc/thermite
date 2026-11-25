@@ -104,10 +104,15 @@ class NativeItems(unittest.TestCase):
     def test_native_volume_and_tv_profiles_reject_unrelated_commands(self):
         conf = oh_render.build(oh_conf.House(house()))
         items = conf.yaml[sonos.FILE].items
-        tv = next(iter(items[f"{ARC}_tv"]["channels"].values()))["toHandlerScript"][1:]
+        self.assertEqual(items[f"{ARC}_volume"]["tags"], ["Control", "SoundVolume"])
+        self.assertEqual(items[f"{ARC}_mute"]["tags"], ["Control", "SoundVolume"])
+        observed = oh_render.build(oh_conf.House(house(False))).yaml[sonos.FILE].items
+        self.assertEqual(observed[f"{ARC}_volume"]["tags"], ["Status", "SoundVolume"])
+        self.assertEqual(observed[f"{ARC}_mute"]["tags"], ["Status", "SoundVolume"])
+        tv = next(iter(items[f"{ARC}_tv"]["channels"].values()))["commandFromItemScript"][1:]
         script = "const vm=require('vm'); const p=JSON.parse(process.argv[1]); " \
                  "process.stdout.write(JSON.stringify(p.map(([code,values])=>values.map(input=>vm.runInNewContext(code,{input})))));"
-        volume = next(iter(items[f"{ARC}_volume"]["channels"].values()))["toHandlerScript"][1:]
+        volume = next(iter(items[f"{ARC}_volume"]["channels"].values()))["commandFromItemScript"][1:]
         probes = [[volume, ["50", "75", "100", "101", "-1", "INCREASE", "DECREASE", "UNDEF"]],
                   [tv, [UDN, "RINCON_ANOTHER", "http://example.invalid/", "ON"]]]
         run = subprocess.run([shutil.which("node"), "-e", script, json.dumps(probes)], text=True,
@@ -216,7 +221,7 @@ class AudioPage(unittest.TestCase):
                  "process.stdout.write(JSON.stringify(p.map(([code,values])=>values.map(input=>vm.runInNewContext(code,{input})))));"
 
         def link(suffix):
-            return next(iter(items[f"{ARC}_{suffix}"]["channels"].values()))["toHandlerScript"][1:]
+            return next(iter(items[f"{ARC}_{suffix}"]["channels"].values()))["commandFromItemScript"][1:]
         probes = [[link("bass"), ["-10", "10", "0", "11", "-11", "2.5", "UP"]],
                   [link("sub_gain"), ["-15", "15", "16"]],
                   [link("repeat"), ["OFF", "ONE", "ALL", "all", "SHUFFLE"]],

@@ -732,4 +732,17 @@ test('when one independent field is fenced, healthy independent fields recover a
  assert.deepEqual(ovProof.map(e=>[e.type,e.key,e.resource]),[['retired','switch','D2']]);
  assert.equal(JSON.parse(ov.broker.states.get('switch')).fences.D1.token,'in-flight-d1');
 });
+test('pyatv_http unreachable helper returns unsent/unreachable instead of quarantining and updates status',()=>{
+ const updates=[];
+ const err=Object.assign(Error('connection refused'),{unreached:true});
+ const context=vm.createContext({Date,JSON,Map,Set,Number,Object,String,Error,
+  console:{info(){},warn(){}},thermiteIO:{http(){throw err;},unreached:e=>!!e&&e.unreached===true},
+  require(name){assert.equal(name,'openhab');return {rules:{JSRule(){}},triggers:{GenericCronTrigger(){},ItemCommandTrigger(){}},
+   items:{getItem:item=>({state:'UNDEF',postUpdate(v){updates.push([item,String(v)]);}})}};}});
+ vm.runInContext(appleTvScript(),context);
+ const provider=vm.runInContext('routingProvider()',context), op={token:String('down'),value:'OFF'};
+ assert.deepEqual(provider.execute('source_power','OFF',op),{outcome:'unsent',code:'unreachable'});
+ assert(updates.some(([item,v])=>item==='source_pairing_status'&&v==='unavailable'));
+ assert.throws(()=>provider.probe('source_power',op));
+});
 process.stdout.write(JSON.stringify({passed:tests.length,tests}));

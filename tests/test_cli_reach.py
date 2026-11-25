@@ -149,6 +149,31 @@ class Reached(unittest.TestCase):
             self.assertEqual(oh_cli.reached("bugreport", ["--url", "ssh://thermite.example", "--since", "2h"])[0], 0)
         fetch.assert_called_once_with(["--since", "2h"], "ssh://thermite.example")
 
+    def test_explicit_config_suppresses_thermite_url_and_rejects_ssh_url(self):
+        import oh_paths
+        os.environ[oh_cli.URL_VARIABLE] = "ssh://thermite.example"
+        with mock.patch.object(oh_paths, "SITE", oh_paths.SITE), \
+                mock.patch.object(oh_paths, "CONFIG_EXPLICIT", oh_paths.CONFIG_EXPLICIT):
+            remaining = oh_paths.select_args(["--config", "/tmp/local-site", "status"])
+            self.assertEqual(remaining, ["status"])
+            self.assertTrue(oh_paths.explicit_config())
+            self.assertEqual(oh_cli.reached("status", []), (None, []))
+            self.ssh.assert_not_called()
+            (status, _), err = quietly(oh_cli.reached, "status", ["--url", "ssh://thermite.example"])
+            self.assertEqual(status, 2)
+            self.assertIn("--config", err)
+            self.ssh.assert_not_called()
+
+    def test_every_ssh_verb_parser_exposes_url_in_help_without_duplicates(self):
+        for verb, spec in oh_cli.VERBS.items():
+            if spec.reach != oh_cli.SSH:
+                continue
+            with self.subTest(verb=verb):
+                parser = oh_cli.parser_of(verb)
+                url_actions = [action for action in parser._actions if "--url" in action.option_strings]
+                self.assertEqual(len(url_actions), 1, f"{verb} should declare --url exactly once")
+                self.assertIn("--url", parser.format_help())
+
 
 class NamedServer(unittest.TestCase):
     def named(self, value):

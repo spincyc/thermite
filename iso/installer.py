@@ -684,8 +684,13 @@ def install(answers: dict, host: Host, *, media: Path = MEDIA, state: Path = STA
     run = Run(host, state, emit)
     if left: run.say("line", text=f"Unmounted {target}, which an earlier run left mounted")
     run.say("answers", answers=public(answers))
-    secrets, hashes = [state / "creds.json", state / "wifi.json"], []
+    secrets = [state / "creds.json", state / "wifi.json"]
+    hashes: list[str] = []
+    forgotten = False
     def forget() -> None:
+        nonlocal forgotten
+        if forgotten: return
+        forgotten = True
         for path in secrets: path.unlink(missing_ok=True)
         for path, error in scrub([host.path(f"/{ARCHINSTALL_LOGS}"), target / ARCHINSTALL_LOGS], hashes):
             run.say("line", text=f"Removed archinstall's copy of the password hashes from {path}" if error is None
@@ -733,7 +738,7 @@ def install(answers: dict, host: Host, *, media: Path = MEDIA, state: Path = STA
         run.say("failed", error=str(exc))
         raise
     finally:
-        for path in secrets: path.unlink(missing_ok=True)
+        forget()
         keep(run, target)
         run.log.close()
     return {"hostname": answers["hostname"], "log": str(state / "installer.log")}

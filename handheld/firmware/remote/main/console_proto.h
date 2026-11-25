@@ -43,6 +43,10 @@ typedef struct {
 /* One line without its newline; a trailing CR is ignored. */
 void cp_parse(const char *line, size_t length, cp_command_t *command);
 
+/* Whether a parsed command is permitted given enrolment state and build policy.
+ * When refused, sets *reason (if non-NULL) and returns false. */
+bool cp_allowed(cp_kind_t kind, bool enrolled, bool unrestricted, const char **reason);
+
 /* "thermite remote 1 <fw> <mac> <board> <0|1>\n"; returns the length, 0 when it does not fit. */
 size_t cp_format_remote(char *out, size_t capacity, const char *fw, const uint8_t mac[CP_MAC_LEN], const char *board,
                         bool enrolled);

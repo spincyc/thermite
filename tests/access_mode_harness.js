@@ -33,11 +33,13 @@ async function browser(page, client) {
   const host = new Element(), status = new Element(), login = new Element("form"), title = new Element("h1"), hidden = new Element(), guests = new Element();
   const redirects = [], mapping = { "[data-security]": host, "[data-security-guests]": guests, "[data-access-status]": status, "[data-login]": login,
     ".access-login h1": title };
-  const context = { ThermiteAccess: { client }, ThermiteNavigation: Navigation, REMOTE_HOUSE: house, URLSearchParams,
-    location: { origin, search: "", replace: value => redirects.push(value), reload: () => redirects.push("reload") },
-    document: { body: { dataset: { thermitePage: page } }, createElement: tag => new Element(tag),
+  const context = { ThermiteAccess: { client }, REMOTE_HOUSE: house, URLSearchParams,
+    location: { origin, protocol: "https:", pathname: "/" + page + "/", search: "", replace: value => redirects.push(value), reload: () => redirects.push("reload") },
+    document: { documentElement: { dataset: { thermiteHosted: "true" } }, body: { dataset: { thermitePage: page } }, createElement: tag => new Element(tag),
       querySelector: selector => mapping[selector], querySelectorAll: () => [hidden] } };
-  vm.createContext(context); vm.runInContext(fs.readFileSync(path.join(__dirname, "../web/remote/access-ui.js"), "utf8"), context);
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, "../web/remote/navigation.js"), "utf8"), context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, "../web/remote/access-ui.js"), "utf8"), context);
   await tick(); return { host, status, login, title, hidden, guests, redirects };
 }
 (async () => {

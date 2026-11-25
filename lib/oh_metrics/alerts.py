@@ -117,6 +117,11 @@ STREAM_KINDS = ("stream_error", "stream_refused")
 STARTING = ("UNINITIALIZED", "INITIALIZING", "UNKNOWN")
 #: Unallocated btrfs space below which a new metadata chunk may not fit.
 BTRFS_UNALLOCATED = 5 * 2**30
+#: Filesystem types excluded from host disk-space alerts and tiles (virtual,
+#: read-only image, EFI boot, FUSE and network mounts).
+IGNORED_FSTYPES = r"tmpfs|overlay|squashfs|vfat|fuse\..*|cifs|nfs.*"
+#: Days before gateway TLS certificate expiry at which the warning fires.
+CERT_EXPIRY_DAYS = 30
 
 # An alert's words are finite: a client is given these (oh_identity.alerts),
 # never a label or an annotation of Prometheus', so no runtime error body can reach one.
@@ -131,12 +136,13 @@ CATALOG = {
     "ThermiteServiceDown": ("A thermite service is not running", "A long-running thermite service has not been active for three minutes. Inspect it with systemctl status and its journal."),
     "ThermiteServiceFlapping": ("A thermite service keeps restarting", "A thermite service restarted three or more times in thirty minutes. Its journal says why; the Host dashboard shows restarts."),
     "ThermiteGatewayDown": ("The remote gateway is not answering", "The local HTTPS check of the gateway has failed for three minutes. Check thermite-access.service and its journal. If the gateway answers browsers, run thermite deploy so the check has the gateway's trust certificate."),
+    "ThermiteGatewayCertExpiring": ("The remote gateway's certificate is expiring", "The remote gateway's TLS certificate expires in less than thirty days. Renew or replace the gateway certificate and reload thermite-access.service before browsers refuse the connection."),
     "ThermiteGatewayFeedDown": ("Remotes are not live", "For five minutes the gateway has been reconnecting to the runtime's event feed, so every remote page shows states as they were. Check the runtime and thermite-access.service's journal."),
     "ThermiteRemoteStarved": ("A remote holds too many HTTP/1.1 streams", "One client holds six or more event streams over HTTP/1.1, the browser's connection limit, so its controls can stall. Close extra remote pages on that device. Switching & remotes shows streams by HTTP version."),
     "ThermiteRemoteTimeouts": ("Remotes are timing out", "Remote pages reported repeated timeouts waiting for the gateway in the last fifteen minutes. Switching & remotes shows which requests and how long they waited."),
     "ThermiteThingStuck": ("A device's Thing never started", "For fifteen minutes openHAB has had a device's Thing neither online nor offline, so its states never update and its commands go nowhere; a device that is asleep goes offline instead. A binding that failed as openHAB started does this, and restarting thermite-openhab.service brings it up; missing or wrong settings keep it so until fixed. Things not online, on the Devices dashboard, lists each one."),
     "ThermiteRoutingTelemetryUnavailable": ("Routing telemetry is unreadable", "For five minutes the routing executor's status or routing's counts in the runtime have not been valid, so the dashboards cannot show switching, device failures or quarantined devices. Check the runtime's log for the routing rule and the routing executor."),
-    "ThermiteRoutingQuarantined": ("Routing commands are quarantined", "The routing executor has refused commands to a device for five minutes after an uncertain outcome, and its recovery reads have not succeeded. Devices shows which device; check that it is powered and on its network."),
+    "ThermiteRoutingQuarantined": ("Routing commands are quarantined", "The routing executor has refused commands to a device for five minutes after an uncertain outcome, and its recovery reads have not succeeded. House health (Needs attention now) and Switching & remotes (Quarantined now) show which device; check that it is powered and on its network."),
     "ThermitePolicyWorkerStalled": ("Room schedules are not being applied", "The room policy worker has not completed a pass for three minutes, so schedules and locks are not enforced. Check thermite-access-worker.service and its journal."),
     "ThermitePolicyUnenforced": ("A room's lock is not being enforced", "For ten minutes a locked room's lock could not be held: its policy cannot be read, it conflicts with another room over shared hardware, openHAB does not answer the worker's reads, or a change on the room's devices has not been put back. A reading that is merely old, from a device that reports only when it changes, does not count. Switching & remotes shows locked rooms by state; check the room's devices and thermite-access-worker.service's journal."),
     "ThermiteHandlerPoolSaturated": ("Device dispatch is saturated", "Device dispatch has no idle workers and a ready probe is overdue. Inspect blocked binding connections."),
@@ -146,7 +152,7 @@ CATALOG = {
 }
 #: The alerts of severity critical; every other is a warning.
 CRITICAL = frozenset({"ThermiteCheckFailing", "ThermiteRuntimeUnavailable", "ThermiteGatewayDown", "ThermiteGatewayFeedDown",
-                      "ThermiteRemoteStarved", "ThermiteServiceDown", "ThermiteRoutingQuarantined",
+                      "ThermiteRemoteStarved", "ThermiteServiceFailed", "ThermiteServiceDown", "ThermiteRoutingQuarantined",
                       "ThermitePolicyWorkerStalled", "ThermitePolicyUnenforced", "ThermiteHandlerPoolSaturated",
                       "ThermiteThingStuck"})
 #: The labels by which an alert names what it is about, for the alerts whose
@@ -222,10 +228,11 @@ def zone_source() -> str:
     reading, as for the zone's source check.
 
     The readback's own history is the memory, so a zone unknown when these
-    rules are first loaded is held too. The subquery steps at the
-    evaluation interval, which is the scrape interval: it sees every scrape."""
+    rules are first loaded is held too. The subquery steps every 2 m (well
+    inside Prometheus's 5 m lookback delta), four times cheaper than stepping
+    at the 30 s evaluation interval with the same coverage."""
     read = 'max by (item, zone, value) (timestamp(thermite_item_info{point="source",value!="other"}))'
-    return f"{read} or on (item) topk by (item) (1, max_over_time(({read})[{HELD}:]))"
+    return f"{read} or on (item) topk by (item) (1, max_over_time(({read})[{HELD}:2m]))"
 
 
 def _demand(demands: list[dict]) -> str:
@@ -359,25 +366,26 @@ def rules(mapping):
             # Every job with a scrape check, so each failed one has this alert.
             alert("ThermiteScrapeFailed", f'up{{job=~"{"|".join(CORE_JOBS)}"}} == 0', "3m"),
             alert("ThermiteRuntimeUnavailable", "thermite_openhab_up == 0", "3m"),
-            alert("ThermiteHostDiskLow", '(node_filesystem_avail_bytes{job="node",fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes < 0.10) and (node_filesystem_readonly == 0)', "10m"),
-            alert("ThermiteBtrfsTrouble", f'(sum by (uuid) (increase(node_btrfs_device_errors_total{{job="node"}}[1h])) > 0) or (sum by (uuid) (node_btrfs_device_unused_bytes{{job="node"}}) < {BTRFS_UNALLOCATED})', "5m"),
+            alert("ThermiteHostDiskLow", f'(node_filesystem_avail_bytes{{job="node",fstype!~{_q(IGNORED_FSTYPES)}}} / node_filesystem_size_bytes < 0.10) and (node_filesystem_readonly == 0)', "10m"),
+            alert("ThermiteBtrfsTrouble", f'(sum by (uuid) (increase(node_btrfs_device_errors_total{{job="node"}}[1h])) > 0) or (min by (uuid) (node_btrfs_device_unused_bytes{{job="node"}}) < {BTRFS_UNALLOCATED})', "5m"),
             alert("ThermiteServiceFailed", 'node_systemd_unit_state{job="node",name=~"thermite-.*\\\\.service",state="failed"} == 1', "3m"),
             # A failed unit is ThermiteServiceFailed's.
             alert("ThermiteServiceDown", f'(node_systemd_unit_state{{job="node",name=~{_q(daemons)},state="active"}} == 0) unless on(name) (node_systemd_unit_state{{job="node",state="failed"}} == 1)', "3m"),
-            alert("ThermiteServiceFlapping", 'increase(node_systemd_service_restart_total{job="node",name=~"thermite-.*"}[30m]) >= 3', "0s"),
+            alert("ThermiteServiceFlapping", 'increase(node_systemd_service_restart_total{job="node",name=~"thermite-.*"}[30m]) >= 3', "1m"),
             # Only where the gateway's unit exists: a house without one has nothing to probe.
             alert("ThermiteGatewayDown", f'(probe_success{{job="{GATEWAY_JOB}"}} == 0) and on() ({GATEWAY_INSTALLED})', "3m"),
+            alert("ThermiteGatewayCertExpiring", f'(probe_ssl_earliest_cert_expiry{{job="{GATEWAY_JOB}"}} - time() < {CERT_EXPIRY_DAYS} * 86400) and (probe_ssl_earliest_cert_expiry{{job="{GATEWAY_JOB}"}} > 0) and on() ({GATEWAY_INSTALLED})', "1h"),
             # The gateway's one subscription to the runtime's events; `closed`
             # is a gateway with no client stream, which needs none.
             alert("ThermiteGatewayFeedDown", f'(thermite_gateway_upstream_state{{state="connecting"}} == 1) and on() ({GATEWAY_INSTALLED})', "5m"),
             alert("ThermiteRemoteStarved", f'thermite_gateway_sse_peer_streams_max{{http_version="1.1"}} >= {HTTP1_CONNECTIONS}', "1m"),
             alert("ThermiteRemoteTimeouts", f'sum(increase(thermite_client_events_total{{kind=~"{timeouts}"}}[15m])) >= 5', "5m"),
-            # Per Thing, so each one stuck says so, while another alert fires.
-            alert("ThermiteThingStuck", f'thermite_thing_status_info{{status=~"{"|".join(STARTING)}"}} == 1', "15m"),
+            # Per Thing, so each one stuck says so, while another alert fires; optional devices excluded.
+            alert("ThermiteThingStuck", f'(thermite_thing_status_info{{status=~"{"|".join(STARTING)}"}} == 1) and on(device) thermite_device_info{{required="true"}}', "15m"),
             alert("ThermiteRoutingQuarantined", "thermite_routing_quarantined > 0", "5m"),
             alert("ThermiteRoutingTelemetryUnavailable",
                   "(thermite_routing_executor_up == 0) or (thermite_routing_metrics_up == 0)", "5m"),
-            alert("ThermitePolicyWorkerStalled", "time() - thermite_policy_loop_timestamp_seconds > 120", "1m"),
+            alert("ThermitePolicyWorkerStalled", f'(time() - thermite_policy_loop_timestamp_seconds > 120) and on() (node_systemd_unit_state{{job="node",name={_q(oh_units.ACCESS_WORKER)},state="active"}} == 1)', "1m"),
             alert("ThermitePolicyUnenforced", 'thermite_policy_room_state{state="unavailable"} == 1', "10m"),
             *([alert("ThermiteHandlerPoolSaturated", '(thermite_handler_pool_active_threads >= thermite_handler_pool_core_threads) and (thermite_handler_pool_probe_overdue_seconds > 30)', "2m"),
                alert("ThermiteHandlerTelemetryUnavailable", 'thermite_handler_pool_up == 0', "5m")]

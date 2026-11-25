@@ -72,7 +72,7 @@ class InstalledInstall(unittest.TestCase):
             self.assertEqual(token.save(self.host), 0)
         action, host, area = perform.call_args.args
         self.assertTrue(action.root)
-        self.assertEqual(action.argv, ("python3", "-I", "-B", str(self.program / "lib/oh_install/secrets.py"),
+        self.assertEqual(action.argv, ("/usr/bin/python3", "-I", "-B", str(self.program / "lib/oh_install/secrets.py"),
                          str(self.site / "installation/runtime"), "--name", "openhab-token", "--source",
                          str(self.site / "var/server/api-token"), "--uid", "9001", "--gid", "9001",
                          "--recover-runtime-token", "--runtime-url", "http://127.0.0.1:13602"))

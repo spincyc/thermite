@@ -82,8 +82,10 @@ async function installs() {
     onQuit: () => quits.push("quit"),
     onChange: () => {
       if (!controller || controller.step().id !== "install") return;
-      if (!quitTried) {                              // Ctrl-C while installing
+      if (!quitTried) {                              // Ctrl-C and Enter while installing
         quitTried = true;
+        controller.key("\r", { name: "enter", full: "enter" });
+        proof.enterIgnoredWhileInstalling = controller.step().id === "install";
         controller.key("c", { name: "c", full: "C-c", ctrl: true });
         proof.quitRefusedWhileInstalling = !quits.length && /cannot be stopped/.test(controller.ui.message.text);
       }
@@ -213,6 +215,8 @@ async function fails() {
   await until(() => controller.step().id === "done", "the failed installation");
   const text = look_at(controller, "failed");
   proof.failureShown = !ui.result && Boolean(ui.failure) && text.includes(ui.failure.slice(0, 30));
+  k.press("enter");
+  proof.enterIgnoredOnFailedDone = controller.step().id === "done";
   k.press("escape");
   proof.failureReturnsToReview = controller.step().id === "review" && ui.answers.confirm === "";
 }
@@ -307,12 +311,53 @@ async function faults() {
   app.destroy();
 }
 
+async function regressions() {
+  // 80x24 Wi-Fi layout with many SSIDs, hidden network selected, and uncarried Wi-Fi note must never clip Continue or fields.
+  const controller = Controller.create({ core: { request: () => new Promise(() => {}) }, look, label: "tty1", still: true, now: () => 0 });
+  const ui = controller.ui;
+  ui.step = Controller.STEPS.findIndex((entry) => entry.id === "network");
+  ui.network = {
+    online: false,
+    interfaces: [
+      { name: "enp1s0", wireless: false, addresses: [] },
+      { name: "wlan0", wireless: true, addresses: ["192.0.2.50"] }
+    ],
+    wifi: { ssid: "ExistingNet", security: "psk", carried: false }
+  };
+  ui.wifi.scanned = true;
+  ui.wifi.networks = Array.from({ length: 12 }, (_, i) => ({ ssid: "Net-" + (i + 1), security: "psk", signal: 4, connected: false }));
+  ui.wifi.cursor = ui.wifi.networks.length; // "A hidden network…" so wifi_name is also shown
+  ui.focus = 0;
+  const shown = controller.frame(80, 24).grid.text();
+  proof.wifi80x24Fits = shown.includes("Network name") && shown.includes("Passphrase")
+    && shown.includes("without its passphrase") && shown.includes("Continue");
+  // erase() clears ui.errors and Alt/Meta keys do not type into fields.
+  ui.step = Controller.STEPS.findIndex((entry) => entry.id === "hostname");
+  ui.focus = 0;
+  ui.answers.hostname = "bad";
+  ui.errors.hostname = "Invalid hostname";
+  controller.key("x", { name: "x", full: "M-x", meta: true });
+  const metaIgnored = ui.answers.hostname === "bad";
+  controller.key(null, { name: "backspace", full: "backspace" });
+  proof.eraseAndMeta = metaIgnored && ui.answers.hostname === "ba" && !ui.errors.hostname;
+  // Core.create handles child.stdin error events by rejecting pending requests instead of crashing.
+  const fakeChild = Object.assign(new EventEmitter(), {
+    stdout: Object.assign(new EventEmitter(), { setEncoding() {} }),
+    stdin: Object.assign(new EventEmitter(), { write() { this.emit("error", new Error("EPIPE")); }, end() {} })
+  });
+  const broken = Core.create(fakeChild);
+  let stdinRejected = false;
+  try { await broken.request("facts"); } catch (err) { stdinRejected = err.message === "EPIPE"; }
+  proof.stdinErrorHandled = stdinRejected;
+}
+
 (async () => {
   await installs();
   await fails();
   await wifi();
   await locked();
   await faults();
+  await regressions();
   assert.ok(proof.frames > 100);
   fs.writeSync(1, JSON.stringify(proof));  // whole before exit, even to a pipe
   process.exit(0);

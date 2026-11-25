@@ -497,5 +497,108 @@ class Reports(Scratch):
             self.assertEqual(len(list((self.root / "var/discovery").glob("*/scan.json"))), 1)
 
 
+class Phase0Regressions(unittest.TestCase):
+    def test_sub_room_routing_aliases_validate_cross_check_and_render(self):
+        from oh_features import overview, remote_activity
+        data = copy.deepcopy(EXAMPLE)
+        data["routing"]["rooms"]["west_desk"] = {
+            "room": "example_west", "label": "West Desk", "hdmi_output": 3, "sources": ["example_computer"]}
+        self.assertEqual(oh_render.validate(data), [])
+        house = House(data)
+        conf = oh_render.build(house)
+        pages = conf.yaml[overview.FILE].pages["overview"]
+        self.assertIn("loc_west_desk_source", json.dumps(pages))
+        feed = remote_activity.manifest(house, conf)["items"]
+        self.assertEqual(feed["loc_west_desk_source"]["room"], "West Desk")
+        bad = copy.deepcopy(data)
+        bad["routing"]["rooms"]["West-Desk"] = bad["routing"]["rooms"].pop("west_desk")
+        self.assertTrue(any("not snake_case" in problem for problem in oh_render.validate(bad)))
+
+    def test_extension_device_and_house_keys_are_shape_checked_even_when_unused(self):
+        cases = (
+            lambda d: d["devices"][0].update(sony_speaker_audio="yes"),
+            lambda d: d["devices"][0].update(settings=123),
+            lambda d: d["devices"][0].update(heos_pid=[]),
+            lambda d: d["devices"][0].update(ir="bad"),
+            lambda d: d["devices"][0].update(cec="bad"),
+            lambda d: d["devices"][0].update(protect=123),
+            lambda d: d["devices"][0].update(sonos_udn=123),
+            lambda d: d["devices"][0].update(zones="two"),
+            lambda d: d.update(protect={"host": 123}),
+            lambda d: d.update(control4_director=123),
+            lambda d: d.update(theme=123),
+            lambda d: d.update(diagnostics="yes"),
+        )
+        for index, mutate in enumerate(cases):
+            data = copy.deepcopy(EXAMPLE)
+            mutate(data)
+            with self.subTest(case=index):
+                self.assertTrue(oh_inventory.validate(data), f"inventory accepted case {index}")
+                self.assertTrue(oh_render.validate(data), f"render accepted case {index}")
+
+    def test_devices_via_rejects_self_reference_and_cycles(self):
+        self_ref = copy.deepcopy(EXAMPLE)
+        self_ref["devices"].append({"id": "loop_dev", "room": "example_west", "kind": "tv", "via": "loop_dev"})
+        self.assertTrue(any("cannot refer to itself" in problem for problem in oh_inventory.validate(self_ref)))
+        cycle = copy.deepcopy(EXAMPLE)
+        cycle["devices"] += [
+            {"id": "gw_a", "room": "example_west", "kind": "controller", "via": "gw_b"},
+            {"id": "gw_b", "room": "example_west", "kind": "controller", "via": "gw_a"},
+        ]
+        problems = oh_inventory.validate(cycle)
+        self.assertTrue(any("via forms a cycle" in problem for problem in problems), problems)
+
+    def test_denonmarantz_zones_1_3_4_and_all_off_multi_zone(self):
+        from oh_features import all_off
+        from oh_integrations import denonmarantz_http
+        for zones in (1, 3, 4):
+            data = {
+                "version": 1,
+                "rooms": {"den": {"label": "Den", "tag": "Room"}},
+                "devices": [{
+                    "id": "den_avr", "room": "den", "kind": "avr", "make": "Marantz", "model": "CINEMA 40",
+                    "ip": "192.0.2.60", "zones": zones,
+                    "controls": {"observe": ["denonmarantz_http"], "control": ["denonmarantz_http"]},
+                }],
+            }
+            house = House(data)
+            conf = oh_render.build(house)
+            items = conf.yaml[denonmarantz_http.FILE].items
+            expected_zones = range(2, zones + 1)
+            for z in range(2, 5):
+                if z in expected_zones:
+                    self.assertIn(f"den_avr_zone{z}_power", items)
+                    self.assertIn(f"den_avr_zone{z}_input", items)
+                    self.assertIsNotNone(denonmarantz_http.stage(data["devices"][0], z))
+                    self.assertIn(f"den_avr_zone{z}_input", denonmarantz_http.powered_by(data["devices"][0]))
+                    self.assertIn(f"den_avr_zone{z}_power", denonmarantz_http.fields(data["devices"][0]))
+                else:
+                    self.assertNotIn(f"den_avr_zone{z}_power", items)
+                    self.assertNotIn(f"den_avr_zone{z}_input", items)
+                    self.assertIsNone(denonmarantz_http.stage(data["devices"][0], z))
+            expected_all_off = [["den_avr_main_power", "OFF"],
+                                *([f"den_avr_zone{z}_power", "OFF"] for z in expected_zones)]
+            self.assertEqual(all_off.commands(house), expected_all_off)
+
+    def test_all_off_and_controls_pick_first_matching_remote_provider(self):
+        from oh_features import all_off
+        from oh_testing import controls
+        data = copy.deepcopy(EXAMPLE)
+        house = House(data)
+        first = SimpleNamespace(NAME="first_remote", stage=None, diagnostics=None,
+                                remote=lambda d: {"power": f"{d['id']}_first_power"} if d["id"] == "example_player" else None)
+        second = SimpleNamespace(NAME="second_remote", stage=None, diagnostics=None,
+                                 remote=lambda d: {"power": f"{d['id']}_second_power"} if d["id"] == "example_player" else None)
+        with mock.patch.object(all_off.integrations, "defining", return_value=[first, second]):
+            cmds = all_off.commands(house)
+        self.assertIn(["example_player_first_power", "OFF"], cmds)
+        self.assertNotIn(["example_player_second_power", "OFF"], cmds)
+        with mock.patch.object(controls.integrations, "defining",
+                               side_effect=lambda hook: [first, second] if hook == "remote" else []), \
+                mock.patch.dict(controls.STAND_INS, {"first_remote": lambda m, d: SimpleNamespace(server=None)}):
+            check = controls.Check(house)
+        self.assertIs(check.controls["example_player"][0], first)
+
+
 if __name__ == "__main__":
     unittest.main()

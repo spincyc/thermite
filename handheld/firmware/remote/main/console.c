@@ -5,7 +5,9 @@
 
 #include "driver/uart.h"
 #include "esp_log.h"
+#include "freertos/semphr.h"
 #include "sdkconfig.h"
+#include "thermite_link.h"
 
 #if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
 #include "driver/usb_serial_jtag.h"
@@ -16,6 +18,7 @@
 
 static const char *TAG = "console";
 
+static SemaphoreHandle_t s_out;
 static QueueHandle_t s_lines;
 static TaskHandle_t s_notify;
 static uint32_t s_bit;
@@ -59,13 +62,20 @@ static void reader(void *arg)
                 } else {
                     console_put("thermite error busy\n");
                 }
+                tl_zeroize(&line, sizeof line);
+            }
+            if (event == CP_LINE_READY || event == CP_LINE_TOO_LONG) {
+                tl_zeroize(lines.data, sizeof lines.data);
             }
         }
+        tl_zeroize(buffer, sizeof buffer);
     }
 }
 
 void console_start(QueueHandle_t lines, TaskHandle_t notify, uint32_t bit)
 {
+    s_out = xSemaphoreCreateMutex();
+    configASSERT(s_out);
     s_lines = lines;
     s_notify = notify;
     s_bit = bit;
@@ -84,6 +94,8 @@ void console_start(QueueHandle_t lines, TaskHandle_t notify, uint32_t bit)
 
 void console_put(const char *line)
 {
+    if (s_out) xSemaphoreTake(s_out, portMAX_DELAY);
     fputs(line, stdout);
     fflush(stdout);
+    if (s_out) xSemaphoreGive(s_out);
 }

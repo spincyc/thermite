@@ -39,3 +39,22 @@ class ThemeInputs(unittest.TestCase):
                 with self.assertRaises(oh_brand.PaletteError):
                     remote.palette({'theme': 'themes/child.json'})
             self.assertEqual(oh_brand.load(outside).name, 'outside')
+
+    def test_yaml_themes_use_strict_loader(self):
+        scratch = AREA / '.scratch/site-theme-inputs'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as folder:
+            root = Path(folder)
+            good = root / 'clean.yaml'
+            good.write_text('name: clean\nextends: thermite\n', encoding='utf-8')
+            self.assertEqual(oh_brand.load(good).name, 'clean')
+            for filename, body in (
+                ('dup.yaml', 'name: dup\nname: dup2\nextends: thermite\n'),
+                ('anchor.yaml', 'base: &a thermite\nname: anc\nextends: *a\n'),
+                ('yaml11.yaml', 'name: y11\nextends: on\n'),
+                ('broken.yaml', 'name: [\n'),
+            ):
+                bad = root / filename
+                bad.write_text(body, encoding='utf-8')
+                with self.subTest(file=filename), self.assertRaises(oh_brand.PaletteError):
+                    oh_brand.load(bad)

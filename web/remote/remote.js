@@ -80,7 +80,7 @@
       if (session.access) session.access.watchLocks(true);
       buildInfo();
       listenPage = globalThis.RemoteListenPage.create({ session: session, sessions: heard,
-        ui: { $: $, all: all, node: node, icon: icon, openSheet: openSheet } });
+        ui: { $: $, all: all, node: node, icon: icon, openSheet: openSheet, markOverflow: markOverflow, reveal: reveal } });
       bind();
       applyTheme(document.documentElement.getAttribute("data-theme"));
       ready = true;
@@ -138,7 +138,31 @@
 
   function update() {
     const current = session.current();
-    if (!current) return;
+    if (!current) {
+      all("[data-room-name]").forEach((node) => { node.textContent = "No rooms"; });
+      document.title = "Remotes · thermite";
+      document.body.toggleAttribute("data-stale", !session.connected());
+      const roomSwitch = $("#room-switch");
+      roomSwitch.disabled = true;
+      roomSwitch.setAttribute("aria-label", "No rooms configured");
+      $("[data-modes]").hidden = true;
+      $(".targets-wrap").hidden = true;
+      $("[data-speakers-wrap]").hidden = true;
+      $("#now").hidden = true;
+      $("#controls").hidden = true;
+      $("#listen").hidden = true;
+      $("[data-listen-info]").hidden = true;
+      const told = $("[data-off-note]");
+      told.hidden = false;
+      told.room = "";
+      told.replaceChildren(note("i-off", "No rooms configured", "Add rooms to your house configuration to use the remotes."));
+      const words = session.connected() ? "" : Session.NOT_CONNECTED;
+      $("#alert").hidden = !words;
+      $("#alert-text").textContent = words;
+      updateRoomLists();
+      return;
+    }
+    $("#room-switch").disabled = false;
     all("[data-room-name]").forEach((node) => { node.textContent = current.label; });
     all('.thermite-nav-link[data-view="settings"]').forEach((link) => { link.href = globalThis.ThermiteShell.href("settings", location.search, current.id); });
     document.title = current.label + " · thermite";
@@ -372,24 +396,28 @@
     box.scrollLeft += delta;
   }
 
-  function scrollTargets(step) {
-    const box = $("[data-targets]");
+  function scrollTargets(step, box) {
+    const target = box && box.nodeType ? box : $("[data-targets]");
+    if (!target) return;
     const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    box.scrollBy({ left: step * Math.max(80, box.clientWidth - 96), behavior: still ? "auto" : "smooth" });
+    target.scrollBy({ left: step * Math.max(80, target.clientWidth - 96), behavior: still ? "auto" : "smooth" });
   }
 
   // The row overflows when its bubbles are wider than the whole well, arrows
   // included, so showing the arrows never keeps them up by itself.
-  function markOverflow() {
-    const box = $("[data-targets]");
-    const wrap = box.parentNode;
-    wrap.toggleAttribute("data-overflow", !wrap.hidden && box.scrollWidth > wrap.clientWidth + 1);
-    const left = box.scrollLeft > 2;
-    const right = box.scrollLeft + box.clientWidth < box.scrollWidth - 2;
-    if (left || right) box.setAttribute("data-more", left && right ? "both" : left ? "left" : "right");
-    else box.removeAttribute("data-more");
-    wrap.querySelector('[data-step="-1"]').disabled = !left;
-    wrap.querySelector('[data-step="1"]').disabled = !right;
+  function markOverflow(box) {
+    const target = box && box.nodeType ? box : $("[data-targets]");
+    if (!target || !target.parentNode) return;
+    const wrap = target.parentNode;
+    wrap.toggleAttribute("data-overflow", !wrap.hidden && target.scrollWidth > wrap.clientWidth + 1);
+    const left = target.scrollLeft > 2;
+    const right = target.scrollLeft + target.clientWidth < target.scrollWidth - 2;
+    if (left || right) target.setAttribute("data-more", left && right ? "both" : left ? "left" : "right");
+    else target.removeAttribute("data-more");
+    const prev = wrap.querySelector('[data-step="-1"]');
+    const next = wrap.querySelector('[data-step="1"]');
+    if (prev) prev.disabled = !left;
+    if (next) next.disabled = !right;
   }
 
   // The remote of the device the buttons control, in the frame every remote
@@ -598,7 +626,7 @@
       info.appendChild(node("section", { class: "info__section", "data-room-controls-section": "" }, [
         node("h3", { class: "info__title" }, "Room controls"),
         node("div", { class: "room-controls", "data-room-controls": "" }),
-        node("p", { class: "info__note" }, "Not connected yet. Later, turning the room on and off will run them; these buttons stay as a backup.")
+        node("p", { class: "info__note", "data-room-controls-note": "" }, "Not connected yet. Later, turning the room on and off will run them; these buttons stay as a backup.")
       ]));
       // Administrators lock the room from here; the remote shows only the state.
       info.appendChild(node("section", { class: "info__section", "data-room-lock-section": "", hidden: "" }, [
@@ -685,10 +713,12 @@
   }
 
   function updateSignal() {
+    const current = session.current();
+    if (!current) return;
     const model = session.diagnostics();
     const view = model ? globalThis.RemoteDiagnostics.outline(model, Date.now()) : null;
     all("[data-signal]").forEach((panel) => {
-      const context = session.current().id + ":" + session.state(session.current().id).value;
+      const context = current.id + ":" + session.state(current.id).value;
       if (panel.dataset.context !== context) {
         const scroller = panel.closest(".panel--signal") || panel.closest(".sheet");
         if (scroller) scroller.scrollTop = 0;
@@ -793,6 +823,7 @@
       });
     });
     all("[data-room-controls-section]").forEach((section) => { section.hidden = !shown.controls.length; });
+    all("[data-room-controls-note]").forEach((noteEl) => { noteEl.hidden = !shown.controls.some((control) => !control.connected); });
     all("[data-room-controls]").forEach((box) => {
       box.textContent = "";
       shown.controls.forEach((control) => {
@@ -871,6 +902,8 @@
     document.addEventListener("click", onClick);
     document.addEventListener("pointerdown", onPointerDown);
     ["pointerup", "pointercancel"].forEach((type) => document.addEventListener(type, stopRepeat));
+    window.addEventListener("blur", stopRepeat);
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") stopRepeat(); });
     bindLockMenu();
     document.addEventListener("keydown", onKey);
     document.addEventListener("focusin", (event) => {
@@ -890,9 +923,15 @@
     range.addEventListener("pointerdown", () => session.setDragging(true));
     ["pointerup", "pointercancel"].forEach((type) => range.addEventListener(type, () => session.setDragging(false)));
     $("#info-open").addEventListener("click", () => openSheet("info-sheet"));
-    $("[data-targets]").addEventListener("scroll", markOverflow, { passive: true });
-    $("[data-targets]").addEventListener("wheel", wheelTargets, { passive: false });
-    window.addEventListener("resize", markOverflow);
+    [$("[data-targets]"), $("[data-speakers]")].forEach((box) => {
+      if (!box) return;
+      box.addEventListener("scroll", () => markOverflow(box), { passive: true });
+      box.addEventListener("wheel", wheelTargets, { passive: false });
+    });
+    window.addEventListener("resize", () => {
+      markOverflow($("[data-targets]"));
+      markOverflow($("[data-speakers]"));
+    });
     window.addEventListener("resize", () => {
       if (inlineSignal() && $("#info-sheet").open && infoView === "signal") {
         $("#info-sheet").close();
@@ -980,7 +1019,7 @@
         session.simulateExternal();
         break;
       case "scroll-targets":
-        scrollTargets(Number(action.getAttribute("data-step")));
+        scrollTargets(Number(action.getAttribute("data-step")), action.closest(".targets-wrap") && action.closest(".targets-wrap").querySelector(".targets"));
         break;
     }
   }
@@ -1007,8 +1046,12 @@
     key.pressedByPointer = true;
     pressButton(button);
     repeat = { key: key, timer: setTimeout(function tick() {
+      if (!repeat || repeat.key.isConnected === false || repeat.key.disabled) {
+        stopRepeat();
+        return;
+      }
       pressButton(button);
-      repeat.timer = setTimeout(tick, Session.REPEAT_EVERY);
+      if (repeat) repeat.timer = setTimeout(tick, Session.REPEAT_EVERY);
     }, Session.REPEAT_DELAY) };
     key.addEventListener("pointerleave", stopRepeat, { once: true });
   }
@@ -1252,6 +1295,10 @@
   function applyTheme(theme) {
     const root = document.documentElement;
     root.setAttribute("data-theme", theme);
+    if (globalThis.ThermiteAppearance && typeof globalThis.ThermiteAppearance.syncThemeColor === "function") {
+      globalThis.ThermiteAppearance.syncThemeColor();
+      return;
+    }
     const chrome = getComputedStyle(root).getPropertyValue("--chrome").trim();
     const meta = $('meta[name="theme-color"]');
     if (meta && chrome) meta.setAttribute("content", chrome);
@@ -1333,9 +1380,14 @@
   }
 
   function icon(id, extra) {
-    const holder = document.createElement("span");
-    holder.innerHTML = '<svg class="icon' + (extra ? " " + extra : "") + '" aria-hidden="true" focusable="false"><use href="#'
-      + id + '"></use></svg>';
-    return holder.firstChild;
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("class", "icon" + (extra ? " " + extra : ""));
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    const use = document.createElementNS(ns, "use");
+    use.setAttribute("href", "#" + id);
+    svg.appendChild(use);
+    return svg;
   }
 })();

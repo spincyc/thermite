@@ -946,6 +946,38 @@ class CertificateProfile(GatewayFixture):
         self.assertIn("subjectAltName = DNS:house.example.test,IP:192.0.2.10\n",
                       openssl_config(["house.example.test", "192.0.2.10"]))
 
+    def test_replace_leaf_writes_on_destination_filesystem_and_cleans_temp_dir(self):
+        import errno
+        system = real_openssl(Host())
+        gateway, metadata = self.served(system)
+        authority = Path(metadata["tls_ca"])
+        real_replace = os.replace
+
+        def cross_device_if_different_parents(src, dst):
+            if Path(src).parent != Path(dst).parent:
+                raise OSError(errno.EXDEV, "Invalid cross-device link")
+            return real_replace(src, dst)
+
+        with patch("os.replace", side_effect=cross_device_if_different_parents):
+            gateway._replace_leaf(system, ["house.example.test", "localhost"], (authority, authority.parent / "ca-key.pem"))
+        self.assertEqual(list(gateway.directory.glob("tls-*")), [])
+        self.assertTrue((gateway.inputs / "tls-key.pem").is_file())
+        self.assertTrue((gateway.inputs / "tls-cert.pem").is_file())
+
+    def test_boundary_passes_effective_sonos_callback_port(self):
+        import oh_ports
+        gateway, system = self.gateway(), Host()
+        gateway.boundary = None
+        gateway.inputs.mkdir(parents=True, mode=0o700, exist_ok=True)
+        record = {}
+        metadata = {"callback_file": None}
+        with patch.object(oh_ports, "effective", return_value={**oh_ports.DEFAULTS, "callbacks": 14605}) as effective, \
+                patch("oh_access.native_boundary.configure", return_value={"callbacks": None}) as configure, \
+                patch("oh_conf.House.load", return_value=type("H", (), {"data": {}})()):
+            gateway._boundary(system, record, metadata)
+        effective.assert_called_once_with(gateway.context.host)
+        self.assertEqual(configure.call_args.kwargs["callback_port"], 14605)
+
 
 if __name__ == "__main__":
     unittest.main()

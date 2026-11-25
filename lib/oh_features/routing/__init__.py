@@ -167,8 +167,9 @@ STAGE = {
                            "this zone takes that room's input, so both screens show one picture"),
 }
 #: A display may instead be passive, and then has only its device.
-DISPLAY = {**STAGE, "passive": Key(TRUTH, "whether thermite leaves the display alone: true for one it sends nothing "
-                                          "to and reads nothing from, which then has only its device here")}
+DISPLAY = {k: v for k, v in STAGE.items() if k not in ("zone", "sync_with")} | {
+    "passive": Key(TRUTH, "whether thermite leaves the display alone: true for one it sends nothing "
+                          "to and reads nothing from, which then has only its device here")}
 _ACTIONS = {name: Key(MAPPING, what, by="device id", each=Key(TEXT, "the name of one of the device's actions, in quotes"))
             for name, what in zip(ROOM_ACTIONS, ("what other devices are sent when the room turns to any source: a curtain "
                                                  "and lights, say", "what they are sent when it turns Off"), strict=True)}
@@ -528,6 +529,8 @@ def validate(data: object) -> list[str]:
     for room, entry in rooms_section.items():
         where = f"routing.rooms.{room}"
         if isinstance(entry, dict) and "room" in entry:
+            if not isinstance(room, str) or not inventory.ID.match(room):
+                problems.append(f"{where}: room id '{room}' is not snake_case")
             if entry["room"] not in rooms or entry["room"] == "unassigned":
                 problems.append(f"{where}.room: {entry['room']!r} is not a room id")
             if "label" not in entry:
@@ -677,7 +680,8 @@ def validate(data: object) -> list[str]:
         fixed = (devices[routing["hdmi_matrix"]].get("settings") or {}).get("edid") or {}
         if isinstance(fixed, dict):
             for number, source in sorted(inputs.items()):
-                key = number if number in fixed else "default" if "default" in fixed else None
+                key = (number if number in fixed else str(number) if str(number) in fixed
+                       else "default" if "default" in fixed else None)
                 if key is not None:
                     problems.append(f"{routing['hdmi_matrix']}.settings.edid.{key}: routing.edid sets the "
                                     f"EDID of input {number} ({source}); fix only the inputs no source uses")
@@ -968,7 +972,7 @@ def _stage_problems(where: str, spec: object, offered: list, sources: dict, devi
             problems.append(f"{at}: must name an offered source upstream of this stage")
         if value(at, input_) and input_ in taken and taken[input_] != "input":
             problems.append(f"{at}: {input_} is already a locally cabled source input")
-    for key in sorted(unknown(STAGE, spec)):
+    for key in sorted(unknown(DISPLAY if where.endswith(".display") else STAGE, spec)):
         problems.append(f"{where}: unknown key '{key}'")
     return problems
 

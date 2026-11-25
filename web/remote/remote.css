@@ -1189,18 +1189,18 @@ body[data-stale] :is([data-led], .target) .led {
     gap: var(--space-4);
   }
 
-  /* Seven keys (the Blu-ray's) shrink to fit a narrow phone. */
+  /* Seven keys (the Blu-ray's) wrap instead of shrinking below 44 px on a narrow phone. */
   .keyrow--dense {
     width: 100%;
+    flex-wrap: wrap;
     gap: var(--space-1);
   }
 
   .keyrow--dense .key {
-    flex: 0 1 var(--key-dense);
-    width: auto;
-    min-width: 36px;
-    height: auto;
-    aspect-ratio: 1;
+    flex: 0 0 var(--tap);
+    width: var(--tap);
+    min-width: var(--tap);
+    height: var(--tap);
   }
 
   /* Four to a row, a shorter row's keys sharing its width. */
@@ -1821,9 +1821,9 @@ body[data-stale] :is([data-led], .target) .led {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: #ffffff;
+  background: var(--th-text);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
-  transition: transform var(--dur-state) var(--ease-out);
+  transition: transform var(--dur-state) var(--ease-out), background var(--dur-state);
 }
 
 .switch[aria-checked="true"] .switch__track {
@@ -1832,6 +1832,7 @@ body[data-stale] :is([data-led], .target) .led {
 
 .switch[aria-checked="true"] .switch__track::after {
   transform: translateX(18px);
+  background: var(--th-accent-ink);
 }
 
 .info__note {
@@ -2331,7 +2332,13 @@ kbd {
 
 .caption__link {
   /* A taller target than its line, without moving the line. */
-  padding: 8px 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--tap);
+  min-height: var(--tap);
+  margin: -10px 0;
+  padding: 0 4px;
   border: 0;
   font: inherit;
   color: inherit;

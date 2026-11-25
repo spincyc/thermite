@@ -689,7 +689,8 @@ class Registered(unittest.TestCase):
         verb = oh_cli.VERBS["device"]
         self.assertEqual((verb.group, verb.site), ("devices", True))
         usage = oh_cli.parser_of("device").format_help()
-        self.assertIn("thermite device [-h] [--config DIR] [--house FILE] [--timeout SECONDS] [--json]", usage)
+        self.assertIn("thermite device [-h] [--config DIR] [--url URL] [--house FILE] [--timeout SECONDS] [--json]",
+                      " ".join(usage.split()))
         self.assertIn("is unknown", usage)
 
 

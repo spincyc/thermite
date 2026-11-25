@@ -1122,8 +1122,8 @@ examples:
   thermite rollback -n --json       the plan, as one JSON object
 </pre>
 </section>
-<section class="verb" id="status"><h3><code>thermite status</code></h3><p>What is deployed and running here, against this checkout.</p><pre class="help">usage: thermite status [-h] [--config DIR] [--runtime] [--production | --sandbox |
-                       --runtime-url URL] [--installation |
+<section class="verb" id="status"><h3><code>thermite status</code></h3><p>What is deployed and running here, against this checkout.</p><pre class="help">usage: thermite status [-h] [--config DIR] [--url URL] [--runtime] [--production |
+                       --sandbox | --runtime-url URL] [--installation |
                        --allow-offline UID [UID ...]] [--settle SECONDS] [--addons FILE]
                        [--token-file FILE] [--timeout SECONDS] [--state-dir DIR]
                        [--json]
@@ -1196,6 +1196,10 @@ snapshot, as the other checks do; they remain strict.
 options:
   -h, --help                    show this help message and exit
   --config DIR                  use this private configuration directory
+  --url URL                     run it on a server instead, over ssh:
+                                ssh://[USER@]HOST[:PORT][/SITE] (default: THERMITE_URL
+                                when it names one), SITE being the site&#x27;s path there,
+                                below /~/ for one in its home
   --runtime                     only the runtime&#x27;s checks (--sandbox and --runtime-url
                                 imply it)
   --production                  production runtime on this host (default)
@@ -1271,7 +1275,7 @@ examples:
   thermite status --installation    installation readiness, as thermite install checks it last
 </pre>
 </section>
-<section class="verb" id="history"><h3><code>thermite history</code></h3><p>This host&#x27;s deploys, numbered, the latest last.</p><pre class="help">usage: thermite history [-h] [--config DIR] [--last N] [--details] [--json]
+<section class="verb" id="history"><h3><code>thermite history</code></h3><p>This host&#x27;s deploys, numbered, the latest last.</p><pre class="help">usage: thermite history [-h] [--config DIR] [--url URL] [--last N] [--details] [--json]
                         [--state-dir DIR]
 
 List, read-only, what thermite install, upgrade and rollback deployed on
@@ -1297,6 +1301,9 @@ have no details.
 options:
   -h, --help       show this help message and exit
   --config DIR     use this private configuration directory
+  --url URL        run it on a server instead, over ssh: ssh://[USER@]HOST[:PORT][/SITE]
+                   (default: THERMITE_URL when it names one), SITE being the site&#x27;s path
+                   there, below /~/ for one in its home
   --last N         the last N deploys; 0 for every one (default: 10)
   --details        also what each deploy changed, reloaded, backed up and activated
   --json           print the report as JSON
@@ -1424,8 +1431,8 @@ examples:
                                     the last hour, read on the server named thermite
 </pre>
 </section>
-<section class="verb" id="bugreport"><h3><code>thermite bugreport</code></h3><p>Collect versions, status, history, logs and system facts into one archive.</p><pre class="help">usage: thermite bugreport [-h] [--config DIR] [--out FILE] [--since WHEN] [--no-redact]
-                          [--json]
+<section class="verb" id="bugreport"><h3><code>thermite bugreport</code></h3><p>Collect versions, status, history, logs and system facts into one archive.</p><pre class="help">usage: thermite bugreport [-h] [--config DIR] [--url URL] [--out FILE] [--since WHEN]
+                          [--no-redact] [--json]
 
 Collect, read-only, what a bug report about this host&#x27;s Thermite needs into
 one compressed archive: thermite&#x27;s version and the runtime&#x27;s (thermite
@@ -1449,6 +1456,9 @@ ssh://HOST it collects on that server and writes the archive here.
 options:
   -h, --help     show this help message and exit
   --config DIR   use this private configuration directory
+  --url URL      run it on a server instead, over ssh: ssh://[USER@]HOST[:PORT][/SITE]
+                 (default: THERMITE_URL when it names one), SITE being the site&#x27;s path
+                 there, below /~/ for one in its home
   --out FILE     write the archive here (default: thermite-bugreport-HOST-TIME.tar.gz in
                  the current directory); - writes it to standard output
   --since WHEN   the logs from WHEN on, as thermite logs --since takes it (default: 24h)
@@ -1672,8 +1682,8 @@ examples:
   thermite discover --json          the comparison as JSON
 </pre>
 </section>
-<section class="verb" id="pair"><h3><code>thermite pair</code></h3><p>Pair a TV with runtime, or check the Sony TVs&#x27; pairing.</p><pre class="help">usage: thermite pair [-h] [--config DIR] [--status] [--json] [--production | --sandbox]
-                     [--house FILE] [--timeout SECONDS]
+<section class="verb" id="pair"><h3><code>thermite pair</code></h3><p>Pair a TV with runtime, or check the Sony TVs&#x27; pairing.</p><pre class="help">usage: thermite pair [-h] [--config DIR] [--url URL] [--status] [--json] [--production |
+                     --sandbox] [--house FILE] [--timeout SECONDS]
                      [DEVICE] [CODE]
 
 Pair a device with thermite, as its integration in the house file
@@ -1711,6 +1721,10 @@ positional arguments:
 options:
   -h, --help         show this help message and exit
   --config DIR       use this private configuration directory
+  --url URL          run it on a server instead, over ssh:
+                     ssh://[USER@]HOST[:PORT][/SITE] (default: THERMITE_URL when it
+                     names one), SITE being the site&#x27;s path there, below /~/ for one in
+                     its home
   --status           read DEVICE&#x27;s pairing instead of pairing it (without DEVICE: every
                      Sony TV&#x27;s)
   --json             print the report as JSON
@@ -1754,7 +1768,8 @@ examples:
   thermite pair --json              every Sony TV&#x27;s pairing as JSON
 </pre>
 </section>
-<section class="verb" id="device"><h3><code>thermite device</code></h3><p>Everything about one device: what it is, what watches it, what holds now.</p><pre class="help">usage: thermite device [-h] [--config DIR] [--house FILE] [--timeout SECONDS] [--json]
+<section class="verb" id="device"><h3><code>thermite device</code></h3><p>Everything about one device: what it is, what watches it, what holds now.</p><pre class="help">usage: thermite device [-h] [--config DIR] [--url URL] [--house FILE]
+                       [--timeout SECONDS] [--json]
                        ID
 
 Everything thermite knows about one device, without knowing where each
@@ -1788,6 +1803,10 @@ positional arguments:
 options:
   -h, --help         show this help message and exit
   --config DIR       use this private configuration directory
+  --url URL          run it on a server instead, over ssh:
+                     ssh://[USER@]HOST[:PORT][/SITE] (default: THERMITE_URL when it
+                     names one), SITE being the site&#x27;s path there, below /~/ for one in
+                     its home
   --house FILE       the house file (default: instance/devices.yaml)
   --timeout SECONDS  seconds to wait for each answer of Prometheus (default: 5)
   --json             print the report as JSON
@@ -1814,7 +1833,8 @@ examples:
                                     what another house file makes of it
 </pre>
 </section>
-<section class="verb" id="reboot"><h3><code>thermite reboot</code></h3><p>Restart a device now as the nightly reboots do, or list how each went.</p><pre class="help">usage: thermite reboot [-h] [--config DIR] [--house FILE] [--timeout SECONDS] [--json]
+<section class="verb" id="reboot"><h3><code>thermite reboot</code></h3><p>Restart a device now as the nightly reboots do, or list how each went.</p><pre class="help">usage: thermite reboot [-h] [--config DIR] [--url URL] [--house FILE]
+                       [--timeout SECONDS] [--json]
                        [DEVICE]
 
 Restart a device as the nightly reboots do (lib/oh_features/reboots):
@@ -1840,6 +1860,10 @@ positional arguments:
 options:
   -h, --help         show this help message and exit
   --config DIR       use this private configuration directory
+  --url URL          run it on a server instead, over ssh:
+                     ssh://[USER@]HOST[:PORT][/SITE] (default: THERMITE_URL when it
+                     names one), SITE being the site&#x27;s path there, below /~/ for one in
+                     its home
   --house FILE       the house file (default: instance/devices.yaml)
   --timeout SECONDS  seconds to wait for the device to answer again (default: 480)
   --json             print the report as JSON
@@ -1862,7 +1886,7 @@ examples:
   thermite reboot --json            the list, as JSON
 </pre>
 </section>
-<section class="verb" id="cameras"><h3><code>thermite cameras</code></h3><p>Read camera status, or configure native Protect bridges privately.</p><pre class="help">usage: thermite cameras [-h] [--config DIR] ACTION ...
+<section class="verb" id="cameras"><h3><code>thermite cameras</code></h3><p>Read camera status, or configure native Protect bridges privately.</p><pre class="help">usage: thermite cameras [-h] [--config DIR] [--url URL] ACTION ...
 
 Show the house&#x27;s UniFi Protect cameras, or configure their native runtime
 bridges. Homebridge and Apple Home are independent and stay in place.
@@ -1879,6 +1903,9 @@ with configure or streams; see docs/cameras.md for resource and permission needs
 options:
   -h, --help     show this help message and exit
   --config DIR   use this private configuration directory
+  --url URL      run it on a server instead, over ssh: ssh://[USER@]HOST[:PORT][/SITE]
+                 (default: THERMITE_URL when it names one), SITE being the site&#x27;s path
+                 there, below /~/ for one in its home
 
 actions:
   ACTION
@@ -3146,7 +3173,7 @@ examples:
                                     write them; then commit and push there
 </pre></details>
 </section>
-<section class="verb" id="version"><h3><code>thermite version</code></h3><p>Thermite&#x27;s version, and runtime&#x27;s: pinned, and running here.</p><pre class="help">usage: thermite version [-h] [--config DIR] [--json] [--timeout SECONDS]
+<section class="verb" id="version"><h3><code>thermite version</code></h3><p>Thermite&#x27;s version, and runtime&#x27;s: pinned, and running here.</p><pre class="help">usage: thermite version [-h] [--config DIR] [--url URL] [--json] [--timeout SECONDS]
 
 Print thermite&#x27;s version and the commit of this checkout it runs from
 (`, modified` when the area&#x27;s tracked files differ from it), the runtime
@@ -3157,6 +3184,10 @@ the first line; without Git, or outside a repository, it has no commit.
 options:
   -h, --help         show this help message and exit
   --config DIR       use this private configuration directory
+  --url URL          run it on a server instead, over ssh:
+                     ssh://[USER@]HOST[:PORT][/SITE] (default: THERMITE_URL when it
+                     names one), SITE being the site&#x27;s path there, below /~/ for one in
+                     its home
   --json             print the report as JSON
   --timeout SECONDS  seconds to wait for production runtime to answer (default: 2)
 

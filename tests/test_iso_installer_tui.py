@@ -73,11 +73,14 @@ class InstallerTerminal(unittest.TestCase):
         self.check("reviewSummary", "confirmRefused")
 
     def test_progress_runs_to_done_and_cannot_be_quit(self):
-        self.check("quitRefusedWhileInstalling", "progress", "installDrawn", "done", "doneAddress", "doneStays",
-                   "reboots", "quits")
+        self.check("enterIgnoredWhileInstalling", "quitRefusedWhileInstalling", "progress", "installDrawn", "done",
+                   "doneAddress", "doneStays", "reboots", "quits")
 
     def test_a_failed_installation_says_why_and_returns_to_review(self):
-        self.check("failureShown", "failureReturnsToReview")
+        self.check("failureShown", "enterIgnoredOnFailedDone", "failureReturnsToReview")
+
+    def test_80x24_wifi_layout_erase_meta_and_stdin_error(self):
+        self.check("wifi80x24Fits", "eraseAndMeta", "stdinErrorHandled")
 
     def test_console_and_ssh_share_one_installer(self):
         self.check("lockShared")

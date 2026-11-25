@@ -210,6 +210,19 @@ class SignalPaths(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("(synced)", problems[0])
 
+    def test_synced_variant_drops_followers_hdmi_switch(self):
+        data = house_data()
+        data["routing"]["rooms"]["desk"].update(
+            sources=["player"], receiver={"device": "avr", "input": "AUX2", "zone": 2, "sync_with": "lounge"})
+        data["routing"]["rooms"]["lounge"] = {
+            "hdmi_output": 1, "sources": ["player"], "receiver": {"device": "avr", "input": "BD"}}
+        found = paths(data)["player"]
+        self.assertIn("switch", [node["device"] for node in found["nodes"]])
+        synced_devices = [node["device"] for node in found["variants"]["synced"]["nodes"]]
+        self.assertNotIn("switch", synced_devices)
+        self.assertIn("matrix", synced_devices)
+        self.assertIn("avr", synced_devices)
+
     def test_multiple_integrations_retain_independent_items_and_freshness(self):
         data = house_data()
         device = data["devices"][3]

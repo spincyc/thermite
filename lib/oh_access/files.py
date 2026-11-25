@@ -1,5 +1,9 @@
 """Owner-only bounded files and atomic replacement, shared by CLI and service."""
 
+from __future__ import annotations
+
+from collections.abc import Sequence
+import contextlib
 import errno
 import json
 import grp
@@ -10,7 +14,7 @@ import re
 import secrets
 import stat
 
-from oh_service import ACCOUNT, GROUP, UID, GID
+from oh_service import ACCOUNT, GROUP, UID, GID, _open_root
 
 from . import AccessError
 
@@ -195,3 +199,128 @@ def remove_temporaries(value):
 
 def json_private(value, data):
     atomic_private(value, (json.dumps(data, separators=(",", ":"), allow_nan=False) + "\n").encode())
+
+
+def _single_name(name: str) -> str:
+    if not name or "/" in name or name in (".", ".."):
+        raise ValueError(f"invalid entry name: {name!r}")
+    return name
+
+
+def open_tree_dir(root_fd: int, parts: Sequence[str], *, create: bool = False, mode: int = 0o750) -> int:
+    """Walk `parts` from an open directory fd without following symlinks.
+
+    Returns a new open directory fd (caller closes it). When `create` is True,
+    missing subdirectories are created via mkdirat with `mode` and normalized
+    with fchmod on the opened descriptor.
+    """
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    current = os.dup(root_fd)
+    try:
+        for part in parts:
+            _single_name(part)
+            created = False
+            try:
+                child = os.open(part, flags, dir_fd=current)
+            except FileNotFoundError:
+                if not create:
+                    raise
+                try:
+                    os.mkdir(part, mode, dir_fd=current)
+                except FileExistsError:
+                    pass
+                else:
+                    created = True
+                child = os.open(part, flags, dir_fd=current)
+                if created:
+                    try:
+                        os.fchmod(child, mode)
+                    except BaseException:
+                        os.close(child)
+                        raise
+            os.close(current)
+            current = child
+        return current
+    except BaseException:
+        os.close(current)
+        raise
+
+
+def open_directory(root: Path | str, relative: Path | str = ".", *, create: bool = False, mode: int = 0o750) -> int:
+    """Open `root / relative` anchored from `/` with O_DIRECTORY | O_NOFOLLOW."""
+    root_path = Path(root)
+    rel_path = Path(relative)
+    if rel_path.is_absolute():
+        raise ValueError(f"relative path must not be absolute: {relative!r}")
+    parts = [part for part in rel_path.parts if part != "."]
+    root_fd = _open_root(root_path)
+    try:
+        return open_tree_dir(root_fd, parts, create=create, mode=mode)
+    finally:
+        os.close(root_fd)
+
+
+def replace_at(dir_fd: int, name: str, data: bytes, mode: int, *, sync: bool = True,
+               prefix: str = ".", suffix: str = ".tmp") -> None:
+    """Atomically write `name` inside `dir_fd` using a random temporary name."""
+    _single_name(name)
+    for _ in range(16):
+        temp = f"{prefix}{name}.{secrets.token_hex(TEMPORARY_BYTES)}{suffix}"
+        try:
+            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode, dir_fd=dir_fd)
+            break
+        except FileExistsError:
+            continue
+    else:
+        raise FileExistsError(f"could not allocate temporary file for {name}")
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fchmod(stream.fileno(), mode)
+            if sync:
+                os.fsync(stream.fileno())
+        os.replace(temp, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(temp, dir_fd=dir_fd)
+        raise
+    if sync:
+        os.fsync(dir_fd)
+
+
+def unlink_at(dir_fd: int, name: str) -> bool:
+    """Unlink `name` inside `dir_fd` without following symlinks."""
+    _single_name(name)
+    try:
+        os.unlink(name, dir_fd=dir_fd)
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def prune_at(root_fd: int, parts: Sequence[str]) -> None:
+    """Remove empty directories along `parts` below `root_fd`, deepest first."""
+    if not parts:
+        return
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fds = [os.dup(root_fd)]
+    names: list[str] = []
+    try:
+        for part in parts:
+            _single_name(part)
+            try:
+                child = os.open(part, flags, dir_fd=fds[-1])
+            except OSError:
+                break
+            fds.append(child)
+            names.append(part)
+        for index in range(len(names) - 1, -1, -1):
+            os.close(fds.pop())
+            try:
+                os.rmdir(names[index], dir_fd=fds[-1])
+            except OSError:
+                break
+    finally:
+        for fd in fds:
+            os.close(fd)

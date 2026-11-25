@@ -55,13 +55,31 @@ static uint32_t s_dropped;
 /* One whole line to the host, or nothing when no host is listening. */
 static void put_line(const char *line, size_t length)
 {
+    static bool s_needs_newline;
     if (length == 0) return;
     xSemaphoreTake(s_out, portMAX_DELAY);
     if (usb_serial_jtag_is_connected()) {
+        if (s_needs_newline) {
+            if (usb_serial_jtag_write_bytes("\n", 1, pdMS_TO_TICKS(USB_WRITE_MS)) == 1) {
+                s_needs_newline = false;
+            } else {
+                xSemaphoreGive(s_out);
+                return;
+            }
+        }
         size_t done = 0;
         while (done < length) {
             int n = usb_serial_jtag_write_bytes(line + done, length - done, pdMS_TO_TICKS(USB_WRITE_MS));
-            if (n <= 0) break; /* the host stopped reading: the line is lost, as on a closed port */
+            if (n <= 0) {
+                /* A partial line went out without its newline: terminate it now (or before the
+                 * next line) so it never corrupts the following protocol line. */
+                if (done > 0 && line[done - 1] != '\n') {
+                    if (usb_serial_jtag_write_bytes("\n", 1, pdMS_TO_TICKS(USB_WRITE_MS)) != 1) {
+                        s_needs_newline = true;
+                    }
+                }
+                break;
+            }
             done += (size_t)n;
         }
     }

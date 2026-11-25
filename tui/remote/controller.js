@@ -171,7 +171,7 @@ function create(options) {
     session.subscribe(onSession);
     if (listen) listen.subscribe(onListen);
     timers.tick = (options.setInterval || setInterval)(() => {
-      ui.blink = !ui.blink;
+      if (!ui.still) ui.blink = !ui.blink;
       ui.clock = clock();
       changed();
     }, TICK_MS);
@@ -343,7 +343,7 @@ function create(options) {
       cameras.backend = options.createCameras();
       cameras.backend.subscribe(() => {
         if (!cameras.backend.camera(cameras.selected)) cameras.selected = (cameras.backend.list()[0] || {}).id || null;
-        if (ui.screen === "cameras" || ui.overlay && ui.overlay.kind === "cameras") {
+        if (ui.screen === "cameras") {
           if (!["camera:" + cameras.selected, "camera-open"].includes(ui.focus)) {
             ui.focus = cameras.selected ? "camera:" + cameras.selected : null;
           }
@@ -370,7 +370,7 @@ function create(options) {
     if (!cameras.selected || !options.openCamera) return;
     const selected = cameras.selected;
     options.openCamera(selected).then((result) => {
-      if (ui.screen !== "cameras" && !(ui.overlay && ui.overlay.kind === "cameras")) return;
+      if (ui.screen !== "cameras") return;
       if (cameras.selected === selected) cameras.link = result.url;
       toast("Camera web view", result.opened ? "Opened in your browser" : result.url);
     }).catch(() => toast("Camera web view", "Open Cameras from the web remote.", "bad"));
@@ -501,7 +501,7 @@ function create(options) {
       || list.find((entry) => ["key", "listen-key"].includes(entry.kind));
     else if (pane === "pair-card" && !hit) hit = list.find((entry) => entry.key === "code");
     // Listen's Info panel has the speaker's settings to choose; Watch's only says.
-    const quiet = ["signal", "log", "sheet:info", "sheet:help"].concat(listening() ? [] : ["info"]);
+    const quiet = ["signal", "log", "sheet:help"].concat(listening() ? [] : ["info"]);
     if (quiet.includes(pane)) hit = null;
     ui.focus = hit ? hit.key : list.length && !quiet.includes(pane) ? list[0].key : null;
     ui.focusVisible = true;
@@ -611,8 +611,6 @@ function create(options) {
       render(size.width, size.height);
       enterPane("signal"); changed(); return;
     }
-    if (ui.overlay && ui.overlay.kind === "cameras" && kind !== "cameras" && cameras.backend) cameras.backend.close();
-    if (ui.overlay && ui.overlay.kind === "topology" && kind !== "topology" && topology.backend) topology.backend.close();
     if (ui.overlay && ui.overlay.kind === "day" && kind !== "day" && day.backend) day.backend.close();
     // A sheet over a sheet (a setting's choices over Info, an item's over
     // the library) gives that one back, its focus with it, once closed.
@@ -639,7 +637,6 @@ function create(options) {
     render(size.width, size.height);
     if (!ui.focus && ui.focusVisible && frame.focusables.length) ui.focus = frame.focusables[0].key;
     changed();
-    if (kind === "cameras") { ui.revealFocus = true; openCameras(); }
     if (kind === "day") openDay();
   }
 
@@ -686,7 +683,7 @@ function create(options) {
       topology.source = reading && sources.includes(reading.value) ? reading.value : sources[0] || null;
     }
     if (axis === "source" && sources.length) topology.source = sources[(sources.indexOf(topology.source) + delta + sources.length) % sources.length];
-    ui.scroll[ui.screen === "topology" ? "topology" : "sheet:topology"] = 0;
+    ui.scroll.topology = 0;
     changed();
   }
 
@@ -700,8 +697,6 @@ function create(options) {
       changed();
       return;
     }
-    if (ui.overlay && ui.overlay.kind === "cameras" && cameras.backend) cameras.backend.close();
-    if (ui.overlay && ui.overlay.kind === "topology" && topology.backend) topology.backend.close();
     if (ui.overlay && ui.overlay.kind === "day" && day.backend) day.backend.close();
     ui.overlay = null;
     ui.focus = null;
@@ -732,8 +727,6 @@ function create(options) {
     if (ui.screen === "cameras" && cameras.backend) cameras.backend.close();
     if (ui.screen === "topology" && topology.backend) topology.backend.close();
     if (ui.screen === "system") { system.backend?.close(); system.expanded = false; system.link = null; }
-    if (ui.overlay && ui.overlay.kind === "cameras" && cameras.backend) cameras.backend.close();
-    if (ui.overlay && ui.overlay.kind === "topology" && topology.backend) topology.backend.close();
     if (ui.overlay && ui.overlay.kind === "day" && day.backend) day.backend.close();
     ui.screen = name;
     ui.overlay = null;
@@ -761,6 +754,7 @@ function create(options) {
 
   function toggleStill() {
     ui.still = !ui.still;
+    if (ui.still) ui.blink = false;
     store.set("remote.still", ui.still);
     changed();
   }
@@ -1296,23 +1290,6 @@ function create(options) {
     if (ui.overlay.kind === "signal" && (ch === "d" || ch === "D")) return toggleSignalGroups();
     // Watch's Info as these: the arrows choose its buttons and switches, PgUp and PgDn scroll it.
     if (["remotes-menu", "lock-menu", "audio-choice", "audio-inputs", "music-item", "info"].includes(ui.overlay.kind) && ["up", "down", "left", "right"].includes(name)) return moveControl(name === "up" || name === "left" ? -1 : 1);
-    if (ui.overlay.kind === "topology") {
-      if (name === "up" || name === "down") return stepTopology("room", name === "up" ? -1 : 1);
-      if (name === "left" || name === "right") return stepTopology("source", name === "left" ? -1 : 1);
-      if (name === "enter" && options.openTopology) {
-        const room = topology.room, source = topology.source;
-        options.openTopology(room, source).then((result) => {
-          if (room === topology.room && source === topology.source) topology.link = result.url;
-          if (!result.opened) toast("Site topology", "Open the map link in your browser.");
-          changed();
-        }).catch(() => toast("Site topology", "The browser could not be opened."));
-        return;
-      }
-    }
-    if (ui.overlay.kind === "cameras") {
-      if (["up", "down", "left", "right"].includes(name)) return stepCamera(name === "up" || name === "left" ? -1 : 1);
-      if (name === "enter") return openCamera();
-    }
     if (ui.overlay.kind === "day" && (name === "up" || name === "down")) return moveControl(name === "up" ? -1 : 1);
     if (name === "up" || name === "down" || (ui.overlay.kind === "inputs" && ["left", "right"].includes(name))) {
       if (ui.overlay.kind === "rooms") stepRoomFocus(name === "up" ? -1 : 1);
@@ -1514,7 +1491,12 @@ function create(options) {
     if (stopped) return;
     const keyEvent = event || {};
     const name = keyEvent.name;
-    if (ui.overlay?.kind === "access-form" && access.key(ch, keyEvent, focusedHit())) return;
+    if (ui.overlay?.kind === "access-form") {
+      if (name === "return") return;
+      if (keyEvent.ctrl && name === "c") return quit();
+      if (access.key(ch, keyEvent, focusedHit())) return;
+      return sheetKey(ch, keyEvent);
+    }
     // A letter typed into the library's search goes there, q and the remote's keys included.
     if (musicTyping(ch, keyEvent)) return;
     // blessed reports Enter twice, as "enter" and "return".
@@ -1689,6 +1671,8 @@ function create(options) {
         return;
       }
       if (hit.kind === "key" && hit.repeat && ui.screen === "remote" && !listening()) {
+        const blocked = session.controlBlock();
+        if (blocked) { toast("Read-only", blocked); return; }
         startRepeat(() => { session.press(hit.button); flash(hit.key); });
         return;
       }

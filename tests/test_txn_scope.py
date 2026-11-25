@@ -269,9 +269,11 @@ class Signalled(base.Fixture):
     in the same run."""
 
     def setUp(self):
-        super().setUp()
         if threading.current_thread() is not threading.main_thread():
             self.skipTest("signals are handled in the main thread only")
+        previous = signal.signal(signal.SIGHUP, signal.SIG_DFL)
+        self.addCleanup(signal.signal, signal.SIGHUP, previous)
+        super().setUp()
         self.assertNotIn(signal.getsignal(signal.SIGTERM), (signal.SIG_DFL, signal.SIG_IGN),
                          "the scope handles it: sending it here must not end the tests")
 
@@ -410,9 +412,11 @@ class ChildStillRunning(Site):
     and the lock is released only after that."""
 
     def setUp(self):
-        super().setUp()
         if threading.current_thread() is not threading.main_thread():
             self.skipTest("signals are handled in the main thread only")
+        previous = signal.signal(signal.SIGHUP, signal.SIG_DFL)
+        self.addCleanup(signal.signal, signal.SIGHUP, previous)
+        super().setUp()
         self.started, self.finished = self.site / "started", self.site / "finished"
         self.reports = []
 
@@ -499,6 +503,11 @@ with open(report, "w") as stream:
 
 
 class Hangup(Site):
+    def setUp(self):
+        super().setUp()
+        previous = signal.signal(signal.SIGHUP, signal.SIG_DFL)
+        self.addCleanup(signal.signal, signal.SIGHUP, previous)
+
     def test_what_a_run_says_after_its_terminal_hung_up_goes_nowhere_and_stops_nothing(self):
         master, slave = pty.openpty()
         kept = self.site / "kept.log"

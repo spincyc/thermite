@@ -55,6 +55,7 @@ the same JSON.
 from __future__ import annotations
 
 import dataclasses
+import itertools
 import re
 
 import oh_units
@@ -112,6 +113,9 @@ LISTENING_POOL = "lsp"
 #: Device kinds whose volume is a listening level; others (TVs behind a
 #: receiver, Cast players at a fixed 100) only draw flat lines.
 LISTENING_KINDS = ("avr", "amp", "streaming_amp", "audio_streamer", "soundbar", "sub")
+#: Shared routing infrastructure device kinds whose health is always required
+#: for routed rooms (oh_metrics.health_paths()).
+INFRA_KINDS = ("hdmi_matrix", "usb_matrix", "hdmi_switch")
 #: The units the Host dashboard shows.
 UNITS = oh_units.DAEMONS
 #: Seconds between samples (oh_metrics.SCRAPE_INTERVAL): a sample count
@@ -443,8 +447,8 @@ def table(title: str, queries: str | list[str], columns: list[Column], descripti
     transformations += [{"id": "sortBy", "options": {"fields": {}, "sort": [{"field": field, "desc": descending}]}}
                         for field, descending in order]
     transformations.append({"id": "organize", "options": {
-        "excludeByName": {"Time": True, "Value": "Value" not in keep, "__name__": True, "job": True,
-                          "instance": "instance" not in keep},
+        "excludeByName": {"Time": True, "Value": "Value" not in keep, "__name__": True,
+                          "job": "job" not in keep, "instance": "instance" not in keep},
         "indexByName": keep, "includeByName": {column.field: True for column in columns},
         "renameByName": {column.field: column.name for column in columns if column.name != column.field}}})
     options: dict = {"showHeader": True, "cellHeight": "sm", "footer": {"show": False}}
@@ -601,14 +605,13 @@ class Count:
 
     def expr(self) -> str:
         """The events in each bar. The bar at a time counts the bucket that
-        starts there (_grown() ahead), so the newest bar is the bucket still
-        filling: otherwise what happened since the last full bucket would
-        not show."""
+        ends there (_grown() with ahead=False), so negative offsets never
+        shift past the selected window end when $__range < 1h."""
         selector = _selector(self.counter, self.where)
         if self.by and not _LABELS.fullmatch(self.by):
             raise ValueError(f"{self.by!r} is not a list of labels")
         by = f" by ({self.by})" if self.by else ""
-        return f"round(sum{by} ({_grown(selector, ahead=True)})) > 0"
+        return f"round(sum{by} ({_grown(selector, ahead=False)})) > 0"
 
 
 def events(title: str, counts: list[Count], description: str, *, none: str,
@@ -617,7 +620,7 @@ def events(title: str, counts: list[Count], description: str, *, none: str,
     The builder writes each query from its counter's name, so a bar cannot
     count anything but its own width; `none` says what an empty chart
     means. `names` as for timeseries()."""
-    custom = {"drawStyle": "bars", "barAlignment": 1, "lineWidth": 1, "fillOpacity": 70, "showPoints": "never",
+    custom = {"drawStyle": "bars", "barAlignment": -1, "lineWidth": 1, "fillOpacity": 70, "showPoints": "never",
               "spanNulls": False, "stacking": {"mode": "normal", "group": "A"}}
     return Panel({**_base("timeseries", title, description),
                   "targets": [{**target(count.expr(), count.legend, _ref(index)), "interval": EVENT_BUCKET}
@@ -831,6 +834,42 @@ def _zone_words(mapping: dict) -> dict:
     return {zone: str(spec.get("label", zone)) for zone, spec in zones.items()}
 
 
+def _optional_device(mapping: dict, ident: str) -> bool:
+    """Whether a device is marked `monitor: optional` in the exporter map."""
+    device = (mapping.get("devices") or {}).get(ident) or {}
+    if "optional" in device:
+        return bool(device["optional"])
+    checks = [check for check in (mapping.get("health_checks") or []) if check.get("device") == ident]
+    return bool(checks) and all(check.get("optional") for check in checks)
+
+
+def _zone_combinations(mapping: dict) -> dict[str, str]:
+    """{zones label: display text} for single zones and multi-room comma-separated
+    `zones` labels in `What played`, so multi-room rows show room labels rather
+    than raw zone IDs."""
+    words = _zone_words(mapping)
+    mapped = dict(words)
+    groups: list[list[str]] = []
+    if 1 < len(words) <= 6:
+        groups.append(sorted(words))
+    else:
+        by_source: dict[str, set[str]] = {}
+        for path in (mapping.get("paths") or {}).values():
+            zone = path.get("zone")
+            if zone in words:
+                for source in path.get("sources") or ():
+                    by_source.setdefault(source, set()).add(zone)
+        for shared in by_source.values():
+            if len(shared) > 1:
+                groups.append(sorted(shared))
+    for group in groups:
+        sizes = range(2, len(group) + 1) if len(group) <= 6 else (2, 3, len(group))
+        for size in sizes:
+            for combo in itertools.combinations(group, size):
+                mapped.setdefault(",".join(combo), ", ".join(words[zone] for zone in combo))
+    return mapped
+
+
 def _source_words(mapping: dict) -> dict:
     """{source id: label}: each source as the remotes name it. Where two
     share a label, each adds its device's room ("Apple TV (Theater)"), and
@@ -1009,7 +1048,8 @@ def _room_column(mapping: dict, last: bool = False) -> Column:
 def _attention(mapping: dict) -> Panel:
     """Needs attention now: failing or unknown required checks, and
     quarantined devices, in words."""
-    failing = f'{alerts.CHECK}{{required="true"}} != 0'
+    # Drop synthetic room="house" so house-wide checks do not link to ?var-room=house.
+    failing = f'label_replace({alerts.CHECK}{{required="true"}} != 0, "room", "", "room", "{HOUSE_ROOM}")'
     quarantined = 'label_replace(thermite_routing_device_quarantined == 1, "check", "quarantined", "", "")'
     # The room and the problem first: a phone shows those, and scrolls to the rest.
     return table("Needs attention now", f"({failing}) or ({quarantined})", [
@@ -1029,13 +1069,19 @@ def _attention(mapping: dict) -> Panel:
 
 def _firing(mapping: dict) -> Panel:
     # The alert and its severity first: the rest says where, and a narrow panel scrolls to it.
-    return table("Alerts firing", 'ALERTS{alertstate="firing"}', [
+    # Drop synthetic room="house" so house-wide alerts do not link to ?var-room=house.
+    expr = f'label_replace(ALERTS{{alertstate="firing"}}, "room", "", "room", "{HOUSE_ROOM}")'
+    return table("Alerts firing", expr, [
         Column("alertname", "Alert", _words({name: title for name, (title, _) in alerts.CATALOG.items()}), least=180),
         Column("severity", "Severity", states=SEVERITY, width=90),
         _room_column(mapping),
         Column("zone", "Zone", _words(_zone_words(mapping)), width=130),
         Column("device", "Device", _words(_device_words(mapping))),
-        Column("check", "Check", _words(CHECK_WORDS))],
+        Column("check", "Check", _words(CHECK_WORDS)),
+        Column("name", "Unit"),
+        Column("job", "Job", width=110),
+        Column("mountpoint", "Mount"),
+        Column("file", "File")],
         "Alerts firing now, every one. The thermite app's Home shows them too, critical ones first, without "
         "those another firing alert already explains.", none="No alerts")
 
@@ -1048,12 +1094,12 @@ def _known(expr: str, valid: str) -> str:
 def house(mapping: dict, probes: list[dict]) -> dict:
     board = Board()
     zones = _zones(mapping)
-    speakers = _speakers(mapping)
+    required_speakers = [row for row in _speakers(mapping) if not _optional_device(mapping, row[1])]
     # Two rows of tiles: in one row a tile is too narrow for its title on a
     # laptop with Grafana's menu docked. The house's tiles, what they point
     # at, then monitoring's: a phone stacks the panels in this order, and
     # what needs attention must not wait below seven tiles.
-    wide = 6 if speakers else 8
+    wide = 24 // (2 + bool(zones) + bool(required_speakers))
     board.add(stat("Control", alerts.HEALTH, mappings=CONTROL,
                    description="Every check a room's selected source needs, routing infrastructure, each speaker "
                                f"in use (it played in the last {alerts.IN_USE}, or was playing when it stopped "
@@ -1062,87 +1108,118 @@ def house(mapping: dict, probes: list[dict]) -> dict:
                                "or an idle speaker, is never a failure; a missing report is Unknown. "
                                "Monitoring's own checks do not count here. Needs attention now lists the "
                                "checks. This checks control, not picture or sound."), wide, TILE)
-    ready = (f'count(count by (zone) ({alerts.CHECK}{{check="source"}} == 0) unless on(zone) '
-             f'({alerts.CHECK}{{required="true",zone!=""}} != 0)) or vector(0)')
-    board.add(stat("Rooms ready", ready, f"suffix: of {len(zones)}", steps=((WARN, None), (OK, len(zones) or 1)),
-                   description="Routing zones whose source is known and whose required checks all pass. A zone "
-                               "that is Off and reports Off is ready. A click opens Devices.", to=link(DEVICES)),
-              wide, TILE)
-    if speakers:
-        names = "|".join(re.escape(device) for _, device, _ in speakers)
-        answering = f'count(max by (device) (abs({alerts.CHECK}{{device=~{_q(names)}}})) == 0) or vector(0)'
-        board.add(stat("Speakers ready", answering, f"suffix: of {len(speakers)}",
-                       steps=((WARN, None), (OK, len(speakers))),
-                       description="Speakers whose checks all pass: the runtime reaches each, playing or idle. One "
-                                   "that does not answer is a failure only while in use (Control): it played in "
+    if zones:
+        zone_ready = (f'count by (zone) ({alerts.CHECK}{{check="source"}} == 0) unless on(zone) '
+                      f'({alerts.CHECK}{{required="true",zone!=""}} != 0)')
+        infra = sorted(ident for ident, device in (mapping.get("devices") or {}).items()
+                       if device.get("kind") in INFRA_KINDS and not _optional_device(mapping, ident))
+        if infra:
+            infra_pat = "|".join(re.escape(ident) for ident in infra)
+            ready = (f'count(({zone_ready}) unless on() '
+                     f'({alerts.CHECK}{{required="true",scope="{alerts.CONTROL}",device=~{_q(infra_pat)}}} != 0)) '
+                     'or vector(0)')
+        else:
+            ready = f"count({zone_ready}) or vector(0)"
+        board.add(stat("Rooms ready", ready, f"suffix: of {len(zones)}", steps=((WARN, None), (OK, len(zones))),
+                       description="Routing zones whose source is known and whose required checks (including "
+                                   "shared routing infrastructure) all pass. A zone that is Off and reports Off is "
+                                   "ready. A click opens Devices.", to=link(DEVICES)), wide, TILE)
+    if required_speakers:
+        names = "|".join(re.escape(device) for _, device, _ in required_speakers)
+        answering = (f'count(max by (device) (abs({alerts.CHECK}{{device=~{_q(names)},check!="power"}}) '
+                     'and on(device) thermite_device_info{required="true"}) == 0) or vector(0)')
+        board.add(stat("Speakers ready", answering, f"suffix: of {len(required_speakers)}",
+                       steps=((WARN, None), (OK, len(required_speakers))),
+                       description="Required speakers whose reachability checks all pass: the runtime reaches each, "
+                                   "playing or idle. Optional speakers (`monitor: optional`) are excluded. One that "
+                                   "does not answer is a failure only while in use (Control): it played in "
                                    f"the last {alerts.IN_USE}, or was playing when it stopped answering. A click "
                                    "opens Devices.", to=link(DEVICES)), wide, TILE)
     # Only where the gateway is installed, as for ThermiteGatewayDown: elsewhere its probe always fails.
+    # Require >= 8 samples in 5m so startup never flashes Not live, and omit `or vector(0)` so missing
+    # gateway textfile metrics read Unknown rather than OK.
     down = f'(max(probe_success{{job="{alerts.GATEWAY_JOB}"}}) == bool 0) and on() ({alerts.GATEWAY_INSTALLED})'
-    stale = 'max(min_over_time(thermite_gateway_upstream_state{state="connecting"}[5m])) or vector(0)'
-    timeouts = f'(sum(increase(thermite_client_events_total{{kind=~"{TIMEOUTS}"}}[15m])) > bool 0) or vector(0)'
-    # The worst of the three: 3 down, else 2 not live, else 1 timing out, else 0.
-    board.add(stat("Remotes", f"clamp_max(3 * ({down}) + clamp_min(2 * ({stale}), scalar({timeouts})), 3)",
+    connecting = 'thermite_gateway_upstream_state{state="connecting"}'
+    stale = f'max(min_over_time({connecting}[5m]) * (count_over_time({connecting}[5m]) >= bool 8))'
+    timeouts = f'(sum(increase(thermite_client_events_total{{kind=~"{TIMEOUTS}"}}[15m])) > bool 0)'
+    # The worst of the three: 3 down (even if the textfile is missing), else 2 not live, else 1 timing out, else 0.
+    board.add(stat("Remotes", f"(({down}) == 1) * 3 or (({down}) + clamp_max(2 * ({stale}) + ({timeouts}), 2))",
                    mappings=REMOTES,
                    description="Gateway down: the local HTTPS check of the gateway fails. Not live: for 5 minutes "
                                "the gateway has been reconnecting to the runtime's events, so remote pages show "
                                "states as they were. Timing out: remote pages gave up waiting for the gateway in "
-                               "the last 15 minutes. Unknown: this host has no gateway, or nothing has checked it "
-                               "yet. A click opens Switching & remotes.", to=link(SWITCHING)), wide, TILE)
+                               "the last 15 minutes. Unknown: this host has no gateway, nothing has checked it yet, "
+                               "or the gateway's metrics file is missing. A click opens Switching & remotes.",
+                   to=link(SWITCHING)), wide, TILE)
     board.add(_attention(mapping), 24, 6)
     board.add(stat("Alerts firing", 'count(ALERTS{alertstate="firing"}) or vector(0)',
                    steps=((OK, None), (WARN, 1)),
                    description="Alerts firing now, every one Prometheus has: the table below lists them. The "
                                "thermite app's Home shows them without those another firing alert already "
                                "explains, so it can show fewer. Nothing is sent to a phone."), 12, TILE)
-    problems = (f'(count(up{{job!="{YOKE_JOB}"}} == 0) or vector(0)) + (count(node_systemd_unit_state{{job="node",name=~"thermite-.*",'
-                'state="failed"} == 1) or vector(0)) + (count((node_filesystem_avail_bytes{job="node",'
-                'fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes < 0.10) and '
-                '(node_filesystem_readonly == 0)) or vector(0))')
+    daemons = _units(oh_units.DAEMONS)
+    problems = " + ".join((
+        f'(count(up{{job!="{YOKE_JOB}"}} == 0) or vector(0))',
+        '(count(node_systemd_unit_state{job="node",name=~"thermite-.*\\\\.service",state="failed"} == 1) or vector(0))',
+        f'(count((node_systemd_unit_state{{job="node",name=~{daemons},state="active"}} == 0) '
+        'unless on(name) (node_systemd_unit_state{job="node",state="failed"} == 1)) or vector(0))',
+        f'(count((node_filesystem_avail_bytes{{job="node",fstype!~{_q(alerts.IGNORED_FSTYPES)}}} / '
+        'node_filesystem_size_bytes < 0.10) and (node_filesystem_readonly == 0)) or vector(0))',
+        '(count((sum by (uuid) (increase(node_btrfs_device_errors_total{job="node"}[1h])) > 0) or '
+        f'(min by (uuid) (node_btrfs_device_unused_bytes{{job="node"}}) < {alerts.BTRFS_UNALLOCATED})) or vector(0))',
+        f'(count({alerts.stale_textfiles()}) or vector(0))',
+    ))
     board.add(stat("Host", problems, "suffix: problems", steps=((OK, None), (FAIL, 1)),
-                   mappings=value_map({0: ("OK", OK)}),
-                   description="Scrape targets down, failed Thermite units and file systems under 10% free. "
-                               "A click opens Host, which says which.", to=link(HOST)), 12, TILE)
+                   mappings=value_map({0: ("OK", OK), 1: ("1 problem", FAIL)}),
+                   description="Scrape targets down, failed or stopped Thermite units, file systems under 10% free, "
+                               "btrfs trouble and stale service metrics files. A click opens Host, which says which.",
+                   to=link(HOST)), 12, TILE)
     board.add(_firing(mapping), 14, 7)
     # Routing's counts read 0 only while its telemetry is valid, else
     # Unknown; device failures only where an executor counts them, while its
     # status is valid too.
     executor = bool((mapping.get("routing") or {}).get("status"))
     counted = ROUTING_COUNTS_VALID + (f" and on() {EXECUTOR_VALID}" if executor else "")
-    board.add(figures("Since yesterday evening", [
-        Figure(_known("round(sum(increase(thermite_route_seconds_count[$__range]))) or vector(0)",
-                      ROUTING_COUNTS_VALID), "Source changes", ((IN_USE, None),)),
-        Figure(_known('round(sum(increase(thermite_route_seconds_count{outcome="deadline"}[$__range]))) or vector(0)',
-                      ROUTING_COUNTS_VALID), "Slow or missed"),
+    since_figures = [
+        *([Figure(_known("round(sum(increase(thermite_route_seconds_count[$__range]))) or vector(0)",
+                         ROUTING_COUNTS_VALID), "Source changes", ((IN_USE, None),)),
+           Figure(_known('round(sum(increase(thermite_route_seconds_count{outcome="deadline"}[$__range]))) or vector(0)',
+                         ROUTING_COUNTS_VALID), "Slow or missed")] if zones else []),
         Figure(f'round(sum(increase(thermite_client_events_total{{kind=~"{TIMEOUTS}"}}[$__range]))) or vector(0)',
                "Remotes gave up"),
         *([Figure(_known("round(sum(increase(thermite_routing_endpoint_failures_total[$__range]))) or vector(0)",
-                         counted), "Device failures")] if executor else []),
+                         counted), "Device failures")] if zones and executor else []),
         Figure('round(sum(increase(node_systemd_service_restart_total{job="node",name=~"thermite-.*"}[$__range]))) '
-               'or vector(0)', "Restarts")],
-        "Since 18:00 yesterday (browser time). Source changes: choices routing followed. "
-        f"Slow or missed: not confirmed {_within(mapping)}. Remotes gave up: requests remote "
-        "pages stopped waiting for. " + ("Device failures: routing operations a device did not "
-        "take. " if executor else "") + "Restarts: Thermite services systemd restarted. Unknown: "
-        "routing's telemetry is unreadable now.", since=True), 10, 7)
-    # Every zone's series is there at zero from routing's first report, and the quantile of no changes is
-    # NaN: only a room with a confirmed change in the range gets a row, so an idle house reads "No source
-    # changes".
-    changes = 'round(sum by (zone) (increase(thermite_route_seconds_count{outcome="confirmed"}[$__range]))) > 0'
-    quantile = ("histogram_quantile({q}, sum by (le, zone) (increase(thermite_route_seconds_bucket"
-                '{{outcome="confirmed"}}[$__range]))) and on (zone) ({changes})')
-    seconds = {"unit": "s", "decimals": 1, "steps": _switch_thresholds(mapping), "width": 110}
-    board.add(table("Switch time by room", [quantile.format(q=0.5, changes=changes),
-                                            quantile.format(q=0.95, changes=changes), changes], [
-        Column("zone", "Room", _words(_zone_words(mapping))),
-        Column("Value #A", "Median", **seconds), Column("Value #B", "95th", **seconds),
-        Column("Value #C", "Changes", decimals=0, width=110)],
-        "Since 18:00 yesterday: how long a source change took until the room's readback showed it, "
-        "median and 95th percentile of confirmed changes, estimated from "
-        f"{', '.join(map(str, ROUTE_BUCKETS[:-1]))} and {ROUTE_BUCKETS[-1]} s buckets. Amber from half "
-        f"the routing deadline, red from the deadline: a change not confirmed {_within(mapping)} "
-        "counts as slow or missed instead.",
-        none="No source changes", sort=("95th", True), since=True), 24, 6)  # the slowest room first
+               'or vector(0)', "Restarts"),
+    ]
+    since_desc = (
+        "Since 18:00 yesterday (browser time). "
+        + (f"Source changes: choices routing followed. Slow or missed: not confirmed {_within(mapping)}. " if zones else "")
+        + "Remotes gave up: requests remote pages stopped waiting for. "
+        + ("Device failures: routing operations a device did not take. " if zones and executor else "")
+        + "Restarts: Thermite services systemd restarted."
+        + (" Unknown: routing's telemetry is unreadable now." if zones else "")
+    )
+    board.add(figures("Since yesterday evening", since_figures, since_desc, since=True), 10, 7)
+    if zones:
+        # Every zone's series is there at zero from routing's first report, and the quantile of no changes is
+        # NaN: only a room with a confirmed change in the range gets a row, so an idle house reads "No source
+        # changes".
+        changes = 'round(sum by (zone) (increase(thermite_route_seconds_count{outcome="confirmed"}[$__range]))) > 0'
+        quantile = ("histogram_quantile({q}, sum by (le, zone) (increase(thermite_route_seconds_bucket"
+                    '{{outcome="confirmed"}}[$__range]))) and on (zone) ({changes})')
+        seconds = {"unit": "s", "decimals": 1, "steps": _switch_thresholds(mapping), "width": 110}
+        board.add(table("Switch time by room", [quantile.format(q=0.5, changes=changes),
+                                                quantile.format(q=0.95, changes=changes), changes], [
+            Column("zone", "Room", _words(_zone_words(mapping))),
+            Column("Value #A", "Median", **seconds), Column("Value #B", "95th", **seconds),
+            Column("Value #C", "Changes", decimals=0, width=110)],
+            "Since 18:00 yesterday: how long a source change took until the room's readback showed it, "
+            "median and 95th percentile of confirmed changes, estimated from "
+            f"{', '.join(map(str, ROUTE_BUCKETS[:-1]))} and {ROUTE_BUCKETS[-1]} s buckets. Amber from half "
+            f"the routing deadline, red from the deadline: a change not confirmed {_within(mapping)} "
+            "counts as slow or missed instead.",
+            none="No source changes", sort=("95th", True), since=True), 24, 6)  # the slowest room first
     # No panel here has a time axis to mark service starts and deploys on.
     return dashboard(HOUSE, board, "Is the house OK? Control, rooms, speakers, remotes, alerts and "
                      "the host; what needs attention now; the alerts firing; switching since yesterday evening.",
@@ -1159,46 +1236,52 @@ def _per_bar(what: str) -> str:
 
 def switching(mapping: dict) -> dict:
     board = Board()
+    has_zones = bool(_zones(mapping))
+    executor = bool((mapping.get("routing") or {}).get("status"))
     zones = _zone_words(mapping)
-    board.row("Switching sources")
-    board.add(heatmap("Time to switch", "thermite_route_seconds", 'outcome="confirmed"',
-                      "How long confirmed source changes took, from the choice until the room's readback showed "
-                      "it, per quarter hour. More opaque cells: more changes. A quarter hour shows once it has "
-                      "ended; Source changes by outcome counts the hour still running."), 12, 8)
-    board.add(events("Source changes by outcome", [
-        Count("thermite_route_seconds_count", "{{outcome}}", UNKNOWN, by="outcome")],
-        _per_bar("Source changes") + ". Confirmed: the readback showed the choice. Deadline: it did not "
-        f"{_within(mapping)}. Superseded: a newer choice came first.", none="No source changes",
-        names={"confirmed": ("Confirmed", OK), "deadline": ("Deadline", FAIL), "superseded": ("Superseded", UNKNOWN)}),
-        12, 8)
-    board.add(timeseries("Routing executor", [
-        Series("thermite_routing_pending", "Waiting", IN_USE, line="dashed"),
-        Series("thermite_routing_active", "Running", IN_USE),
-        Series("thermite_routing_events_queued", "Outcomes queued", IN_USE, line="dotted"),
-        Series("thermite_routing_quarantined > 0", "Quarantined", FAIL)], minimum=0, decimals=0,
-        description="Device operations the routing executor holds. Quarantined, in red while there are any: "
-                    "devices that refuse commands until a recovery read succeeds."), 8, 7)
-    board.add(events("Resends by room", [Count("thermite_routing_resends_total", "{{zone}}", WARN, by="zone")],
-                     _per_bar("Rounds in which routing sent a room's commands again because a device had not "
-                              "taken them (often one still waking)"), none="No resends",
-                     names={zone: (label, WARN) for zone, label in zones.items()}), 8, 7)
-    board.add(events("Operations by outcome", [
-        Count("thermite_routing_operations_total", "{{outcome}}", UNKNOWN, by="outcome")],
-        _per_bar("What became of each executor operation") + ". Applied and sampled are normal; the red ones are "
-        "device failures.", none="No operations",
-        names={outcome: (plain(outcome), OK if outcome in ("applied", "sampled") else
-                         FAIL if outcome in FAILED_OPERATIONS else UNKNOWN) for outcome in OPERATION_OUTCOMES}), 8, 7)
-    board.add(table("Device failures", "sum by (device, reason) (increase(thermite_routing_endpoint_failures_total"
-                    "[$__range])) > 0", [
-        Column("device", "Device", _words(_device_words(mapping))),
-        Column("reason", "Reason", _words({reason: plain(reason) for reason in FAILURE_REASONS}), width=160),
-        Column("Value", "Failures", decimals=0, width=90)],
-        "Routing operations a device did not take in the selected range, by reason.",
-        none="No device failures"), 12, 6)
-    board.add(table("Quarantined now", "thermite_routing_device_quarantined == 1", [
-        _room_column(mapping), Column("device", "Device", _words(_device_words(mapping)))],
-        "Devices whose routing commands are refused now. A click on a room opens Devices for it.",
-        none="No device is quarantined"), 12, 6)
+    if has_zones:
+        board.row("Switching sources")
+        board.add(heatmap("Time to switch", "thermite_route_seconds", 'outcome="confirmed"',
+                          "How long confirmed source changes took, from the choice until the room's readback showed "
+                          "it, per quarter hour. More opaque cells: more changes. Each cell counts a quarter hour; "
+                          "Source changes by outcome counts each hour ending at its mark."), 12, 8)
+        board.add(events("Source changes by outcome", [
+            Count("thermite_route_seconds_count", "{{outcome}}", UNKNOWN, by="outcome")],
+            _per_bar("Source changes") + ". Confirmed: the readback showed the choice. Deadline: it did not "
+            f"{_within(mapping)}. Superseded: a newer choice came first.", none="No source changes",
+            names={"confirmed": ("Confirmed", OK), "deadline": ("Deadline", FAIL), "superseded": ("Superseded", UNKNOWN)}),
+            12, 8)
+        if executor:
+            board.add(timeseries("Routing executor", [
+                Series("thermite_routing_pending", "Waiting", IN_USE, line="dashed"),
+                Series("thermite_routing_active", "Running", IN_USE),
+                Series("thermite_routing_events_queued", "Outcomes queued", IN_USE, line="dotted"),
+                Series("thermite_routing_quarantined > 0", "Quarantined", FAIL)], minimum=0, decimals=0,
+                description="Device operations the routing executor holds. Quarantined, in red while there are any: "
+                            "devices that refuse commands until a recovery read succeeds."), 8, 7)
+        board.add(events("Resends by room", [Count("thermite_routing_resends_total", "{{zone}}", WARN, by="zone")],
+                         _per_bar("Rounds in which routing sent a room's commands again because a device had not "
+                                  "taken them (often one still waking)"), none="No resends",
+                         names={zone: (label, WARN) for zone, label in zones.items()}), 8 if executor else 24, 7)
+        if executor:
+            board.add(events("Operations by outcome", [
+                Count("thermite_routing_operations_total", "{{outcome}}", UNKNOWN, by="outcome")],
+                _per_bar("What became of each executor operation") + ". Applied and sampled are normal; the red ones are "
+                "device failures.", none="No operations",
+                names={outcome: (plain(outcome), OK if outcome in ("applied", "sampled") else
+                                 FAIL if outcome in FAILED_OPERATIONS else UNKNOWN) for outcome in OPERATION_OUTCOMES}),
+                8, 7)
+            board.add(table("Device failures", "sum by (device, reason) (increase(thermite_routing_endpoint_failures_total"
+                            "[$__range])) > 0", [
+                Column("device", "Device", _words(_device_words(mapping))),
+                Column("reason", "Reason", _words({reason: plain(reason) for reason in FAILURE_REASONS}), width=160),
+                Column("Value", "Failures", decimals=0, width=90)],
+                "Routing operations a device did not take in the selected range, by reason.",
+                none="No device failures"), 12, 6)
+            board.add(table("Quarantined now", "thermite_routing_device_quarantined == 1", [
+                _room_column(mapping), Column("device", "Device", _words(_device_words(mapping)))],
+                "Devices whose routing commands are refused now. A click on a room opens Devices for it.",
+                none="No device is quarantined"), 12, 6)
     board.row("Remotes and the gateway")
     board.add(timeseries("Event streams", [
         Series("sum by (http_version) (thermite_gateway_sse_streams)", "HTTP/{{http_version}} streams", IN_USE),
@@ -1550,18 +1633,19 @@ def openhab(mapping: dict | None = None) -> dict:
     board.add(stat("Things not ONLINE", f"count({m['thing_state']}{{{job}}} != 3) or vector(0)",
                    steps=((OK, None), (WARN, 1)),
                    description="Includes devices that are asleep or off; Devices says which are needed now."), 8, TILE)
+    handler = bool((mapping or {}).get("handler_pool"))
     board.add(stat("Items missing", "thermite_items_missing", steps=((OK, None), (WARN, 1)),
                    description="Items the generated configuration has that the runtime does not: a deploy it has "
-                               "not loaded, or an Item file it refused. Their checks read Unknown."), 8, TILE)
+                               "not loaded, or an Item file it refused. Their checks read Unknown."),
+              8 if handler else 12, TILE)
     board.add(stat("Heap used",
                    f'sum({m["memory_used"]}{{{job},area="heap"}}) / sum({m["memory_max"]}{{{job},area="heap"}} > 0)',
-                   "percentunit", ((OK, None), (WARN, 0.8), (FAIL, 0.9))), 8, TILE)
-    handler = bool((mapping or {}).get("handler_pool"))
-    board.add(stat("thingHandler busy", "max(thermite_handler_pool_active_threads / "
-                   "(thermite_handler_pool_core_threads > 0))", "percentunit", ((OK, None), (WARN, 0.75), (FAIL, 1)),
-                   description="Busy share of the thingHandler pool, where bindings do device I/O. At 100% one "
-                               "blocked connection delays every device." + ("" if handler else
-                               " This house does not report it.")), 8, TILE)
+                   "percentunit", ((OK, None), (WARN, 0.8), (FAIL, 0.9))), 8 if handler else 12, TILE)
+    if handler:
+        board.add(stat("thingHandler busy", "max(thermite_handler_pool_active_threads / "
+                       "(thermite_handler_pool_core_threads > 0))", "percentunit", ((OK, None), (WARN, 0.75), (FAIL, 1)),
+                       description="Busy share of the thingHandler pool, where bindings do device I/O. At 100% one "
+                                   "blocked connection delays every device."), 8, TILE)
     board.row("JVM and thread pools")
     board.add(timeseries("Heap", [
         Series(f'sum({m["memory_used"]}{{{job},area="heap"}})', "Used", IN_USE),
@@ -1587,25 +1671,26 @@ def openhab(mapping: dict | None = None) -> dict:
         Series(f"sum by (pool) ({m['pool_queued']}{{{job}}}) > 0", "{{pool}}", WARN)], minimum=0, decimals=0,
         none="No task is queued",
         description="Tasks waiting for a pool thread; pools with none queued are left out."), 8, 8)
-    # Threads and tasks on one chart, seconds on another: one axis cannot show both.
-    board.add(timeseries("thingHandler pool", [
-        Series("thermite_handler_pool_active_threads", "Busy", IN_USE),
-        Series("thermite_handler_pool_core_threads", "Size", IN_USE, line="dashed"),
-        Series("thermite_handler_pool_queued_tasks", "Queued", WARN)], minimum=0, decimals=0,
-        description="Where bindings do device I/O: its busy threads against its size, and the tasks waiting "
-                    "for one."), 8, 8)
-    board.add(timeseries("thingHandler probe", [
-        Series("thermite_handler_pool_probe_overdue_seconds", "Probe overdue", WARN),
-        Series("thermite_handler_pool_observation_age_seconds", "Sample age", IN_USE)], "s", minimum=0,
-        description="A probe overdue while every thread is busy means a blocked connection is delaying other "
-                    "devices. Sample age: how old the runtime's last report of the pool is; over 60 s the pool's "
-                    "numbers are left out as stale."), 8, 8)
+    if handler:
+        # Threads and tasks on one chart, seconds on another: one axis cannot show both.
+        board.add(timeseries("thingHandler pool", [
+            Series("thermite_handler_pool_active_threads", "Busy", IN_USE),
+            Series("thermite_handler_pool_core_threads", "Size", IN_USE, line="dashed"),
+            Series("thermite_handler_pool_queued_tasks", "Queued", WARN)], minimum=0, decimals=0,
+            description="Where bindings do device I/O: its busy threads against its size, and the tasks waiting "
+                        "for one."), 8, 8)
+        board.add(timeseries("thingHandler probe", [
+            Series("thermite_handler_pool_probe_overdue_seconds", "Probe overdue", WARN),
+            Series("thermite_handler_pool_observation_age_seconds", "Sample age", IN_USE)], "s", minimum=0,
+            description="A probe overdue while every thread is busy means a blocked connection is delaying other "
+                        "devices. Sample age: how old the runtime's last report of the pool is; over 60 s the pool's "
+                        "numbers are left out as stale."), 8, 8)
     board.add(timeseries("REST answer time", [
         Series("max(thermite_scrape_duration_seconds)", "Things and Items", IN_USE)], "s", minimum=0,
         limit=ROUND_SECONDS,
         description="How long the runtime took to answer the exporter's two REST reads, its Things and its "
                     f"Items, every 30 s. At {ROUND_SECONDS:g} s (the red band) the exporter stops waiting and "
-                    "counts the runtime as not answering."), 8, 8)
+                    "counts the runtime as not answering."), 8 if handler else 24, 8)
     board.row("Events and rules")
     board.add(timeseries("Events per second", [Series(f"sum(rate({m['event_count']}{{{job}}}[5m]))", "All", IN_USE)],
                          "ops", minimum=0), 8, 8)
@@ -1658,8 +1743,9 @@ def host(targets: int = 0, mapping: dict | None = None) -> dict:
                                 f'node_filesystem_size_bytes{{{node},mountpoint="/"}}', "percentunit",
                    ((FAIL, None), (WARN, 0.1), (OK, 0.2))), 12, TILE)
     board.add(stat("Metrics storage", "sum(prometheus_tsdb_storage_blocks_bytes) + "
-                                      "sum(prometheus_tsdb_wal_storage_size_bytes)", "bytes",
-                   steps=((UNKNOWN, None),)), 12, TILE)
+                                      "sum(prometheus_tsdb_wal_storage_size_bytes) + "
+                                      "(sum(prometheus_tsdb_head_chunks_storage_size_bytes) or vector(0))", "bytes",
+                   steps=((IN_USE, None),)), 12, TILE)
     board.add(table("Targets down", "up == 0", [Column("job", "Job"), Column("instance", "Target")],
                     "Scrape targets that did not answer.", none="Every target is up"), 12, 6)
     board.add(_firing(mapping or {}), 12, 6)
@@ -1704,7 +1790,7 @@ def host(targets: int = 0, mapping: dict | None = None) -> dict:
         Series(f"node_hwmon_temp_celsius{{{node}}}", "{{chip}} {{sensor}}", IN_USE)], "celsius"), 12, 8)
     board.row("Disk")
     board.add(timeseries("Free space", [
-        Series(f'node_filesystem_avail_bytes{{{node},fstype!~"tmpfs|overlay|squashfs"}}', "{{mountpoint}}", IN_USE)],
+        Series(f'node_filesystem_avail_bytes{{{node},fstype!~{_q(alerts.IGNORED_FSTYPES)}}}', "{{mountpoint}}", IN_USE)],
         "bytes", minimum=0), 6, 8)
     board.add(timeseries("btrfs", [
         Series(f"sum by (device) (node_btrfs_device_unused_bytes{{{node}}})", "{{device}} unallocated", IN_USE),
@@ -1848,7 +1934,7 @@ def _played(board: Board, mapping: dict) -> None:
         f"max by ({key}) (max_over_time({PLAYING}[$__range])) * 1000",
         f"sum by ({key}) (count_over_time({PLAYING}[$__range])) * {SAMPLE_SECONDS}"], [
         Column("device", "Device", _words(_device_words(mapping))),
-        Column("zones", "Rooms", _words(_zone_words(mapping))),
+        Column("zones", "Rooms", _words(_zone_combinations(mapping))),
         Column("app", "App"), Column("title", "Title"),
         Column("Value #A", "First", unit="dateTimeAsLocal"), Column("Value #B", "Last", unit="dateTimeAsLocal"),
         Column("Value #C", "Time", unit="dtdurations", decimals=0)],

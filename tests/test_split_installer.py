@@ -343,7 +343,7 @@ class SplitInstaller(unittest.TestCase):
             self.assertTrue(helpers)
             self.assertTrue(all(part.startswith(str(program / "lib") + "/") for part in helpers))
             secret = steps._install_secret(self.context, Path("source"), Path("destination"))
-            self.assertEqual(secret.argv[:4], ("python3", "-I", "-B", str(program / "lib/oh_install/secrets.py")))
+            self.assertEqual(secret.argv[:4], ("/usr/bin/python3", "-I", "-B", str(program / "lib/oh_install/secrets.py")))
 
     def test_explicit_restart_is_one_approved_action_then_normal_readiness(self):
         context = dataclasses.replace(self.context, restart_runtime=True)

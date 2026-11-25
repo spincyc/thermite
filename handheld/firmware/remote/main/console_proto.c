@@ -146,6 +146,15 @@ void cp_parse(const char *line, size_t length, cp_command_t *command)
     fail(command, "unknown command");
 }
 
+bool cp_allowed(cp_kind_t kind, bool enrolled, bool unrestricted, const char **reason)
+{
+    if (enrolled && !unrestricted && (kind == CP_ENROLL || kind == CP_FORGET)) {
+        if (reason) *reason = "already enrolled";
+        return false;
+    }
+    return true;
+}
+
 size_t cp_format_remote(char *out, size_t capacity, const char *fw, const uint8_t mac[CP_MAC_LEN], const char *board,
                         bool enrolled)
 {

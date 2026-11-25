@@ -77,7 +77,7 @@ static struct {
 
     unsigned pending; /* TR_CHANGED_* bits waiting for the update timer */
     uint32_t bubbles_hash, body_hash;
-    bool body_empty; /* the body shows the no-screen note */
+    int waiting_link; /* the tr_link_t the waiting body shows, or -1 */
     char repeat_id[48];
     char led_shown[8]; /* the status LED's state, so a new screen restarts no blink */
     const char *rooms[ROOMS_MAX];
@@ -358,6 +358,8 @@ static void repeat_cb(lv_timer_t *timer)
 /* A key that repeats presses on touch, again 420 ms later, then every 150 ms. */
 static void hold_cb(lv_event_t *event)
 {
+    lv_obj_t *obj = lv_event_get_target(event);
+    if (lv_obj_has_state(obj, LV_STATE_DISABLED)) return;
     stop_repeat();
     snprintf(ui.repeat_id, sizeof ui.repeat_id, "%s", (const char *)lv_event_get_user_data(event));
     press(ui.repeat_id);
@@ -373,6 +375,8 @@ static void let_go_cb(lv_event_t *event)
 /* Any other key presses once on release, so a drag that scrolls the body sends nothing. */
 static void click_cb(lv_event_t *event)
 {
+    lv_obj_t *obj = lv_event_get_target(event);
+    if (lv_obj_has_state(obj, LV_STATE_DISABLED)) return;
     press(lv_event_get_user_data(event));
 }
 
@@ -629,7 +633,7 @@ static void build_body(const cJSON *screen)
     lv_obj_clean(ui.body);
     ui.all_off = NULL;
     ui.body_ids.used = 0;
-    ui.body_empty = false;
+    ui.waiting_link = -1;
     lv_obj_scroll_to_y(ui.body, 0, LV_ANIM_OFF);
 
     const char *notice = string_of(screen, "notice"), *problem = string_of(screen, "problem");
@@ -665,10 +669,12 @@ static void build_body(const cJSON *screen)
 /* The volume line follows the room's block, as every key on the web remote does. */
 static void block_footer(const cJSON *screen)
 {
+    bool is_blocked = blocked(screen);
+    if (is_blocked) stop_repeat();
     lv_obj_t *keys[] = { ui.volume_down, ui.volume_up, ui.mute };
     for (size_t i = 0; i < 3; i++) {
         if (!keys[i]) continue;
-        if (blocked(screen)) lv_obj_add_state(keys[i], LV_STATE_DISABLED);
+        if (is_blocked) lv_obj_add_state(keys[i], LV_STATE_DISABLED);
         else lv_obj_remove_state(keys[i], LV_STATE_DISABLED);
     }
 }
@@ -724,6 +730,8 @@ static void show_status(const cJSON *screen)
 
 static void bubble_cb(lv_event_t *event)
 {
+    lv_obj_t *obj = lv_event_get_target(event);
+    if (lv_obj_has_state(obj, LV_STATE_DISABLED)) return;
     if (ui.remote) tr_bubble(ui.remote, lv_event_get_user_data(event));
 }
 
@@ -752,7 +760,8 @@ static void build_bubbles(const cJSON *screen)
         const char *id = keep(&ui.bubble_ids, string_of(item, "id"));
         if (!id) break;
         const char *state = string_of(item, "state");
-        bool current = strcmp(state, "current") == 0, switching = strcmp(state, "switching") == 0;
+        bool current = strcmp(state, "current") == 0, switching = strcmp(state, "switching") == 0,
+             unconfirmed = strcmp(state, "unconfirmed") == 0;
         lv_obj_t *bubble = lv_button_create(ui.bubbles);
         lv_obj_remove_style_all(bubble);
         lv_obj_add_style(bubble, &ui.bubble, 0);
@@ -761,9 +770,9 @@ static void build_bubbles(const cJSON *screen)
         lv_obj_set_size(bubble, LV_SIZE_CONTENT, ui.m.compact ? 22 : ui.m.key_h);
         lv_obj_set_flex_flow(bubble, LV_FLEX_FLOW_ROW);
         lv_obj_set_flex_align(bubble, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        uint32_t color = current ? C_OK : switching ? C_BUSY : C_LINE;
+        uint32_t color = current ? C_OK : switching ? C_BUSY : unconfirmed ? C_BAD : C_LINE;
         if (true_of(item, "lock")) {
-            padlock(bubble, current || switching ? color : C_MUTED);
+            padlock(bubble, current || switching || unconfirmed ? color : C_MUTED);
         } else {
             lv_obj_t *dot = led_dot(bubble, ui.m.compact ? 6 : 8);
             lv_obj_set_style_bg_color(dot, lv_color_hex(color), 0);
@@ -773,7 +782,7 @@ static void build_bubbles(const cJSON *screen)
         lv_obj_add_style(bubble, &ui.key_disabled, LV_STATE_DISABLED);
         if (true_of(item, "inert")) lv_obj_add_state(bubble, LV_STATE_DISABLED);
         lv_obj_add_event_cb(bubble, bubble_cb, LV_EVENT_CLICKED, (void *)id);
-        if (current || switching || (!reveal && strcmp(id, selected) == 0)) reveal = bubble;
+        if (current || switching || unconfirmed || (!reveal && strcmp(id, selected) == 0)) reveal = bubble;
     }
     if (reveal && !ui.m.compact) reveal_bubble(reveal);
 }
@@ -875,7 +884,7 @@ static void show_waiting(void)
     tr_link_t link = tr_link(ui.remote);
     lv_obj_clean(ui.body);
     ui.all_off = NULL;
-    ui.body_empty = true;
+    ui.waiting_link = (int)link;
     ui.body_hash = 0;
     ui.bubbles_hash = 0;
     lv_obj_clean(ui.bubbles);
@@ -948,15 +957,16 @@ static void show_toast(void)
 
 static void close_inputs(void)
 {
-    if (ui.inputs) lv_obj_delete_async(ui.inputs);
-    ui.inputs = NULL;
-    ui.input_ids.used = 0;
+    if (!ui.inputs) return;
+    /* Hide now so no second tap reaches its items before show_inputs deletes ui.inputs and resets ui.input_ids. */
+    lv_obj_add_flag(ui.inputs, LV_OBJ_FLAG_HIDDEN);
+    tu_changed(TR_CHANGED_INPUTS);
 }
 
 static void input_cb(lv_event_t *event)
 {
     const char *value = lv_event_get_user_data(event);
-    if (!ui.remote) return;
+    if (!ui.remote || !ui.inputs || lv_obj_has_flag(ui.inputs, LV_OBJ_FLAG_HIDDEN)) return;
     if (value) tr_input(ui.remote, value);
     tr_clear_inputs(ui.remote);
     close_inputs();
@@ -1038,17 +1048,18 @@ static void show_screen(void)
     static const char *const bubble_parts[] = { "bubbles", "selected", "locked" };
     const cJSON *screen = tr_screen(ui.remote);
     if (!screen) {
-        if (!ui.body_empty) show_waiting();
+        if (ui.waiting_link != (int)tr_link(ui.remote)) show_waiting();
         return;
     }
+    bool was_waiting = ui.waiting_link >= 0;
     show_rooms(screen);
     show_status(screen);
     uint32_t hash = hash_members(screen, bubble_parts, sizeof bubble_parts / sizeof bubble_parts[0]);
-    if (hash != ui.bubbles_hash || ui.body_empty) build_bubbles(screen);
+    if (hash != ui.bubbles_hash || was_waiting) build_bubbles(screen);
     ui.bubbles_hash = hash;
     /* The bubbles count for the body only through inert, which blocks its keys. */
     hash = hash_members(screen, body_parts, sizeof body_parts / sizeof body_parts[0]) ^ (blocked(screen) ? 1u : 0u);
-    if (hash != ui.body_hash || ui.body_empty) build_body(screen);
+    if (hash != ui.body_hash || was_waiting) build_body(screen);
     ui.body_hash = hash;
     show_all_off(screen);
     block_footer(screen);
@@ -1177,6 +1188,7 @@ static void reset(void)
                              &ui.bubble_selected, &ui.chip };
     for (size_t i = 0; i < sizeof styles / sizeof styles[0]; i++) lv_style_reset(styles[i]);
     memset(&ui, 0, sizeof ui);
+    ui.waiting_link = -1;
 }
 
 void tu_create(lv_display_t *display, tr_t *remote, const tu_keys_t *keys)
