@@ -62,7 +62,7 @@ from .exporter import HOUSE_ROOM
 
 #: The Prometheus jobs and local HTTP services with a house-wide check.
 CORE_JOBS = ("openhab", "thermite", "node", "prometheus", "blackbox")
-SERVICES = ("openhab", "apple_tv_helper", "grafana")
+SERVICES = ("openhab", "apple_tv_helper", "climate_helper", "grafana")
 #: The services that only watch the house: control works without them.
 MONITORING_SERVICES = ("grafana",)
 #: A check's scope (the module docstring).
@@ -83,8 +83,9 @@ CHECK_WORDS = {
     "port": "Control port closed",
     "reads": "Cannot be read",
     "power": "Off while in use",
-    "online": "Camera offline",
+    "online": "Device offline",
     "recording": "Not recording",
+    "has_error": "Thermostat fault",
 }
 CHECK = "thermite:check"
 HEALTH = "thermite:control_health"
@@ -266,11 +267,21 @@ def _needs_atv(mapping: dict) -> bool:
     return oh_units.ATV in (mapping.get("helpers") or ())
 
 
+def _needs_climate(mapping: dict) -> bool:
+    """Whether this house runs the climate helper (False when helpers is omitted in fixture maps)."""
+    return oh_units.CLIMATE in (mapping.get("helpers") or ())
+
+
 def active_daemons(mapping: dict) -> tuple[str, ...]:
     """Long-running Thermite units monitored for this house."""
-    if _needs_atv(mapping):
+    excluded = set()
+    if not _needs_atv(mapping):
+        excluded.add(oh_units.ATV)
+    if not _needs_climate(mapping):
+        excluded.add(oh_units.CLIMATE)
+    if not excluded:
         return oh_units.DAEMONS
-    return tuple(unit for unit in oh_units.DAEMONS if unit != oh_units.ATV)
+    return tuple(unit for unit in oh_units.DAEMONS if unit not in excluded)
 
 
 def checks(mapping: dict) -> tuple[list[dict], int]:
@@ -292,7 +303,12 @@ def checks(mapping: dict) -> tuple[list[dict], int]:
     record("max(thermite_openhab_up == bool 0) or vector(-1)", HOUSE_ROOM, "openhab", "runtime", True)
     for job in CORE_JOBS:
         record(f"max(up{{job={_q(job)}}} == bool 0) or vector(-1)", HOUSE_ROOM, job, "scrape", True, scope=MONITORING)
-    active_services = SERVICES if _needs_atv(mapping) else tuple(s for s in SERVICES if s != "apple_tv_helper")
+    excluded_services = set()
+    if not _needs_atv(mapping):
+        excluded_services.add("apple_tv_helper")
+    if not _needs_climate(mapping):
+        excluded_services.add("climate_helper")
+    active_services = tuple(s for s in SERVICES if s not in excluded_services)
     for service in active_services:
         record(f'max(probe_success{{job="service_http",service={_q(service)}}} == bool 0) or vector(-1)',
                HOUSE_ROOM, service, "service", True, scope=MONITORING if service in MONITORING_SERVICES else CONTROL)

@@ -38,14 +38,15 @@ class Allocation(unittest.TestCase):
         # One run but for the ports of removed listeners, which nothing takes:
         # the listeners after them stay where every installed host has them.
         removed = [13612, 13613, 13614]
-        self.assertEqual(list(oh_ports.DEFAULTS.values()), [port for port in range(13600, 13629) if port not in removed])
+        self.assertEqual(list(oh_ports.DEFAULTS.values()), [port for port in range(13600, 13630) if port not in removed])
         self.assertEqual([13600 + offset for offset, name in enumerate(oh_ports.NAMES) if name is None], removed)
         self.assertEqual((oh_ports.DEFAULTS["grafana"], oh_ports.CALLBACK_PORT), (13611, 13615))
         self.assertEqual(len(set(oh_ports.DEFAULTS.values())), len(oh_ports.DEFAULTS))
         self.assertEqual([oh_ports.DEFAULTS[name] for name in ("native_shutdown", "sandbox_shutdown", "boot_shutdown")],
                          [13624, 13625, 13626])
-        self.assertEqual(tuple(oh_ports.DEFAULTS)[-2:], ("music", "music_stream"))
-        self.assertEqual([oh_ports.DEFAULTS[name] for name in ("music", "music_stream")], [13627, 13628])
+        self.assertEqual(tuple(oh_ports.DEFAULTS)[-3:], ("music", "music_stream", "climate"))
+        self.assertEqual([oh_ports.DEFAULTS[name] for name in ("music", "music_stream", "climate")], [13627, 13628, 13629])
+        self.assertEqual(oh_ports.CLIMATE_PORT, 13629)
 
     def test_overrides_cannot_take_other_production_or_development_listeners(self):
         for host in ({"http_port": oh_ports.HTTPS_PORT},
@@ -55,6 +56,7 @@ class Allocation(unittest.TestCase):
                      {"http_port": 14040, "metrics": {"exporter_port": 14040}},
                      {"music": {"port": oh_ports.HTTPS_PORT}},
                      {"music": {"port": 14040, "stream_port": 14040}},
+                     {"http_port": oh_ports.CLIMATE_PORT},
                      *({"http_port": oh_ports.DEFAULTS[name]} for name in ("native_shutdown", "sandbox_shutdown", "boot_shutdown"))):
             with self.subTest(host=host), self.assertRaisesRegex(ValueError, "collides"):
                 oh_ports.effective(host)

@@ -14,7 +14,7 @@
   "use strict";
 
   (global.ThermiteMocks = global.ThermiteMocks || {}).backend = function (kit) {
-    const { OFF, UNDEF, ALL_OFF, Common, unread, unheard, controlOf, held, audioItems, sourceItem, settled, deviceAction, allOffResult } = kit;
+    const { OFF, UNDEF, ALL_OFF, Common, unread, unheard, controlOf, held, audioItems, climateOf, unheardClimate, sourceItem, settled, deviceAction, allOffResult } = kit;
 
     // A problem's codes and words, as a generated house's activity.json gives
     // them to a served page; the sample has only this copy, which
@@ -115,6 +115,23 @@
         });
       });
       Object.keys(config.audio || {}).forEach((item) => { if (pages[item]) this.audio[pages[item]][item] = String(config.audio[item]); });
+      this.climate = unheardClimate(house);
+      Object.keys(this.climate).forEach((id) => {
+        const desc = climateOf(house, id);
+        const metric = desc && desc.scale === "C";
+        Object.assign(this.climate[id], {
+          temperature: metric ? "21.5" : "70.5",
+          setpoint: metric ? "2200" : "7200",
+          mode: "Auto",
+          heating: "OFF",
+          hold_until: "NULL",
+          online: "ON",
+          error: "OFF",
+          stale: "OFF",
+          write_state: "idle",
+          status: "ok"
+        }, (config.climate && config.climate[id]) || {});
+      });
       if (global.RemoteActivity) {
         const items = activityItems(house);
         this.activity = global.RemoteActivity.create({ items: items, layouts: global.REMOTE_LAYOUTS,
@@ -191,6 +208,18 @@
         const command = String(value);
         console.info("[remote mock] command " + item + " " + command);
         setTimeout(() => {
+          if (field === "climate_mode") {
+            this.updateClimate(deviceId, "mode", command);
+            this.updateClimate(deviceId, "write_state", "confirmed");
+            if (command !== "Hold") this.updateClimate(deviceId, "hold_until", "NULL");
+            return;
+          }
+          if (field === "climate_setpoint") {
+            this.updateClimate(deviceId, "setpoint", command);
+            this.updateClimate(deviceId, "mode", "Manual");
+            this.updateClimate(deviceId, "write_state", "confirmed");
+            return;
+          }
           const page = this.house.devices[deviceId].audio;
           const state = page.state && page.state.item;
           if (field === "setting") this.updateAudio(deviceId, item, command);

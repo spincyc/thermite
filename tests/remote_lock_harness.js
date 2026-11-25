@@ -595,5 +595,56 @@ const pause = () => new Promise(resolve => setTimeout(resolve, 5));
   polling.stop();
   proof.summaryPolled = proof.summaryPaused = true;
 
+  // Multi-room ref-counted watchedRooms (retainRoom / addWatchedRoom) + immediate
+  // locks SSE push: multiple awake handhelds in different rooms stay synced without
+  // a separate polling loop.
+  const multiSite = gateway({ principal: guest }), multiRoomA = ROOMS[0], multiRoomB = ROOMS[1];
+  const multiAccess = Shared.load().Access.create({ base: origin, fetch: multiSite.fetch, policyInterval: 3600000 });
+  await multiAccess.ready();
+  const sseInstances = [];
+  class FakeLockEvents {
+    constructor(url) {
+      this.url = url; this.readyState = 1;
+      sseInstances.push(this);
+      setImmediate(() => { if (this.onopen) this.onopen({}); });
+    }
+    close() { this.readyState = 2; }
+  }
+  const AuthEvents = multiAccess.eventSource(FakeLockEvents);
+  const stream = new AuthEvents(origin + "/api/v1/events/remote");
+  await settle(() => sseInstances.length > 0);
+  const relA1 = multiAccess.retainRoom(multiRoomA);
+  const relA2 = multiAccess.addWatchedRoom(multiRoomA);
+  const relB = multiAccess.retainRoom(multiRoomB);
+  assert.deepEqual(multiAccess.watchedRooms().sort(), [multiRoomA, multiRoomB].sort());
+  await settle(() => multiAccess.policy(multiRoomA) && multiAccess.policy(multiRoomB));
+  assert.equal(multiAccess.canControl(multiRoomA), true);
+  assert.equal(multiAccess.canControl(multiRoomB), true);
+  // Release one ref on roomA: still retained by relA2.
+  relA1();
+  assert.deepEqual(multiAccess.watchedRooms().sort(), [multiRoomA, multiRoomB].sort());
+  // Gateway locks both rooms and sends a locks SSE event: both policies refresh immediately.
+  multiSite.policies[multiRoomA] = { ...multiSite.policies[multiRoomA], revision: 2, manual_lock: { desired: "off" },
+    effective: { allowed: false, locked: true, reason: "manual_lock", desired: "off", until: null } };
+  multiSite.policies[multiRoomB] = { ...multiSite.policies[multiRoomB], revision: 2, manual_lock: { desired: "off" },
+    effective: { allowed: false, locked: true, reason: "manual_lock", desired: "off", until: null } };
+  sseInstances[0].onmessage({ data: JSON.stringify({ type: "locks", rooms: {
+    [multiRoomA]: { locked: true, manual: true, until: null, reason: "manual_lock" },
+    [multiRoomB]: { locked: true, manual: true, until: null, reason: "manual_lock" }
+  } }) });
+  await settle(() => !multiAccess.canControl(multiRoomA) && !multiAccess.canControl(multiRoomB));
+  assert.equal(multiAccess.canControl(multiRoomA), false);
+  assert.equal(multiAccess.canControl(multiRoomB), false);
+  assert.equal(multiAccess.lockSummary(multiRoomA).locked, true);
+  assert.equal(multiAccess.lockSummary(multiRoomB).locked, true);
+  relA2();
+  relA2(); // idempotent release
+  assert.deepEqual(multiAccess.watchedRooms(), [multiRoomB]);
+  relB();
+  assert.deepEqual(multiAccess.watchedRooms(), []);
+  stream.close();
+  multiAccess.stop();
+  proof.multiRoomWatched = true;
+
   process.stdout.write(JSON.stringify(proof));
 })().catch(error => { process.stderr.write(error.stack + "\n"); process.exitCode = 1; });

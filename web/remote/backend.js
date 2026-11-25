@@ -259,6 +259,7 @@
       display: device(house, room.display),
       audio: device(house, room.audio),
       devices: room.devices.map((id) => device(house, id)),
+      climate: Array.isArray(room.climate) ? room.climate.slice() : [],
       order: room.order || room.sources,
       controls: (room.controls || []).map((control) => ({
         id: control.id,
@@ -372,9 +373,16 @@
   }
 
   // What a device page's action commands: [field, Item], field the control's
-  // point or "setting"; throws for an action the device's page lacks.
+  // point, "setting", or climate action ("climate_mode" / "climate_setpoint");
+  // throws for an action the device lacks.
   function deviceAction(house, deviceId, action) {
     const target = house.devices[deviceId];
+    if (!target) throw new Error("thermite has no page for " + deviceId);
+    const climate = target.climate;
+    if (climate && climate.items) {
+      if (action === "climate_mode" && climate.items.mode) return ["climate_mode", climate.items.mode];
+      if (action === "climate_setpoint" && climate.items.setpoint) return ["climate_setpoint", climate.items.setpoint];
+    }
     const control = controlOf(house, deviceId);
     const page = target && target.audio;
     if (!control || !page) throw new Error("thermite has no page for " + deviceId);
@@ -383,6 +391,37 @@
     if (point) return [action, point];
     if ((page.settings || []).some((setting) => setting.item === action)) return ["setting", action];
     throw new Error("The " + target.label + " has no " + action);
+  }
+
+  // What a device's climate descriptor declares (house.js devices.<id>.climate), or null.
+  function climateOf(house, id) {
+    const known = id ? house.devices[id] : null;
+    return (known && known.climate) || null;
+  }
+
+  const CLIMATE_FIELDS = ["temperature", "setpoint", "mode", "heating", "hold_until", "online", "error", "stale", "write_state", "status"];
+
+  // Item name -> [device id, field] for every climate Item (problem is in problemItems).
+  function climateItems(house) {
+    const items = Object.create(null);
+    Object.keys(house.devices || {}).forEach((id) => {
+      const desc = climateOf(house, id);
+      if (!desc || !desc.items) return;
+      CLIMATE_FIELDS.forEach((field) => {
+        if (desc.items[field]) items[desc.items[field]] = [id, field];
+      });
+    });
+    return items;
+  }
+
+  function unheardClimate(house) {
+    const map = {};
+    Object.keys(house.devices || {}).forEach((id) => {
+      if (!climateOf(house, id)) return;
+      map[id] = {};
+      CLIMATE_FIELDS.forEach((field) => { map[id][field] = NULL_STATE; });
+    });
+    return map;
   }
 
   // Item name -> device id for every device's problem Item.
@@ -682,6 +721,53 @@
     audioOf: function (deviceId) {
       return Object.assign({}, this.audio[deviceId]);
     },
+    climateOf: function (deviceId) {
+      const desc = climateOf(this.house, deviceId);
+      const state = this.climate && this.climate[deviceId];
+      if (!desc || !state) return null;
+      return {
+        device: deviceId,
+        label: desc.label || (this.house.devices[deviceId] && this.house.devices[deviceId].label) || deviceId,
+        scale: desc.scale || null,
+        step: Number.isInteger(desc.step) && desc.step > 0 ? desc.step : 100,
+        modes: Array.isArray(desc.modes) ? desc.modes.slice() : ["Auto", "Hold", "Manual"],
+        temperature: state.temperature,
+        setpoint: state.setpoint,
+        mode: state.mode,
+        heating: state.heating,
+        holdUntil: state.hold_until,
+        online: state.online,
+        error: state.error,
+        stale: state.stale,
+        writeState: state.write_state,
+        status: state.status,
+        problem: this.problemOf(deviceId)
+      };
+    },
+    updateClimate: function (deviceId, field, value) {
+      const state = this.climate && this.climate[deviceId];
+      if (!state || state[field] === value) return;
+      state[field] = value;
+      this.emit({ type: "climate", device: deviceId, state: this.climateOf(deviceId) });
+    },
+    climateMode: function (deviceId, mode) {
+      return settled(() => {
+        const desc = climateOf(this.house, deviceId);
+        if (!desc) throw new Error("thermite has no climate control for " + deviceId);
+        const allowed = Array.isArray(desc.modes) ? desc.modes : ["Auto", "Hold", "Manual"];
+        if (allowed.indexOf(mode) < 0) throw new Error("Unsupported climate mode: " + mode);
+        return this.command(deviceId, "climate_mode", mode);
+      });
+    },
+    climateSetpoint: function (deviceId, rawSetpoint) {
+      return settled(() => {
+        const desc = climateOf(this.house, deviceId);
+        if (!desc) throw new Error("thermite has no climate control for " + deviceId);
+        const value = Number(rawSetpoint);
+        if (!Number.isInteger(value)) throw new Error("Climate setpoint must be an integer: " + rawSetpoint);
+        return this.command(deviceId, "climate_setpoint", value);
+      });
+    },
     updateAudio: function (deviceId, item, value) {
       const values = this.audio[deviceId];
       if (!values || values[item] === value) return;
@@ -712,6 +798,9 @@
         "openhab/items/" + this.house.devices[deviceId].problem + "/statechanged",
         JSON.stringify({ value: problem || UNDEF, oldValue: before || UNDEF }));
       this.emit({ type: "problem", device: deviceId, problem: this.problemOf(deviceId) });
+      if (this.climate && this.climate[deviceId]) {
+        this.emit({ type: "climate", device: deviceId, state: this.climateOf(deviceId) });
+      }
     },
     updateDevice: function (deviceId, field, value) {
       const state = this.devices[deviceId];
@@ -810,12 +899,15 @@
     this.playingItems = remote ? playingItems(house) : Object.create(null);
     this.audioItems = remote ? audioItems(house) : Object.create(null);
     this.audio = unheard(this.audioItems);
+    this.climateItems = remote ? climateItems(house) : Object.create(null);
+    this.climate = unheardClimate(house);
     this.unsubscribeAccess = null;
     if (this.access && !this.access.native) {
       this.unsubscribeAccess = this.access.subscribe((event) => {
         if (event.type === "unauthorized") {
           this.stop(); this.connected = false; this.devices = unread(house); this.problems = {}; this.playing = {}; this.aims = {}; this.activity = null;
           this.audio = unheard(this.audioItems);
+          this.climate = unheardClimate(house);
           Object.values(this.items).forEach((item) => { item.value = NULL_STATE; item.pending = null; item.unconfirmed = null; });
         }
         this.emit({ type: "access", unauthorized: event.type === "unauthorized", guest: event.guest === true });
@@ -1022,10 +1114,10 @@
   };
 
   // Every Item a control is read from, then every problem Item, then what
-  // devices play, then what their audio pages read.
+  // devices play, then what their audio pages and climate devices read.
   OpenHabBackend.prototype.watched = function () {
     return Object.keys(this.controlItems).concat(Object.keys(this.problemItems), Object.keys(this.routeProblemItems),
-      Object.keys(this.playingItems), Object.keys(this.audioItems));
+      Object.keys(this.playingItems), Object.keys(this.audioItems), Object.keys(this.climateItems));
   };
 
   OpenHabBackend.prototype.updateRouteProblem = function (item, value) {
@@ -1042,6 +1134,7 @@
     else if (this.problemItems[item]) this.updateProblem(this.problemItems[item], value);
     else if (this.playingItems[item]) this.updatePlaying(this.playingItems[item][0], this.playingItems[item][1], value);
     else if (this.audioItems[item]) this.updateAudio(this.audioItems[item], item, value);
+    else if (this.climateItems[item]) this.updateClimate(this.climateItems[item][0], this.climateItems[item][1], value);
   };
 
   // The view's Items as the gateway (or openHAB) holds them now: after a
@@ -1281,7 +1374,7 @@
     if (this.activity) this.activity.accept(event.topic, event.payload);
     // Commands and Items the view does not show are ignored before inner parsing.
     if (verb === "command" || !(roomId || this.controlItems[item] || this.problemItems[item] || this.routeProblemItems[item]
-      || this.playingItems[item] || this.audioItems[item])) return;
+      || this.playingItems[item] || this.audioItems[item] || this.climateItems[item])) return;
     try { payload = JSON.parse(event.payload); } catch (error) { return; }
     if (!payload || payload.value === undefined) return;
     const value = String(payload.value);
@@ -1442,7 +1535,7 @@
     if (Mock) return Mock;
     const make = global.ThermiteMocks && global.ThermiteMocks.backend;
     if (!make) throw new Error("The sample house is not loaded. Open the page with ?backend=mock, which loads backend-mock.js.");
-    Mock = make({ OFF, UNDEF, ALL_OFF, Common, unread, unheard, controlOf, held, audioItems, sourceItem, settled, deviceAction, allOffResult });
+    Mock = make({ OFF, UNDEF, ALL_OFF, Common, unread, unheard, controlOf, held, audioItems, climateOf, climateItems, unheardClimate, sourceItem, settled, deviceAction, allOffResult });
     return Mock;
   }
 
@@ -1459,6 +1552,7 @@
     OpenHabBackend: OpenHabBackend,
     controlsFor: controlsFor,
     controlOf: controlOf,
+    climateOf: climateOf,
     volumeText: volumeText,
     volumeValue: held,
     volumeStep: volumeStep,

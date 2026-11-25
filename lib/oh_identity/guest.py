@@ -29,6 +29,7 @@ ASSETS = frozenset({
     "house.js", "remotes.js", "activity.js", "activity.json", "diagnostics.js", "diagnostics.json", "backend.js",
     "session.js", "log.js", "remote.js", "home.js", "alerts.js", "theme.css", "shell.css", "remote.css", "home.css",
     "audio-session.js", "music-backend.js", "music-session.js", "listen-session.js", "listen.js", "listen.css",
+    "climate.js", "climate.css",
     "manifest.webmanifest", "icon.svg", "mark.svg", "mark-light.svg", "apple-touch-icon.png",
     "access-mock.js", "alerts-mock.js", "backend-mock.js", "music-backend-mock.js"})
 #: The routes, as urls.py writes them, a guest-listener request may use, and

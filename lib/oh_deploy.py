@@ -56,6 +56,7 @@ if TYPE_CHECKING:
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 QUADLET = f"deploy/{oh_units.CONTAINERS[oh_units.RUNTIME]}.container"
 ATV_QUADLET = f"deploy/{oh_units.CONTAINERS[oh_units.ATV]}.container"
+CLIMATE_QUADLET = f"deploy/{oh_units.CONTAINERS[oh_units.CLIMATE]}.container"
 #: The metrics services' quadlets (oh_metrics.services()), by unit.
 METRICS_QUADLETS = {unit: f"deploy/{unit.removesuffix('.service')}.container" for unit in metrics.SERVICE_UNITS}
 MUSIC_QUADLET = f"deploy/{oh_units.CONTAINERS[oh_units.MUSIC]}.container"
@@ -65,6 +66,9 @@ CONTAINER_DROPINS = {unit: f"deploy/{unit}.d/50-container-lifecycle.conf" for un
 #: Apple TV helper's unit and drop-in: generated and installed only when the
 #: house uses an integration that requires oh_units.ATV (or when house is None).
 ATV_UNITS = (ATV_QUADLET, CONTAINER_DROPINS[oh_units.ATV])
+#: Localhost climate helper's unit and drop-in: generated and installed only
+#: when `house` uses a climate helper integration (omitted when house is None).
+CLIMATE_UNITS = (CLIMATE_QUADLET, CONTAINER_DROPINS[oh_units.CLIMATE])
 #: Music Assistant's unit and drop-in: generated and installed only for a
 #: host with music: (host_units).
 MUSIC_UNITS = (MUSIC_QUADLET, CONTAINER_DROPINS[oh_units.MUSIC])
@@ -72,11 +76,12 @@ MUSIC_UNITS = (MUSIC_QUADLET, CONTAINER_DROPINS[oh_units.MUSIC])
 #: host with a share on a named server (host_units).
 SHARE_GATE = f"deploy/{oh_units.SHARE_GATE}"
 #: The units only some hosts have.
-OPTIONAL_UNITS = (*MUSIC_UNITS, SHARE_GATE)
+OPTIONAL_UNITS = (*MUSIC_UNITS, SHARE_GATE, *CLIMATE_UNITS)
 #: Where the owner installs each generated unit on the host.
 INSTALLED = {
     QUADLET: Path("/etc/containers/systemd") / Path(QUADLET).name,
     ATV_QUADLET: Path("/etc/containers/systemd") / Path(ATV_QUADLET).name,
+    CLIMATE_QUADLET: Path("/etc/containers/systemd") / Path(CLIMATE_QUADLET).name,
     **{name: Path("/etc/containers/systemd") / Path(name).name for name in METRICS_QUADLETS.values()},
     MUSIC_QUADLET: Path("/etc/containers/systemd") / Path(MUSIC_QUADLET).name,
     SHARE_GATE: Path("/etc/systemd/system") / oh_units.SHARE_GATE,
@@ -107,14 +112,20 @@ def needs_atv(house: House | None = None) -> bool:
     return True if house is None else oh_units.ATV in helper_services(house)
 
 
+def needs_climate(house: House | None = None) -> bool:
+    """Whether `house` requires the climate helper unit (False when house is None)."""
+    return False if house is None else oh_units.CLIMATE in helper_services(house)
+
+
 def host_units(host: dict, house: House | None = None) -> dict[str, Path]:
     """INSTALLED as this host has it: without MUSIC_UNITS unless it has
     music:, without SHARE_GATE unless a share needs it, without ATV_UNITS
-    when `house` is given and uses no Apple TV helper, and with its shares'
-    mount units."""
+    when `house` is given and uses no Apple TV helper, without CLIMATE_UNITS
+    unless `house` uses a climate helper, and with its shares' mount units."""
     absent = (*(() if music.enabled(host) else MUSIC_UNITS),
               *(() if shares.gated(host) else (SHARE_GATE,)),
-              *(() if needs_atv(house) else ATV_UNITS))
+              *(() if needs_atv(house) else ATV_UNITS),
+              *(() if needs_climate(house) else CLIMATE_UNITS))
     return {**{source: target for source, target in INSTALLED.items() if source not in absent},
             **share_units(host)}
 
@@ -127,9 +138,11 @@ def every_unit(host: dict) -> dict[str, Path]:
 
 def services(host: dict, house: House | None = None) -> tuple[str, ...]:
     """SERVICES as this host has them: without oh_units.ATV when `house`
-    uses none, with Music Assistant when it has music:, and each share's mount."""
+    uses none, with oh_units.CLIMATE when `house` uses a climate helper,
+    with Music Assistant when it has music:, and each share's mount."""
     base = SERVICES if needs_atv(house) else tuple(unit for unit in SERVICES if unit != oh_units.ATV)
-    return (*base, *((oh_units.MUSIC,) if music.enabled(host) else ()),
+    climate = (oh_units.CLIMATE,) if needs_climate(house) else ()
+    return (*base, *climate, *((oh_units.MUSIC,) if music.enabled(host) else ()),
             *(share.unit for _, share in sorted(shares.settings(host).items())))
 
 
@@ -137,6 +150,10 @@ def services(host: dict, house: House | None = None) -> tuple[str, ...]:
 ATV_APP = ("bin/thermite", "lib/oh_cli/__init__.py", "lib/oh_cli/apple_tv.py", "lib/oh_atv.py",
            "lib/requirements-pyatv.txt", "lib/oh_paths.py", "lib/oh_release.py", "lib/oh_ports.py", "lib/oh_service.py",
            "lib/oh_units.py")
+#: The area's files the localhost climate helper's container runs (stdlib only).
+CLIMATE_APP = ("bin/thermite", "lib/oh_cli/__init__.py", "lib/oh_cli/climate.py", "lib/oh_climate/__init__.py",
+               "lib/oh_climate/nuheat_api.py", "lib/oh_climate/daemon.py", "lib/oh_paths.py", "lib/oh_release.py",
+               "lib/oh_ports.py", "lib/oh_service.py", "lib/oh_units.py")
 #: Inside the helper's container.
 ATV_VENV = "/venv/pyatv"
 DIR_MODE = oh_service.SHARED_DIR
@@ -158,8 +175,9 @@ SECRETS_MOUNT = "/secrets"
 #: openHAB's log directory: the group-readable State.logs, its $OPENHAB_LOGDIR.
 LOGS_MODE = oh_service.LOG_DIR
 LOGS_MOUNT = "/openhab/logs"
-#: Ports besides HTTP and HTTPS that openHAB or the helper listen on.
+#: Ports besides HTTP and HTTPS that openHAB or the helpers listen on.
 HELPER_PORT = oh_ports.HELPER_PORT
+CLIMATE_PORT = oh_ports.CLIMATE_PORT
 KARAF_PORT = oh_ports.KARAF_PORT
 LSP_PORT = oh_ports.LSP_PORT
 
@@ -234,6 +252,18 @@ class State:
     @property
     def atv_secrets(self) -> Path:
         return self.atv / "secrets"
+
+    @property
+    def climate(self) -> Path:
+        return self.root / "climate"
+
+    @property
+    def climate_app(self) -> Path:
+        return self.climate / "app"
+
+    @property
+    def climate_secrets(self) -> Path:
+        return self.climate / "secrets"
 
     @property
     def secrets(self) -> Path:
@@ -343,6 +373,14 @@ class State:
     def music_directories(self) -> list[tuple[int, list[Path]]]:
         """(mode, directories) Music Assistant needs, on a host with music:."""
         return [(SECRETS_MODE, [self.music])]
+
+    def climate_directories(self) -> list[tuple[int, list[Path]]]:
+        """(mode, directories) the localhost climate helper needs, when enabled."""
+        return [
+            (MONITORING_MODE, [self.climate]),
+            (DIR_MODE, [self.climate_app]),
+            (SECRETS_MODE, [self.climate_secrets]),
+        ]
 
     def with_metrics(self) -> bool:
         """Whether thermite install or upgrade has made the directories a
@@ -745,6 +783,58 @@ def render_atv_quadlet(versions: dict, host: dict) -> str:
     return "\n".join(lines)
 
 
+def render_climate_quadlet(versions: dict, host: dict) -> str:
+    oh_service.validate_identity(host["uid"], host["gid"])
+    layout = state(host)
+    lines = [
+        "# The NuHeat climate helper for openHAB (bin/thermite climate, lib/oh_climate/daemon.py).",
+        *HEADER,
+        "[Unit]",
+        "Description=NuHeat climate helper for openHAB",
+        f"PartOf={oh_units.TARGET}",
+        "Wants=network-online.target",
+        "After=network-online.target",
+        "",
+        "[Container]",
+        f"ContainerName={oh_units.CONTAINERS[oh_units.CLIMATE]}",
+        f"Image={image(versions, 'atv_helper')}",
+        f"# openHAB reaches it on 127.0.0.1:{CLIMATE_PORT}; it has no login, so it",
+        "# listens there only.",
+        *_contained(host, oh_units.CLIMATE),
+        "NoNewPrivileges=true",
+        "DropCapability=all",
+        # Avoid crun/AppArmor profile stacking under no-new-privileges.
+        "PodmanArgs=--runtime=runc",
+        "PodmanArgs=--replace=false",
+        "PodmanArgs=--cidfile=%t/%N.cid",
+        "PodmanArgs=--umask=0077",
+        "# Forwards SIGTERM to Python, which ignores it as PID 1.",
+        "PodmanArgs=--init",
+        "# Its code, as the last deploy installed it.",
+        f"Volume={layout.climate_app}:/app:ro,Z",
+        f"Volume={layout.climate_secrets}:/secrets:Z",
+        "Environment=HOME=/secrets",
+        "Environment=PYTHONDONTWRITEBYTECODE=1",
+        f"Environment=TZ={host['timezone']}",
+        "Exec=python3 /app/bin/thermite climate serve --secrets /secrets",
+        "",
+        "[Service]",
+        f"Slice={oh_units.SLICE}",
+        *_ceiling(host, oh_units.CLIMATE),
+        "UMask=0077",
+        "# Python killed by its init's forwarded SIGTERM exits 143.",
+        "SuccessExitStatus=143",
+        "Restart=always",
+        "RestartSec=10",
+        "TimeoutStartSec=300",
+        "",
+        "[Install]",
+        f"WantedBy={oh_units.TARGET}",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def bounds(host: dict) -> dict[str, oh_units.Bounds]:
     """Each service's record of what it runs as, may use, reaches and is
     given: oh_units.BOUNDS and the monitoring services' own."""
@@ -1085,6 +1175,8 @@ def render_units(versions: dict, host: dict, house: House | None = None) -> dict
     }
     if needs_atv(house):
         units[ATV_QUADLET] = render_atv_quadlet(versions, host)
+    if needs_climate(house):
+        units[CLIMATE_QUADLET] = render_climate_quadlet(versions, host)
     for service in metrics.services(host):
         units[METRICS_QUADLETS[service.unit]] = render_metrics_quadlet(versions, host, service)
     if music.enabled(host):
@@ -1731,7 +1823,7 @@ def prepared_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob],
     from oh_paths import SITE_FILE
     import oh_release
     files = export(area, commit, ("conf", "metrics", "deploy", "instance", "versions.json", SITE_FILE, *ATV_APP,
-                                  *metrics.EXPORTER_APP))
+                                  *CLIMATE_APP, *metrics.EXPORTER_APP))
     locked = files.pop(SITE_FILE, None)
     if locked is None:
         return {name: blob for name, blob in files.items() if not name.startswith("instance/") and name != "versions.json"}, None
@@ -1740,7 +1832,8 @@ def prepared_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob],
         root = oh_release.resolve(Path(var) / "application-releases", requirement["release"],
                                   requirement["application"])
         release = oh_release.manifest(root, requirement["release"])
-        names = tuple(dict.fromkeys((*ATV_APP, *metrics.EXPORTER_APP)))
+        optional_climate = CLIMATE_APP if set(CLIMATE_APP) <= set(release["files"]) else ()
+        names = tuple(dict.fromkeys((*ATV_APP, *optional_climate, *metrics.EXPORTER_APP)))
         application = oh_release.blobs(root, names, requirement["release"])
     except (OSError, ValueError) as exc:
         raise DeployError("the committed site's exact application release is unavailable or failed verification; "
@@ -1763,6 +1856,8 @@ def prepared_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob],
         rendered = oh_site_snapshot.render(inputs, root, work, requirement["release"])
     except (OSError, ValueError) as exc:
         raise DeployError("could not derive committed site configuration from its pinned application") from exc
+    if CLIMATE_QUADLET in rendered and not optional_climate:
+        raise DeployError("the committed site requires the climate helper, which its pinned application release lacks")
     files = {name: Blob(data) for name, data in rendered.items()}
     # The gateway compiles its own contract from the very same committed
     # inventory, including provider data. Never consult the working tree.

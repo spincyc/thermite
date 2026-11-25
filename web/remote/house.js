@@ -17,6 +17,7 @@ globalThis.REMOTE_HOUSE = {
         "example_matrix"
       ],
       "speakers": [],
+      "climate": [],
       "holdMs": 15000,
       "routeProblem": "loc_example_west_source_problem"
     },
@@ -33,6 +34,7 @@ globalThis.REMOTE_HOUSE = {
         "example_computer"
       ],
       "speakers": [],
+      "climate": [],
       "holdMs": 15000,
       "routeProblem": "loc_example_east_source_problem"
     }
@@ -119,6 +121,7 @@ globalThis.REMOTE_HOUSE = {
   "initial": {},
   "holdMs": 15000,
   "speakerRooms": [],
+  "climateRooms": [],
   "layouts": {
     "remotes": {
       "apple_tv": {

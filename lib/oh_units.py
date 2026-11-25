@@ -4,6 +4,8 @@ import dataclasses
 
 RUNTIME = "thermite-openhab.service"
 ATV = "thermite-atv.service"
+#: Localhost climate helper, on a house whose devices use a climate helper integration.
+CLIMATE = "thermite-climate.service"
 PROMETHEUS = "thermite-prometheus.service"
 NODE_EXPORTER = "thermite-node-exporter.service"
 BLACKBOX = "thermite-blackbox.service"
@@ -27,7 +29,7 @@ ACCESS_CALLBACKS = "thermite-access-callbacks.service"
 METRICS = (PROMETHEUS, NODE_EXPORTER, BLACKBOX, EXPORTER, GRAFANA)
 ACCESS_UNITS = (ACCESS, ACCESS_WORKER, ACCESS_CALLBACKS)
 #: The units that run in containers (Quadlet).
-CONTAINED = (RUNTIME, ATV, *METRICS, MUSIC)
+CONTAINED = (RUNTIME, ATV, CLIMATE, *METRICS, MUSIC)
 #: Every long-running Thermite service a host may have.
 DAEMONS = (*CONTAINED, *ACCESS_UNITS)
 CONTAINERS = {unit: unit.removesuffix(".service") for unit in CONTAINED}
@@ -94,6 +96,7 @@ class Bounds:
 BOUNDS = {
     RUNTIME: Bounds(STATE_USER, "2560M", "3G", HOST_NETWORK, ("secrets", "userdata")),
     ATV: Bounds(STATE_USER, "256M", "512M", HOST_NETWORK, ("atv/secrets",)),
+    CLIMATE: Bounds(STATE_USER, "128M", "256M", HOST_NETWORK, ("climate/secrets",)),
     MUSIC: Bounds(STATE_USER, "1536M", "2560M", HOST_NETWORK, ("music",)),
     ACCESS: Bounds(STATE_USER, "256M", "512M", HOST_NETWORK, ACCESS_SECRETS),
     ACCESS_WORKER: Bounds(STATE_USER, "256M", "512M", HOST_NETWORK, (ACCESS_STATE, ACCESS_RUNTIME_TOKEN)),

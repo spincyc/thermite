@@ -1,0 +1,122 @@
+{
+ "screen": {
+  "id": "f76f81328b3ffd02",
+  "room": "kitchen",
+  "label": "Kitchen",
+  "rooms": [
+   {
+    "id": "example_west",
+    "label": "Example West",
+    "led": "ok",
+    "short": "Player",
+    "mode": "watch",
+    "locked": true
+   },
+   {
+    "id": "example_east",
+    "label": "Example East",
+    "led": "off",
+    "short": "Off",
+    "mode": "watch"
+   },
+   {
+    "id": "kitchen",
+    "label": "Kitchen",
+    "led": "ok",
+    "short": "Playing",
+    "mode": "listen"
+   }
+  ],
+  "led": "ok",
+  "short": "Playing",
+  "problem": "",
+  "notice": "",
+  "locked": false,
+  "bubbles": [
+   {
+    "id": "kitchen_amp",
+    "label": "Sonos Amp",
+    "state": "current",
+    "lock": false,
+    "inert": false
+   },
+   {
+    "id": "kitchen_mini",
+    "label": "WiiM Mini",
+    "state": "idle",
+    "lock": false,
+    "inert": false
+   }
+  ],
+  "selected": "kitchen_amp",
+  "hidden": false,
+  "remote": {
+   "label": "Sonos Amp",
+   "note": ""
+  },
+  "pad": null,
+  "rows": [
+   {
+    "label": "",
+    "keys": [
+     "previous",
+     "play_pause",
+     "next"
+    ],
+    "columns": 3
+   }
+  ],
+  "beside": [],
+  "channel": false,
+  "buttons": {
+   "previous": {
+    "label": "Previous",
+    "icon": "previous"
+   },
+   "play_pause": {
+    "label": "Pause",
+    "icon": "pause"
+   },
+   "next": {
+    "label": "Next",
+    "icon": "next"
+   },
+   "volume_up": {
+    "label": "Volume up",
+    "icon": "plus",
+    "repeat": true
+   },
+   "volume_down": {
+    "label": "Volume down",
+    "icon": "minus",
+    "repeat": true
+   },
+   "mute": {
+    "label": "Mute",
+    "icon": "mute"
+   }
+  },
+  "allOff": false,
+  "mode": "listen",
+  "playing": {
+   "title": "Harbour Lights",
+   "artist": "The Lanterns · Harbour Lights",
+   "state": "playing"
+  },
+  "modes": [
+   "watch",
+   "listen"
+  ]
+ },
+ "audio": {
+  "short": "Sonos Amp",
+  "value": 32,
+  "min": 0,
+  "max": 100,
+  "step": 1,
+  "muted": false,
+  "disabled": false,
+  "text": "32",
+  "caption": "Sonos Amp · 32"
+ }
+}

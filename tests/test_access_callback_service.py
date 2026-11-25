@@ -273,10 +273,17 @@ class Protocol(unittest.IsolatedAsyncioTestCase):
             self._stop = None
 
         def start(self):
+            import socket
             import threading
+            import time
             self._thread = threading.Thread(target=asyncio.run, args=(self._main(),), daemon=True)
             self._thread.start()
             assert self._ready.wait(5), "callback test server failed to start"
+            sock = self.sockets.insecure_sockets[0]
+            deadline = time.monotonic() + 5.0
+            while not sock.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN):
+                assert time.monotonic() < deadline, "callback test server socket did not start listening"
+                time.sleep(0.005)
             return self
 
         async def _main(self):

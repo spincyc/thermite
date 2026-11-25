@@ -18,6 +18,7 @@
   <link rel="stylesheet" href="shell.css">
   <link rel="stylesheet" href="remote.css">
   <link rel="stylesheet" href="listen.css">
+  <link rel="stylesheet" href="climate.css">
   <link rel="thermite-mock" href="access-mock.js"><link rel="thermite-mock" href="backend-mock.js"><link rel="thermite-mock" href="music-backend-mock.js"><script src="navigation.js"></script><script src="appearance.js"></script><script src="access-config.js"></script><script src="access.js"></script>
   <script src="house.js" defer></script>
   <script src="dom.js" defer></script>
@@ -35,6 +36,7 @@
   <script src="session.js" defer></script>
   <script src="log.js" defer></script>
   <script src="listen.js" defer></script>
+  <script src="climate.js" defer></script>
   <script src="remote.js" defer></script>
 </head>
 <body data-thermite-page="remotes">
@@ -253,6 +255,8 @@
           </div>
         </div>
       </section>
+
+      <section class="climate" id="climate" data-climate hidden aria-label="Room climate"></section>
     </main>
 
     <div class="sidebar">

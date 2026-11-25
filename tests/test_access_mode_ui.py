@@ -39,3 +39,6 @@ class AccessModeUI(unittest.TestCase):
 
     def test_guest_listener_pages_are_guest_only_and_sign_in_on_https(self):
         self.assertTrue(self.proof["guestListener"])
+
+    def test_handheld_client_labels_and_for_client_wrappers(self):
+        self.assertTrue(self.proof["handheldClients"])

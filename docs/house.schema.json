@@ -317,6 +317,25 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "nuheat_http": {
+                "description": "nuheat_http integration settings",
+                "type": "object",
+                "properties": {
+                  "scale": {
+                    "description": "display temperature unit for the remote UI",
+                    "type": "string",
+                    "enum": [
+                      "F",
+                      "C"
+                    ]
+                  },
+                  "step": {
+                    "description": "setpoint step size in raw units for UI +/- buttons",
+                    "type": "number"
+                  }
+                },
+                "additionalProperties": false
               }
             },
             "additionalProperties": false
@@ -752,6 +771,25 @@
                   },
                   "input": {
                     "description": "the matrix input the source is on; derived from routing.sources.<id>.hdmi_input when omitted",
+                    "type": "number"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "nuheat_http": {
+                "description": "nuheat_http integration settings",
+                "type": "object",
+                "properties": {
+                  "scale": {
+                    "description": "display temperature unit for the remote UI",
+                    "type": "string",
+                    "enum": [
+                      "F",
+                      "C"
+                    ]
+                  },
+                  "step": {
+                    "description": "setpoint step size in raw units for UI +/- buttons",
                     "type": "number"
                   }
                 },

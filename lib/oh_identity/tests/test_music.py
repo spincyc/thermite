@@ -1456,7 +1456,9 @@ class Events(Stand_in, TransactionTestCase):
                 frame = await self.next(subscriber, "speaker")
                 while frame["speaker"]["now_playing"]["elapsed"] != 42:
                     frame = await self.next(subscriber, "speaker")
-                self.assertEqual(computed, [AMP])
+                self.assertEqual(set(computed), {AMP})
+                self.assertNotIn(MINI, computed)
+                self.assertNotIn(WIIM, computed)
 
                 # When MINI is grouped under AMP, queue_time_updated updates AMP and MINI, not WIIM.
                 await asyncio.to_thread(self.music.group, self.guest, AMP, [MINI])

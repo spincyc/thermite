@@ -40,13 +40,17 @@
 
 #define REPEAT_FIRST_MS 420
 #define REPEAT_EVERY_MS 150
+#define SLIDE_EVERY_MS 250 /* matches Web/TUI RemoteSession.SLIDE_EVERY */
 #define TOAST_MS 2500
 #define BLINK_MS 500
 #define BLINK_MAX 16
 #define TEXT_MAX 256
 #define ROOMS_MAX 24
 #define COMPACT_WIDTH 160
+#define SLIDER_MIN_W 240
+#define SLIDER_MIN_H 320
 #define ROOMY_HEIGHT 400 /* tall enough to show keys the board also has */
+#define UI_CHANGED_PICKER (1u << 16)
 
 typedef struct {
     bool compact;
@@ -71,24 +75,27 @@ static struct {
     lv_style_t key, key_pressed, key_lit, key_disabled, bubble, bubble_selected, chip;
 
     lv_obj_t *screen, *room_prev, *room_label, *room_next;
-    lv_obj_t *led, *short_label, *link_mark, *battery_mark;
+    lv_obj_t *led, *short_label, *mode_btn, *mode_label, *link_mark, *battery_mark;
     lv_obj_t *bubbles, *body, *all_off, *all_off_label;
-    lv_obj_t *footer, *volume_down, *volume_up, *mute, *audio_short, *audio_text;
-    lv_obj_t *toast, *inputs;
-    lv_timer_t *update, *toast_timer, *repeat, *blink_timer;
+    lv_obj_t *footer, *volume_down, *volume_up, *mute, *audio_short, *audio_text, *volume_slider;
+    lv_obj_t *toast, *inputs, *room_picker;
+    lv_timer_t *update, *toast_timer, *repeat, *blink_timer, *slider_timer;
 
     lv_obj_t *blink_dots[BLINK_MAX];
     size_t blink_count;
     bool blink_dim;
+    bool listen_mode, multi_mode, room_picker_open;
+    double audio_min, audio_max, audio_step, slider_pending, slider_sent;
+    bool slider_has_sent, slider_dirty, slider_dragging, slider_syncing;
     int8_t all_off_armed; /* -1 unset, 0 unarmed, 1 armed */
-    unsigned pending; /* TR_CHANGED_* bits waiting for the update timer */
+    unsigned pending; /* TR_CHANGED_* and UI_CHANGED_* bits waiting for the update timer */
     uint32_t bubbles_hash, body_hash;
     int waiting_link; /* the tr_link_t the waiting body shows, or -1 */
     char repeat_id[48];
     char led_shown[8]; /* the status LED's state, so a new screen restarts no blink */
     const char *rooms[ROOMS_MAX];
     int room_count, room_index;
-    arena_t body_ids, bubble_ids, room_ids, input_ids;
+    arena_t body_ids, bubble_ids, room_ids, input_ids, picker_ids;
 } ui;
 
 /* Outside ui: the battery is reported whenever it changes, not again for a new screen. */
@@ -537,17 +544,22 @@ static void key_grid(lv_obj_t *parent, const cJSON *screen, const char *const *i
 }
 
 /* The ids of a JSON array that the screen shows, kept in the body's arena. */
-static int shown_ids(const cJSON *array, const char **ids, int capacity)
+static int shown_ids_mode(const cJSON *array, const char **ids, int capacity, bool keep_all)
 {
     int count = 0;
     const cJSON *item;
     cJSON_ArrayForEach(item, array) {
         if (count == capacity) break;
-        if (!cJSON_IsString(item) || on_board(item->valuestring)) continue;
+        if (!cJSON_IsString(item) || (!keep_all && on_board(item->valuestring))) continue;
         const char *id = keep(&ui.body_ids, item->valuestring);
         if (id) ids[count++] = id;
     }
     return count;
+}
+
+static int shown_ids(const cJSON *array, const char **ids, int capacity)
+{
+    return shown_ids_mode(array, ids, capacity, false);
 }
 
 /* ---- the body ------------------------------------------------------------ */
@@ -596,18 +608,60 @@ static void dpad(const cJSON *screen, const cJSON *corners)
     }
 }
 
-static void rows(const cJSON *screen)
+static void rows_mode(const cJSON *screen, bool keep_all)
 {
     const cJSON *row;
     cJSON_ArrayForEach(row, cJSON_GetObjectItemCaseSensitive(screen, "rows")) {
         const char *ids[24];
-        int count = shown_ids(cJSON_GetObjectItemCaseSensitive(row, "keys"), ids, 24);
+        int count = shown_ids_mode(cJSON_GetObjectItemCaseSensitive(row, "keys"), ids, 24, keep_all);
         if (!count) continue;
         const char *title = string_of(row, "label");
         if (title[0]) heading(ui.body, title);
         const cJSON *columns = cJSON_GetObjectItemCaseSensitive(row, "columns");
         key_grid(ui.body, screen, ids, count, cJSON_IsNumber(columns) ? columns->valueint : 0);
     }
+}
+
+static void rows(const cJSON *screen)
+{
+    rows_mode(screen, false);
+}
+
+/* Compact Now Playing card for Listen mode; all strings normalized via set_text(). */
+static void now_playing(const cJSON *screen)
+{
+    const cJSON *playing = cJSON_GetObjectItemCaseSensitive(screen, "playing");
+    const char *state = string_of(playing, "state");
+    const char *title = string_of(playing, "title");
+    const char *artist = string_of(playing, "artist");
+    lv_obj_t *card = box(ui.body);
+    lv_obj_add_style(card, &ui.chip, 0);
+    lv_obj_set_style_bg_color(card, lv_color_hex(C_SURFACE), 0);
+    lv_obj_set_style_border_color(card, lv_color_hex(C_LINE), 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_size(card, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(card, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(card, ui.m.gap, 0);
+
+    const char *state_text = "Idle";
+    uint32_t state_color = C_MUTED;
+    if (strcmp(state, "playing") == 0) {
+        state_text = LV_SYMBOL_PLAY " Playing";
+        state_color = C_OK;
+    } else if (strcmp(state, "paused") == 0) {
+        state_text = LV_SYMBOL_PAUSE " Paused";
+        state_color = C_BUSY;
+    } else if (strcmp(state, "stale") == 0) {
+        state_text = "Offline";
+        state_color = C_FAINT;
+    } else if (strcmp(state, "unknown") == 0) {
+        state_text = "Reading...";
+        state_color = C_FAINT;
+    }
+    paragraph(card, ui.m.small, state_color, state_text);
+    paragraph(card, ui.m.compact ? ui.m.body : ui.m.title, C_TEXT, title[0] ? title : "Nothing playing");
+    if (artist[0]) paragraph(card, ui.m.small, C_MUTED, artist);
 }
 
 /* The playback keys that sit beside Mute, and the CH rocker. */
@@ -691,7 +745,15 @@ static void build_body(const cJSON *screen, bool is_blocked)
         paragraph(ui.body, ui.m.small, C_BAD, text);
     }
     const cJSON *remote = cJSON_GetObjectItemCaseSensitive(screen, "remote");
-    if (true_of(screen, "hidden")) {
+    bool is_listen = strcmp(string_of(screen, "mode"), "listen") == 0;
+    if (is_listen) {
+        if (true_of(screen, "hidden")) {
+            note("No speaker", "Choose a speaker above");
+        } else {
+            now_playing(screen);
+            if (!ui.m.compact) rows_mode(screen, true);
+        }
+    } else if (true_of(screen, "hidden")) {
         note("Off", "Choose a source, or a device for its buttons");
     } else if (!cJSON_IsObject(remote)) {
         note("Nothing to control", "Choose a source above");
@@ -713,15 +775,28 @@ static void build_body(const cJSON *screen, bool is_blocked)
     if (is_blocked) disable_keys(ui.body);
 }
 
+static void stop_slider_timer(void)
+{
+    if (ui.slider_timer) {
+        lv_timer_delete(ui.slider_timer);
+        ui.slider_timer = NULL;
+    }
+}
+
 /* The volume line follows the room's block, as every key on the web remote does. */
 static void block_footer(bool is_blocked)
 {
-    if (is_blocked) stop_repeat();
-    lv_obj_t *keys[] = { ui.volume_down, ui.volume_up, ui.mute };
-    for (size_t i = 0; i < 3; i++) {
-        if (!keys[i]) continue;
-        if (is_blocked) lv_obj_add_state(keys[i], LV_STATE_DISABLED);
-        else lv_obj_remove_state(keys[i], LV_STATE_DISABLED);
+    if (is_blocked) {
+        stop_repeat();
+        stop_slider_timer();
+        ui.slider_dragging = false;
+        ui.slider_dirty = false;
+    }
+    lv_obj_t *controls[] = { ui.volume_down, ui.volume_up, ui.mute, ui.volume_slider };
+    for (size_t i = 0; i < sizeof controls / sizeof controls[0]; i++) {
+        if (!controls[i]) continue;
+        if (is_blocked) lv_obj_add_state(controls[i], LV_STATE_DISABLED);
+        else lv_obj_remove_state(controls[i], LV_STATE_DISABLED);
     }
 }
 
@@ -739,6 +814,51 @@ static void room_cb(lv_event_t *event)
     if (ui.room_count < 2 || !ui.remote) return;
     int next = (ui.room_index + step + ui.room_count) % ui.room_count;
     tr_room(ui.remote, ui.rooms[next]);
+}
+
+static void room_picker_open_cb(lv_event_t *event)
+{
+    (void)event;
+    if (ui.room_count < 2 || !ui.remote) return;
+    if (ui.m.compact) {
+        int next = (ui.room_index + 1) % ui.room_count;
+        tr_room(ui.remote, ui.rooms[next]);
+        return;
+    }
+    ui.room_picker_open = true;
+    tu_changed(UI_CHANGED_PICKER);
+}
+
+static void mode_cb(lv_event_t *event)
+{
+    (void)event;
+    if (!ui.remote || !ui.multi_mode) return;
+    tr_mode(ui.remote, ui.listen_mode ? "watch" : "listen");
+}
+
+static bool modes_has_both(const cJSON *screen)
+{
+    const cJSON *modes = cJSON_GetObjectItemCaseSensitive(screen, "modes");
+    bool has_watch = false, has_listen = false;
+    const cJSON *item;
+    cJSON_ArrayForEach(item, modes) {
+        if (!cJSON_IsString(item)) continue;
+        if (strcmp(item->valuestring, "watch") == 0) has_watch = true;
+        else if (strcmp(item->valuestring, "listen") == 0) has_listen = true;
+    }
+    return has_watch && has_listen;
+}
+
+static void show_mode(const cJSON *screen)
+{
+    ui.listen_mode = strcmp(string_of(screen, "mode"), "listen") == 0;
+    ui.multi_mode = modes_has_both(screen);
+    if (!ui.mode_btn) return;
+    show(ui.mode_btn, ui.multi_mode);
+    if (!ui.multi_mode) return;
+    set_text(ui.mode_label, ui.listen_mode ? "Listen" : "Watch");
+    if (ui.listen_mode) lv_obj_add_state(ui.mode_btn, LV_STATE_CHECKED);
+    else lv_obj_remove_state(ui.mode_btn, LV_STATE_CHECKED);
 }
 
 static void show_rooms(const cJSON *screen)
@@ -835,26 +955,132 @@ static void build_bubbles(const cJSON *screen)
 
 /* ---- the volume line ----------------------------------------------------- */
 
+static double slider_value_of(int32_t pos)
+{
+    double v = ui.audio_min + (double)pos * ui.audio_step;
+    if (v < ui.audio_min) v = ui.audio_min;
+    if (v > ui.audio_max) v = ui.audio_max;
+    long long tenths = (long long)(v >= 0.0 ? v * 10.0 + 0.5 : v * 10.0 - 0.5);
+    return (double)tenths / 10.0;
+}
+
+static void slider_emit(double value)
+{
+    if (!ui.remote) return;
+    if (ui.slider_has_sent && ui.slider_sent == value) return;
+    ui.slider_sent = value;
+    ui.slider_has_sent = true;
+    ui.slider_dirty = false;
+    tr_volume(ui.remote, value);
+}
+
+static void slider_timer_cb(lv_timer_t *timer)
+{
+    (void)timer;
+    if (ui.slider_dirty) {
+        slider_emit(ui.slider_pending);
+        return;
+    }
+    stop_slider_timer();
+}
+
+static void slider_cb(lv_event_t *event)
+{
+    lv_event_code_t code = lv_event_get_code(event);
+    if (!ui.volume_slider || ui.slider_syncing) return;
+    if (lv_obj_has_state(ui.volume_slider, LV_STATE_DISABLED)) {
+        if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+            ui.slider_dragging = false;
+            ui.slider_dirty = false;
+            stop_slider_timer();
+        }
+        return;
+    }
+    if (code == LV_EVENT_PRESSED) {
+        ui.slider_dragging = true;
+        ui.slider_has_sent = false;
+        ui.slider_dirty = false;
+        return;
+    }
+    if (code == LV_EVENT_VALUE_CHANGED) {
+        double value = slider_value_of(lv_slider_get_value(ui.volume_slider));
+        ui.slider_pending = value;
+        char text[24];
+        long long whole = (long long)value;
+        if ((double)whole == value) snprintf(text, sizeof text, "%lld", whole);
+        else snprintf(text, sizeof text, "%.1f", value);
+        set_text(ui.audio_text, text);
+        if (!ui.slider_timer) {
+            slider_emit(value);
+            ui.slider_timer = lv_timer_create(slider_timer_cb, SLIDE_EVERY_MS, NULL);
+        } else {
+            ui.slider_dirty = true;
+        }
+        return;
+    }
+    if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        double value = slider_value_of(lv_slider_get_value(ui.volume_slider));
+        ui.slider_dragging = false;
+        stop_slider_timer();
+        if (ui.slider_dirty || !ui.slider_has_sent || ui.slider_sent != value) slider_emit(value);
+        ui.slider_dirty = false;
+    }
+}
+
 static void show_audio(void)
 {
     const cJSON *audio = tr_audio(ui.remote);
     show(ui.footer, audio != NULL);
-    if (!audio) return;
+    if (!audio) {
+        stop_slider_timer();
+        ui.slider_dragging = false;
+        ui.slider_dirty = false;
+        return;
+    }
     /* The level large under the device's name; a longer text (no level yet) says it all alone. */
     const char *text = string_of(audio, "text");
     bool level = strlen(text) <= 6;
     set_text(ui.audio_short, !level ? "" : ui.m.compact ? string_of(audio, "caption") : string_of(audio, "short"));
     show(ui.audio_short, level);
-    set_text(ui.audio_text, text);
-    set_font(ui.audio_text, level ? ui.m.value : ui.m.small);
-    lv_label_long_mode_t mode = level ? LV_LABEL_LONG_DOT : LV_LABEL_LONG_WRAP;
-    if (lv_label_get_long_mode(ui.audio_text) != mode) lv_label_set_long_mode(ui.audio_text, mode);
+    if (!ui.slider_dragging) {
+        set_text(ui.audio_text, text);
+        set_font(ui.audio_text, level ? ui.m.value : ui.m.small);
+        lv_label_long_mode_t mode = level ? LV_LABEL_LONG_DOT : LV_LABEL_LONG_WRAP;
+        if (lv_label_get_long_mode(ui.audio_text) != mode) lv_label_set_long_mode(ui.audio_text, mode);
+    }
     const cJSON *muted = cJSON_GetObjectItemCaseSensitive(audio, "muted");
     set_ink(ui.audio_text, cJSON_IsTrue(muted) ? C_BUSY : C_TEXT);
     if (ui.mute) {
         show(ui.mute, cJSON_IsBool(muted));
         if (cJSON_IsTrue(muted)) lv_obj_add_state(ui.mute, LV_STATE_CHECKED);
         else lv_obj_remove_state(ui.mute, LV_STATE_CHECKED);
+    }
+    if (ui.volume_slider) {
+        const cJSON *j_val = cJSON_GetObjectItemCaseSensitive(audio, "value");
+        const cJSON *j_min = cJSON_GetObjectItemCaseSensitive(audio, "min");
+        const cJSON *j_max = cJSON_GetObjectItemCaseSensitive(audio, "max");
+        const cJSON *j_step = cJSON_GetObjectItemCaseSensitive(audio, "step");
+        double vmin = cJSON_IsNumber(j_min) ? j_min->valuedouble : 0.0;
+        double vmax = cJSON_IsNumber(j_max) ? j_max->valuedouble : 100.0;
+        double vstep = cJSON_IsNumber(j_step) && j_step->valuedouble > 0.0 ? j_step->valuedouble : 1.0;
+        bool disabled = true_of(audio, "disabled") || !cJSON_IsNumber(j_val);
+        bool slider_ok = !disabled && vmax > vmin;
+        show(ui.volume_slider, slider_ok);
+        if (slider_ok && !ui.slider_dragging) {
+            int32_t steps = (int32_t)((vmax - vmin) / vstep + 0.5);
+            if (steps < 1) steps = 1;
+            if (steps > 1000) steps = 1000;
+            int32_t pos = (int32_t)((j_val->valuedouble - vmin) / vstep + 0.5);
+            if (pos < 0) pos = 0;
+            if (pos > steps) pos = steps;
+            ui.audio_min = vmin;
+            ui.audio_max = vmax;
+            ui.audio_step = vstep;
+            ui.slider_syncing = true;
+            lv_slider_set_range(ui.volume_slider, 0, steps);
+            lv_slider_set_value(ui.volume_slider, pos, LV_ANIM_OFF);
+            ui.slider_syncing = false;
+        }
     }
 }
 
@@ -867,15 +1093,21 @@ static void make_footer(lv_obj_t *parent)
     lv_obj_set_style_border_side(ui.footer, LV_BORDER_SIDE_TOP, 0);
     lv_obj_set_style_border_width(ui.footer, 1, 0);
     lv_obj_set_style_border_color(ui.footer, lv_color_hex(C_LINE), 0);
-    lv_obj_set_flex_flow(ui.footer, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_flow(ui.footer, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(ui.footer, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(ui.footer, ui.m.gap, 0);
+    lv_obj_set_style_pad_row(ui.footer, ui.m.gap, 0);
+
+    lv_obj_t *controls = box(ui.footer);
+    lv_obj_set_size(controls, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(controls, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(controls, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(controls, ui.m.gap, 0);
 
     bool keys = !ui.m.compact && !(ui.keys.volume && !ui.roomy);
     /* remotes.js's specs, which every screen repeats: the line exists before the first screen. */
     int32_t width = ui.m.key_min_w - 4;
-    if (keys) ui.volume_down = make_key(ui.footer, "volume_down", "minus", "", "Volume down", true, width, ui.m.key_h);
-    lv_obj_t *middle = box(ui.footer);
+    if (keys) ui.volume_down = make_key(controls, "volume_down", "minus", "", "Volume down", true, width, ui.m.key_h);
+    lv_obj_t *middle = box(controls);
     lv_obj_set_flex_grow(middle, 1);
     lv_obj_set_height(middle, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(middle, LV_FLEX_FLOW_COLUMN);
@@ -889,8 +1121,34 @@ static void make_footer(lv_obj_t *parent)
     lv_obj_set_style_text_align(ui.audio_text, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(ui.audio_text, LV_LABEL_LONG_DOT);
     if (keys) {
-        ui.volume_up = make_key(ui.footer, "volume_up", "plus", "", "Volume up", true, width, ui.m.key_h);
-        ui.mute = make_key(ui.footer, "mute", "mute", "", "Mute", false, width, ui.m.key_h);
+        ui.volume_up = make_key(controls, "volume_up", "plus", "", "Volume up", true, width, ui.m.key_h);
+        ui.mute = make_key(controls, "mute", "mute", "", "Mute", false, width, ui.m.key_h);
+    }
+    if (ui.width >= SLIDER_MIN_W && ui.height >= SLIDER_MIN_H) {
+        ui.volume_slider = lv_slider_create(ui.footer);
+        lv_obj_set_width(ui.volume_slider, LV_PCT(100));
+        lv_obj_set_height(ui.volume_slider, 10);
+        lv_obj_set_style_margin_ver(ui.volume_slider, 4, 0);
+        lv_obj_set_ext_click_area(ui.volume_slider, 10);
+        lv_obj_remove_flag(ui.volume_slider, LV_OBJ_FLAG_SCROLL_CHAIN);
+        lv_obj_set_style_bg_color(ui.volume_slider, lv_color_hex(C_LINE), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(ui.volume_slider, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_radius(ui.volume_slider, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(ui.volume_slider, lv_color_hex(C_ACCENT), LV_PART_INDICATOR);
+        lv_obj_set_style_bg_opa(ui.volume_slider, LV_OPA_COVER, LV_PART_INDICATOR);
+        lv_obj_set_style_radius(ui.volume_slider, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(ui.volume_slider, lv_color_hex(C_TEXT), LV_PART_KNOB);
+        lv_obj_set_style_bg_opa(ui.volume_slider, LV_OPA_COVER, LV_PART_KNOB);
+        lv_obj_set_style_border_color(ui.volume_slider, lv_color_hex(C_ACCENT), LV_PART_KNOB);
+        lv_obj_set_style_border_width(ui.volume_slider, 2, LV_PART_KNOB);
+        lv_obj_set_style_pad_all(ui.volume_slider, 4, LV_PART_KNOB);
+        lv_obj_set_style_radius(ui.volume_slider, LV_RADIUS_CIRCLE, LV_PART_KNOB);
+        lv_obj_add_style(ui.volume_slider, &ui.key_disabled, LV_STATE_DISABLED);
+        lv_obj_add_event_cb(ui.volume_slider, slider_cb, LV_EVENT_PRESSED, NULL);
+        lv_obj_add_event_cb(ui.volume_slider, slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
+        lv_obj_add_event_cb(ui.volume_slider, slider_cb, LV_EVENT_RELEASED, NULL);
+        lv_obj_add_event_cb(ui.volume_slider, slider_cb, LV_EVENT_PRESS_LOST, NULL);
+        show(ui.volume_slider, false);
     }
     show(ui.footer, false);
 }
@@ -943,6 +1201,7 @@ static void show_waiting(void)
     set_text(ui.short_label, "");
     show(ui.room_prev, false);
     show(ui.room_next, false);
+    if (ui.mode_btn) show(ui.mode_btn, false);
     if (link == TR_LINK_OFFLINE) note("Not connected", "Tap to try again");
     else if (link == TR_LINK_CONNECTING) note("Connecting", "Looking for the remote's base...");
     else note("Connected", "Waiting for the screen...");
@@ -1088,12 +1347,107 @@ static void show_inputs(void)
     if (over > 0) lv_obj_set_height(list, lv_obj_get_height(list) - over);
 }
 
+/* ---- room picker overlay ------------------------------------------------- */
+
+static void close_room_picker(void)
+{
+    ui.room_picker_open = false;
+    if (!ui.room_picker) return;
+    /* Hide now so no second tap reaches its items before show_room_picker deletes it. */
+    lv_obj_add_flag(ui.room_picker, LV_OBJ_FLAG_HIDDEN);
+    tu_changed(UI_CHANGED_PICKER);
+}
+
+static void room_pick_cb(lv_event_t *event)
+{
+    const char *id = lv_event_get_user_data(event);
+    if (!ui.remote || !ui.room_picker || lv_obj_has_flag(ui.room_picker, LV_OBJ_FLAG_HIDDEN)) return;
+    if (id) tr_room(ui.remote, id);
+    close_room_picker();
+}
+
+static void show_room_picker(void)
+{
+    if (ui.room_picker) {
+        lv_obj_delete(ui.room_picker);
+        ui.room_picker = NULL;
+        ui.picker_ids.used = 0;
+    }
+    const cJSON *screen = tr_screen(ui.remote);
+    if (!ui.room_picker_open || !screen) return;
+
+    lv_obj_t *shade = lv_obj_create(lv_display_get_layer_top(ui.display));
+    ui.room_picker = shade;
+    lv_obj_remove_style_all(shade);
+    lv_obj_set_size(shade, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(shade, lv_color_hex(C_BG), 0);
+    lv_obj_set_style_bg_opa(shade, LV_OPA_70, 0);
+    lv_obj_remove_flag(shade, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *panel = lv_obj_create(shade);
+    lv_obj_remove_style_all(panel);
+    lv_obj_add_style(panel, &ui.chip, 0);
+    lv_obj_set_style_border_color(panel, lv_color_hex(C_LINE), 0);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(C_SURFACE), 0);
+    lv_obj_set_size(panel, ui.width - 2 * ui.m.margin, LV_SIZE_CONTENT);
+    lv_obj_center(panel);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(panel, ui.m.gap, 0);
+    lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *title = label(panel, ui.m.title, C_TEXT, "Rooms");
+    lv_obj_set_width(title, LV_PCT(100));
+    lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
+
+    lv_obj_t *list = box(panel);
+    lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(list, LV_DIR_VER);
+    lv_obj_set_size(list, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(list, ui.m.gap, 0);
+
+    const char *current = string_of(screen, "room");
+    const cJSON *room;
+    cJSON_ArrayForEach(room, cJSON_GetObjectItemCaseSensitive(screen, "rooms")) {
+        const char *id = keep(&ui.picker_ids, string_of(room, "id"));
+        if (!id) break;
+        bool is_current = strcmp(id, current) == 0;
+        bool is_locked = true_of(room, "locked");
+        lv_obj_t *item = key_button(list, LV_PCT(100), ui.m.key_h);
+        lv_obj_set_style_pad_hor(item, ui.m.margin, 0);
+        lv_obj_set_flex_flow(item, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(item, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_column(item, 6, 0);
+        if (is_current) lv_obj_add_state(item, LV_STATE_CHECKED);
+        lv_obj_t *dot = led_dot(item, 8);
+        lv_obj_set_style_bg_color(dot, lv_color_hex(led_color(string_of(room, "led"))), 0);
+        lv_obj_t *name = label(item, ui.m.body, is_current ? C_INK : C_TEXT, string_of(room, "label"));
+        lv_obj_set_flex_grow(name, 1);
+        lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
+        if (is_locked) padlock(item, is_current ? C_INK : C_BUSY);
+        const char *room_short = string_of(room, "short");
+        if (room_short[0]) {
+            lv_obj_t *sub = label(item, ui.m.small, is_current ? C_INK : C_MUTED, room_short);
+            lv_label_set_long_mode(sub, LV_LABEL_LONG_DOT);
+        }
+        lv_obj_add_event_cb(item, room_pick_cb, LV_EVENT_CLICKED, (void *)id);
+    }
+    lv_obj_t *close_btn = key_button(panel, LV_PCT(100), ui.m.key_h);
+    lv_obj_t *close_lbl = label(close_btn, ui.m.body, C_MUTED, "Close");
+    lv_obj_center(close_lbl);
+    lv_obj_add_event_cb(close_btn, room_pick_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_update_layout(panel);
+    int32_t over = lv_obj_get_height(panel) - (ui.height - 2 * ui.m.margin);
+    if (over > 0) lv_obj_set_height(list, lv_obj_get_height(list) - over);
+}
+
 /* ---- updates ------------------------------------------------------------- */
 
 static void show_screen(void)
 {
     static const char *const body_parts[] = { "hidden", "remote", "pad", "rows", "beside", "channel", "buttons",
-                                              "notice", "problem", "locked" };
+                                              "notice", "problem", "locked", "mode", "modes", "playing" };
     static const char *const bubble_parts[] = { "bubbles", "selected", "locked" };
     const cJSON *screen = tr_screen(ui.remote);
     if (!screen) {
@@ -1103,6 +1457,7 @@ static void show_screen(void)
     bool was_waiting = ui.waiting_link >= 0;
     show_rooms(screen);
     show_status(screen);
+    show_mode(screen);
     uint32_t hash = hash_members(screen, bubble_parts, sizeof bubble_parts / sizeof bubble_parts[0]);
     if (hash != ui.bubbles_hash || was_waiting) build_bubbles(screen);
     ui.bubbles_hash = hash;
@@ -1113,6 +1468,7 @@ static void show_screen(void)
     ui.body_hash = hash;
     show_all_off(screen);
     block_footer(is_blocked);
+    if (ui.room_picker_open) show_room_picker();
 }
 
 static void update_cb(lv_timer_t *timer)
@@ -1125,6 +1481,7 @@ static void update_cb(lv_timer_t *timer)
     if (what & TR_CHANGED_AUDIO) show_audio();
     if (what & TR_CHANGED_TOAST) show_toast();
     if (what & TR_CHANGED_INPUTS) show_inputs();
+    if (what & UI_CHANGED_PICKER) show_room_picker();
 }
 
 void tu_changed(unsigned what)
@@ -1172,7 +1529,7 @@ static void make_header(lv_obj_t *parent)
     lv_obj_set_style_text_align(ui.room_label, ui.m.compact ? LV_TEXT_ALIGN_LEFT : LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(ui.room_label, LV_LABEL_LONG_DOT);
     ui.room_next = arrow(top, LV_SYMBOL_RIGHT, 1);
-    lv_obj_add_event_cb(top, room_cb, LV_EVENT_CLICKED, (void *)(intptr_t)1);
+    lv_obj_add_event_cb(top, room_picker_open_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_add_event_cb(top, room_cb, LV_EVENT_GESTURE, NULL);
 
     lv_obj_t *status = box(parent);
@@ -1185,6 +1542,15 @@ static void make_header(lv_obj_t *parent)
     ui.short_label = label(status, ui.m.compact ? ui.m.small : ui.m.body, C_MUTED, "");
     lv_obj_set_flex_grow(ui.short_label, 1);
     lv_label_set_long_mode(ui.short_label, LV_LABEL_LONG_DOT);
+    ui.mode_btn = key_button(status, LV_SIZE_CONTENT, ui.m.compact ? 18 : 24);
+    lv_obj_set_style_pad_hor(ui.mode_btn, ui.m.compact ? 4 : 8, 0);
+    lv_obj_set_style_radius(ui.mode_btn, LV_RADIUS_CIRCLE, 0);
+    ui.mode_label = lv_label_create(ui.mode_btn);
+    lv_obj_set_style_text_font(ui.mode_label, ui.m.small, 0);
+    lv_label_set_text(ui.mode_label, "");
+    lv_obj_center(ui.mode_label);
+    lv_obj_add_event_cb(ui.mode_btn, mode_cb, LV_EVENT_CLICKED, NULL);
+    show(ui.mode_btn, false);
     ui.link_mark = label(status, ui.m.body, C_BUSY, "");
     lv_obj_add_flag(ui.link_mark, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_ext_click_area(ui.link_mark, 16);
@@ -1230,8 +1596,10 @@ static void make_body(lv_obj_t *parent)
 static void reset(void)
 {
     stop_repeat();
+    stop_slider_timer();
     close_toast();
     if (ui.inputs) lv_obj_delete(ui.inputs);
+    if (ui.room_picker) lv_obj_delete(ui.room_picker);
     if (ui.blink_timer) lv_timer_delete(ui.blink_timer);
     if (ui.update) lv_timer_delete(ui.update);
     if (ui.screen) lv_obj_clean(ui.screen);

@@ -1,0 +1,216 @@
+/*
+ * Room climate controls: compact thermostat cards on the Remote page, shown
+ * only when the active room owns one or more climate devices.
+ */
+
+.climate {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  width: 100%;
+  max-width: var(--remote-width);
+}
+
+.climate[hidden] {
+  display: none;
+}
+
+.climate-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-panel);
+  color: var(--ink);
+}
+
+.climate-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.climate-card__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+}
+
+.climate-card__badges {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.climate-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--well);
+  color: var(--ink-muted);
+  border: 1px solid var(--panel-border);
+}
+
+.climate-pill--heating {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.climate-pill--hold {
+  background: var(--well);
+  color: var(--ink);
+}
+
+.climate-banners {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.climate-banner {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-row);
+  font-size: 12px;
+  line-height: 1.4;
+  border: 1px solid var(--panel-border);
+}
+
+.climate-banner--warn {
+  background: var(--well);
+  color: var(--led-busy);
+  border-color: var(--led-busy);
+}
+
+.climate-banner--bad {
+  background: var(--bad-soft);
+  color: var(--bad);
+  border-color: var(--bad);
+}
+
+.climate-card__main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.climate-reading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.climate-reading__label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+}
+
+.climate-reading__value {
+  font-size: 26px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.climate-reading__target {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.climate-setpoint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.climate-setpoint__value {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 64px;
+}
+
+.climate-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-row);
+  border: 1px solid var(--key-rim);
+  background: var(--key-top);
+  color: var(--key-ink);
+  font-family: var(--font-ui);
+  font-size: 20px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.climate-step:hover:not(:disabled) {
+  background: var(--panel-hover);
+}
+
+.climate-step:active:not(:disabled) {
+  background: var(--key-pressed);
+}
+
+.climate-step:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.climate-modes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.climate-mode {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-row);
+  border: 1px solid var(--key-rim);
+  background: var(--key-top);
+  color: var(--key-ink);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.climate-mode:hover:not(:disabled) {
+  background: var(--panel-hover);
+}
+
+.climate-mode.is-active {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+
+.climate-mode:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

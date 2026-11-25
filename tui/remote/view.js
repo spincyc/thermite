@@ -21,6 +21,7 @@ const Day = require("./day");
 const Topology = require("./topology");
 const Landing = require("./landing");
 const Listen = require("./listen");
+const Climate = require("./climate");
 const Navigation = require("../../web/remote/navigation");
 
 // One column each: a key shows its icon as one of these, or its caption.
@@ -742,7 +743,10 @@ function remoteContent(frame, g, w, height, ctx) {
     y += 1;
   }
   // A room that is off shows no remote until a device bubble is tapped.
-  if (session.remoteHidden(list)) return paragraph(g, 2, y + 1, w - 4, "Off \u00b7 choose a source, or a device for its buttons", "dim");
+  if (session.remoteHidden(list)) {
+    const end = paragraph(g, 2, y + 1, w - 4, "Off \u00b7 choose a source, or a device for its buttons", "dim");
+    return Climate.list(ctx).length ? Climate.render(g, w, end + 1, ctx, KIT) : end;
+  }
   const remote = session.remoteOf(target);
   const groups = remote && remote.keyGroups && remote.keyGroups.length ? remote.keyGroups : null;
   const dense = w >= 104 && remote && remote.wide && groups && groups.some((group) => !group.primary);
@@ -774,7 +778,9 @@ function remoteContent(frame, g, w, height, ctx) {
   const left = Math.floor((w - width) / 2);
   copyGrid(g, body, left, y);
   frame.remoteBody = { left, width, primaryWidth, columns: dense ? 2 : 1, height: body.height, flat: short };
-  return y + body.height;
+  let end = y + body.height;
+  if (Climate.list(ctx).length) end = Climate.render(g, w, end + 1, ctx, KIT);
+  return end;
 }
 
 function copyGrid(into, from, x, y) {

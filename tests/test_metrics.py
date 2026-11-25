@@ -1130,7 +1130,7 @@ class Signals(unittest.TestCase):
             unread = oh_metrics.unobserved(House(inventory), conf)
             for device in inventory["devices"]:
                 read = oh_metrics.signals(device, conf, found)
-                self.assertLessEqual({signal.kind for signal in read}, {"thing", "port", "reads", "online", "recording"})
+                self.assertLessEqual({signal.kind for signal in read}, {"thing", "port", "reads", "online", "recording", "has_error"})
                 for control in (device.get("controls") or {}).get("control") or []:
                     through = [signal for signal in read if control in signal.integrations]
                     self.assertEqual(not through, (device["id"], control) in unread, (name, phase, control))
@@ -1226,7 +1226,7 @@ class Signals(unittest.TestCase):
                     self.assertTrue(got[0].control)
 
     def test_every_kind_of_signal_has_its_words_for_a_person(self):
-        self.assertEqual(set(oh_metrics.SIGNAL_WORDS), {"thing", "port", "reads", "online", "recording"})
+        self.assertEqual(set(oh_metrics.SIGNAL_WORDS), {"thing", "port", "reads", "online", "recording", "has_error"})
         signal = oh_metrics.Signal("port", ("sony_rest",), "probe_success",
                                    (("job", "device_tcp"), ("device", "example_tv"), ("port", "80")), 0, True)
         self.assertEqual(oh_metrics.signal_words(signal),

@@ -123,6 +123,7 @@
     if (!ready) return;
     if (event.type === "diagnostics") return updateSignal();
     if (event.type === "change" || event.type === "access") scheduleUpdate();
+    else if (event.type === "climate") updateClimate();
     else if (event.type === "audio") updateAudio();
     else if (event.type === "device") {
       updateAudio();
@@ -207,6 +208,7 @@
       $("#now").hidden = true;
       $("#controls").hidden = true;
       $("#listen").hidden = true;
+      if ($("[data-climate]")) $("[data-climate]").hidden = true;
       $("[data-listen-info]").hidden = true;
       const told = $("[data-off-note]");
       told.hidden = false;
@@ -230,6 +232,7 @@
     updateAlert();
     updateControls();
     updateAudio();
+    updateClimate();
     updateSimulation();
     updateSignal();
     updateRoomLock();
@@ -947,6 +950,16 @@
     });
   }
 
+  function updateClimate() {
+    const box = $("[data-climate]");
+    if (!box) return;
+    if (globalThis.RemoteClimate && typeof globalThis.RemoteClimate.render === "function" && typeof session.roomClimate === "function") {
+      globalThis.RemoteClimate.render(box, session);
+    } else {
+      box.hidden = true;
+    }
+  }
+
   function updateSimulation() {
     all("[data-action=simulate-matrix]").forEach((button) => {
       button.setAttribute("aria-checked", session.isAnswering() ? "true" : "false");
@@ -1116,13 +1129,23 @@
       case "scroll-targets":
         scrollTargets(Number(action.getAttribute("data-step")), action.closest(".targets-wrap") && action.closest(".targets-wrap").querySelector(".targets"));
         break;
+      case "climate-step":
+        if (typeof session.stepClimateSetpoint === "function") {
+          session.stepClimateSetpoint(action.getAttribute("data-device"), Number(action.getAttribute("data-step")));
+        }
+        break;
+      case "climate-mode":
+        if (typeof session.setClimateMode === "function") {
+          session.setClimateMode(action.getAttribute("data-device"), action.getAttribute("data-mode"));
+        }
+        break;
     }
   }
 
   function onPointerDown(event) {
     lastInput = "pointer";
     if (event.pointerType === "mouse" && event.button !== 0) return;
-    const target = event.target.closest("[data-button], [data-action=bubble], [data-speaker], [data-action=mode], [data-action=room], [data-action=all-off]");
+    const target = event.target.closest("[data-button], [data-action=bubble], [data-speaker], [data-action=mode], [data-action=room], [data-action=all-off], [data-action=climate-step], [data-action=climate-mode]");
     if (!target) return;
     haptic();
     if (!target.hasAttribute("data-button")) return;

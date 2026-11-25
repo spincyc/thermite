@@ -25,11 +25,33 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_deploy as deploy  # noqa: E402
 import oh_host  # noqa: E402
 import oh_music  # noqa: E402
+import oh_ports  # noqa: E402
 import oh_units  # noqa: E402
 import oh_sandbox as sandbox_lib  # noqa: E402
+from oh_conf import House  # noqa: E402
 from oh_cli import sandbox as sandbox_cli  # noqa: E402
 from oh_cli import health as health_cli  # noqa: E402
 from oh_cli import generate as generate_cli  # noqa: E402
+
+#: Minimal houses exercising conditional helper units.
+CLIMATE_HOUSE = House({
+    "version": 2,
+    "rooms": {"bath": {"label": "Bath", "tag": "Bathroom"}},
+    "devices": [
+        {"id": "bath_floor", "room": "bath", "kind": "thermostat", "make": "NuHeat", "model": "Signature",
+         "controls": {"control": ["nuheat_http"]}},
+    ],
+})
+ALL_HELPERS_HOUSE = House({
+    "version": 2,
+    "rooms": {"den": {"label": "Den", "tag": "Room"}, "bath": {"label": "Bath", "tag": "Bathroom"}},
+    "devices": [
+        {"id": "den_atv", "room": "den", "kind": "streamer", "make": "Apple", "model": "AppleTV14,1",
+         "ip": "192.0.2.40", "controls": {"control": ["pyatv_http"]}},
+        {"id": "bath_floor", "room": "bath", "kind": "thermostat", "make": "NuHeat", "model": "Signature",
+         "controls": {"control": ["nuheat_http"]}},
+    ],
+})
 
 VERSIONS = {
     "openhab": {"version": "5.2.3", "image": {
@@ -128,6 +150,7 @@ class Units(unittest.TestCase):
     def test_every_payload_renderer_refuses_root_or_invalid_numeric_identity(self):
         service = deploy.metrics.services(HOST)[0]
         renderers = (deploy.render_units, deploy.render_quadlet, deploy.render_atv_quadlet,
+                     deploy.render_climate_quadlet,
                      lambda versions, host: deploy.render_metrics_quadlet(versions, host, service),
                      deploy.render_music_quadlet, deploy.prepare_openhab_argv)
         for uid, gid in ((0, 9001), (9001, 0), (-1, 9001), (9001, -1), (True, 9001),
@@ -185,7 +208,7 @@ class Units(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source, generated = Path(tmp, "quadlets"), Path(tmp, "systemd")
             source.mkdir(); generated.mkdir()
-            rendered = deploy.render_units(VERSIONS, MUSIC_HOST)
+            rendered = deploy.render_units(VERSIONS, MUSIC_HOST, ALL_HELPERS_HOUSE)
             for name, text in rendered.items():
                 if name.endswith(".container"):
                     (source / Path(name).name).write_text(text)
@@ -211,15 +234,15 @@ class Units(unittest.TestCase):
                     for line in merged.stdout.splitlines() if "Command Line: " in line]
         expected = {f"/run/{unit.removesuffix('.service')}.cid" for unit in oh_units.CONTAINED}
         starts = [argv for argv in commands if argv[:2] == ["/usr/bin/podman", "run"]]
-        self.assertEqual(len(starts), 8)
+        self.assertEqual(len(starts), len(oh_units.CONTAINED))
         self.assertEqual({word.removeprefix("--cidfile=") for argv in starts for word in argv
                           if word.startswith("--cidfile=")}, expected)
         prestarts = [argv for argv in commands if argv[:3] == ["/usr/bin/rm", "-f", "--"]]
-        self.assertEqual(len(prestarts), 8)
+        self.assertEqual(len(prestarts), len(oh_units.CONTAINED))
         self.assertEqual({argv[3] for argv in prestarts}, expected)
         self.assertTrue(all(len(argv) == 4 for argv in prestarts))
         cleanup = [argv for argv in commands if argv[:2] == ["/usr/bin/podman", "rm"]]
-        self.assertEqual(len(cleanup), 16)  # ExecStop and ExecStopPost for each container.
+        self.assertEqual(len(cleanup), len(oh_units.CONTAINED) * 2)  # ExecStop and ExecStopPost for each container.
         for argv in cleanup:
             self.assertEqual(argv[:5], ["/usr/bin/podman", "rm", "-v", "-f", "-i"])
             self.assertEqual(len(argv), 6)
@@ -241,10 +264,21 @@ class Units(unittest.TestCase):
         # A share's mount unit is named after its mount point (tests/test_shares.py).
         full = {**MUSIC_HOST, "shares": {"music": {"type": "cifs", "server": "nas.example", "share": "music",
                                                    "where": "/mnt/music"}}}
-        self.assertEqual(set(deploy.render_units(VERSIONS, full)), set(deploy.INSTALLED) | set(deploy.share_units(full)))
-        self.assertEqual(set(deploy.render_units(VERSIONS, full)), set(deploy.host_units(full)))
+        self.assertEqual(set(deploy.render_units(VERSIONS, full, ALL_HELPERS_HOUSE)),
+                         set(deploy.INSTALLED) | set(deploy.share_units(full)))
+        self.assertEqual(set(deploy.render_units(VERSIONS, full, ALL_HELPERS_HOUSE)),
+                         set(deploy.host_units(full, ALL_HELPERS_HOUSE)))
         self.assertEqual(set(deploy.render_units(VERSIONS, HOST)), set(deploy.host_units(HOST)))
         self.assertEqual(set(deploy.INSTALLED) - set(deploy.host_units(HOST)), set(deploy.OPTIONAL_UNITS))
+        # Climate unit is emitted only when a house declares a climate helper.
+        self.assertFalse(deploy.needs_climate(None))
+        self.assertTrue(deploy.needs_climate(CLIMATE_HOUSE))
+        with_climate = deploy.render_units(VERSIONS, HOST, CLIMATE_HOUSE)
+        self.assertIn(deploy.CLIMATE_QUADLET, with_climate)
+        self.assertIn(deploy.CONTAINER_DROPINS[oh_units.CLIMATE], with_climate)
+        self.assertNotIn(deploy.ATV_QUADLET, with_climate)
+        self.assertIn(f"127.0.0.1:{oh_ports.CLIMATE_PORT}", with_climate[deploy.CLIMATE_QUADLET])
+        self.assertNotIn(deploy.CLIMATE_QUADLET, deploy.render_units(VERSIONS, HOST))
 
     def test_target_groups_only_thermite_members_and_services_share_the_slice(self):
         rendered = deploy.render_units(VERSIONS, MUSIC_HOST)
@@ -294,7 +328,7 @@ class Units(unittest.TestCase):
                         self.assertEqual(parsed["Service"]["Slice"], "thermite.slice")
                     if "Container" in parsed:
                         containers.add(parsed["Container"]["ContainerName"])
-        self.assertEqual(containers, set(oh_units.CONTAINERS.values()))
+        self.assertEqual(containers, set(oh_units.CONTAINERS.values()) - {oh_units.CONTAINERS[oh_units.CLIMATE]})
 
     def test_runtime_heap_is_bounded_alike_in_the_unit_and_the_sandbox(self):
         self.assertEqual(deploy.JAVA_HEAP_OPTS.split(), ["-Xmx1536m", "-XX:+ExitOnOutOfMemoryError"])

@@ -113,11 +113,47 @@ async function browser(page, client) {
   await bearer.ready(); assert(bearer.canEdit());
   assert.deepEqual([...new Set(labels)], ["tui/laptop"]);
   const tabLabels = [];
-  for (const client of [undefined, "web/../x", "tui/a b"]) {
+  for (const client of [undefined, "web/../x", "tui/a b", "handheld/", "handheld/../x"]) {
     const tab = Access.create({ base: origin, client, fetch: async (url, init) => { tabLabels.push(init.headers.get("X-Thermite-Client")); return response(mode(false)); } });
     await tab.loadSecurity();
   }
   assert(tabLabels.every(label => /^web\/[0-9a-f]{8}$/.test(label)), tabLabels.join());
+  // Handheld bridge label and per-remote scoped access.forClient() share session/token
+  // while stamping each remote's handheld/<name> on commands and keeping telemetry client as tui.
+  const hhHeaders = [];
+  const hhTelemetry = [];
+  const handheld = Access.create({ base: origin, token: personal, client: "handheld/bridge-host", fetch: async (url, init) => {
+    const route = new URL(url).pathname;
+    hhHeaders.push([route, init.headers.get("X-Thermite-Client"), init.headers.get("Authorization")]);
+    if (route === "/api/v1/security") return response(mode(true));
+    if (route === "/api/v1/me") return response(admin);
+    if (route === "/api/v1/telemetry") { hhTelemetry.push(JSON.parse(init.body)); return response({}, 204); }
+    return response({ accepted: true }, 202);
+  } });
+  await handheld.ready();
+  const lounge = handheld.forClient("handheld/lounge");
+  const den = handheld.forClient("handheld/den-1");
+  const fallback = handheld.forClient("bad/label");
+  assert.equal(handheld.clientLabel, "handheld/bridge-host");
+  assert.equal(lounge.clientLabel, "handheld/lounge");
+  assert.equal(den.clientLabel, "handheld/den-1");
+  assert.equal(fallback, handheld);
+  await lounge.command("den", "source", "off");
+  await den.deviceCommand("speaker_1", "volume", 40);
+  await lounge.musicCommand("speaker_1/transport", { action: "play" });
+  await den.allOff();
+  handheld.record("command_timeout", 2);
+  await handheld.flushTelemetry(true);
+  assert.deepEqual(hhHeaders.filter(([r]) => r.startsWith("/api/v1/rooms/") || r.startsWith("/api/v1/devices/") || r.startsWith("/api/v1/music/") || r === "/api/v1/all-off"), [
+    ["/api/v1/rooms/den/commands", "handheld/lounge", "Bearer " + personal],
+    ["/api/v1/devices/speaker_1/commands", "handheld/den-1", "Bearer " + personal],
+    ["/api/v1/music/speaker_1/transport", "handheld/lounge", "Bearer " + personal],
+    ["/api/v1/all-off", "handheld/den-1", "Bearer " + personal]
+  ]);
+  assert.equal(hhTelemetry[0].client, "tui", "handheld telemetry keeps gateway-accepted client kind");
+  const HandheldMain = require("../handheld/main");
+  assert.deepEqual(["pi.home.example", "DEN-PI", "", "bad host!"].map(HandheldMain.clientLabel),
+    ["handheld/pi", "handheld/den-pi", "handheld/bridge", "handheld/badhost"]);
   const Main = require("../tui/remote/main");
   assert.deepEqual(["laptop.home.example", "LAPTOP", "", "bad_host!"].map(Main.clientLabel), ["tui/laptop", "tui/laptop", "tui/terminal", "tui/terminal"]);
   const invalid = Access.create({ base: origin, token: personal, fetch: async (url, init) => {
@@ -245,5 +281,5 @@ async function browser(page, client) {
     assert.equal(Access.secureOrigin(value), null, String(value));
   assert.equal(Access.secureOrigin(secure + "/"), secure);
   assert.equal(Access.create({ base: origin, guest: true, mock: true, fetch: async () => response(guest) }).guestOnly, false);
-  process.stdout.write(JSON.stringify({ camerasNote: true, enabledGuest: true, guestGateway: true, terminalCsrf: true, noFallback: true, transitionFence: true, bootstrapForms: true, staleRecovery: true, terminalSecurity: true, guestListener: true }));
+  process.stdout.write(JSON.stringify({ camerasNote: true, enabledGuest: true, guestGateway: true, terminalCsrf: true, noFallback: true, transitionFence: true, bootstrapForms: true, staleRecovery: true, terminalSecurity: true, guestListener: true, handheldClients: true }));
 })().catch(error => { process.stderr.write(error.stack + "\n"); process.exitCode = 1; });

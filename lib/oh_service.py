@@ -64,17 +64,17 @@ PAIRING_LOGGING_UNPROTECTED = 3
 PRIVATE_CACHE_PROGRAM = re.compile(
     r"userdata/\.cache/org\.graalvm\.polyglot/engine/libtruffleattach/[0-9a-f]{64}/bin/libtruffleattach\.so\Z")
 
-SHARED = ("conf", "metrics", "atv/app", "exporter/app", "deploy")
+SHARED = ("conf", "metrics", "atv/app", "climate/app", "exporter/app", "deploy")
 #: Music Assistant's state (oh_music.STATE) is private as a whole: TIDAL's
 #: tokens and the key that encrypts them are in its settings.
-PRIVATE = ("secrets", "atv/secrets", "monitoring/secrets", "userdata", "music")
-NATIVE_ROOTS = ("conf", "userdata", LOGS, "addons", "atv", "deploy", "secrets", "metrics", "monitoring", "exporter",
+PRIVATE = ("secrets", "atv/secrets", "climate/secrets", "monitoring/secrets", "userdata", "music")
+NATIVE_ROOTS = ("conf", "userdata", LOGS, "addons", "atv", "climate", "deploy", "secrets", "metrics", "monitoring", "exporter",
                 "backups", "music")
 #: The openHAB container's own trees, its volumes. A change that needs only
 #: openHAB's offline preparation repairs just these: the gateway, the Apple TV
 #: helper and monitoring write their own stores.
 RUNTIME_STORES = ("conf", "userdata", LOGS, "addons", "secrets")
-RUNTIME_ROOTS = ("", "addons", "atv", "atv/venv", "monitoring", "monitoring/prometheus", "monitoring/grafana",
+RUNTIME_ROOTS = ("", "addons", "atv", "atv/venv", "climate", "monitoring", "monitoring/prometheus", "monitoring/grafana",
                  "exporter")
 DEPLOY_RECORDS = ("deploy/history", "deploy/deployed.json", RECEIPT)
 

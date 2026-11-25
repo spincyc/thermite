@@ -63,16 +63,39 @@ what to check on each board.
 
 ## Known gaps
 
-- The gateway's command trail names the bridge `tui/handheld.<host>`, one
-  label for every remote. A `handheld` kind needs `web/remote/access.js` and
-  `lib/oh_identity/trail.py` to accept it.
-- The shared access client follows one room's lock policy, so the bridge also
-  reloads the policy of each awake remote's room every 5 seconds.
 - Firmware updates are over USB only.
 - LVGL's built-in fonts have no accented letters; `tu_text` maps typographic
   punctuation to glyphs they have.
 - ESP-NOW runs at its default 1 Mbit/s for range; a full screen is two to
   four frames.
+
+## Completed since 2026-11-05
+
+- **Per-remote audit attribution (`handheld/<name>`)**: `lib/oh_identity/trail.py`
+  and `web/remote/access.js` now accept the `handheld` origin and
+  `handheld/<name>` client labels (while Guest listener requests keep
+  `origin=guest`). Each enrolled remote sends commands through an
+  `access.forClient("handheld/<name>")` scoped wrapper over the shared session
+  and SSE streams, and bridge-level requests use `handheld/<host>`.
+- **Ref-counted multi-room lock watching**: `web/remote/access.js` tracks
+  `watchedRooms` via `retainRoom(roomId)` / `addWatchedRoom(roomId)` (while
+  preserving single-slot `watchRoom(roomId)` for Web/TUI) and refreshes all
+  watched rooms on `locks` SSE events or policy updates. `handheld/main.js`
+  retired its 5-second `POLICY_EVERY_MS` loop; awake remotes retain their room
+  on wake/room-change and release it on sleep or removal.
+- **Listen/Music mode & touch volume slider**: `handheld/main.js` shares one
+  `MusicBackend` when the house has speakers, `handheld/bridge.js` wires
+  per-remote `RemoteAudio` + `RemoteMusic` + `RemoteListen` into each session,
+  `handheld/screen.js` and `PROTOCOL.md` support `mode`, `modes`, `playing`,
+  speaker bubbles, transport controls (`previous`, `play_pause`, `next`),
+  `rooms[].mode`, `rooms[].locked`, and `"mode"` / `"volume"` operations.
+  `thermite_ui.c` renders the Listen Now Playing view, mode toggle, locked
+  room picker, and a 250 ms-throttled LVGL touch volume slider on displays
+  `>= 240x320` (kept compact on smaller screens such as M5StickS3 `135x240`).
+- **Optional health metrics textfile**: `thermite handheld serve --metrics-file
+  PATH` (or `THERMITE_HANDHELD_METRICS_FILE`) atomically writes Prometheus
+  gauges (`thermite_handheld_base_connected`, battery, charging, last seen,
+  RSSI) with sanitized remote labels and mode `0644`.
 
 ## Open questions
 

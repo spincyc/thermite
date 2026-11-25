@@ -35,7 +35,7 @@ NAMES = (
     "guest_http", "access", "http", "https", "karaf", "lsp", "helper", "prometheus", "node_exporter",
     "blackbox", "exporter", "grafana", None, None, None, "callbacks",
     "sandbox_http", "sandbox_https", "sandbox_karaf", "boot_http", "boot_https", "boot_karaf", "docs", "preview",
-    "native_shutdown", "sandbox_shutdown", "boot_shutdown", "music", "music_stream",
+    "native_shutdown", "sandbox_shutdown", "boot_shutdown", "music", "music_stream", "climate",
 )
 DEFAULTS = MappingProxyType({name: BASE + offset for offset, name in enumerate(NAMES) if name})
 ACCESS_PORT = DEFAULTS["access"]
@@ -48,6 +48,7 @@ HELPER_PORT = DEFAULTS["helper"]
 CALLBACK_PORT = DEFAULTS["callbacks"]
 DOCS_PORT = DEFAULTS["docs"]
 GUEST_HTTP_PORT = DEFAULTS["guest_http"]
+CLIMATE_PORT = DEFAULTS["climate"]
 SANDBOX_URL = f"http://127.0.0.1:{DEFAULTS['sandbox_http']}"
 NATIVE_URL = f"http://127.0.0.1:{HTTP_PORT}"
 METRICS = ("prometheus", "node_exporter", "blackbox", "exporter", "grafana")

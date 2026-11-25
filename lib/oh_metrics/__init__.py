@@ -53,8 +53,9 @@ PROMETHEUS_PORT = oh_ports.DEFAULTS["prometheus"]
 NODE_EXPORTER_PORT = oh_ports.DEFAULTS["node_exporter"]
 BLACKBOX_PORT = oh_ports.DEFAULTS["blackbox"]
 GRAFANA_PORT = oh_ports.DEFAULTS["grafana"]
-#: The Apple TV helper (oh_atv.LISTEN).
+#: The Apple TV helper (oh_atv.LISTEN) and climate helper (oh_climate.daemon.LISTEN).
 HELPER_PORT = oh_ports.HELPER_PORT
+CLIMATE_PORT = oh_ports.CLIMATE_PORT
 LOOPBACK = "127.0.0.1"
 
 #: Prometheus keeps 13 months (it takes no month unit) and at most this much
@@ -523,6 +524,9 @@ def signals(device: dict, conf, found: list[Probe]) -> list[Signal]:
         if file and f"{ident}_recording" in file.items and is_monitored:
             out.append(Signal("recording", (module.NAME,), "thermite_item_value",
                               (("item", f"{ident}_recording"), ("point", "recording")), 0, True))
+        if file and f"{ident}_has_error" in file.items and is_monitored:
+            out.append(Signal("has_error", (module.NAME,), "thermite_item_value",
+                              (("item", f"{ident}_has_error"), ("point", "has_error")), 1, True))
     out += [Signal("port", probe.integrations, "probe_success",
                    (("job", DEVICE_JOB), ("device", ident), ("port", str(probe.port))), 0,
                    bool(needed.intersection(probe.integrations)))
@@ -539,6 +543,7 @@ SIGNAL_WORDS = {
     "reads": ("{integration}'s own reads of it", "it answers", "it cannot be read"),
     "online": ("Ping, or its controller's word", "it answers", "no response"),
     "recording": ("Camera recording", "recording", "not recording"),
+    "has_error": ("Device fault status", "no fault", "fault reported"),
 }
 
 
@@ -645,6 +650,10 @@ def select_point(name: str, item: dict) -> tuple[str, str] | None:
         return "online", "switch"
     if kind == "Switch" and name.endswith("_recording"):
         return "recording", "switch"
+    if kind == "Switch" and name.endswith("_has_error"):
+        return "has_error", "switch"
+    if kind == "Switch" and name.endswith("_heating_call"):
+        return "heating", "switch"
     if "Power" in tags:
         return {"Switch": ("power", "switch"), "String": ("power_state", "enum")}.get(kind)
     if "SoundVolume" in tags:
@@ -654,6 +663,8 @@ def select_point(name: str, item: dict) -> tuple[str, str] | None:
         return {"String": ("input", "enum"), "Number": ("input", "number")}.get(kind)
     if kind == "Number" and "Control" in tags:
         return None if name.endswith("_edid") else ("routing", "number")
+    if kind == "Number" and "Setpoint" in tags and "Temperature" in tags:
+        return "setpoint", "number"
     if kind == "Number" and "Measurement" in tags:
         return next(((point, "number") for tag, point in MEASURED.items() if tag in tags), None)
     return None
@@ -899,10 +910,10 @@ def health_paths(house: House, conf, items: dict) -> tuple[dict, list[dict]]:
                 used.append(audio)
                 device_checks(audio, {"item": name, "source": source})
     import oh_integrations
-    monitored = {module.NAME for module in oh_integrations.REGISTRY if module.MONITORED}
+    monitored = [module for module in oh_integrations.REGISTRY if module.MONITORED]
     for ident, device in devices.items():
         if (device.get("kind") in ("hdmi_matrix", "usb_matrix", "hdmi_switch")
-                or any(_uses(device, "observe", name) for name in monitored)):
+                or any(_uses(device, module.PHASE, module.NAME) for module in monitored)):
             device_checks(ident, None)
     for name, spec in sorted(items.items()):
         if spec.get("point") == "playing":
@@ -946,7 +957,9 @@ def prometheus_yml(house: House, host: dict, conf=None) -> str:
     yoke_job = yoke_scrape_job(host)
     found, _ = probes(house, conf)
     unread = unobserved(house, conf)
-    atv = oh_units.ATV in oh_integrations.helper_services(house)
+    helpers = oh_integrations.helper_services(house)
+    atv = oh_units.ATV in helpers
+    climate = oh_units.CLIMATE in helpers
     device_targets = [{"targets": [probe.target],
                        "labels": {"__param_module": TCP, "device": probe.device, "room": probe.room,
                                   "kind": probe.kind, "integration": ",".join(probe.integrations),
@@ -957,6 +970,8 @@ def prometheus_yml(house: House, host: dict, conf=None) -> str:
          "labels": {"__param_module": HTTP_2XX, "service": "openhab"}},
         *([{"targets": [f"http://{LOOPBACK}:{HELPER_PORT}/"],
             "labels": {"__param_module": HTTP_ANSWERS, "service": "apple_tv_helper"}}] if atv else []),
+        *([{"targets": [f"http://{LOOPBACK}:{CLIMATE_PORT}/health"],
+            "labels": {"__param_module": HTTP_2XX, "service": "climate_helper"}}] if climate else []),
         {"targets": [f"http://{LOOPBACK}:{port['grafana']}/api/health"],
          "labels": {"__param_module": HTTP_2XX, "service": "grafana"}},
     ]

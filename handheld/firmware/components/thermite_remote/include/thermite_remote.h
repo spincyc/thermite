@@ -88,6 +88,8 @@ bool tr_wake(tr_t *remote);
 bool tr_key(tr_t *remote, const char *const *ids, size_t count);
 bool tr_bubble(tr_t *remote, const char *id);
 bool tr_room(tr_t *remote, const char *id);
+bool tr_mode(tr_t *remote, const char *mode);
+bool tr_volume(tr_t *remote, double value);
 bool tr_all_off(tr_t *remote);
 bool tr_input(tr_t *remote, const char *value);
 bool tr_sleep(tr_t *remote);

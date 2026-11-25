@@ -89,6 +89,38 @@ static lv_obj_t *find_disabled_button(lv_obj_t *obj)
     return NULL;
 }
 
+static lv_obj_t *find_slider(lv_obj_t *obj)
+{
+    if (!obj || lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN)) return NULL;
+    if (lv_obj_check_type(obj, &lv_slider_class)) return obj;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(obj); i++) {
+        lv_obj_t *found = find_slider(lv_obj_get_child(obj, (int32_t)i));
+        if (found) return found;
+    }
+    return NULL;
+}
+
+static lv_obj_t *find_button_with_label(lv_obj_t *obj, const char *needle)
+{
+    if (!obj || lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN)) return NULL;
+    if (lv_obj_check_type(obj, &lv_button_class) && tree_has_label(obj, needle)) return obj;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(obj); i++) {
+        lv_obj_t *found = find_button_with_label(lv_obj_get_child(obj, (int32_t)i), needle);
+        if (found) return found;
+    }
+    return NULL;
+}
+
+static cJSON *decode_last_data(void)
+{
+    tl_header_t hdr;
+    uint8_t plain[TL_FRAME_MAX];
+    int n = tl_open(KEY, TL_FROM_REMOTE, g_last_frame, g_last_len, &hdr, plain, sizeof plain);
+    if (n <= 0 || hdr.type != TL_DATA) return NULL;
+    plain[n] = '\0';
+    return cJSON_Parse((const char *)plain);
+}
+
 static void answer_hello(tr_t *remote)
 {
     tl_header_t hdr;
@@ -208,6 +240,121 @@ int main(void)
              "\"buttons\":{}}}");
     lv_timer_handler();
     CHECK(lv_anim_count_running() == 0, "switching blink should use stepped timer, not lv_anim");
+
+    /* 5. Listen mode renders Now Playing (normalized), speaker bubbles, mode toggle, and touch volume slider. */
+    const char *listen_msg =
+        "{\"screen\":{\"id\":\"m1\",\"room\":\"kitchen\",\"label\":\"Kitchen\","
+        "\"rooms\":[{\"id\":\"west\",\"label\":\"West\",\"led\":\"ok\",\"short\":\"Player\",\"mode\":\"watch\",\"locked\":true},"
+        "{\"id\":\"kitchen\",\"label\":\"Kitchen\",\"led\":\"ok\",\"short\":\"Playing\",\"mode\":\"listen\"}],"
+        "\"led\":\"ok\",\"short\":\"Playing\",\"problem\":\"\",\"notice\":\"\",\"locked\":false,"
+        "\"bubbles\":["
+        "{\"id\":\"kitchen_amp\",\"label\":\"Sonos Amp\",\"state\":\"current\",\"lock\":false,\"inert\":false},"
+        "{\"id\":\"kitchen_mini\",\"label\":\"WiiM Mini\",\"state\":\"idle\",\"lock\":false,\"inert\":false}],"
+        "\"selected\":\"kitchen_amp\",\"hidden\":false,\"remote\":{\"label\":\"Sonos Amp\",\"note\":\"\"},"
+        "\"pad\":null,\"rows\":[{\"label\":\"\",\"keys\":[\"previous\",\"play_pause\",\"next\"],\"columns\":3}],"
+        "\"beside\":[],\"channel\":false,"
+        "\"buttons\":{\"previous\":{\"label\":\"Previous\",\"icon\":\"previous\"},"
+        "\"play_pause\":{\"label\":\"Pause\",\"icon\":\"pause\"},\"next\":{\"label\":\"Next\",\"icon\":\"next\"},"
+        "\"volume_up\":{\"label\":\"+\",\"icon\":\"plus\",\"repeat\":true},"
+        "\"volume_down\":{\"label\":\"-\",\"icon\":\"minus\",\"repeat\":true},"
+        "\"mute\":{\"label\":\"Mute\",\"icon\":\"mute\"}},"
+        "\"allOff\":false,\"mode\":\"listen\",\"modes\":[\"watch\",\"listen\"],"
+        "\"playing\":{\"title\":\"Harbour Lights\",\"artist\":\"The Lanterns \xC2\xB7 Harbour Lights\",\"state\":\"playing\"}},"
+        "\"audio\":{\"short\":\"Sonos Amp\",\"value\":32,\"min\":0,\"max\":100,\"step\":1,"
+        "\"muted\":false,\"disabled\":false,\"text\":\"32\",\"caption\":\"Sonos Amp \xC2\xB7 32\"}}";
+    tr_apply(remote, listen_msg);
+    lv_timer_handler();
+    CHECK(tree_has_label(scr, "Harbour Lights"), "listen screen missing Now Playing title");
+    CHECK(tree_has_label(scr, "The Lanterns"), "listen screen missing artist");
+    CHECK(tree_has_label(scr, "Playing"), "listen screen missing Playing state");
+    CHECK(tree_has_label(scr, "Sonos Amp"), "listen screen missing speaker bubble");
+
+    /* Mode toggle button sends {"mode":"watch"}. */
+    lv_obj_t *mode_btn = find_button_with_label(scr, "Listen");
+    CHECK(mode_btn != NULL, "listen mode toggle button not shown");
+    if (mode_btn) {
+        int before = g_sent;
+        lv_obj_send_event(mode_btn, LV_EVENT_CLICKED, NULL);
+        CHECK(g_sent == before + 1, "mode button did not send op");
+        cJSON *sent = decode_last_data();
+        const cJSON *mode_field = sent ? cJSON_GetObjectItemCaseSensitive(sent, "mode") : NULL;
+        CHECK(cJSON_IsString(mode_field) && strcmp(mode_field->valuestring, "watch") == 0,
+              "mode toggle did not send mode=watch");
+        cJSON_Delete(sent);
+    }
+
+    /* 5b. Tapping the room header opens the room picker showing locked indicator, then selects a room cleanly. */
+    lv_obj_t *header_row = lv_obj_get_child(scr, 0);
+    if (header_row) {
+        lv_obj_send_event(header_row, LV_EVENT_CLICKED, NULL);
+        lv_timer_handler();
+        CHECK(tree_has_label(top, "Rooms") && tree_has_label(top, "West") && tree_has_label(top, "Kitchen"),
+              "room picker did not list rooms");
+        lv_obj_t *west_btn = find_button_with_label(top, "West");
+        CHECK(west_btn != NULL, "West room button missing from room picker");
+        if (west_btn) {
+            int before = g_sent;
+            lv_obj_send_event(west_btn, LV_EVENT_CLICKED, NULL);
+            CHECK(g_sent == before + 1, "room picker selection did not send room op");
+            cJSON *picked = decode_last_data();
+            const cJSON *room_field = picked ? cJSON_GetObjectItemCaseSensitive(picked, "room") : NULL;
+            CHECK(cJSON_IsString(room_field) && strcmp(room_field->valuestring, "west") == 0,
+                  "room picker did not send room=west");
+            cJSON_Delete(picked);
+            lv_timer_handler();
+            CHECK(lv_obj_get_child_count(top) == 0, "room picker overlay not closed after selection");
+        }
+    }
+
+    /* 6. Interactive touch volume slider on 240x320 throttles at 250 ms and emits final value on release. */
+    lv_obj_t *slider = find_slider(scr);
+    CHECK(slider != NULL, "240x320 screen missing volume slider");
+    if (slider) {
+        CHECK(lv_slider_get_value(slider) == 32, "slider did not sync to audio.value=32");
+        int before = g_sent;
+        lv_obj_send_event(slider, LV_EVENT_PRESSED, NULL);
+        lv_slider_set_value(slider, 40, LV_ANIM_OFF);
+        lv_obj_send_event(slider, LV_EVENT_VALUE_CHANGED, NULL);
+        CHECK(g_sent == before + 1, "first slider move should emit immediately");
+        /* Rapid drags within 250 ms are throttled. */
+        g_clock += 50;
+        lv_slider_set_value(slider, 45, LV_ANIM_OFF);
+        lv_obj_send_event(slider, LV_EVENT_VALUE_CHANGED, NULL);
+        g_clock += 50;
+        lv_slider_set_value(slider, 50, LV_ANIM_OFF);
+        lv_obj_send_event(slider, LV_EVENT_VALUE_CHANGED, NULL);
+        lv_timer_handler();
+        CHECK(g_sent == before + 1, "slider drag within 250 ms was not throttled (%d sends)", g_sent - before);
+        /* At 250 ms the throttled value (50) is emitted. */
+        g_clock += 160;
+        lv_timer_handler();
+        CHECK(g_sent == before + 2, "slider throttle timer did not emit at 250 ms");
+        cJSON *mid = decode_last_data();
+        const cJSON *mid_vol = mid ? cJSON_GetObjectItemCaseSensitive(mid, "volume") : NULL;
+        CHECK(cJSON_IsNumber(mid_vol) && mid_vol->valuedouble == 50.0, "throttled volume != 50");
+        cJSON_Delete(mid);
+        /* Final release emits final value (58). */
+        g_clock += 40;
+        lv_slider_set_value(slider, 58, LV_ANIM_OFF);
+        lv_obj_send_event(slider, LV_EVENT_VALUE_CHANGED, NULL);
+        lv_obj_send_event(slider, LV_EVENT_RELEASED, NULL);
+        CHECK(g_sent == before + 3, "slider release did not emit final value");
+        cJSON *fin = decode_last_data();
+        const cJSON *fin_vol = fin ? cJSON_GetObjectItemCaseSensitive(fin, "volume") : NULL;
+        CHECK(cJSON_IsNumber(fin_vol) && fin_vol->valuedouble == 58.0, "final volume != 58");
+        cJSON_Delete(fin);
+    }
+
+    /* 7. Small screen (135x240) omits the touch volume slider. */
+    lv_display_t *small_disp = lv_display_create(135, 240);
+    static uint16_t small_fb[135 * 240];
+    lv_display_set_color_format(small_disp, LV_COLOR_FORMAT_RGB565);
+    lv_display_set_buffers(small_disp, small_fb, NULL, sizeof small_fb, LV_DISPLAY_RENDER_MODE_DIRECT);
+    lv_display_set_flush_cb(small_disp, flush_cb);
+    tu_create(small_disp, remote, &keys);
+    lv_timer_handler();
+    CHECK(find_slider(lv_display_get_screen_active(small_disp)) == NULL,
+          "compact 135x240 screen should not show touch volume slider");
 
     tr_destroy(remote);
     if (failures) {

@@ -14,7 +14,7 @@ const path = require("path");
 const vm = require("vm");
 
 const WEB = path.join(__dirname, "..", "..", "web", "remote");
-const SCRIPTS = ["navigation.js", "access.js", "house.js", "dom.js", "sse.js", "hold.js", "alerts.js", "remotes.js", "activity.js", "diagnostics.js", "backend.js", "audio-session.js", "session.js", "pair.js",
+const SCRIPTS = ["navigation.js", "access.js", "house.js", "dom.js", "sse.js", "hold.js", "alerts.js", "remotes.js", "activity.js", "diagnostics.js", "backend.js", "audio-session.js", "session.js", "climate.js", "pair.js",
   "music-backend.js", "music-session.js", "listen-session.js"];
 
 // The sample house, its music, its pairing and its demo account
@@ -52,6 +52,7 @@ function load(dir) {
     Remote: globalThis.RemoteBackend,
     Audio: globalThis.RemoteAudio,
     Session: globalThis.RemoteSession,
+    Climate: globalThis.RemoteClimate,
     Pairing: globalThis.PairingBackend,
     Music: globalThis.RemoteMusic,
     Listen: globalThis.RemoteListen,

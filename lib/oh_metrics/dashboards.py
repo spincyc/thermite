@@ -1232,7 +1232,8 @@ TEXTFILES = {oh_units.ACCESS: "Gateway", oh_units.ACCESS_WORKER: "Policy worker"
 def host(targets: int = 0, mapping: dict | None = None) -> dict:
     board = Board()
     node = 'job="node"'
-    units = _units(UNITS)
+    active = alerts.active_daemons(mapping or {})
+    units = _units(active)
     board.add(stat("Scrape targets", "count(up == 1) or vector(0)", f"suffix:/{targets} up" if targets else "none",
                    steps=((FAIL, None), (OK, targets or 1)),
                    description="Prometheus targets that answered their last scrape. Each device and service "

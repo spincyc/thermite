@@ -32,9 +32,22 @@ import oh_metrics  # noqa: E402
 import oh_service  # noqa: E402
 import oh_units  # noqa: E402
 from oh_access import staging  # noqa: E402
+from oh_conf import House  # noqa: E402
 from oh_install import ingress  # noqa: E402
 from tests import test_generated_output  # noqa: E402
 from tests.test_deploy import MUSIC_HOST, VERSIONS  # noqa: E402
+
+#: A fictional house using every optional helper service (ATV + climate).
+ALL_HELPERS_HOUSE = House({
+    "version": 2,
+    "rooms": {"den": {"label": "Den", "tag": "Room"}, "bath": {"label": "Bath", "tag": "Bathroom"}},
+    "devices": [
+        {"id": "den_atv", "room": "den", "kind": "streamer", "make": "Apple", "model": "AppleTV14,1",
+         "ip": "192.0.2.40", "controls": {"control": ["pyatv_http"]}},
+        {"id": "bath_floor", "room": "bath", "kind": "thermostat", "make": "NuHeat", "model": "Signature",
+         "controls": {"control": ["nuheat_http"]}},
+    ],
+})
 
 TARGET, SLICE = oh_units.TARGET, oh_units.SLICE
 #: Directives that make systemd start a unit along with another.
@@ -67,7 +80,7 @@ def rendered() -> dict[str, str]:
     """{unit name: text} of every unit Thermite renders and installs, on a
     host with all of them."""
     units = {}
-    for name, text in deploy.render_units(VERSIONS, MUSIC_HOST).items():
+    for name, text in deploy.render_units(VERSIONS, MUSIC_HOST, ALL_HELPERS_HOUSE).items():
         if name in deploy.CONTAINER_DROPINS.values():
             continue
         unit = Path(name).name

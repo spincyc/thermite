@@ -229,8 +229,8 @@ class RuntimeContract:
         return spec["item"], str(value), affected
 
     def device_command(self, device_id, action, value):
-        """(Item, value, {routed room: role}) of a command on a device's
-        audio page, checked as a room's is."""
+        """(Item, value, {routed room: role}) of a command on a device's own
+        route (audio page or climate device), checked as a room's is."""
         device = self.devices.get(device_id)
         spec = device and device["actions"].get(action)
         self.checked(spec, value)

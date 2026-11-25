@@ -35,8 +35,9 @@ EXAMPLE = oh_inventory.load(AREA / "instance/devices.yaml")
 #: so HEOS keeps its keys in a second one.
 COMMAND_RULES = {
     "androidtv_googletv/androidtv_googletv.js": 1, "avpro_telnet/avpro_telnet.js": 1, "bk808_cec.js": 1,
-    "globalcache_ir.js": 1, "heos.js": 2, "pyatv_http/pyatv_http.js": 1, "sonos_control.js": 1,
-    "sony_adcp/sony_adcp.js": 1, "sony_ip_control/sony_ip_control.js": 1, "vrroom_telnet/vrroom_telnet.js": 1}
+    "globalcache_ir.js": 1, "heos.js": 2, "nuheat_http/nuheat_http.js": 1, "pyatv_http/pyatv_http.js": 1,
+    "sonos_control.js": 1, "sony_adcp/sony_adcp.js": 1, "sony_ip_control/sony_ip_control.js": 1,
+    "vrroom_telnet/vrroom_telnet.js": 1}
 
 
 def scripts():
@@ -271,7 +272,7 @@ class Tally(unittest.TestCase):
         concludes = re.compile(r"thermiteDevice\.(?:health\(|problem\.read\()")
         polling = {module.NAME for module in integrations.REGISTRY if "SOURCE" in vars(module)
                    and concludes.search(Path(module.SOURCE).read_text(encoding="utf-8"))}
-        self.assertEqual(polling, {"avpro_telnet", "pyatv_http", "sony_adcp", "sony_ip_control", "vrroom_telnet"})
+        self.assertEqual(polling, {"avpro_telnet", "nuheat_http", "pyatv_http", "sony_adcp", "sony_ip_control", "vrroom_telnet"})
         self.assertEqual({module.NAME for module in integrations.REGISTRY if module.READS}, polling)
         for device, check in ((check["device"], check) for check in oh_metrics.exporter_map(House(EXAMPLE))["health_checks"]):
             if check["check"] == "reads":

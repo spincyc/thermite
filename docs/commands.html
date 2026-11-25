@@ -45,7 +45,7 @@
 <h2 id="production">Production runtime on this host</h2>
 <table class="verbs"><tbody><tr><td><a href="#install"><code>thermite install</code></a></td><td>install thermite on this host, with one approval for the whole run</td></tr><tr><td><a href="#upgrade"><code>thermite upgrade</code></a></td><td>update the application, native services and HTTPS gateway together</td></tr><tr><td><a href="#uninstall"><code>thermite uninstall</code></a></td><td>stop thermite here and remove its units; --purge deletes its state</td></tr><tr><td><a href="#rollback"><code>thermite rollback</code></a></td><td>install the commit deployed before the current one, or another</td></tr><tr><td><a href="#status"><code>thermite status</code></a></td><td>what is deployed and running here, against this checkout</td></tr><tr><td><a href="#history"><code>thermite history</code></a></td><td>this host&#x27;s deploys, numbered, the latest last</td></tr><tr><td><a href="#logs"><code>thermite logs</code></a></td><td>every Thermite service&#x27;s log, merged by time; --since and --until pick a range</td></tr><tr><td><a href="#bugreport"><code>thermite bugreport</code></a></td><td>collect versions, status, history, logs and system facts into one archive</td></tr></tbody></table>
 <h2 id="devices">The house&#x27;s devices</h2>
-<table class="verbs"><tbody><tr><td><a href="#dhcp-reservations"><code>thermite dhcp-reservations</code></a></td><td>list the UniFi DHCP reservations the house file needs</td></tr><tr><td><a href="#matrix-settings"><code>thermite matrix-settings</code></a></td><td>show matrix settings that differ from the house file; --apply sets them</td></tr><tr><td><a href="#control4"><code>thermite control4</code></a></td><td>export the Control4 project read-only and compare it</td></tr><tr><td><a href="#discover"><code>thermite discover</code></a></td><td>scan the LAN read-only and compare it with the house file</td></tr><tr><td><a href="#pair"><code>thermite pair</code></a></td><td>pair a TV with runtime, or check the Sony TVs&#x27; pairing</td></tr><tr><td><a href="#device"><code>thermite device</code></a></td><td>everything about one device: what it is, what watches it, what holds now</td></tr><tr><td><a href="#reboot"><code>thermite reboot</code></a></td><td>restart a device now as the nightly reboots do, or list how each went</td></tr><tr><td><a href="#cameras"><code>thermite cameras</code></a></td><td>read camera status, or configure native Protect bridges privately</td></tr><tr><td><a href="#apple-tv"><code>thermite apple-tv</code></a></td><td>run the Apple TV helper runtime calls</td></tr><tr><td><a href="#ir-profile"><code>thermite ir-profile</code></a></td><td>validate verified IR keys or print an iTach packet without transmitting</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#dhcp-reservations"><code>thermite dhcp-reservations</code></a></td><td>list the UniFi DHCP reservations the house file needs</td></tr><tr><td><a href="#matrix-settings"><code>thermite matrix-settings</code></a></td><td>show matrix settings that differ from the house file; --apply sets them</td></tr><tr><td><a href="#control4"><code>thermite control4</code></a></td><td>export the Control4 project read-only and compare it</td></tr><tr><td><a href="#discover"><code>thermite discover</code></a></td><td>scan the LAN read-only and compare it with the house file</td></tr><tr><td><a href="#pair"><code>thermite pair</code></a></td><td>pair a TV with runtime, or check the Sony TVs&#x27; pairing</td></tr><tr><td><a href="#device"><code>thermite device</code></a></td><td>everything about one device: what it is, what watches it, what holds now</td></tr><tr><td><a href="#reboot"><code>thermite reboot</code></a></td><td>restart a device now as the nightly reboots do, or list how each went</td></tr><tr><td><a href="#cameras"><code>thermite cameras</code></a></td><td>read camera status, or configure native Protect bridges privately</td></tr><tr><td><a href="#apple-tv"><code>thermite apple-tv</code></a></td><td>run the Apple TV helper runtime calls</td></tr><tr><td><a href="#climate"><code>thermite climate</code></a></td><td>run the NuHeat climate helper, commission thermostats or read status</td></tr><tr><td><a href="#ir-profile"><code>thermite ir-profile</code></a></td><td>validate verified IR keys or print an iTach packet without transmitting</td></tr></tbody></table>
 <h2 id="use">Front ends, themes and docs</h2>
 <table class="verbs"><tbody><tr><td><a href="#remote"><code>thermite remote</code></a></td><td>the house remote in a terminal</td></tr><tr><td><a href="#tui"><code>thermite tui</code></a></td><td>the house remote in a terminal on any computer, from its HTTPS gateway</td></tr><tr><td><a href="#handheld"><code>thermite handheld</code></a></td><td>handheld remotes: the bridge to the house, enrolling and forgetting them</td></tr><tr><td><a href="#access"><code>thermite access</code></a></td><td>site login, local identity bootstrap, HTTPS service and room policies</td></tr><tr><td><a href="#theme"><code>thermite theme</code></a></td><td>the flaming bowl mark and color themes: show, check, export</td></tr><tr><td><a href="#docs"><code>thermite docs</code></a></td><td>build the docs site, or export it to the thermite repository</td></tr></tbody></table>
 <h2 id="program">This program</h2>
@@ -86,6 +86,7 @@ the house&#x27;s devices:
   reboot               restart a device now as the nightly reboots do, or list how each went
   cameras              read camera status, or configure native Protect bridges privately
   apple-tv             run the Apple TV helper runtime calls
+  climate              run the NuHeat climate helper, commission thermostats or read status
   ir-profile           validate verified IR keys or print an iTach packet without transmitting
 
 front ends, themes and docs:
@@ -2139,6 +2140,149 @@ examples:
                                     as the helper&#x27;s container runs it
 </pre></details>
 </section>
+<section class="verb" id="climate"><h3><code>thermite climate</code></h3><p>Run the NuHeat climate helper, commission thermostats or read status.</p><pre class="help">usage: thermite climate [-h] [--config DIR] ACTION ...
+
+Manage the localhost NuHeat climate helper (lib/oh_climate/daemon.py): serve
+its loopback HTTP API, commission per-device NuHeat contracts privately into
+0600 service state, or query thermostat status and freshness.
+
+`serve` runs the localhost climate helper daemon on 127.0.0.1:13629 until
+SIGTERM or Ctrl-C, refusing non-loopback addresses without --allow-remote.
+
+`commission` validates a per-device NuHeat contract (serial number, verified
+raw temperature encoding, raw min/max bounds, writable modes, and optional
+readback mode codes) via nuheat_api.DeviceContract and writes it atomically
+with mode 0600 inside --secrets DIR. Serial numbers stay private and are never
+stored in devices.yaml or printed back.
+
+`status` queries the localhost climate helper daemon and reports thermostat
+readings, cloud-receipt freshness, commissioning state, and last write state.
+
+options:
+  -h, --help     show this help message and exit
+  --config DIR   use this private configuration directory
+
+actions:
+  ACTION
+    serve        run the localhost climate helper daemon
+    commission   validate and store a private 0600 device contract
+    status       query thermostat status from the localhost climate helper
+
+switches every verb takes:
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
+
+private state:
+  Commissioning contracts and OAuth tokens are stored under --secrets DIR
+  (default var/secrets/climate; directory 0700, files 0600) and are never
+  written to devices.yaml, Git, logs, or HTTP responses.
+
+examples:
+  thermite climate serve            run the localhost helper on 127.0.0.1:13629
+  thermite climate commission bath_floor --serial SN1 --encoding celsius_x100 --min-raw 500 --max-raw 3500 --modes Auto,Hold,Manual --mode-code Auto=1 --mode-code Hold=2 --mode-code Manual=3
+                                    write a private 0600 commissioning contract
+  thermite climate status bath_floor --json
+                                    query one thermostat&#x27;s status as JSON
+</pre>
+<details id="climate-serve"><summary><code>thermite climate serve</code></summary><pre class="help">usage: thermite climate serve [-h] [--listen HOST:PORT] [--secrets DIR] [--allow-remote]
+
+Run the localhost climate helper daemon.
+
+`serve` runs the localhost climate helper daemon on 127.0.0.1:13629 until
+SIGTERM or Ctrl-C, refusing non-loopback addresses without --allow-remote.
+
+options:
+  -h, --help          show this help message and exit
+  --listen HOST:PORT  address to serve on (default 127.0.0.1:13629)
+  --secrets DIR       where commissioning contracts and OAuth tokens are stored (default
+                      var/secrets/climate)
+  --allow-remote      allow a non-loopback --listen address (no authentication)
+
+switches every verb takes:
+  -q, --quiet         print only errors
+  -v, --verbose       also print, on stderr, the commands and HTTP requests it runs
+  --no-color          no color in what it prints (as NO_COLOR=1 does)
+
+private state:
+  Commissioning contracts and OAuth tokens are stored under --secrets DIR
+  (default var/secrets/climate; directory 0700, files 0600) and are never
+  written to devices.yaml, Git, logs, or HTTP responses.
+
+examples:
+  thermite climate serve            serve on 127.0.0.1:13629 until Ctrl-C
+  thermite climate serve --secrets /secrets
+                                    as thermite-climate.service runs it
+</pre></details>
+<details id="climate-commission"><summary><code>thermite climate commission</code></summary><pre class="help">usage: thermite climate commission [-h] --serial SERIAL --encoding ENC --min-raw N
+                                   --max-raw N [--modes MODES] [--mode-code MODE=INT]
+                                   [--secrets DIR] [--json]
+                                   DEVICE
+
+Validate and store a private 0600 device contract.
+
+`commission` validates a per-device NuHeat contract (serial number, verified
+raw temperature encoding, raw min/max bounds, writable modes, and optional
+readback mode codes) via nuheat_api.DeviceContract and writes it atomically
+with mode 0600 inside --secrets DIR. Serial numbers stay private and are never
+stored in devices.yaml or printed back.
+
+positional arguments:
+  DEVICE                inventory device id (snake_case)
+
+options:
+  -h, --help            show this help message and exit
+  --serial SERIAL       thermostat serial number (stored privately in 0600 state only)
+  --encoding ENC        verified raw temperature encoding (e.g. celsius_x100,
+                        fahrenheit_x100, nuheat_raw_f)
+  --min-raw N           verified minimum setpoint in raw units
+  --max-raw N           verified maximum setpoint in raw units
+  --modes MODES         comma-separated writable modes (default: Auto,Hold,Manual)
+  --mode-code MODE=INT  verified readback mode integer mapping (repeatable, e.g. Auto=1)
+  --secrets DIR         private secrets directory (default var/secrets/climate)
+  --json                print the report as JSON
+
+switches every verb takes:
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
+
+private state:
+  Commissioning contracts and OAuth tokens are stored under --secrets DIR
+  (default var/secrets/climate; directory 0700, files 0600) and are never
+  written to devices.yaml, Git, logs, or HTTP responses.
+
+examples:
+  thermite climate commission bath_floor --serial SN1 --encoding celsius_x100 --min-raw 500 --max-raw 3500
+                                    commission a thermostat with verified celsius_x100 limits
+</pre></details>
+<details id="climate-status"><summary><code>thermite climate status</code></summary><pre class="help">usage: thermite climate status [-h] [--url URL] [--secrets DIR] [--json] [DEVICE]
+
+Query thermostat status from the localhost climate helper.
+
+`status` queries the localhost climate helper daemon and reports thermostat
+readings, cloud-receipt freshness, commissioning state, and last write state.
+
+positional arguments:
+  DEVICE         optional thermostat device id
+
+options:
+  -h, --help     show this help message and exit
+  --url URL      climate helper base URL (default http://127.0.0.1:13629)
+  --secrets DIR  private secrets directory used when listing commissioned devices
+  --json         print the report as JSON
+
+switches every verb takes:
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite climate status           query health and every commissioned thermostat
+  thermite climate status bath_floor --json
+                                    print one thermostat&#x27;s status as JSON
+</pre></details>
+</section>
 <section class="verb" id="ir-profile"><h3><code>thermite ir-profile</code></h3><p>Validate verified IR keys or print an iTach packet without transmitting.</p><pre class="help">usage: thermite ir-profile [-h] [--config DIR] [--json] [-n]
                            [--key {audio,back,blue,bluetooth,display,down,eject,fast_forward,favorite,green,home,left,netflix,next,ok,options,pause,play,popup_menu,power,previous,red,rewind,right,stop,subtitle,top_menu,up,yellow}]
                            [--connector {1,2,3}]
@@ -2449,28 +2593,32 @@ examples:
                                     forget lounge, here and on the remote itself
 </pre>
 <details id="handheld-serve"><summary><code>thermite handheld serve</code></summary><pre class="help">usage: thermite handheld serve [-h] [--url URL] [--ca-file FILE] [--mock]
-                               [--port DEVICE | --listen PATH] [--state-file FILE]
+                               [--port DEVICE | --listen PATH] [--metrics-file PATH]
+                               [--state-file FILE]
 
 Run the bridge between the base and the house.
 
 options:
-  -h, --help         show this help message and exit
-  --url URL          the gateway: https://HOST:PORT, HOST:PORT or HOST (default:
-                     THERMITE_URL when it names a server, else a selected site&#x27;s
-                     installed gateway, else https://thermite:13601, on that site&#x27;s
-                     gateway.port where it sets one)
-  --ca-file FILE     trust this copy of the server&#x27;s tls-cert.pem; remembered for that
-                     address
-  --mock             the remote page&#x27;s mock house, which sends nothing
-  --port DEVICE      the base&#x27;s USB serial port (default: the one that answers)
-  --listen PATH      a Unix socket for a simulated base to connect to
-  --state-file FILE  the state file (default:
-                     ~/.local/state/thermite/handheld/state.json, under $XDG_STATE_HOME)
+  -h, --help           show this help message and exit
+  --url URL            the gateway: https://HOST:PORT, HOST:PORT or HOST (default:
+                       THERMITE_URL when it names a server, else a selected site&#x27;s
+                       installed gateway, else https://thermite:13601, on that site&#x27;s
+                       gateway.port where it sets one)
+  --ca-file FILE       trust this copy of the server&#x27;s tls-cert.pem; remembered for that
+                       address
+  --mock               the remote page&#x27;s mock house, which sends nothing
+  --port DEVICE        the base&#x27;s USB serial port (default: the one that answers)
+  --listen PATH        a Unix socket for a simulated base to connect to
+  --metrics-file PATH  write a Prometheus textfile with handheld base and remote health
+                       metrics (default: off, or $THERMITE_HANDHELD_METRICS_FILE)
+  --state-file FILE    the state file (default:
+                       ~/.local/state/thermite/handheld/state.json, under
+                       $XDG_STATE_HOME)
 
 switches every verb takes:
-  -q, --quiet        print only errors
-  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
-  --no-color         no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet          print only errors
+  -v, --verbose        also print, on stderr, the commands and HTTP requests it runs
+  --no-color           no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite handheld serve           the bridge for the house on https://thermite:13601, on the base plugged in here

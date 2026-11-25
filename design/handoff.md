@@ -146,6 +146,44 @@ Not verified on hardware: the TV's 30 s boot window and its boot error code
   15 s deadline runs while iOS suspends the app, so it can report
   unconfirmed on resume (its message says it may still take effect).
 
+## Phase 3A: NuHeat climate integration — done
+
+- Localhost climate helper daemon (`lib/oh_climate/daemon.py`, mock simulator
+  `lib/oh_climate_sim.py`) binds `127.0.0.1:13629` (`oh_ports.CLIMATE_PORT`),
+  refusing non-loopback addresses without `--allow-remote`. OAuth access and
+  refresh tokens and per-device `nuheat_api.DeviceContract` commissioning
+  records (serial, verified raw temperature encoding, raw min/max limits,
+  writable modes, verified mode codes) live strictly in private `0700`/`0600`
+  state written atomically with `fsync` — never in `devices.yaml`, Git, HTTP
+  responses, or logs.
+- Indeterminate cloud write outcomes (`NuheatError.indeterminate`) are never
+  auto-retried and never reported as confirmed (`last_write_state:
+  "indeterminate"`), and `Snapshot.stale(now, 120)` freshness is surfaced
+  explicitly (`time_basis: "cloud_receipt"`).
+- `nuheat_http` integration (`lib/oh_integrations/nuheat_http/{__init__.py,nuheat_http.js}`)
+  declares `NEEDS_IP = False`, `HELPER_SERVICE = oh_units.CLIMATE`, `climate()`
+  hook, `DEVICE_KEYS` (`scale`, `step`), read-only status/fact Items plus
+  `autoupdate: false` mode and setpoint Items, and a per-device 60 s polling
+  and command rule honoring read-only (`SEND = false`).
+- Conditional `thermite-climate.service` (`oh_units.CLIMATE`, `oh_deploy`,
+  `oh_install/steps.py`) is emitted only when a house uses a climate helper,
+  leaving houses without thermostats unchanged. `thermite climate serve|commission|status`
+  (`lib/oh_cli/climate.py`) manages the helper and private contracts.
+- Metrics & alerts (`lib/oh_metrics/{__init__.py,alerts.py,dashboards.py}`)
+  export `reads`, `online`, `has_error`, `heating`, `temperature`, and
+  `setpoint` signals for monitored thermostats and gate `climate_helper` /
+  `thermite-climate.service` probes and alerts on active house helpers.
+- Gateway contract (`oh_site_contract.py`, `oh_features/remote_model.py`,
+  `oh_identity/{runtime.py,guest.py}`) projects `room.climate`, `climateRooms`,
+  and `devices[id].climate`, admits validated `climate_mode` and integer
+  `climate_setpoint` commands via `POST /api/v1/devices/<id>/commands`, and
+  streams all climate Items over the remote SSE view.
+- Web (`web/remote/{climate.js,climate.css}`) and TUI (`tui/remote/climate.js`)
+  render compact room-level climate controls only on rooms with thermostats,
+  with setpoint `−`/`+` stepping, `Auto`/`Hold`/`Manual` mode selection,
+  heating-call and hold-until badges, and explicit Stale / Unconfirmed /
+  Indeterminate / Fault / Offline banners.
+
 ## Metrics left over
 
 - The gateway exports `thermite_gateway_upstream_connects_total` and

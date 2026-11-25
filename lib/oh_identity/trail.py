@@ -11,8 +11,8 @@ line, events.log and the routing rule's own lines can be joined:
         item=loc_den_source value=off outcome=accepted ms=41
 
 A command on a device's audio page has room=- and names its device=<id>.
-origin is web, tui, guest or api (a request that named no client), all_off,
-schedule or repair (the worker), or local (a trusted local call). Values are
+origin is web, tui, handheld, guest or api (a request that named no client),
+all_off, schedule or repair (the worker), or local (a trusted local call). Values are
 validated command values, never pairing codes (always <private>), bodies,
 credentials or addresses: peer is the first 8 characters of the audit's keyed
 peer digest. Nothing here is stored; the journal is the trail.
@@ -39,9 +39,10 @@ LOG = logging.getLogger("oh_identity.trail")
 #: on its requests (oh_identity.guest.listener reads the same key).
 REQUEST_ID = "thermite.request_id"
 #: A client's own label: web/<tab id> from the web remote, tui/<host> from
-#: the terminal remote. It is a claim, never authority.
-CLIENT = re.compile(r"(web|tui)/([A-Za-z0-9][A-Za-z0-9._-]{0,62})")
-ORIGINS = frozenset({"web", "tui", "guest", "api", "all_off", "schedule", "repair", "local"})
+#: the terminal remote, or handheld/<name> from a handheld remote. It is a
+#: claim, never authority.
+CLIENT = re.compile(r"(web|tui|handheld)/([A-Za-z0-9][A-Za-z0-9._-]{0,62})")
+ORIGINS = frozenset({"web", "tui", "handheld", "guest", "api", "all_off", "schedule", "repair", "local"})
 ID = re.compile(r"[0-9a-f]{8}")
 #: openHAB's event source for a command: thermite.<origin>:<id>. openHAB
 #: 5.2.3 prefixes it to its own REST source ("<this>=>org.openhab.core.io.rest$user").

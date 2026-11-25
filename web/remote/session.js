@@ -392,7 +392,8 @@
         return { id: id, label: device.label, short: device.short || device.label, kind: device.kind, model: device.model };
       });
       return { id: entry.id, label: entry.label, item: null, options: [], order: [], display: null, audio: null, devices: devices,
-        controls: [], speakers: devices.map((device) => device.id), listenOnly: true };
+        controls: [], speakers: devices.map((device) => device.id),
+        climate: Array.isArray(entry.climate) ? entry.climate.slice() : [], listenOnly: true };
     }
 
     function start(roomId) {
@@ -400,7 +401,9 @@
       return backend.getRooms()
         .then((list) => {
           list.forEach((room) => {
-            room.speakers = ((house.rooms || []).find((entry) => entry.id === room.id) || {}).speakers || [];
+            const raw = (house.rooms || []).find((entry) => entry.id === room.id) || {};
+            room.speakers = raw.speakers || [];
+            room.climate = Array.isArray(room.climate) ? room.climate : (Array.isArray(raw.climate) ? raw.climate.slice() : []);
             rooms.push(room);
             roomsById[room.id] = room;
           });
@@ -491,6 +494,10 @@
       }
       if (event.type === "problem" || event.type === "playing") {
         emit({ type: "change" });
+        return;
+      }
+      if (event.type === "climate") {
+        emit({ type: "climate", device: event.device, state: event.state });
         return;
       }
       if (event.type === "device") {
@@ -835,6 +842,63 @@
           toast("Could not operate", error.message, "bad");
           return null;
         });
+    }
+
+    // ---- climate -------------------------------------------------------------
+
+    function climateOf(deviceId) {
+      return backend.climateOf ? backend.climateOf(deviceId) : null;
+    }
+
+    function roomClimate(roomId) {
+      const target = roomId ? roomsById[roomId] : current;
+      if (!target || !Array.isArray(target.climate) || !target.climate.length) return [];
+      return target.climate.map((id) => climateOf(id)).filter(Boolean);
+    }
+
+    function climateRooms() {
+      return Array.isArray(house.climateRooms) ? house.climateRooms.slice() : [];
+    }
+
+    function setClimateMode(deviceId, mode) {
+      if (!backend.climateMode) return Promise.resolve(null);
+      const before = climateOf(deviceId);
+      const label = (before && before.label) || deviceId;
+      return backend.climateMode(deviceId, mode)
+        .then((result) => {
+          toast(label, "Mode: " + mode, "", result && result.sent === false ? result.tag || "Mock" : "");
+          return result;
+        }, (error) => {
+          toast(label, error.message, "bad");
+          return null;
+        });
+    }
+
+    function setClimateSetpoint(deviceId, rawSetpoint) {
+      if (!backend.climateSetpoint) return Promise.resolve(null);
+      const before = climateOf(deviceId);
+      const label = (before && before.label) || deviceId;
+      return backend.climateSetpoint(deviceId, rawSetpoint)
+        .then((result) => {
+          toast(label, "Target updated", "", result && result.sent === false ? result.tag || "Mock" : "");
+          return result;
+        }, (error) => {
+          toast(label, error.message, "bad");
+          return null;
+        });
+    }
+
+    function stepClimateSetpoint(deviceId, deltaSteps) {
+      const info = climateOf(deviceId);
+      if (!info) return Promise.resolve(null);
+      const currentRaw = Number(info.setpoint);
+      if (!Number.isFinite(currentRaw)) {
+        toast(info.label, "Current setpoint is unknown", "muted");
+        return Promise.resolve(null);
+      }
+      const step = Number.isInteger(info.step) && info.step > 0 ? info.step : 100;
+      const nextRaw = Math.round(currentRaw) + Math.trunc(deltaSteps) * step;
+      return setClimateSetpoint(deviceId, nextRaw);
     }
 
     // ---- volume --------------------------------------------------------------
@@ -1266,6 +1330,12 @@
       inputOptions: inputOptions,
       chooseInput: chooseInput,
       operate: operate,
+      climateOf: climateOf,
+      roomClimate: roomClimate,
+      climateRooms: climateRooms,
+      setClimateMode: setClimateMode,
+      setClimateSetpoint: setClimateSetpoint,
+      stepClimateSetpoint: stepClimateSetpoint,
       slide: slide,
       setDragging: setDragging,
       sliderShown: sliderShown,

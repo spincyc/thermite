@@ -85,11 +85,13 @@ also carry status fields.
 
 | Field | Value | Bridge action |
 | --- | --- | --- |
-| `key` | Array of button ids, first choice first | `session.pressKey(key)` |
-| `bubble` | Bubble id | `session.tapBubble(...)` for that bubble |
-| `room` | Room id | `session.selectRoom(room)` |
+| `key` | Array of button ids, first choice first | `session.pressKey(key)` (routes to `listen.key()` in Listen mode) |
+| `bubble` | Bubble id | `session.tapBubble(...)` in Watch mode, or `listen.choose(id)` in Listen mode |
+| `room` | Room id | `session.selectRoom(room)` (switches mode when selecting a Listen-only or Watch-only room) |
+| `mode` | `"watch"`, `"listen"` or `"toggle"` | `session.setMode(mode)` or `session.toggleMode()` |
+| `volume` | Finite number (device scale) | `session.slide(volume, true)` in Watch mode, or `listen.setVolume(volume)` in Listen mode (touch slider) |
 | `allOff` | `true` | `session.allOff()`: the first press arms it, the second sends |
-| `input` | Input value | `session.chooseInput(input)` |
+| `input` | Input value | `session.chooseInput(input)` (Watch mode only) |
 | `sleep` | `true` | Stop sending until the remote speaks again |
 | *(none)* | | A wake or status report |
 
@@ -138,7 +140,7 @@ A message over 8192 bytes is split so that `screen` travels alone.
 {
   "id": "1c2a6b0e9d3f4a57",
   "room": "west", "label": "Example West",
-  "rooms": [{"id": "west", "label": "Example West", "led": "ok", "short": "Apple TV"}],
+  "rooms": [{"id": "west", "label": "Example West", "led": "ok", "short": "Apple TV", "mode": "watch", "locked": true}],
   "led": "ok", "short": "Apple TV", "problem": "", "notice": "", "locked": false,
   "bubbles": [{"id": "off", "label": "Off", "state": "idle", "lock": false, "inert": false}],
   "selected": "apple_tv",
@@ -149,13 +151,28 @@ A message over 8192 bytes is split so that `screen` travels alone.
   "beside": ["play_pause"],
   "channel": false,
   "buttons": {"power": {"label": "Power", "icon": "power"}, "up": {"label": "Up", "icon": "up", "repeat": true}},
-  "allOff": false
+  "allOff": false,
+  "mode": "watch",
+  "modes": ["watch", "listen"]
 }
 ```
 
 - `id`: the bridge's digest of the other fields. Remotes compare it and
   echo it as `have`; they never compute it.
-- `rooms`: every room, with `session.view()`'s `led` and `short`.
+- `rooms`: every room (routed Watch rooms and speaker-only Listen rooms),
+  with `session.view()`'s `led` and `short`, `mode` (`"watch"` or
+  `"listen"`), and `locked: true` when the room is locked (omitted when
+  unlocked).
+- `mode`: `"watch"` or `"listen"` when the house offers Listen mode or both
+  Watch and Listen (omitted on Watch-only houses; absent means `"watch"`).
+- `modes`: `["watch", "listen"]` when the house offers both modes so the
+  remote can show a mode toggle (omitted when only one mode exists).
+- `playing`: present when `mode` is `"listen"`: compact
+  `{"title", "artist", "state"}` (`title` and `artist` bounded to 48
+  characters; `state` is `"playing"`, `"paused"`, `"idle"`, `"unknown"` or
+  `"stale"`). In Listen mode `bubbles` lists the room's speakers, `selected`
+  names the active speaker, and `rows` holds the compact transport bar
+  (`previous`, `play_pause`, `next`) with matching specs in `buttons`.
 - `led`, `short`, `problem`: `session.view()` for this room. `notice` is
   `session.lockNotice()`; `locked` is `session.roomLocked()`. `problem` is
   what has failed, in words, for as long as it lasts: the house not heard,

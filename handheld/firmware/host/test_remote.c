@@ -345,6 +345,7 @@ static void operations(void)
     } single[] = {
         { tr_bubble, "apple_tv", "bubble" },
         { tr_room, "west \"main\" \\ room", "room" },
+        { tr_mode, "listen", "mode" },
         { tr_input, "hdmi2", "input" },
     };
     uint32_t op = first + 2;
@@ -356,6 +357,16 @@ static void operations(void)
         cJSON_Delete(sent);
         ack(remote, op);
     }
+    CHECK(tr_volume(remote, 42.0), "integer volume refused");
+    sent = take_data();
+    CHECK(number(sent, "op") == op && number(sent, "volume") == 42.0 && members(sent) == 2, "volume int op");
+    cJSON_Delete(sent);
+    ack(remote, op++);
+    CHECK(tr_volume(remote, 56.5), "fractional volume refused");
+    sent = take_data();
+    CHECK(number(sent, "op") == op && number(sent, "volume") == 56.5 && members(sent) == 2, "volume half op");
+    cJSON_Delete(sent);
+    ack(remote, op++);
     CHECK(tr_all_off(remote), "all off refused");
     sent = take_data();
     CHECK(number(sent, "op") == op && is_true(sent, "allOff") && members(sent) == 2, "allOff op");
@@ -366,7 +377,7 @@ static void operations(void)
     CHECK(number(sent, "op") == op && is_true(sent, "sleep") && members(sent) == 2, "sleep op");
     cJSON_Delete(sent);
     ack(remote, op++);
-    CHECK(!tr_key(remote, up, 0) && !tr_bubble(remote, NULL), "empty operations accepted");
+    CHECK(!tr_key(remote, up, 0) && !tr_bubble(remote, NULL) && !tr_mode(remote, NULL), "empty operations accepted");
     CHECK(persist.op == op - 1 && unread() == 0, "a refused operation used a number");
     tr_destroy(remote);
 }

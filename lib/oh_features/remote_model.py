@@ -135,6 +135,12 @@ def audio_page(device: dict) -> dict | None:
     return next((page for module in integrations.defining("audio") if (page := module.audio(device))), None)
 
 
+def climate_device(device: dict) -> dict | None:
+    """The first integration's (in climate()'s order) room climate descriptor
+    for the device (oh_integrations climate()); None without one."""
+    return next((desc for module in integrations.defining("climate") if (desc := module.climate(device))), None)
+
+
 def quiet_routes(house: House, ident: str) -> list[dict]:
     """The routes that feed a device and can carry it no sound: for each
     routed room whose `audio` it is and whose sources include some that
@@ -201,6 +207,10 @@ def build(house: House) -> dict:
                             "rooms": routing.guard_rooms(house, ident)}
             if page.get("state") and (quiet := quiet_routes(house, ident)):
                 row["audio"]["state"] = {**page["state"], "route": quiet}
+        if cdesc := climate_device(device):
+            row["climate"] = cdesc
+            if "problem" not in row and (cprob := (cdesc.get("items") or {}).get("problem")):
+                row["problem"] = cprob
         availability = next((entry for module in integrations.defining("remote_availability")
                              if (entry := module.remote_availability(device)) is not None), None)
         if availability is not None:
@@ -216,6 +226,7 @@ def build(house: House) -> dict:
         out["sources"][ident] = row
     entries = route.get("rooms") or {}
     speakers = speaker_rooms(house, out["devices"])
+    climate = climate_rooms(house, out["devices"])
     for ident, entry in entries.items():
         physical = entry.get("room", ident)
         sources = list(entry["sources"])
@@ -233,6 +244,7 @@ def build(house: House) -> dict:
         row = {"id": ident, "label": routing.room_label(house, ident), "sources": sources,
                "display": display, "audio": audio, "devices": members,
                "speakers": speakers.pop(ident, []),
+               "climate": climate.pop(ident, []),
                "holdMs": routing.room_hold_ms(house, ident),
                "routeProblem": routing.problem_item_name(ident)}
         if entry.get("audio_link") and entry.get("audio_input") and audio == entry.get("audio"):
@@ -243,6 +255,8 @@ def build(house: House) -> dict:
         out["rooms"].append(row)
     out["speakerRooms"] = [{"id": ident, "label": house.room_label(ident), "speakers": members}
                            for ident, members in speakers.items()]
+    out["climateRooms"] = [{"id": ident, "label": house.room_label(ident), "climate": members}
+                           for ident, members in climate.items() if members]
     used_layouts: dict[str, dict] = {}
     fallback_layouts = all_remote_layouts()
     for ident, row in out["devices"].items():
@@ -280,6 +294,31 @@ def speaker_rooms(house: House, rows: dict) -> dict[str, list[str]]:
         if not owners:
             home = next(d["room"] for d in house.devices if d["id"] == ident)
             (rooms[home] if home in rooms else loose.setdefault(home, [])).append(ident)
+    order = list(data.get("rooms") or {})
+    rooms.update(sorted(loose.items(), key=lambda entry: order.index(entry[0]) if entry[0] in order else len(order)))
+    return rooms
+
+
+def climate_rooms(house: House, rows: dict) -> dict[str, list[str]]:
+    """The climate devices each room owns, by room ID: routed rooms collect
+    climate devices in the rooms they cover, and any remaining climate device
+    stays under its inventory room (forming climateRooms). Ordered as routed
+    rooms first, then remaining rooms in inventory order."""
+    data = house.data
+    routed = list(((data.get("routing") or {}).get("rooms") or {}))
+    rooms: dict[str, list[str]] = {ident: [] for ident in routed}
+    covered_by = {ident: routing.covered_rooms(house, ident) for ident in routed}
+    loose: dict[str, list[str]] = {}
+    for ident, row in rows.items():
+        if "climate" not in row:
+            continue
+        home = house.by_id[ident]["room"]
+        owners = [room for room in routed if home == room] or [room for room in routed if home in covered_by[room]]
+        if owners:
+            for room in owners:
+                rooms[room].append(ident)
+        else:
+            loose.setdefault(home, []).append(ident)
     order = list(data.get("rooms") or {})
     rooms.update(sorted(loose.items(), key=lambda entry: order.index(entry[0]) if entry[0] in order else len(order)))
     return rooms

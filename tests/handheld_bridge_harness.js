@@ -776,6 +776,283 @@ async function run(name, body) {
     return { attempts, logs: logs.length };
   });
 
+  await run("watch_and_listen_mode_switching", async () => {
+    const listenHouse = {
+      version: 1,
+      rooms: [{
+        id: "lounge", label: "Lounge", sources: ["box"], display: "lounge_tv", audio: "lounge_tv",
+        devices: ["lounge_tv", "box", "lounge_amp", "lounge_mini"],
+        speakers: ["lounge_amp", "lounge_mini"]
+      }],
+      speakerRooms: [{ id: "patio", label: "Patio", speakers: ["patio_one"] }],
+      sources: { box: { label: "Box", kind: "streamer", model: "Box", remote: "apple_tv" } },
+      devices: {
+        lounge_tv: { label: "Lounge TV", short: "TV", kind: "tv", model: "TV", remote: "sony_tv",
+          control: { key: "lounge_tv_key", power: "lounge_tv_power", mute: "lounge_tv_mute",
+            volume: { item: "lounge_tv_vol", min: 0, max: 100, step: 1 } } },
+        box: { label: "Box", short: "Box", kind: "streamer", model: "Box", remote: "apple_tv",
+          control: { key: "box_key" } },
+        lounge_amp: { label: "Sonos Amp", short: "Sonos Amp", kind: "streaming_amp", model: "Amp",
+          control: { key: "amp_key", mute: "amp_mute", volume: { item: "amp_vol", min: 0, max: 100, step: 1 } },
+          audio: { place: "Lounge", transport: ["previous", "play_pause", "next"], rooms: { lounge: "own" } } },
+        lounge_mini: { label: "WiiM Mini", short: "WiiM Mini", kind: "audio_streamer", model: "Mini",
+          control: { key: "mini_key", mute: "mini_mute", volume: { item: "mini_vol", min: 0, max: 100, step: 1 } },
+          audio: { place: "Lounge", transport: ["previous", "play_pause", "next"], rooms: { lounge: "own" } } },
+        patio_one: { label: "Sonos One", short: "Sonos One", kind: "streaming_amp", model: "One",
+          control: { key: "patio_key", mute: "patio_mute", volume: { item: "patio_vol", min: 0, max: 100, step: 1 } },
+          audio: { place: "Patio", transport: ["previous", "play_pause", "next"], rooms: {} } }
+      },
+      initial: { lounge: "box" }
+    };
+    const backend = shared.Remote.create(listenHouse, { backend: "mock", latency: LATENCY });
+    const musicBackend = shared.MusicBackend.create({ backend: "mock", latency: LATENCY, house: listenHouse });
+    const calls = spy(backend);
+    const deviceCommands = [];
+    const origCmd = backend.command.bind(backend);
+    backend.command = (...args) => { deviceCommands.push(args); return origCmd(...args); };
+    const handhelds = new Map();
+    const bridge = Bridge.create({
+      shared: Object.assign({}, shared, { house: listenHouse, layouts }),
+      backend, musicBackend, log() {},
+      send: (to, frame, done) => setImmediate(() => {
+        done(true);
+        const target = handhelds.get(to);
+        if (target) target.deliver(frame);
+      })
+    });
+    const remote = new Handheld(bridge, MAC_A, KEY_A);
+    handhelds.set(MAC_A, remote);
+    bridge.add({ name: "lounge-remote", mac: MAC_A, key: KEY_A, store: memoryStore() });
+    await eventually(() => bridge.remote(MAC_A).ready, "listen remote ready");
+    remote.hello();
+    await eventually(() => remote.screen && remote.screen.room === "lounge", "watch screen");
+    assert.equal(remote.screen.mode, "watch");
+    assert.deepEqual(remote.screen.modes, ["watch", "listen"]);
+    assert.deepEqual(remote.screen.rooms.map((r) => [r.id, r.mode]), [["lounge", "watch"], ["patio", "listen"]]);
+
+    // Watch touch volume slider sets absolute volume via session.slide().
+    remote.send({ volume: 52 });
+    await settle(LATENCY * 4);
+    assert.ok(calls.some((call) => call[0] === "setVolume" && call[1] === "lounge" && call[2] === 52), JSON.stringify(calls));
+
+    // Switch to Listen mode via mode op.
+    remote.send({ mode: "listen" });
+    await eventually(() => remote.screen && remote.screen.mode === "listen", "switched to listen");
+    checkId(remote.screen);
+    assert.deepEqual(remote.screen.modes, ["watch", "listen"]);
+    assert.deepEqual(remote.screen.bubbles.map((b) => b.id), ["lounge_amp", "lounge_mini"]);
+    assert.equal(remote.screen.selected, "lounge_amp");
+    assert.ok(remote.screen.playing && typeof remote.screen.playing.title === "string" && remote.screen.playing.title.length <= Screen.TEXT_LIMIT);
+    assert.deepEqual(remote.screen.rows, [{ label: "", keys: ["previous", "play_pause", "next"], columns: 3 }]);
+    assert.ok(remote.audio && remote.audio.short === "Sonos Amp", JSON.stringify(remote.audio));
+
+    // Transport action in Listen mode reaches MusicBackend.
+    const sentBefore = musicBackend.sent.length;
+    remote.send({ key: ["next"] });
+    await settle(LATENCY * 4);
+    assert.ok(musicBackend.sent.slice(sentBefore).some((entry) => entry[0] === "transport" && entry[1] === "lounge_amp" && entry[2] === "next"),
+      JSON.stringify(musicBackend.sent));
+
+    // Touch volume slider in Listen mode drives speaker audio device.
+    remote.send({ volume: 44 });
+    await settle(LATENCY * 4);
+    assert.ok(deviceCommands.some((entry) => entry[0] === "lounge_amp" && entry[1] === "volume" && entry[2] === 44),
+      JSON.stringify(deviceCommands));
+
+    // Selecting the second speaker bubble switches active speaker.
+    remote.send({ bubble: "lounge_mini" });
+    await eventually(() => remote.screen.selected === "lounge_mini", "switched speaker bubble");
+    assert.equal(remote.audio.short, "WiiM Mini");
+
+    // Selecting speaker-only room moves to patio in Listen mode, then toggle returns to Watch.
+    remote.send({ room: "patio" });
+    await eventually(() => remote.screen.room === "patio" && remote.screen.mode === "listen", "speaker-only room");
+    assert.deepEqual(remote.screen.bubbles.map((b) => b.id), ["patio_one"]);
+    const listenFields = Object.keys(remote.screen);
+
+    remote.send({ mode: "watch" });
+    await eventually(() => remote.screen.mode === "watch" && remote.screen.room === "lounge", "back to watch");
+    bridge.remove(MAC_A);
+    musicBackend.stop();
+    return { listenFields, playing: remote.screen.playing || null };
+  });
+
+  await run("speaker_only_house", async () => {
+    const house = {
+      version: 1,
+      rooms: [],
+      speakerRooms: [{ id: "garden", label: "Garden", speakers: ["garden_sp"] }],
+      sources: {},
+      devices: {
+        garden_sp: { label: "Garden Speaker", short: "Garden", kind: "streaming_amp", model: "One",
+          control: { key: "g_key", mute: "g_mute", volume: { item: "g_vol", min: 0, max: 100, step: 1 } },
+          audio: { place: "Garden", transport: ["previous", "play_pause", "next"], rooms: {} } }
+      },
+      initial: {}
+    };
+    const backend = shared.Remote.create(house, { backend: "mock", latency: LATENCY });
+    const musicBackend = shared.MusicBackend.create({ backend: "mock", latency: LATENCY, house });
+    const handhelds = new Map();
+    const bridge = Bridge.create({
+      shared: Object.assign({}, shared, { house, layouts }),
+      backend, musicBackend, log() {},
+      send: (to, frame, done) => setImmediate(() => {
+        done(true);
+        const target = handhelds.get(to);
+        if (target) target.deliver(frame);
+      })
+    });
+    const remote = new Handheld(bridge, MAC_A, KEY_A);
+    handhelds.set(MAC_A, remote);
+    bridge.add({ name: "garden-remote", mac: MAC_A, key: KEY_A, store: memoryStore() });
+    await eventually(() => bridge.remote(MAC_A).ready, "speaker-only ready");
+    remote.hello();
+    await eventually(() => remote.screen && remote.screen.room === "garden", "speaker-only screen");
+    assert.equal(remote.screen.mode, "listen");
+    assert.equal(remote.screen.modes, undefined, "listen-only house omits mode toggle");
+    assert.deepEqual(remote.screen.bubbles.map((b) => b.id), ["garden_sp"]);
+    assert.ok(remote.screen.playing && typeof remote.screen.playing.title === "string");
+    assert.ok(remote.audio && remote.audio.short === "Garden");
+    bridge.remove(MAC_A);
+    musicBackend.stop();
+    return { room: remote.screen.room, mode: remote.screen.mode };
+  });
+
+  await run("multi_remote_locks_and_per_remote_attribution", async () => {
+    const fs = require("fs");
+    assert.ok(!fs.readFileSync(path.join(area, "handheld/main.js"), "utf8").includes("POLICY_EVERY_MS"),
+      "5-second POLICY_EVERY_MS loop must be retired");
+    const [west, east] = shared.house.rooms.map((room) => room.id);
+    const reply = (value, status = 200) => {
+      const body = JSON.stringify(value);
+      return { ok: status < 300, status, headers: { get: () => "application/json", getSetCookie: () => [] },
+        text: async () => body, json: async () => JSON.parse(body), clone: () => reply(value, status) };
+    };
+    const lockState = { [west]: false, [east]: false };
+    const rev = { [west]: 1, [east]: 1 };
+    const commandHeaders = [];
+    const sources = [];
+    const fetch = async (url, init = {}) => {
+      const route = new URL(url).pathname;
+      if (route === "/api/v1/security") return reply({ bootstrap_required: false, setup_available: false, guest_text: true, guest_cameras: false, csrf: "C".repeat(32) });
+      if (route === "/api/v1/session") return reply({ csrf: "C".repeat(32) });
+      if (route === "/api/v1/me") return reply({ id: 1, username: "example", admin: false, can_edit: true, is_guest: false, permissions: ["site.read", "room.control"] });
+      if (route === "/api/v1/locks") {
+        return reply({ rooms: {
+          [west]: { locked: lockState[west], manual: lockState[west], until: null, reason: lockState[west] ? "manual_lock" : "unlocked" },
+          [east]: { locked: lockState[east], manual: lockState[east], until: null, reason: lockState[east] ? "manual_lock" : "unlocked" }
+        } });
+      }
+      const pm = /^\/api\/v1\/rooms\/([a-z0-9_]+)\/policy$/.exec(route);
+      if (pm) {
+        const id = pm[1];
+        const locked = Boolean(lockState[id]);
+        return reply({ room: id, revision: rev[id], manual_lock: locked ? { desired: "off" } : null, can_lock: true, can_edit: true,
+          effective: { allowed: !locked, locked, until: null, reason: locked ? "manual_lock" : "unlocked" }, enforcement: "enforced" });
+      }
+      const cm = /^\/api\/v1\/rooms\/([a-z0-9_]+)\/commands$/.exec(route);
+      if (cm && init.method === "POST") {
+        commandHeaders.push([cm[1], init.headers.get("X-Thermite-Client")]);
+        return reply({ accepted: true }, 202);
+      }
+      return reply({ error: "not_found" }, 404);
+    };
+    class FakeEvents {
+      constructor(url) {
+        this.url = url; this.readyState = 0; sources.push(this);
+        setImmediate(() => {
+          if (this.readyState === 2) return;
+          this.readyState = 1;
+          if (this.onopen) this.onopen({});
+          if (this.onmessage && url.endsWith("/api/v1/events/remote")) {
+            this.onmessage({ data: JSON.stringify({ type: "snapshot", view: "remote",
+              states: { ["loc_" + west + "_source"]: "off", ["loc_" + east + "_source"]: "off" } }) });
+          }
+        });
+      }
+      close() { this.readyState = 2; }
+    }
+    const parts = Main.assemble({ url: "https://thermite.example:13601" },
+      { shared, fetch, EventSource: FakeEvents, environ: {}, hostname: "bridge-pi" });
+    assert.equal(parts.access.clientLabel, "handheld/bridge-pi");
+    const handhelds = new Map();
+    const bridge = Bridge.create({
+      shared, backend: parts.backend, musicBackend: parts.musicBackend, access: parts.access, log() {},
+      send: (to, frame, done) => setImmediate(() => {
+        done(true);
+        const target = handhelds.get(to);
+        if (target) target.deliver(frame);
+      })
+    });
+    const a = new Handheld(bridge, MAC_A, KEY_A);
+    const b = new Handheld(bridge, MAC_B, KEY_B);
+    handhelds.set(MAC_A, a);
+    handhelds.set(MAC_B, b);
+    bridge.add({ name: "lounge", mac: MAC_A, key: KEY_A, store: memoryStore() });
+    bridge.add({ name: "den", mac: MAC_B, key: KEY_B, store: memoryStore() });
+    await eventually(() => bridge.remote(MAC_A).ready && bridge.remote(MAC_B).ready, "both ready");
+    a.hello();
+    b.hello();
+    await eventually(() => a.screen && b.screen, "both awake");
+    b.send({ room: east });
+    await eventually(() => b.screen.room === east, "b in east");
+    assert.deepEqual(parts.access.watchedRooms().sort(), [east, west].sort());
+
+    // Distinct per-remote X-Thermite-Client labels on gateway commands.
+    a.send({ bubble: "example_player" });
+    b.send({ bubble: "example_computer" });
+    await eventually(() => commandHeaders.length >= 2, "both commands attributed");
+    assert.deepEqual(commandHeaders, [[west, "handheld/lounge"], [east, "handheld/den"]]);
+
+    // Immediate locks SSE event updates both rooms without waiting for any 5s poll.
+    lockState[west] = true; rev[west] += 1;
+    lockState[east] = true; rev[east] += 1;
+    sources[0].onmessage({ data: JSON.stringify({ type: "locks", rooms: {
+      [west]: { locked: true, manual: true, until: null, reason: "manual_lock" },
+      [east]: { locked: true, manual: true, until: null, reason: "manual_lock" }
+    } }) });
+    await eventually(() => a.screen.locked === true && b.screen.locked === true, "immediate SSE lock propagation");
+    assert.equal(a.screen.rooms.find((r) => r.id === east).locked, true);
+    assert.equal(b.screen.rooms.find((r) => r.id === west).locked, true);
+
+    // Sleeping remote A releases west while keeping east watched for awake remote B.
+    a.send({ sleep: true });
+    await eventually(() => !bridge.remote(MAC_A).awake, "a slept");
+    assert.deepEqual(parts.access.watchedRooms(), [east]);
+    bridge.remove(MAC_A);
+    bridge.remove(MAC_B);
+    assert.deepEqual(parts.access.watchedRooms(), []);
+    parts.backend.stop();
+    return { attributed: commandHeaders.map(([, label]) => label) };
+  });
+
+  await run("health_metrics_textfile", async () => {
+    const fs = require("fs");
+    const os = require("os");
+    assert.equal(Main.sanitizeMetricLabel("den-1.v2"), "den-1.v2");
+    assert.equal(Main.sanitizeMetricLabel('bad "label"\nnewline'), "bad_label_newline");
+    const text = Main.formatMetrics(true, [
+      { name: "lounge", mac: MAC_A, status: { battery: 76, charging: false }, lastSeen: 1700000123456, rssi: -54 },
+      { name: "den", mac: MAC_B, status: { battery: 100, charging: true }, lastSeen: 1700000124000, rssi: null }
+    ]);
+    assert.ok(text.includes("thermite_handheld_base_connected 1\n"));
+    assert.ok(text.includes('thermite_handheld_remote_battery_percent{remote="lounge"} 76\n'));
+    assert.ok(text.includes('thermite_handheld_remote_charging{remote="den"} 1\n'));
+    assert.ok(text.includes('thermite_handheld_remote_last_seen_seconds{remote="lounge"} 1700000123\n'));
+    assert.ok(text.includes('thermite_handheld_remote_rssi_dbm{remote="lounge"} -54\n'));
+    assert.ok(!text.includes('rssi_dbm{remote="den"}'));
+    assert.ok(!text.includes(MAC_A) && !text.includes(MAC_B), "metrics must never leak MAC addresses");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "handheld-prom-"));
+    const target = path.join(dir, "thermite-handheld.prom");
+    Main.writeMetricsFile(target, text);
+    const stat = fs.statSync(target);
+    assert.equal(stat.mode & 0o777, 0o644);
+    assert.equal(fs.readFileSync(target, "utf8"), text);
+    assert.deepEqual(fs.readdirSync(dir), ["thermite-handheld.prom"], "no leftover temp files");
+    fs.rmSync(dir, { recursive: true, force: true });
+    return { lines: text.trim().split("\n").length };
+  });
+
   process.stdout.write(JSON.stringify({ cases }) + "\n");
   // The mock's timers would keep node alive a moment longer.
   process.exit(0);

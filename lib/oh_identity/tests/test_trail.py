@@ -202,10 +202,38 @@ class Commands(Requests, TestCase):
         guest = SimpleNamespace(scope={trail.GUEST_SCOPE: object(), trail.REQUEST_ID: "0a1b2c3d"},
                                 headers={"X-Thermite-Client": TAB})
         self.assertEqual(trail.origin(guest), trail.Origin("guest", TAB, "0a1b2c3d"))
+        guest_handheld = SimpleNamespace(scope={trail.GUEST_SCOPE: object(), trail.REQUEST_ID: "0a1b2c3d"},
+                                         headers={"X-Thermite-Client": "handheld/den-remote"})
+        self.assertEqual(trail.origin(guest_handheld), trail.Origin("guest", "handheld/den-remote", "0a1b2c3d"))
+        handheld = SimpleNamespace(scope={trail.REQUEST_ID: "0a1b2c3d"},
+                                   headers={"X-Thermite-Client": "handheld/den-remote"})
+        self.assertEqual(trail.origin(handheld), trail.Origin("handheld", "handheld/den-remote", "0a1b2c3d"))
         forged = SimpleNamespace(scope={trail.REQUEST_ID: "not-an-id"}, headers={"X-Thermite-Client": "guest/x"})
         self.assertEqual(trail.origin(forged), trail.Origin("api", None, None))
+        bad_handheld = SimpleNamespace(scope={}, headers={"X-Thermite-Client": "handheld/"})
+        self.assertEqual(trail.origin(bad_handheld), trail.Origin("api", None, None))
         with self.assertRaises(ValueError):
             trail.Origin("admin")
+
+    def test_handheld_client_attribution_and_malformed_rejection(self):
+        token, raw = issue_token(self.operator, "bridge")
+        bridge = Client()
+        with self.assertLogs("oh_identity.trail", "INFO") as logs:
+            for label in ("handheld/den-remote", "handheld/lounge_1.v2", "handheld/", "handheld/-bad",
+                          "handheld/a b", "handheld/../escape", "handheld/" + "x" * 64):
+                response = bridge.post("/api/v1/rooms/den/commands", json.dumps({"action": "source", "value": "off"}),
+                                       content_type="application/json", secure=True, HTTP_AUTHORIZATION="Bearer " + raw,
+                                       HTTP_X_THERMITE_CLIENT=label)
+                self.assertEqual(response.status_code, 202)
+        found = lines(logs, "cmd")
+        self.assertEqual((found[0]["origin"], found[0]["client"], found[0]["principal"], found[0]["token"], found[0]["user"]),
+                         ("handheld", "handheld/den-remote", "token", str(token.pk)[:8], "operator"))
+        self.assertEqual((found[1]["origin"], found[1]["client"]), ("handheld", "handheld/lounge_1.v2"))
+        self.assertEqual([(line["origin"], line["client"]) for line in found[2:]], [("api", "-")] * 5)
+        self.assertEqual(self.adapter.transport.sources[:2],
+                         ["thermite.handheld:" + found[0]["id"], "thermite.handheld:" + found[1]["id"]])
+        self.assertTrue(all(src.startswith("thermite.api:") for src in self.adapter.transport.sources[2:]))
+        self.assertNotIn("escape", "\n".join(logs.output))
 
 
 class GuestListener(TestCase):
@@ -237,6 +265,21 @@ class GuestListener(TestCase):
         self.assertTrue(trail.peer_digest("192.0.2.50").startswith(web["peer"]))
         self.assertNotIn("192.0.2.50", "\n".join(logs.output))
         self.assertEqual(self.adapter.transport.sources, ["thermite.guest:" + web["id"], "thermite.guest:" + terminal["id"]])
+
+    def test_handheld_on_guest_listener_keeps_guest_origin_and_client_label(self):
+        command = {"action": "source", "value": "off"}
+        with self.assertLogs("oh_identity.trail", "INFO") as logs:
+            self.assertEqual(guest_call("post", "/api/v1/rooms/den/commands", command,
+                                        **{"X-Thermite-Client": "handheld/den-remote"}).status_code, 202)
+            self.assertEqual(guest_call("post", "/api/v1/rooms/den/commands", command,
+                                        **{"X-Thermite-Client": "handheld/"}).status_code, 202)
+        valid, malformed = lines(logs, "cmd")
+        self.assertEqual((valid["origin"], valid["client"], valid["user"], valid["principal"]),
+                         ("guest", "handheld/den-remote", "guest", "guest"))
+        self.assertEqual((malformed["origin"], malformed["client"], malformed["principal"]),
+                         ("guest", NONE, "guest"))
+        self.assertEqual(self.adapter.transport.sources,
+                         ["thermite.guest:" + valid["id"], "thermite.guest:" + malformed["id"]])
 
 
 class AllOff(Requests, TransactionTestCase):

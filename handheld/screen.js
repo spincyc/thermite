@@ -21,6 +21,18 @@ const CHANNEL = ["channel_up", "channel_down"];
 const PAD = ["up", "down", "left", "right", "ok"];
 // Up to this many playback keys sit beside Mute when the remote has a D-pad.
 const BESIDE = 3;
+// Compact Listen transport bar keys.
+const LISTEN_TRANSPORT = ["previous", "play_pause", "next"];
+// Bound free text so Listen screens stay within 1-2 ESP-NOW frames.
+const TEXT_LIMIT = 48;
+const NOTICE_LIMIT = 96;
+
+function clip(value, max) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const limit = max || TEXT_LIMIT;
+  return text.length > limit ? text.slice(0, limit - 1) + "\u2026" : text;
+}
 
 // A button's spec with only the fields it has: an absent icon or text is none
 // and an absent repeat is false, which keeps a screen to fewer radio frames.
@@ -94,9 +106,86 @@ function screen(session, layouts) {
       allOff: session.allOffArmed()
     };
   }
-  const list = session.controls();
+  const kinds = typeof session.kinds === "function" ? session.kinds() : ["watch"];
+  const activeMode = typeof session.mode === "function" ? session.mode() : "watch";
+  const multiMode = kinds.length > 1;
+  const roomList = session.rooms().map((room) => {
+    const view = session.view(room, session.state(room.id));
+    const roomModes = typeof session.modes === "function" ? session.modes(room) : ["watch"];
+    const roomMode = roomModes.includes(activeMode) ? activeMode : (roomModes[0] || "watch");
+    const entry = {
+      id: room.id,
+      label: room.label,
+      led: heard ? view.led : "stale",
+      short: view.short,
+      mode: roomMode
+    };
+    if (session.roomLocked(room.id).locked === true) entry.locked = true;
+    return entry;
+  });
   const state = session.state(current.id);
   const shown = session.view(current, state);
+  if (activeMode === "listen") {
+    const listen = session.listen || null;
+    const lv = listen ? listen.view() : null;
+    const listenHeard = Boolean(heard && (!lv || lv.connected !== false));
+    const speakers = listen ? listen.speakers(current.id) : [];
+    const locked = Boolean(lv && lv.locked);
+    const offered = lv && Array.isArray(lv.transport)
+      ? LISTEN_TRANSPORT.filter((id) => lv.transport.some((entry) => entry.id === id))
+      : [];
+    const transportKeys = offered.length ? offered : (lv ? LISTEN_TRANSPORT.slice() : []);
+    const rows = transportKeys.length ? [row("", transportKeys, transportKeys.length)] : [];
+    const buttons = {};
+    transportKeys.concat(ALWAYS).forEach((id) => {
+      if (buttons[id]) return;
+      if (id === "play_pause" && lv) {
+        buttons[id] = lv.playing === true ? { label: "Pause", icon: "pause" } : { label: "Play", icon: "play" };
+      } else {
+        buttons[id] = spec(layouts, id);
+      }
+    });
+    const playState = !listenHeard ? "stale"
+      : lv && lv.playing === true ? "playing"
+      : shown.short === "Paused" ? "paused"
+      : lv && lv.playing === null ? "unknown"
+      : "idle";
+    const result = {
+      room: current.id,
+      label: current.label,
+      rooms: roomList,
+      led: listenHeard ? shown.led : "stale",
+      short: shown.short,
+      problem: clip((lv && (lv.problem || lv.music)) || (!listenHeard ? "Not connected to thermite. Reconnecting\u2026" : ""), NOTICE_LIMIT),
+      notice: locked && lv.locked.text ? clip(lv.locked.text, NOTICE_LIMIT) : "",
+      locked: locked,
+      bubbles: speakers.map((speaker) => ({
+        id: speaker.id,
+        label: speaker.name,
+        state: !listenHeard ? "stale" : speaker.playing ? "current" : "idle",
+        lock: Boolean(locked && speaker.current),
+        inert: false
+      })),
+      selected: listen ? (listen.selected() || null) : null,
+      hidden: !lv,
+      remote: lv ? { label: lv.speaker.name, note: "" } : null,
+      pad: null,
+      rows: rows,
+      beside: [],
+      channel: false,
+      buttons: buttons,
+      allOff: session.allOffArmed(),
+      mode: "listen",
+      playing: {
+        title: clip(lv ? (lv.title || lv.now || "") : "", TEXT_LIMIT),
+        artist: clip(lv && lv.line ? lv.line : "", TEXT_LIMIT),
+        state: playState
+      }
+    };
+    if (multiMode) result.modes = kinds.slice();
+    return result;
+  }
+  const list = session.controls();
   const target = session.activeTarget(list);
   const hidden = session.remoteHidden(list);
   const remote = hidden || !target ? null : planOf(session.remoteOf(target) || target.remote, layouts);
@@ -112,13 +201,10 @@ function screen(session, layouts) {
   if (channel) ids.push(...CHANNEL);
   const buttons = {};
   ids.forEach((id) => { if (!buttons[id]) buttons[id] = spec(layouts, id); });
-  return {
+  const result = {
     room: current.id,
     label: current.label,
-    rooms: session.rooms().map((room) => {
-      const view = session.view(room, session.state(room.id));
-      return { id: room.id, label: room.label, led: heard ? view.led : "stale", short: view.short };
-    }),
+    rooms: roomList,
     led: heard ? shown.led : "stale",
     short: shown.short,
     problem: shown.problem || "",
@@ -142,11 +228,28 @@ function screen(session, layouts) {
     buttons: buttons,
     allOff: session.allOffArmed()
   };
+  if (multiMode) {
+    result.mode = activeMode;
+    result.modes = kinds.slice();
+  }
+  return result;
 }
 
 /* The volume line, or null while the screen is hidden. */
 function audio(session, hidden) {
   if (hidden) return null;
+  if (typeof session.mode === "function" && session.mode() === "listen" && session.listen) {
+    const lv = session.listen.view();
+    if (!lv || !lv.volume) return null;
+    const vol = lv.volume;
+    const short = lv.speaker.name || lv.speaker.label || "Speaker";
+    const text = vol.text || (vol.value === null ? "Reading\u2026" : String(vol.value));
+    const caption = short + " \u00b7 " + text + (lv.muted === true ? " \u00b7 muted" : "");
+    return {
+      short: short, value: vol.value, min: vol.min, max: vol.max, step: vol.step,
+      muted: lv.muted, disabled: vol.disabled === true, text: text, caption: caption
+    };
+  }
   const view = session.audioView();
   return {
     short: view.short, value: view.value, min: view.min, max: view.max, step: view.step,
@@ -159,4 +262,4 @@ function digest(json) {
   return crypto.createHash("sha256").update(json).digest("hex").slice(0, 16);
 }
 
-module.exports = { screen, audio, digest, rowsOf, besideOf, ALWAYS, CHANNEL, PAD, BESIDE };
+module.exports = { screen, audio, digest, rowsOf, besideOf, clip, ALWAYS, CHANNEL, PAD, BESIDE, LISTEN_TRANSPORT, TEXT_LIMIT };

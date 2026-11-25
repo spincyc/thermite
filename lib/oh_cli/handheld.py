@@ -1,6 +1,6 @@
 """Handheld remotes: the bridge to the house, and enrolling remotes.
 
-    thermite handheld serve [--url URL] [--ca-file FILE] [--mock] [--port DEVICE | --listen PATH] [--state-file FILE]
+    thermite handheld serve [--url URL] [--ca-file FILE] [--mock] [--port DEVICE | --listen PATH] [--metrics-file PATH] [--state-file FILE]
     thermite handheld enroll --name NAME [--port DEVICE] [--base-port DEVICE] [--state-file FILE]
     thermite handheld enroll --simulator --name NAME [--key-file FILE] [--mac MAC] [--state-file FILE]
     thermite handheld list [--state-file FILE] [--json]
@@ -496,6 +496,8 @@ def cmd_serve(arguments) -> int:
         argv += ["--port", arguments.port]
     if arguments.listen:
         argv += ["--listen", str(Path(arguments.listen).expanduser().absolute())]
+    if getattr(arguments, "metrics_file", None):
+        argv += ["--metrics-file", str(Path(arguments.metrics_file).expanduser().absolute())]
     if oh_cli.switches.verbose:
         argv.append("--verbose")
     oh_trace.run(argv)
@@ -646,6 +648,9 @@ def parser() -> argparse.ArgumentParser:
     where = serve.add_mutually_exclusive_group()
     where.add_argument("--port", metavar="DEVICE", help="the base's USB serial port (default: the one that answers)")
     where.add_argument("--listen", metavar="PATH", help="a Unix socket for a simulated base to connect to")
+    serve.add_argument("--metrics-file", type=Path, metavar="PATH",
+                       help="write a Prometheus textfile with handheld base and remote health metrics "
+                            "(default: off, or $THERMITE_HANDHELD_METRICS_FILE)")
     oh_cli.add_state_file(serve, state_help)
 
     enroll = oh_cli.action(commands, "enroll", "enroll a remote, or a simulated one",

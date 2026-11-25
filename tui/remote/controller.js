@@ -846,7 +846,7 @@ function create(options) {
   function activate(hit) {
     // A page switch can outrun a terminal redraw. Old control hit boxes must
     // not operate a device once its page has been left.
-    if (["bubble", "key", "volume-mode", "control", "input", "all-off", "room-lock", "lock-menu", "simulate-matrix", "simulate-external", "scroll-bubbles"].includes(hit.kind)
+    if (["bubble", "key", "volume-mode", "control", "input", "all-off", "room-lock", "lock-menu", "simulate-matrix", "simulate-external", "scroll-bubbles", "climate-step", "climate-mode"].includes(hit.kind)
         && ui.screen !== "remote") return;
     // Watch or Listen is Home's switch too; it commands no device.
     if (hit.kind === "mode" && !["remote", "home"].includes(ui.screen)) return;
@@ -948,6 +948,18 @@ function create(options) {
       case "key":
         session.press(hit.button);
         flash(hit.key);
+        break;
+      case "climate-step":
+        if (!hit.disabled && typeof session.stepClimateSetpoint === "function") {
+          session.stepClimateSetpoint(hit.device, hit.step);
+          flash(hit.key);
+        }
+        break;
+      case "climate-mode":
+        if (!hit.disabled && typeof session.setClimateMode === "function") {
+          session.setClimateMode(hit.device, hit.mode);
+          flash(hit.key);
+        }
         break;
       case "volume-mode":
         session.toggleVolumeMode();
@@ -1464,8 +1476,10 @@ function create(options) {
       return;
     }
     if (name === "enter") {
-      if (ui.pane === "remote") pressKey(["ok"]);
-      else applySourceCursor();
+      if (ui.pane === "remote") {
+        if (hit && (hit.kind === "climate-step" || hit.kind === "climate-mode")) activate(hit);
+        else pressKey(["ok"]);
+      } else applySourceCursor();
       return;
     }
     // The remote's keys beyond the page's (Session.KEYS): n and N walk the
@@ -1474,7 +1488,7 @@ function create(options) {
     // Enter OK; the focus starts on OK, so Space is OK until it is moved.
     if (name === "space") {
       if (ui.pane !== "remote") return;
-      if (hit && hit.kind === "key") activate(hit);
+      if (hit && (hit.kind === "key" || hit.kind === "climate-step" || hit.kind === "climate-mode")) activate(hit);
       else if (!hit) pressKey(["ok"]);
       return;
     }

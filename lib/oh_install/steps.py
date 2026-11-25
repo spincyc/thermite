@@ -50,6 +50,7 @@ NODE = metrics.NODE_EXPORTER_ACCOUNT
 RESTARTS = {
     deploy.QUADLET: "thermite-openhab.service",
     deploy.ATV_QUADLET: "thermite-atv.service",
+    deploy.CLIMATE_QUADLET: oh_units.CLIMATE,
 }
 METRICS_RESTARTS = {quadlet: unit for unit, quadlet in deploy.METRICS_QUADLETS.items()}
 MUSIC_RESTARTS = {deploy.MUSIC_QUADLET: oh_units.MUSIC}
@@ -191,6 +192,10 @@ class Context:
         return deploy.needs_atv(self.house)
 
     @property
+    def needs_climate(self) -> bool:
+        return deploy.needs_climate(self.house)
+
+    @property
     def var(self) -> Path:
         return self.area / "var"
 
@@ -265,6 +270,7 @@ class Context:
         return {"thermite-openhab.service": [self.host["http_port"], self.host["https_port"], deploy.KARAF_PORT,
                                     deploy.LSP_PORT, oh_ports.SHUTDOWN_PORT],
                 **({oh_units.ATV: [deploy.HELPER_PORT]} if self.needs_atv else {}),
+                **({oh_units.CLIMATE: [deploy.CLIMATE_PORT]} if self.needs_climate else {}),
                 **{service.unit: [int(service.listen.rsplit(":", 1)[1])] for service in metrics.services(self.host)},
                 **({oh_units.MUSIC: [ports["music"], ports["music_stream"]]} if music.enabled(self.host) else {})}
 
@@ -1140,9 +1146,14 @@ class Services(Step):
         self.runtime_restarted = False
 
     def active_restarts(self) -> dict[str, str]:
-        if self.context.needs_atv:
+        excluded = set()
+        if not self.context.needs_atv:
+            excluded.add(oh_units.ATV)
+        if not self.context.needs_climate:
+            excluded.add(oh_units.CLIMATE)
+        if not excluded:
             return self.restarts
-        return {name: unit for name, unit in self.restarts.items() if unit != oh_units.ATV}
+        return {name: unit for name, unit in self.restarts.items() if unit not in excluded}
 
     def plan(self, system: System) -> tuple[list[str], list[str]]:
         """Units to start, and units to restart (their file changed after
@@ -1201,6 +1212,7 @@ class Services(Step):
     def prefetch(self, system: System, units: list[str]) -> list[Action]:
         """Download sequentially before systemd starts any service's timer."""
         names = {"thermite-openhab.service": "openhab", "thermite-atv.service": "atv_helper",
+                 oh_units.CLIMATE: "atv_helper",
                  **{service.unit: service.image for service in metrics.services(self.context.host)},
                  oh_units.MUSIC: "music_assistant"}
         images = list(dict.fromkeys(deploy.image(self.context.versions, names[unit])
@@ -1274,7 +1286,8 @@ def state_owned(context: Context, system: System) -> bool:
     if service_receipt(context, system) or ownership.inspect(context, system).runtime_bound:
         return True
     allowed = {path for _, paths in (*context.layout.directories(), *context.layout.metrics_directories(),
-                                     *context.layout.music_directories()) for path in paths}
+                                     *context.layout.music_directories(), *context.layout.climate_directories())
+               for path in paths}
     pending = [root]
     while pending:
         directory = pending.pop()

@@ -196,6 +196,11 @@ class Cec(TypedDict, total=False):
     input: int
 
 
+class NuheatConfig(TypedDict, total=False):
+    scale: Literal["F", "C"]
+    step: int
+
+
 class DeviceConfig(TypedDict, total=False):
     sony_ip_control: TvConfig
     androidtv_googletv: AndroidTvConfig
@@ -209,6 +214,7 @@ class DeviceConfig(TypedDict, total=False):
     unifi_protect: Camera
     ir: Infrared
     bk808_cec: Cec
+    nuheat_http: NuheatConfig
 
 
 class DeviceProfile(TypedDict, total=False):
@@ -1022,6 +1028,7 @@ def validate(data: object, *, check_extensions: bool = True, instance_dir: Path 
     rooms = rooms if isinstance(rooms, dict) else {}
     allowed = oh_integrations.allowed()
     needs_mac = {module.NAME for module in oh_integrations.REGISTRY if module.NEEDS_MAC}
+    no_ip = {module.NAME for module in oh_integrations.REGISTRY if not module.NEEDS_IP}
     config_decl = device_keys["config"]
     assert config_decl.keys is not None
     config_keys = config_decl.keys
@@ -1074,10 +1081,16 @@ def validate(data: object, *, check_extensions: bool = True, instance_dir: Path 
         if wrong:
             continue
         # A device reached through a gateway (IR, serial, relay) has no
-        # address of its own; it names the gateway instead. A MAC is only
-        # for dhcp-reservations and discover, which name devices lacking one.
+        # address of its own; it names the gateway instead. A device driven
+        # solely by integrations with NEEDS_IP = False likewise needs no LAN
+        # address. A MAC is only for dhcp-reservations and discover, which name
+        # devices lacking one.
+        controls_raw = device.get("controls")
+        listed = [name for names in (controls_raw.values() if isinstance(controls_raw, dict) else ())
+                  if isinstance(names, list) for name in names if isinstance(name, str)]
+        ip_optional = bool(device.get("via")) or (bool(listed) and all(name in no_ip for name in listed))
         for key in (*(key for key, declaration in DEVICE.items() if declaration.required),
-                    *(() if device.get("via") else ("ip",))):
+                    *(() if ip_optional else ("ip",))):
             if not device.get(key):
                 problems.append(f"{where}: missing {key}")
         if device.get("id"):

@@ -47,6 +47,7 @@ DEVICE = {
                       "config": {"unifi_protect": {"device_id": "0123456789abcdef01234567"}}},
     "drhdmi_http": {"kind": "hdmi_processor", "make": "HDFury", "model": "Dr.HDMI"},
     "ir": {"kind": "disc_player", "make": "Sony", "model": "UBP-X800M2"},
+    "nuheat_http": {"kind": "thermostat", "make": "NuHeat", "model": "Signature"},
     "bk808_cec": {"kind": "disc_player", "make": "Sony", "model": "UBP-X800M2",
                   "config": {"bk808_cec": {"matrix": "den_matrix", "input": 3}}},
 }

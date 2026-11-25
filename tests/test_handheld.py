@@ -87,6 +87,7 @@ class Bridge(unittest.TestCase):
         written by hand: they must keep the fields the bridge sends, and button
         specs without the defaults the bridge leaves out."""
         sony = self.case("sony_tv_layout")
+        listen = self.case("watch_and_listen_mode_switching")
         fixtures = sorted((AREA / "handheld/firmware/host/fixtures").glob("*.json"))
         self.assertTrue(fixtures)
         for path in fixtures:
@@ -94,7 +95,8 @@ class Bridge(unittest.TestCase):
             for message in data if isinstance(data, list) else [data]:
                 if message.get("screen"):
                     screen = message["screen"]
-                    self.assertEqual(sorted(screen), sorted(sony["fields"]), path.name)
+                    expected = listen["listenFields"] if screen.get("mode") == "listen" else sony["fields"]
+                    self.assertEqual(sorted(screen), sorted(expected), path.name)
                     for spec in screen["buttons"].values():
                         self.assertLessEqual(set(spec), {"label", "icon", "text", "repeat"}, path.name)
                         self.assertNotIn("", (spec.get("icon"), spec.get("text")), path.name)
@@ -132,8 +134,19 @@ class Bridge(unittest.TestCase):
         self.case("line_protocol")
         self.assertEqual(self.case("reconnects_with_backoff_and_probes")["attempts"], 3)
 
+    def test_listen_mode_and_speaker_only_house(self):
+        self.case("watch_and_listen_mode_switching")
+        self.assertEqual(self.case("speaker_only_house"), {"ok": True, "room": "garden", "mode": "listen"})
+
+    def test_multi_remote_locks_and_per_remote_attribution(self):
+        result = self.case("multi_remote_locks_and_per_remote_attribution")
+        self.assertEqual(result["attributed"], ["handheld/lounge", "handheld/den"])
+
+    def test_health_metrics_textfile_formatter_and_atomic_write(self):
+        self.assertGreater(self.case("health_metrics_textfile")["lines"], 5)
+
     def test_every_case_ran(self):
-        self.assertEqual(len(self.cases), 20)
+        self.assertEqual(len(self.cases), 24)
         failed = {name: result["error"] for name, result in self.cases.items() if not result["ok"]}
         self.assertEqual(failed, {})
 
@@ -469,7 +482,7 @@ class Command(Scratch):
             self.assertIn(action, out)
 
     def test_action_help_names_the_switches(self):
-        for action, switches in (("serve", ("--url", "--ca-file", "--mock", "--port", "--listen", "--state-file")),
+        for action, switches in (("serve", ("--url", "--ca-file", "--mock", "--port", "--listen", "--metrics-file", "--state-file")),
                                  ("enroll", ("--name", "--port", "--base-port", "--simulator", "--key-file", "--mac",
                                              "--state-file")),
                                  ("list", ("--json", "--state-file")), ("forget", ("NAME", "--port", "--state-file"))):
@@ -865,6 +878,32 @@ class Serve(Scratch):
         self.assertEqual(stat.S_IMODE(self.state.stat().st_mode), 0o600)
         self.assertNotIn(entry["key"], err)
 
+    def test_serve_metrics_file_writes_prometheus_gauges_when_enabled(self):
+        self.assertEqual(self.run_main("enroll", "--simulator", "--name", "sim")[0], 0)
+        socket_path = self.root / "base.sock"
+        metrics_path = self.root / "metrics/thermite-handheld.prom"
+        process = self.serve("--listen", str(socket_path), "--metrics-file", str(metrics_path))
+        self.assertTrue(self.wait_for(socket_path.is_socket), process.stderr.read() if process.poll() is not None else "")
+        run = subprocess.run([NODE, str(AREA / "tests/handheld_sim_harness.js"), str(AREA), str(socket_path),
+                              str(self.state.parent / "sim.key"), handheld.SIMULATED_MAC],
+                             text=True, capture_output=True, timeout=30)
+        seen = json.loads(run.stdout)
+        self.assertIsNone(seen["error"], run.stderr)
+        self.assertTrue(self.wait_for(lambda: metrics_path.is_file() and 'battery_percent{remote="sim"} 55' in metrics_path.read_text()))
+        text = metrics_path.read_text(encoding="utf-8")
+        self.assertEqual(stat.S_IMODE(metrics_path.stat().st_mode), 0o644)
+        self.assertIn('thermite_handheld_remote_battery_percent{remote="sim"} 55\n', text)
+        self.assertIn('thermite_handheld_remote_charging{remote="sim"} 1\n', text)
+        self.assertIn('thermite_handheld_remote_rssi_dbm{remote="sim"} -42\n', text)
+        self.assertRegex(text, r'thermite_handheld_remote_last_seen_seconds\{remote="sim"\} [0-9]+\n')
+        self.assertNotIn(handheld.SIMULATED_MAC, text)
+        self.assertNotIn(self.data()["remotes"][0]["key"], text)
+        self.finish(process)
+        # Clean shutdown flushes base_connected 0 without stray temp files.
+        after = metrics_path.read_text(encoding="utf-8")
+        self.assertIn("thermite_handheld_base_connected 0\n", after)
+        self.assertEqual([p.name for p in metrics_path.parent.iterdir()], ["thermite-handheld.prom"])
+
     def test_a_remote_enrolled_while_serving_is_picked_up(self):
         socket_path = self.root / "base.sock"
         process = self.serve("--listen", str(socket_path))
@@ -919,11 +958,12 @@ class Gateway(Scratch):
                 mock.patch.object(tui, "fetch", return_value=CONTENT), \
                 mock.patch.object(handheld.shutil, "which", return_value="/usr/bin/node"), \
                 mock.patch.object(handheld.os, "execve", side_effect=execve):
-            status, _, err = self.run_main("serve", "--url", "192.0.2.50", "--port", "/dev/ttyACM0")
+            status, _, err = self.run_main("serve", "--url", "192.0.2.50", "--port", "/dev/ttyACM0",
+                                           "--metrics-file", str(self.root / "hh.prom"))
         self.assertEqual(status, 0, err)
         url = "https://192.0.2.50:" + str(tui.default_port())
         self.assertEqual(launched["argv"], ["/usr/bin/node", str(handheld.MAIN), "--url", url, "--state", str(self.state),
-                                            "--port", "/dev/ttyACM0"])
+                                            "--port", "/dev/ttyACM0", "--metrics-file", str(self.root / "hh.prom")])
         model = Path(launched["environment"]["THERMITE_REMOTE_HOUSE_FILE"])
         self.assertEqual(model.read_bytes(), CONTENT)
         self.assertNotIn("THERMITE_REMOTE_TOKEN_FILE", launched["environment"])

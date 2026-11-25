@@ -115,9 +115,10 @@
       permissions: value.permissions.filter((permission) => PERMISSIONS.includes(permission)) };
   }
   // This client's label for the gateway's command trail (X-Thermite-Client):
-  // web/<tab id>, kept for the tab's session, or the terminal's own
-  // tui/<host>. The gateway logs it as a claim, never as authority.
-  const CLIENT = /^(web|tui)\/[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
+  // web/<tab id>, kept for the tab's session, the terminal's tui/<host>, or a
+  // handheld's handheld/<name>. The gateway logs it as a claim, never as authority.
+  const CLIENT = /^(web|tui|handheld)\/[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
+  const LOCKS_FRAME = '{"type":"locks"';
   function clientLabel(value) {
     if (typeof value === "string" && CLIENT.test(value)) return value;
     let id = null;
@@ -177,11 +178,47 @@
     // silence that began before it is not counted (record, visibleSince).
     let shownAt = active ? -Infinity : Infinity;
     const commandDeadline = config.commandDeadline || COMMAND_DEADLINE_MS;
-    // Every room's lock in one read, for the room lists. The watched room's
-    // detailed policy (policies) still decides whether its controls are held back.
+    // Every room's lock in one read, for the room lists. The watched rooms'
+    // detailed policies (policies) still decide whether their controls are held back.
     let lockRooms = null, locksAt = 0, locksWatched = false, lockReads = 0;
-    const policyPoll = poller(() => client.loadPolicy(policyRoom), () => Boolean(policyRoom));
+    const watchedRooms = new Map();
+    function watchedRoomIds() {
+      const ids = new Set(watchedRooms.keys());
+      if (policyRoom) ids.add(policyRoom);
+      return Array.from(ids);
+    }
+    function refreshWatchedPolicies() {
+      const rooms = watchedRoomIds();
+      if (!rooms.length) return Promise.resolve(null);
+      if (rooms.length === 1) return client.loadPolicy(rooms[0]);
+      return Promise.all(rooms.map((room) => client.loadPolicy(room).catch(() => null)));
+    }
+    const policyPoll = poller(refreshWatchedPolicies, () => watchedRoomIds().length > 0);
     const lockPoll = poller(() => client.loadLocks(), () => locksWatched);
+    function handleLocksFrame(data) {
+      if (legacy || mock || typeof data !== "string" || !data.startsWith(LOCKS_FRAME)) return;
+      let frame; try { frame = JSON.parse(data); } catch (_) { return; }
+      if (!frame || frame.type !== "locks") return;
+      if (frame.rooms && typeof frame.rooms === "object" && !Array.isArray(frame.rooms)) {
+        const next = Object.create(null);
+        let valid = true;
+        for (const [room, lock] of Object.entries(frame.rooms)) {
+          if (!/^[a-z][a-z0-9_]{0,99}$/.test(room) || typeof lock?.locked !== "boolean") { valid = false; break; }
+          next[room] = { locked: lock.locked, manual: lock.manual === true, until: typeof lock.until === "string" ? lock.until : null,
+            reason: typeof lock.reason === "string" ? lock.reason : "" };
+        }
+        if (valid) {
+          const changed = JSON.stringify(next) !== JSON.stringify(lockRooms);
+          lockRooms = next; locksAt = Date.now();
+          if (changed) notify("locks");
+        }
+      } else if (locksWatched && client.accountsExist() && active && !ended) {
+        client.loadLocks().catch(() => null);
+      }
+      if (client.accountsExist() && active && !ended && watchedRoomIds().length > 0) {
+        refreshWatchedPolicies().catch(() => null);
+      }
+    }
     // Reads now and again POLICY_EVERY after each answer, while the client is
     // active and wanted() holds; start() replaces any earlier loop.
     function poller(read, wanted) {
@@ -213,8 +250,9 @@
     // own failure is never recorded.
     const TELEMETRY = "/api/v1/telemetry", KINDS = ["policy_timeout", "locks_timeout", "command_timeout", "stream_error", "stream_refused", "snapshot_timeout"];
     // The gateway counts reports by kind (oh_identity.telemetry): web or tui, never a
-    // client's own label (tui/<host>, which names it in the command trail).
-    const telemetryClient = config.client ? String(config.client).split("/")[0] : typeof document === "undefined" ? "tui" : "web",
+    // client's own label (tui/<host> or handheld/<name>, which name it in the command trail).
+    const rawClientKind = config.client ? String(config.client).split("/")[0] : typeof document === "undefined" ? "tui" : "web";
+    const telemetryClient = rawClientKind === "web" || rawClientKind === "tui" ? rawClientKind : typeof document === "undefined" ? "tui" : "web",
       now = config.now || Date.now;
     let telemetry = Object.create(null), hopProtocol = "unknown", reporting = false, reportAfter = 0, throttledUntil = 0;
     const normalHop = (value) => { const hop = String(value || "").toLowerCase();
@@ -301,12 +339,12 @@
       notify("unauthorized", { guest });
       if (config.onUnauthorized) config.onUnauthorized(code);
     }
-    async function raw(path, init, publicRequest) {
+    async function raw(path, init, publicRequest, clientOverride) {
       const target = new URL(path, origin + "/");
       if (target.origin !== origin || target.username || target.password) throw problem("origin_mismatch");
       const request = { ...(init || {}), credentials: token && !publicRequest ? "omit" : "same-origin", redirect: "error", cache: "no-store" };
       const headers = new Headers(request.headers || {});
-      headers.set("X-Thermite-Client", label);
+      headers.set("X-Thermite-Client", clientOverride || label);
       if (token && !publicRequest) headers.set("Authorization", "Bearer " + token);
       const bearerRequest = token && !publicRequest;
       if (!bearerRequest && !["GET", "HEAD"].includes((request.method || "GET").toUpperCase()) && csrf) headers.set("X-CSRFToken", csrf);
@@ -338,9 +376,9 @@
     // A Guest asking for an account-only resource has lost nothing; any other
     // 401 means the credential changed, or accounts exist where none did.
     const guestRefusal = (value) => Boolean(user && user.is_guest && value && value.error === "login_required");
-    async function data(path, init, check, publicRequest) {
+    async function data(path, init, check, publicRequest, clientOverride) {
       const revision = authRevision;
-      const response = await raw(path, init, publicRequest);
+      const response = await raw(path, init, publicRequest, clientOverride);
       if (check) stale(revision);
       let value = null;
       try { value = await response.json(); } catch (_) { /* reported below */ }
@@ -403,45 +441,54 @@
           stale(revision);
         }
         const answer = principal(me);
-        user = answer; notify("change"); return user;
+        user = answer; notify("change");
+        if (client.accountsExist() && watchedRooms.size > 0) policyPoll.start();
+        return user;
       })().catch((error) => { if (error.status === 401 && !ended && !error.stale) lost(error.code); throw error; })
         .finally(() => { loading = null; });
       return loading;
     }
-    async function fetchAuth(url, init) {
-      if (legacy || mock) return rawFetch(url, init);
-      await ready();
-      const target = new URL(url, config.base ? origin + "/" : global.document?.baseURI || origin + "/"), method = (init && init.method || "GET").toUpperCase();
-      if (!client.has("pairing.manage") && (target.pathname === "/rest/items" && target.searchParams.get("metadata") === "pairing"
-          || method === "POST" && target.pathname.startsWith("/rest/items/"))) throw problem("forbidden", 403);
-      const revision = authRevision;
-      const response = await raw(target.href, init);
-      stale(revision);
-      if (response.status === 401) {
-        const body = user && user.is_guest && typeof response.clone === "function" ? await response.clone().json().catch(() => null) : null;
+    function makeFetchAuth(clientOverride) {
+      return async function fetchAuth(url, init) {
+        if (legacy || mock) return rawFetch(url, init);
+        await ready();
+        const target = new URL(url, config.base ? origin + "/" : global.document?.baseURI || origin + "/"), method = (init && init.method || "GET").toUpperCase();
+        if (!client.has("pairing.manage") && (target.pathname === "/rest/items" && target.searchParams.get("metadata") === "pairing"
+            || method === "POST" && target.pathname.startsWith("/rest/items/"))) throw problem("forbidden", 403);
+        const revision = authRevision;
+        const response = await raw(target.href, init, false, clientOverride);
         stale(revision);
-        if (guestRefusal(body)) throw problem("login_required", 401);
-        lost("session_expired"); throw problem("session_expired", 401);
-      }
-      return response;
+        if (response.status === 401) {
+          const body = user && user.is_guest && typeof response.clone === "function" ? await response.clone().json().catch(() => null) : null;
+          stale(revision);
+          if (guestRefusal(body)) throw problem("login_required", 401);
+          lost("session_expired"); throw problem("session_expired", 401);
+        }
+        return response;
+      };
     }
-    async function json(path, method, value, options) {
-      await ready();
-      if (legacy) throw problem("access_not_configured", 404);
-      if (!client.accountsExist() && (/^\/api\/v1\/(users|tokens)(\/|$)/.test(path) || /\/(policy|lock)$/.test(path))) throw problem("auth_disabled", 403);
-      if (mock) return fake().request(path, method || "GET", value);
-      const init = { ...(options || {}), method: method || "GET", headers: { Accept: "application/json" } };
-      if (value !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(value); }
-      return data(path, init, true);
+    const fetchAuth = makeFetchAuth();
+    function makeJson(clientOverride) {
+      return async function json(path, method, value, options) {
+        await ready();
+        if (legacy) throw problem("access_not_configured", 404);
+        if (!client.accountsExist() && (/^\/api\/v1\/(users|tokens)(\/|$)/.test(path) || /\/(policy|lock)$/.test(path))) throw problem("auth_disabled", 403);
+        if (mock) return fake().request(path, method || "GET", value);
+        const init = { ...(options || {}), method: method || "GET", headers: { Accept: "application/json" } };
+        if (value !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(value); }
+        return data(path, init, true, false, clientOverride);
+      };
     }
+    const json = makeJson();
     // A JSON request that gives up after ms: its fetch is aborted, it rejects
     // with code and status 0 (no server answer), and kind, when given, is
     // counted. Nothing waits on it longer than ms, however the gateway fares.
-    function bounded(path, method, value, ms, code, kind) {
+    function bounded(path, method, value, ms, code, kind, clientOverride) {
       const controller = typeof AbortController === "function" ? new AbortController() : null, started = now();
       let timer;
+      const sendJson = clientOverride ? makeJson(clientOverride) : json;
       return Promise.race([
-        json(path, method, value, controller ? { signal: controller.signal } : {}),
+        sendJson(path, method, value, controller ? { signal: controller.signal } : {}),
         new Promise((_, reject) => { timer = setTimeout(() => {
           controller?.abort(); if (kind) record(kind, (now() - started) / 1000, path); reject(problem(code));
         }, ms); })
@@ -453,9 +500,116 @@
     const timedGet = (path, kind) => bounded(path, "GET", undefined, config.policyTimeout || 8000, "client_timeout", kind);
     // A command aborted after commandDeadline rejects as command_unconfirmed:
     // the gateway may still have sent it, so the caller says so, never that it failed.
-    const commandRequest = (path, method, value, ms) => bounded(path, method, value, ms || commandDeadline, "command_unconfirmed");
+    const commandRequest = (path, method, value, ms, clientOverride) => bounded(path, method, value, ms || commandDeadline, "command_unconfirmed", undefined, clientOverride);
+    function makeSavePolicy(clientOverride) {
+      const sendJson = clientOverride ? makeJson(clientOverride) : json;
+      return async function savePolicy(room, revision, value) {
+        const saved = await sendJson("/api/v1/rooms/" + encodeURIComponent(room) + "/policy", "PUT", { revision, config: value });
+        policies[room] = { ...policies[room], ...saved }; notify("policy");
+        await client.loadPolicy(room); return saved;
+      };
+    }
+    function makeSetRoomLock(clientOverride) {
+      return async function setRoomLock(room, revision, locked, desired) {
+        await ready();
+        const authority = authRevision;
+        if (!client.accountsExist()) throw problem("auth_disabled", 403);
+        if (!client.canEdit() || policies[room]?.can_lock !== true) throw problem("forbidden", 403);
+        if (policyWrites.has(room)) return null;
+        policyWrites.add(room); policyReads[room] = (policyReads[room] || 0) + 1;
+        try {
+          const saved = await commandRequest("/api/v1/rooms/" + encodeURIComponent(room) + "/lock", "PUT",
+            desired === undefined ? { revision, locked } : { revision, locked, desired }, undefined, clientOverride);
+          stale(authority);
+          if (saved.room !== room || !Number.isInteger(saved.revision) || typeof saved.effective?.allowed !== "boolean"
+              || typeof saved.effective?.locked !== "boolean") throw problem("invalid_response");
+          policies[room] = saved; policyAt[room] = Date.now(); policyFailures.delete(room); notify("policy"); return saved;
+        } catch (error) {
+          // A rejected/uncertain write never changes the displayed switch optimistically.
+          policyWrites.delete(room);
+          if (!error.stale && !ended) await client.loadPolicy(room).catch(() => {});
+          throw error;
+        } finally { policyWrites.delete(room); }
+      };
+    }
+    function makeCommand(clientOverride) {
+      return async function command(room, action, value) {
+        await ready();
+        if (!client.canControl(room)) throw problem(policies[room]?.effective?.reason === "policy_unavailable" ? "policy_unavailable" : "room_locked", 403);
+        // A refusal means the lock shown may be out of date: read it again.
+        const path = "/api/v1/rooms/" + encodeURIComponent(room) + "/commands";
+        try { return await overdue("command_timeout", path, commandRequest(path, "POST", { action, value }, undefined, clientOverride), config.commandTimeout || 8000); }
+        catch (error) { if ([403, 423].includes(error.status) || error.code === "policy_unavailable") client.loadPolicy(room).catch(() => {}); throw error; }
+      };
+    }
+    function makeDeviceCommand(clientOverride) {
+      return async function deviceCommand(device, action, value) {
+        await ready();
+        const path = "/api/v1/devices/" + encodeURIComponent(device) + "/commands";
+        try { return await overdue("command_timeout", path, commandRequest(path, "POST", { action, value }, undefined, clientOverride), config.commandTimeout || 8000); }
+        catch (error) { if ([403, 423].includes(error.status) && locksWatched) client.loadLocks().catch(() => {}); throw error; }
+      };
+    }
+    function makeMusicRead(clientOverride) {
+      return async function musicRead(path, ms) {
+        await ready();
+        return bounded("/api/v1/music" + path, "GET", undefined, ms || config.readTimeout || 8000, "client_timeout", undefined, clientOverride);
+      };
+    }
+    function makeMusicCommand(clientOverride) {
+      return async function musicCommand(path, value) {
+        await ready();
+        const target = "/api/v1/music/" + path;
+        try { return await overdue("command_timeout", target, commandRequest(target, "POST", value, undefined, clientOverride), config.commandTimeout || 8000); }
+        catch (error) { if ([403, 423].includes(error.status) && locksWatched) client.loadLocks().catch(() => {}); throw error; }
+      };
+    }
+    function makeAllOff(clientOverride) {
+      return async function allOff() {
+        await ready();
+        return commandRequest("/api/v1/all-off", "POST", {}, 2 * commandDeadline, clientOverride);
+      };
+    }
+    function retainRoom(room) {
+      if (typeof room !== "string" || !room) return () => {};
+      let released = false;
+      const wasEmpty = watchedRoomIds().length === 0;
+      const prev = watchedRooms.get(room) || 0;
+      watchedRooms.set(room, prev + 1);
+      if (wasEmpty) {
+        policyPoll.start().catch(() => null);
+      } else if (prev === 0 && !legacy && !mock && client.accountsExist() && active && !ended) {
+        client.loadPolicy(room).catch(() => null);
+      }
+      return function release() {
+        if (released) return;
+        released = true;
+        const count = watchedRooms.get(room) || 0;
+        if (count <= 1) watchedRooms.delete(room);
+        else watchedRooms.set(room, count - 1);
+        if (watchedRoomIds().length === 0) policyPoll.stop();
+      };
+    }
+    function forClient(value) {
+      const scoped = typeof value === "string" && CLIENT.test(value) ? value : label;
+      if (scoped === label) return client;
+      return Object.assign(Object.create(client), {
+        clientLabel: scoped,
+        fetch: makeFetchAuth(scoped),
+        json: makeJson(scoped),
+        savePolicy: makeSavePolicy(scoped),
+        setRoomLock: makeSetRoomLock(scoped),
+        command: makeCommand(scoped),
+        deviceCommand: makeDeviceCommand(scoped),
+        musicRead: makeMusicRead(scoped),
+        musicCommand: makeMusicCommand(scoped),
+        allOff: makeAllOff(scoped),
+        forClient
+      });
+    }
     const client = {
-      native: legacy, mock, guestOnly, base, origin, ready, fetch: fetchAuth, json, loadSecurity, record, flushTelemetry,
+      native: legacy, mock, guestOnly, base, origin, clientLabel: label, ready, fetch: fetchAuth, json, loadSecurity, record, flushTelemetry,
+      forClient, retainRoom, addWatchedRoom: retainRoom, watchedRooms: () => Array.from(watchedRooms.keys()),
       // The HTTPS site's origin, which the Guest listener names; else null.
       secureSite: () => secure,
       security: () => security,
@@ -533,49 +687,13 @@
         }
         return client.accountsExist() && lockRooms?.[room] || null;
       },
-      async savePolicy(room, revision, value) {
-        const saved = await json("/api/v1/rooms/" + encodeURIComponent(room) + "/policy", "PUT", { revision, config: value });
-        policies[room] = { ...policies[room], ...saved }; notify("policy");
-        await client.loadPolicy(room); return saved;
-      },
+      savePolicy: makeSavePolicy(),
       // desired, when given, is what the caller saw: the server locks only if the room still reads it.
-      async setRoomLock(room, revision, locked, desired) {
-        await ready();
-        const authority = authRevision;
-        if (!client.accountsExist()) throw problem("auth_disabled", 403);
-        if (!client.canEdit() || policies[room]?.can_lock !== true) throw problem("forbidden", 403);
-        if (policyWrites.has(room)) return null;
-        policyWrites.add(room); policyReads[room] = (policyReads[room] || 0) + 1;
-        try {
-          const saved = await commandRequest("/api/v1/rooms/" + encodeURIComponent(room) + "/lock", "PUT",
-            desired === undefined ? { revision, locked } : { revision, locked, desired });
-          stale(authority);
-          if (saved.room !== room || !Number.isInteger(saved.revision) || typeof saved.effective?.allowed !== "boolean"
-              || typeof saved.effective?.locked !== "boolean") throw problem("invalid_response");
-          policies[room] = saved; policyAt[room] = Date.now(); policyFailures.delete(room); notify("policy"); return saved;
-        } catch (error) {
-          // A rejected/uncertain write never changes the displayed switch optimistically.
-          policyWrites.delete(room);
-          if (!error.stale && !ended) await client.loadPolicy(room).catch(() => {});
-          throw error;
-        } finally { policyWrites.delete(room); }
-      },
-      async command(room, action, value) {
-        await ready();
-        if (!client.canControl(room)) throw problem(policies[room]?.effective?.reason === "policy_unavailable" ? "policy_unavailable" : "room_locked", 403);
-        // A refusal means the lock shown may be out of date: read it again.
-        const path = "/api/v1/rooms/" + encodeURIComponent(room) + "/commands";
-        try { return await overdue("command_timeout", path, commandRequest(path, "POST", { action, value }), config.commandTimeout || 8000); }
-        catch (error) { if ([403, 423].includes(error.status) || error.code === "policy_unavailable") client.loadPolicy(room).catch(() => {}); throw error; }
-      },
+      setRoomLock: makeSetRoomLock(),
+      command: makeCommand(),
       // A device page's command. The server checks it against the locks of
       // the rooms that command the device; a refusal reads the locks again.
-      async deviceCommand(device, action, value) {
-        await ready();
-        const path = "/api/v1/devices/" + encodeURIComponent(device) + "/commands";
-        try { return await overdue("command_timeout", path, commandRequest(path, "POST", { action, value }), config.commandTimeout || 8000); }
-        catch (error) { if ([403, 423].includes(error.status) && locksWatched) client.loadLocks().catch(() => {}); throw error; }
-      },
+      deviceCommand: makeDeviceCommand(),
       // The house's music (oh_identity.music_api): a read gives up after ms
       // (readTimeout unless given) as client_timeout; a command (path below
       // /api/v1/music/) is bounded and refused as a device's.
@@ -606,13 +724,8 @@
         await ready();
         return json("/api/v1/tokens/" + encodeURIComponent(String(id)), "DELETE");
       },
-      async musicRead(path, ms) { await ready(); return bounded("/api/v1/music" + path, "GET", undefined, ms || config.readTimeout || 8000, "client_timeout"); },
-      async musicCommand(path, value) {
-        await ready();
-        const target = "/api/v1/music/" + path;
-        try { return await overdue("command_timeout", target, commandRequest(target, "POST", value), config.commandTimeout || 8000); }
-        catch (error) { if ([403, 423].includes(error.status) && locksWatched) client.loadLocks().catch(() => {}); throw error; }
-      },
+      musicRead: makeMusicRead(),
+      musicCommand: makeMusicCommand(),
       watchRoom(room) { policyRoom = room; return policyPoll.start(); },
       // A room list on show asks for every room's lock; nothing is read otherwise.
       watchLocks(on) { locksWatched = Boolean(on); return lockPoll.start(); },
@@ -626,7 +739,7 @@
         streams.forEach((stream) => stream.watch());
       },
       stop() { active = false; policyPoll.stop(); lockPoll.stop(); streams.forEach((stream) => stream.watch()); },
-      async allOff() { await ready(); return commandRequest("/api/v1/all-off", "POST", {}, 2 * commandDeadline); },
+      allOff: makeAllOff(),
       async login(username, password) {
         const address = new URL(origin);
         if (guestOnly || address.protocol !== "https:" && !["127.0.0.1", "localhost", "[::1]"].includes(address.hostname)) throw problem("secure_connection_required");
@@ -702,6 +815,7 @@
               if (!current()) return;
               this.heard = stamp();
               compareBuild(event?.data);
+              handleLocksFrame(event?.data);
               if (event?.data !== HEARTBEAT_FRAME && this.onmessage) this.onmessage(event);
             };
             source.onerror = (event) => {

@@ -19,6 +19,10 @@ TEXT = {"kind": "text", "max_length": 192, "pattern": r"[^\x00-\x1f\x7f-\x9f]{1,
 #: The remote() points a room or device route commands.
 POINTS = ("power", "input", "key", "volume", "mute")
 PAIR_FIELDS = {"device", "integration", "label", "model", "room", "order", "status", "length", "chars", "again", "hint", "confirm", "result"}
+#: Bounded raw setpoint range accepted by the gateway contract; the localhost
+#: climate helper enforces each thermostat's verified private DeviceContract limits.
+CLIMATE_SETPOINT_MIN = -5000
+CLIMATE_SETPOINT_MAX = 10000
 
 
 def readable(name: str) -> bool:
@@ -279,10 +283,10 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None, metrics
             if outputs:
                 states[diagnosis["item"]]["fields"]["output"] = {"kind": "enum", "values": outputs}
 
-    # Each audio page's device route (oh_identity.runtime): its remote's
-    # controls by point, its settings by Item, and the routed rooms that
-    # command it with its role in each (routing.targets).
-    audio_devices = {}
+    # Each audio page's and climate device's route (oh_identity.runtime):
+    # audio pages take remote controls by point and settings by Item with
+    # room guards; climate devices take climate_mode and climate_setpoint.
+    contract_devices = {}
     for ident, device in devices.items():
         module, control = native[ident]
         page = remote_model.audio_page(device)
@@ -293,7 +297,30 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None, metrics
         actions.update({setting["item"]: spec for setting in page.get("settings", ())
                         if (spec := setting_spec(device, setting))})
         if actions:
-            audio_devices[ident] = {"actions": actions, "rooms": guards.get(ident, {})}
+            contract_devices[ident] = {"actions": actions, "rooms": guards.get(ident, {})}
+
+    for ident, device in devices.items():
+        desc = remote_model.climate_device(device)
+        if not desc:
+            continue
+        items_map = desc.get("items") or {}
+        actions = dict((contract_devices.get(ident) or {}).get("actions") or {})
+        mode_item = items_map.get("mode")
+        modes = [mode for mode in (desc.get("modes") or ()) if isinstance(mode, str)]
+        if mode_item and modes and commandable(mode_item) and readable(mode_item):
+            states[mode_item] = {"kind": "enum", "values": list(modes), "commands": True}
+            actions["climate_mode"] = {"kind": "enum", "values": list(modes), "item": mode_item,
+                                       "resources": ["device:" + ident]}
+        setpoint_item = items_map.get("setpoint")
+        if setpoint_item and commandable(setpoint_item) and readable(setpoint_item):
+            states[setpoint_item] = {"kind": "number", "min": CLIMATE_SETPOINT_MIN,
+                                     "max": CLIMATE_SETPOINT_MAX, "commands": True}
+            actions["climate_setpoint"] = {"kind": "number", "min": CLIMATE_SETPOINT_MIN,
+                                           "max": CLIMATE_SETPOINT_MAX, "step": 1,
+                                           "item": setpoint_item, "resources": ["device:" + ident]}
+        if actions:
+            existing_rooms = dict((contract_devices.get(ident) or {}).get("rooms") or {})
+            contract_devices[ident] = {"actions": actions, "rooms": existing_rooms}
 
     for description in remote_diagnostics.providers(house).values():
         for reading in description.get("readings", ()):
@@ -337,7 +364,7 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None, metrics
     assets = {name: {"private": name == "house.js" or name.endswith(".json")
                     or name.endswith(".html") and name != "access.html",
                     **({"admin": True} if name in remote_system.ADMIN_ASSETS else {})} for name in remote.FILES}
-    return {"rooms": rooms, "devices": audio_devices, "states": states, "routing": table,
+    return {"rooms": rooms, "devices": contract_devices, "states": states, "routing": table,
             "house": copy.deepcopy(house.data), "assets": assets, "build": build,
             "asset_root": str(Path(asset_root).resolve()) if asset_root else None, "pairings": pairings, "groups": groups, "media": media,
             "views": views(house, rooms, activity, pairings), "history": history(house, conf, rooms, metrics_port),
@@ -373,6 +400,8 @@ def views(house: House, rooms: dict, activity: dict, pairings: dict) -> dict:
         read.update((page.get("track") or {}).values())
         for entry in (*page.get("settings", ()), *page.get("facts", ())):
             read.update((entry["item"], (entry.get("when") or {}).get("item")))
+        climate = device.get("climate") or {}
+        read.update((climate.get("items") or {}).values())
     read.update(name for name, description in activity.items() if description.get("states"))
     read.discard(None)
     status = {config[field] for spec in pairings.values() for config in (spec["config"],)

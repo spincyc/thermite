@@ -298,7 +298,7 @@ _TABLE = (
         script integrations of one device share the Item, which the first
         of them in this order defines""",
          order=("sony_ip_control", "androidtv_googletv", "pyatv_http", "sonos", "heos", "sony_adcp", "vrroom_telnet",
-                "avpro_telnet", "ir", "bk808_cec")),
+                "avpro_telnet", "ir", "bk808_cec", "nuheat_http")),
 
     # A control module that can restart its devices without cutting their
     # power, for nightly reboots (oh_features.reboots).
@@ -454,6 +454,12 @@ _TABLE = (
         doorbell, packageCamera, thing, items: {online, recording, motion,
         lastMotion, ring, lastRing, ...}, media: {snapshot, streams}), or None""",
          order=("unifi_protect",)),
+
+    # A climate integration exposes its room thermostat descriptor for the
+    # remote UI and gateway contract without naming vendor internals generically.
+    Hook("climate", FUNCTION, """
+        climate(device) -> dict | None: room climate descriptor for the remote
+        UI and gateway contract""", order=("nuheat_http",)),
 
     # A conditional localhost helper daemon (e.g. thermite-atv.service) needed
     # only when at least one device in the house uses this integration.

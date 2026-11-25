@@ -431,6 +431,22 @@ bool tr_room(tr_t *r, const char *id)
     return member(fields, "room", id) && operation(r, fields);
 }
 
+bool tr_mode(tr_t *r, const char *mode)
+{
+    char fields[FIELDS_MAX];
+    return member(fields, "mode", mode) && operation(r, fields);
+}
+
+bool tr_volume(tr_t *r, double value)
+{
+    if (!r || !(value == value) || value < -1e6 || value > 1e6) return false;
+    char fields[FIELDS_MAX];
+    long long whole = (long long)value;
+    int n = (double)whole == value ? snprintf(fields, sizeof fields, "\"volume\":%lld", whole)
+                                   : snprintf(fields, sizeof fields, "\"volume\":%.1f", value);
+    return n > 0 && (size_t)n < sizeof fields && operation(r, fields);
+}
+
 bool tr_all_off(tr_t *r)
 {
     return operation(r, "\"allOff\":true");

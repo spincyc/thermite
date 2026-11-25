@@ -68,6 +68,9 @@ class RemoteLockUI(unittest.TestCase):
         for key in ("summaryPolled", "summaryPaused", "listsOnlyPoll"):
             self.assertTrue(self.proof[key], key)
 
+    def test_multi_room_ref_counted_watched_rooms_and_locks_sse_refresh(self):
+        self.assertTrue(self.proof["multiRoomWatched"])
+
 
 if __name__ == "__main__":
     unittest.main()

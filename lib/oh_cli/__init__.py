@@ -100,6 +100,7 @@ VERBS = {
     "reboot": Verb("devices", "restart a device now as the nightly reboots do, or list how each went", reach=SSH),
     "cameras": Verb("devices", "read camera status, or configure native Protect bridges privately", reach=SSH),
     "apple-tv": Verb("devices", "run the Apple TV helper runtime calls"),
+    "climate": Verb("devices", "run the NuHeat climate helper, commission thermostats or read status"),
     "ir-profile": Verb("devices", "validate verified IR keys or print an iTach packet without transmitting"),
     "remote": Verb("use", "the house remote in a terminal", reach=GATEWAY),
     "tui": Verb("use", "the house remote in a terminal on any computer, from its HTTPS gateway", site=False,
@@ -781,6 +782,8 @@ def reached(verb: str, words: Sequence[str]) -> tuple[int | None, list[str]]:
                        "--runtime-url=" + word.split("=", 1)[1] if word.startswith("--url=") and index < end else word)
                       for index, word in enumerate(words)]
     if reach == LOCAL or (reach == SSH) != url.startswith("ssh://"):
+        if verb == "climate" and words[:1] == ["status"] and url.startswith(("http://", "https://")):
+            return None, words
         return refuse_url(verb, url), words
     if verb == "bugreport":
         from oh_cli import bugreport

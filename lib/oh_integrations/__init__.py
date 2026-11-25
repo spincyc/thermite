@@ -28,14 +28,14 @@ if TYPE_CHECKING:
     from oh_conf import House
 
 from . import _hooks
-from . import (androidtv_googletv, avpro_telnet, bk808_cec, bk808_http, cast, denonmarantz_http, drhdmi_http, globalcache_ir, heos, network_ping, pyatv_http, sonos,
+from . import (androidtv_googletv, avpro_telnet, bk808_cec, bk808_http, cast, denonmarantz_http, drhdmi_http, globalcache_ir, heos, network_ping, nuheat_http, pyatv_http, sonos,
                sony_adcp, sony_ip_control, sony_rest, ukm404_http, unifi_protect, vrroom_http, vrroom_telnet, wiim_http)
 
 #: Implemented integrations, in render order; a room page lists each device's
 #: points in this order. Which of two a device lists is asked first for a
 #: hook only one answers is that hook's `order` (_hooks.HOOKS), not this.
 REGISTRY = (network_ping, sony_rest, sony_ip_control, cast, androidtv_googletv, pyatv_http, sonos, denonmarantz_http, heos,
-            wiim_http, sony_adcp, bk808_http, ukm404_http, vrroom_http, vrroom_telnet, avpro_telnet, unifi_protect, drhdmi_http, globalcache_ir, bk808_cec)
+            wiim_http, sony_adcp, bk808_http, ukm404_http, vrroom_http, vrroom_telnet, avpro_telnet, unifi_protect, drhdmi_http, globalcache_ir, bk808_cec, nuheat_http)
 for _module in REGISTRY:
     _module.__getattr__ = _hooks.absent  # type: ignore[method-assign]  # a module's own __getattr__ (PEP 562)
 

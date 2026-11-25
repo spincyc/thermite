@@ -45,6 +45,7 @@ FILES = ("index.html", "theme.css", "remote.css", "house.js", "dom.js", "sse.js"
          "access-config.js", "access.js", "access-ui.js", "access.css", "access.html", "users.html", "settings.html",
          "manifest.webmanifest", "icon.svg", "mark.svg", "mark-light.svg", "apple-touch-icon.png", "pair.html", "pair.js", "pair.css",
          "audio-session.js", "music-backend.js", "music-session.js", "listen-session.js", "listen.js", "listen.css",
+         "climate.js", "climate.css",
          "cameras.html", "cameras.js", "cameras.css", "cameras.json", "topology.html", "topology.js", "topology.css", "topology.json",
          # The sample house and its demo account: a page names them (<link rel="thermite-mock">)
          # and loads them only for ?backend=mock (navigation.js), so no phone downloads them.
